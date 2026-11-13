@@ -18,6 +18,13 @@ auto_execute_confidence_threshold: 0.75
 # cells cannot identify individuals. 11 follows common clinical data-use agreements.
 small_cell_threshold: 11
 
+# Semantic layers kept open at once; the least recently used one beyond this is closed.
+semantic_layer_cache_size: 4
+# DuckDB limits for each open layer: memory as a share of RAM or a size ("20%", "2GB");
+# threads 0 means half the CPUs, so a question never takes the whole machine.
+duckdb_memory_limit: "20%"
+duckdb_threads: 0
+
 # Performance/timeout settings
 tier_timeout_seconds: 5.0  # Fail fast if any tier takes too long
 enable_parallel_tier_matching: false  # Future optimization (not implemented yet)

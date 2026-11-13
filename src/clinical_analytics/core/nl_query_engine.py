@@ -29,6 +29,7 @@ from clinical_analytics.core.config_loader import load_patterns_config
 from clinical_analytics.core.data_home import nl_learning_dir
 from clinical_analytics.core.log_redaction import stable_hash, text_fingerprint
 from clinical_analytics.core.query_plan import CohortStep, FilterSpec, QueryPlan, Statistic
+from clinical_analytics.core.value_index import ColumnValues
 
 logger = structlog.get_logger()
 
@@ -472,6 +473,7 @@ class NLQueryEngine:
         # cohort peel, so parse outcomes can be joined across tiers and runs.
         self._question_hash: str | None = _stable_hash(query)
         columns = list(self.semantic_layer.get_base_view().columns)
+        self.refresh_value_index(columns)
         peeled = peel_cohort(query, columns, lambda column: self._distinct_values(column))
         self._pending_cohort: PeelResult | None = peeled
         query = peeled.residual
@@ -2706,16 +2708,68 @@ Fix the errors and return a corrected query intent as JSON.
         return matched_vars, collision_suggestions
 
     def _distinct_values(self, column: str) -> list[Any]:
-        """Cached distinct values for cohort matching. Uses the layer's own frame."""
+        """Cached distinct values for cohort matching. Uses the layer's own frame.
+
+        Each column's values come back as a ColumnValues, which caches the lookups the peel and
+        word accounting derive from them (core/value_index.py), so they are built once per
+        layer rather than once per question. refresh_value_index drops them when the layer's
+        columns or aliases change.
+        """
         cache: dict[str, list[Any]] = getattr(self, "_distinct_value_cache", {})
         if column in cache:
             return cache[column]
         # DuckDB deduplicates; only the distinct values cross into Python, as Polars.
         frame = self.semantic_layer.get_base_view().select(column).distinct().order_by(column).to_polars()
-        values = list(frame.get_column(column).to_list())
+        stored = frame.get_column(column).to_list()
+        values = ColumnValues(column, stored, match_stored=self._value_words_matchable(column, stored))
         cache[column] = values
         self._distinct_value_cache = cache
+        if not values.match_stored:
+            logger.debug("value_index_column_skipped", column_hash=_stable_hash(column), distinct=len(values))
         return values
+
+    def _value_words_matchable(self, column: str, stored: list[Any]) -> bool:
+        """False when the column's stored values are never matched as question words.
+
+        A numeric column with more values than a grouping has (a measurement: numbers bind only
+        through a comparison), and an identifier: the patient id, or a column whose every row
+        holds a different value. Only stored values are skipped; header code labels still match.
+        """
+        from clinical_analytics.core.nl_query_config import (
+            MAX_NUMERIC_GROUP_LEVELS,
+            VALUE_MATCH_MIN_IDENTIFIER_VALUES,
+        )
+        from clinical_analytics.core.schema import UnifiedCohort
+
+        present = [value for value in stored if value is not None]
+        if len(present) > MAX_NUMERIC_GROUP_LEVELS and all(
+            isinstance(value, int | float) and not isinstance(value, bool) for value in present
+        ):
+            return False
+        if len(present) < VALUE_MATCH_MIN_IDENTIFIER_VALUES:
+            return True
+        if column == UnifiedCohort.PATIENT_ID:
+            return False
+        row_count = self.semantic_layer.get_base_row_count()
+        return not (isinstance(row_count, int) and len(stored) == row_count)
+
+    def refresh_value_index(self, columns: list[str]) -> None:
+        """Drop the cached values and their lookups when the layer's columns or aliases changed."""
+        aliases = self.semantic_layer.get_column_alias_index()
+        signature: tuple[tuple[str, ...], tuple[tuple[str, str], ...]] | None = (
+            tuple(columns),
+            tuple(sorted(aliases.items())) if isinstance(aliases, dict) else (),
+        )
+        if getattr(self, "_value_index_signature", None) != signature:
+            if getattr(self, "_distinct_value_cache", None):
+                logger.info("value_index_invalidated", columns=len(columns))
+            self._distinct_value_cache = {}
+            self._value_index_signature = signature
+
+    def invalidate_value_index(self) -> None:
+        """Forget every column's cached values; the next question reads them again."""
+        self._distinct_value_cache = {}
+        self._value_index_signature = None
 
     def _fuzzy_match_variable(self, query_term: str) -> tuple[str | None, float, list[str] | None]:
         """

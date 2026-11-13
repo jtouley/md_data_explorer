@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, Literal, TypeAlias
 
 from clinical_analytics.core.column_parser import parse_column_name
@@ -42,6 +44,7 @@ from clinical_analytics.core.question_vocabulary import (
     range_in_order,
 )
 from clinical_analytics.core.question_vocabulary import NEGATION_WORDS as BASE_NEGATION_WORDS
+from clinical_analytics.core.value_index import ColumnValues, IndexedWords, StemIndex, cached, matches_stored
 
 INTENT_WORDS: dict[str, frozenset[str]] = {
     "COUNT": frozenset({"how", "many", "number", "count", "total"}),
@@ -215,9 +218,13 @@ def numeric_ranges(columns: list[str], values_for: Callable[[str], list[Any]]) -
     for column in columns:
         values = values_for(column)
         if _is_measure(values):
-            numbers = [float(value) for value in values if value is not None]
-            ranges[column] = (min(numbers), max(numbers))
+            ranges[column] = cached(values, column, "range", partial(_range, values))
     return ranges
+
+
+def _range(values: list[Any]) -> tuple[float, float]:
+    numbers = [float(value) for value in values if value is not None]
+    return min(numbers), max(numbers)
 
 
 def number_owner(
@@ -633,8 +640,9 @@ def _is_grouping(column: str, values_for: Callable[[str], list[Any]]) -> bool:
     """A column with a few stored labels or codes (sex, site, treatment), not an identifier."""
     from clinical_analytics.core.nl_query_config import MAX_NUMERIC_GROUP_LEVELS
 
-    values = {value for value in values_for(column) if value is not None}
-    return 2 <= len(values) <= MAX_NUMERIC_GROUP_LEVELS
+    stored = values_for(column)
+    count = cached(stored, column, "distinct", lambda: len({value for value in stored if value is not None}))
+    return 2 <= count <= MAX_NUMERIC_GROUP_LEVELS
 
 
 def _statistic_missing(
@@ -887,16 +895,42 @@ class _ColumnNamer:
         return set()
 
 
-def _names_value(word: str, values: set[str]) -> bool:
+def _names_value(word: str, values: AbstractSet[str]) -> bool:
+    if isinstance(values, IndexedWords):
+        return values.named_by(word)
     return any(stem_match(word, value) for value in values)
 
 
 def _value_key(word: str, column: str, values_for: Callable[[str], list[Any]]) -> str:
     """The stored value a word names (so "women" and "females" count as one value)."""
-    for value in values_for(column):
+    stored = values_for(column)
+    if isinstance(stored, ColumnValues) and stored.column == column:
+        return stored.derived("value_keys", lambda: _ValueKeys(column, stored)).key(word)
+    for value in stored:
         if value is not None and _names_value(word, _value_words(column, [value])):
             return str(value)
     return word
+
+
+class _ValueKeys:
+    """_value_key by index: the first stored value (in stored order) one of whose words the
+    word stem-matches, found without trying every value."""
+
+    def __init__(self, column: str, stored: ColumnValues) -> None:
+        self._stored = stored
+        self._first: dict[str, int] = {}
+        for at, value in enumerate(stored):
+            if value is None:
+                continue
+            for word in _words_of(column, [value], stored.match_stored):
+                self._first.setdefault(word, at)
+        self._index = StemIndex(self._first, stem_match)
+
+    def key(self, word: str) -> str:
+        named = self._index.matches(word)
+        if not named:
+            return word
+        return str(self._stored[min(self._first[target] for target in named)])
 
 
 def _logic_used(
@@ -1024,17 +1058,32 @@ def _referenced_columns(plan: Any, context: Any) -> set[str]:
     return referenced
 
 
-def _value_words(column: str, values: list[Any]) -> set[str]:
+def _value_words(column: str, values: list[Any]) -> AbstractSet[str]:
+    """Words that name a value of the column: its stored labels and their header code labels.
+
+    For a column's own distinct values the set is built once and indexed (IndexedWords).
+    """
+    if isinstance(values, ColumnValues) and values.column == column:
+        return values.derived(
+            "value_words", lambda: IndexedWords(_words_of(column, values, values.match_stored), stem_match)
+        )
+    return _words_of(column, values, True)
+
+
+def _words_of(column: str, values: list[Any], match_stored: bool) -> set[str]:
+    """Value words; with ``match_stored`` False only the header codebook's labels count
+    (value_index: identifiers and many-valued measures are never named by a word)."""
     mapping = parse_column_name(column).value_mapping or {}
     words: set[str] = set()
     for value in values:
         if value is None:
             continue
         label = str(value).strip().lower()
-        if not re.fullmatch(r"\d+(?:\.\d+)?", label):
-            # A stored label's digits are part of it ("Type 2"); a bare numeric code is not a word.
-            words |= set(name_tokens(label))
-        words |= _SEX_INFLECTIONS.get(label, set())
+        if match_stored:
+            if not re.fullmatch(r"\d+(?:\.\d+)?", label):
+                # A stored label's digits are part of it ("Type 2"); a bare numeric code is not a word.
+                words |= set(name_tokens(label))
+            words |= _SEX_INFLECTIONS.get(label, set())
         code = label[:-2] if label.endswith(".0") else label
         if code in mapping:
             words |= set(name_tokens(mapping[code]))
@@ -1092,6 +1141,12 @@ def _is_no_value(column: str, value: Any, values_for: Callable[[str], list[Any]]
 
 
 def _is_measure(values: list[Any]) -> bool:
+    if isinstance(values, ColumnValues):
+        return values.derived("is_measure", lambda: _measure(values))
+    return _measure(values)
+
+
+def _measure(values: list[Any]) -> bool:
     present = [value for value in values if value is not None]
     if len(present) <= 2:
         return False
@@ -1192,14 +1247,11 @@ class _Justifier:
         """
         claimed: dict[int, str] = {}
         for column in self.all_columns:
-            labels = [str(value) for value in self.values_for(column) if isinstance(value, str)]
-            labels += list((parse_column_name(column).value_mapping or {}).values())
-            for label in labels:
-                phrase = name_tokens(label)
-                if len(phrase) < 2 or not any(_NUMBER_TOKEN.fullmatch(part) for part in phrase):
-                    continue
-                size = len(phrase)
-                for start in range(len(self.tokens) - size + 1):
+            stored = self.values_for(column)
+            by_first = cached(stored, column, "digit_phrases", lambda: _digit_phrases(column, stored))
+            for start, token in enumerate(self.tokens):
+                for phrase in by_first.get(token, ()):
+                    size = len(phrase)
                     if self.tokens[start : start + size] != phrase:
                         continue
                     for at in range(start, start + size):
@@ -1327,6 +1379,20 @@ class _Justifier:
 
         yes, no = yes_no_values(column, self.values_for(column))
         return value is not None and str(value) in {str(yes), str(no)} and yes is not None
+
+
+def _digit_phrases(column: str, stored: list[Any]) -> dict[str, list[list[str]]]:
+    """Labels of two or more words with a number among them ("Type 2"), by first word."""
+    labels = [str(value) for value in stored if isinstance(value, str)] if matches_stored(stored) else []
+    labels += list((parse_column_name(column).value_mapping or {}).values())
+    by_first: dict[str, list[list[str]]] = {}
+    for label in labels:
+        phrase = name_tokens(label)
+        if len(phrase) < 2 or not any(_NUMBER_TOKEN.fullmatch(part) for part in phrase):
+            continue
+        if phrase not in by_first.setdefault(phrase[0], []):
+            by_first[phrase[0]].append(phrase)
+    return by_first
 
 
 def _contains(tokens: list[str], phrase: list[str]) -> bool:

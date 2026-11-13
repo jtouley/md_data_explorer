@@ -9,14 +9,20 @@ Provides reusable dependencies for routes:
 Reference: docs/architecture/SEMANTIC_LAYER_FASTAPI_ADAPTER.md
 """
 
+import os
+import re
 import threading
 import weakref
+from collections import OrderedDict
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Annotated
 
+import duckdb
+import structlog
 from fastapi import Depends, HTTPException, Path, status
 
+from clinical_analytics.core import nl_query_config
 from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.datasets.uploaded.definition import SemanticLayerBuildError, UploadedDatasetFactory
 from clinical_analytics.storage.datastore import STORE_BUSY_MESSAGE, StoreBusyError
@@ -25,10 +31,15 @@ from clinical_analytics.storage.datastore import STORE_BUSY_MESSAGE, StoreBusyEr
 # Semantic Layer Dependency (Singleton Pattern)
 # ============================================================================
 
-# Module-level cache: one SemanticLayer instance per dataset_id
-# Replaces Streamlit's @st.cache_resource pattern
+logger = structlog.get_logger(__name__)
+
+# Module-level cache: one SemanticLayer instance per dataset_id, least recently used first.
+# Each layer holds its dataset in an in-memory DuckDB, so the cache is bounded
+# (nl_query_config.SEMANTIC_LAYER_CACHE_SIZE) and an evicted layer's connection is closed.
 # Non-picklable objects (DuckDB connections, Ibis expressions) stored directly
-_semantic_layer_cache: dict[str, SemanticLayer] = {}
+_semantic_layer_cache: OrderedDict[str, SemanticLayer] = OrderedDict()
+# Guards reads and writes of the cache's order; the per-dataset locks below guard builds.
+_semantic_layer_cache_guard = threading.Lock()
 # One lock per dataset_id so concurrent cold requests build a single SemanticLayer
 # (and a single DuckDB connection) instead of racing and orphaning the loser.
 _semantic_layer_locks: dict[str, threading.Lock] = {}
@@ -54,13 +65,15 @@ def dataset_deletion_guard(dataset_id: str) -> Iterator[None]:
         if dataset_id in _deleting_datasets:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=DATASET_BEING_DELETED)
         _deleting_datasets.add(dataset_id)
-        _semantic_layer_cache.pop(dataset_id, None)
+        dropped = _pop_layer(dataset_id)
+    _close_layers([dropped])
     try:
         yield
     finally:
         with _semantic_layer_lock(dataset_id):
-            _semantic_layer_cache.pop(dataset_id, None)
+            dropped = _pop_layer(dataset_id)
             _deleting_datasets.discard(dataset_id)
+        _close_layers([dropped])
 
 
 # One lock per dataset_id around writes of derived files (contracts, quality reports) and the
@@ -85,6 +98,92 @@ def dataset_files_lock(dataset_id: str) -> Iterator[None]:
 def _semantic_layer_lock(dataset_id: str) -> threading.Lock:
     with _semantic_layer_locks_guard:
         return _semantic_layer_locks.setdefault(dataset_id, threading.Lock())
+
+
+_MEMORY_LIMIT = re.compile(r"^\d+(?:\.\d+)?\s*(?:%|[KMGT]i?B)$", re.IGNORECASE)
+
+
+def _cache_size() -> int:
+    size = nl_query_config.SEMANTIC_LAYER_CACHE_SIZE
+    if size < 1:
+        raise ValueError(f"semantic_layer_cache_size must be at least 1, got {size}")
+    return size
+
+
+def duckdb_settings() -> dict[str, str | int]:
+    """The DuckDB ``memory_limit`` and ``threads`` each semantic layer runs with, validated.
+
+    Raises:
+        ValueError: a memory limit that is not a size or percentage, or a negative thread count.
+    """
+    memory_limit = nl_query_config.DUCKDB_MEMORY_LIMIT.strip()
+    if not _MEMORY_LIMIT.fullmatch(memory_limit):
+        raise ValueError(
+            f"duckdb_memory_limit must be a size such as '2GB' or a share such as '20%', got {memory_limit!r}"
+        )
+    threads = nl_query_config.DUCKDB_THREADS
+    if threads < 0:
+        raise ValueError(f"duckdb_threads must be 0 (automatic) or more, got {threads}")
+    if threads == 0:
+        threads = max(1, (os.cpu_count() or 2) // 2)
+    return {"memory_limit": memory_limit, "threads": threads}
+
+
+def _configure_duckdb(layer: SemanticLayer) -> None:
+    """Apply the configured memory limit and thread count to the layer's own connection."""
+    settings = duckdb_settings()
+    raw = layer.con.con
+    # Both values are validated above (a size pattern and an int), so formatting is safe.
+    raw.execute(f"SET memory_limit = '{settings['memory_limit']}'")
+    raw.execute(f"SET threads = {int(settings['threads'])}")
+
+
+def _pop_layer(dataset_id: str) -> SemanticLayer | None:
+    with _semantic_layer_cache_guard:
+        return _semantic_layer_cache.pop(dataset_id, None)
+
+
+def _cached_layer(dataset_id: str) -> SemanticLayer | None:
+    """The cached layer, marked most recently used."""
+    with _semantic_layer_cache_guard:
+        layer = _semantic_layer_cache.get(dataset_id)
+        if layer is not None:
+            _semantic_layer_cache.move_to_end(dataset_id)
+        return layer
+
+
+def _store_layer(dataset_id: str, layer: SemanticLayer) -> list[SemanticLayer]:
+    """Cache ``layer`` as most recently used; return the layers evicted to stay in bounds."""
+    evicted: list[SemanticLayer] = []
+    with _semantic_layer_cache_guard:
+        _semantic_layer_cache[dataset_id] = layer
+        _semantic_layer_cache.move_to_end(dataset_id)
+        while len(_semantic_layer_cache) > _cache_size():
+            old_id, old_layer = _semantic_layer_cache.popitem(last=False)
+            logger.info("semantic_layer_evicted", dataset_id=old_id, cache_size=_cache_size())
+            evicted.append(old_layer)
+    return evicted
+
+
+def _close_layers(layers: list[SemanticLayer | None]) -> None:
+    """Close each dropped layer's DuckDB connection, after any question running on it ends.
+
+    A question holds the layer's connection lock for its whole run, so closing under that lock
+    never cuts a running query short. Call without holding a dataset lock.
+    """
+    for layer in layers:
+        if layer is None:
+            continue
+        lock = getattr(layer, "_con_lock", None)
+        try:
+            if isinstance(lock, type(threading.Lock())):
+                with lock:
+                    layer.con.disconnect()
+            else:
+                layer.con.disconnect()
+        except duckdb.Error as error:
+            # The layer is already out of the cache; a failed close leaks memory, never an answer.
+            logger.warning("semantic_layer_close_failed", error_type=type(error).__name__)
 
 
 def get_semantic_layer(dataset_id: Annotated[str, Path(..., description="Dataset ID")]) -> SemanticLayer:
@@ -113,22 +212,24 @@ def get_semantic_layer(dataset_id: Annotated[str, Path(..., description="Dataset
             return semantic_layer.get_dataset_info()
     """
     reject_if_deleting(dataset_id)
-    cached = _semantic_layer_cache.get(dataset_id)
+    cached = _cached_layer(dataset_id)
     if cached is not None:
         return cached
 
+    evicted: list[SemanticLayer] = []
     with _semantic_layer_lock(dataset_id):
         # Checked again under the lock: the delete guard takes the same lock.
         reject_if_deleting(dataset_id)
         # Re-check: another request may have filled the cache while this one waited.
-        if dataset_id not in _semantic_layer_cache:
+        layer = _cached_layer(dataset_id)
+        if layer is None:
             try:
                 # Create dataset instance and load data
                 dataset = UploadedDatasetFactory.create_dataset(dataset_id)
                 dataset.load()
 
                 # Get semantic layer (DuckDB + Ibis)
-                _semantic_layer_cache[dataset_id] = dataset.get_semantic_layer()
+                layer = dataset.get_semantic_layer()
 
             except StoreBusyError as e:
                 raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=STORE_BUSY_MESSAGE) from e
@@ -150,8 +251,11 @@ def get_semantic_layer(dataset_id: Annotated[str, Path(..., description="Dataset
                 ) from e
             # Any other failure is a bug, not a client error: let it propagate so FastAPI logs
             # the traceback and returns a generic 500 without leaking paths or internals.
-
-        return _semantic_layer_cache[dataset_id]
+            # Outside the try: a bad limit in the config is a 500, never "not found".
+            _configure_duckdb(layer)
+            evicted = _store_layer(dataset_id, layer)
+    _close_layers(list(evicted))
+    return layer
 
 
 def invalidate_semantic_layer_cache(dataset_id: str) -> None:
@@ -169,7 +273,8 @@ def invalidate_semantic_layer_cache(dataset_id: str) -> None:
         dataset_id: Dataset identifier to invalidate
     """
     with _semantic_layer_lock(dataset_id):
-        _semantic_layer_cache.pop(dataset_id, None)
+        dropped = _pop_layer(dataset_id)
+    _close_layers([dropped])
 
 
 # ============================================================================

@@ -36,6 +36,18 @@ SMALL_CELL_THRESHOLD: int = int(_config["small_cell_threshold"])
 # one group per exact value (289 LDL levels) identifies patients and answers nothing.
 MAX_NUMERIC_GROUP_LEVELS: int = 10
 
+# Stored values a question can never name are not matched as words (core/value_index.py): a
+# numeric column with more than MAX_NUMERIC_GROUP_LEVELS values, and an identifier with at
+# least this many values (the patient id, or a column with a different value in every row).
+# Below it a small table's every column is unique per row, and its values must still match.
+VALUE_MATCH_MIN_IDENTIFIER_VALUES: int = 50
+
+# Open semantic layers (least recently used beyond this are closed) and each layer's DuckDB
+# limits. Validated in api/dependencies.py before they reach a SET statement.
+SEMANTIC_LAYER_CACHE_SIZE: int = int(_config["semantic_layer_cache_size"])
+DUCKDB_MEMORY_LIMIT: str = str(_config["duckdb_memory_limit"])
+DUCKDB_THREADS: int = int(_config["duckdb_threads"])
+
 # Performance/timeout settings
 TIER_TIMEOUT_SECONDS: float = _config["tier_timeout_seconds"]
 ENABLE_PARALLEL_TIER_MATCHING: bool = _config["enable_parallel_tier_matching"]

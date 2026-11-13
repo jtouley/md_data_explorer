@@ -180,6 +180,49 @@ def plan_restriction_problem(plan: "QueryPlan", columns: list[str]) -> str | Non
     return None
 
 
+_COHORT_CTE = "_cohort_in"
+
+
+def _with_cohort_cte(view_sql: str, sql: str) -> str:
+    """``sql`` with the compiled view bound to ``_cohort_in`` as its first CTE.
+
+    A query that has its own WITH clause gets ``_cohort_in`` prepended to that clause, since
+    a query cannot have two.
+    """
+    body = sql.lstrip()
+    if body[:5].upper() == "WITH ":
+        if body[5:].lstrip().upper().startswith("RECURSIVE"):
+            raise ValueError("A recursive cohort query is not supported")
+        return f"WITH {_COHORT_CTE} AS ({view_sql}), {body[5:]}"
+    return f"WITH {_COHORT_CTE} AS ({view_sql}) {body}"
+
+
+def _analysis_columns(plan: "QueryPlan", context: Any, columns: list[str]) -> list[str] | None:
+    """The view columns compute_analysis_by_type reads for this plan, in view order, or None.
+
+    The analysis reads the context's variables and filter columns, nothing else, when each one
+    is a column of the view by its exact name. Otherwise (no variable, "all", a fuzzy name the
+    analysis resolves against every column, a filter on a column the view lacks) None: the
+    whole view is passed, so the result, and any error it reports, is what it always was.
+    """
+    variables = [
+        getattr(context, "primary_variable", None),
+        getattr(context, "grouping_variable", None),
+        getattr(context, "time_variable", None),
+        getattr(context, "event_variable", None),
+        *(getattr(context, "predictor_variables", None) or []),
+    ]
+    named = [variable for variable in variables if variable is not None]
+    if not named or any(not isinstance(variable, str) or variable not in columns for variable in named):
+        return None
+    filters = [*(plan.filters or []), *(getattr(context, "filters", None) or [])]
+    filter_columns = [getattr(spec, "column", None) for spec in filters]
+    if any(column not in columns for column in filter_columns):
+        return None
+    wanted = {*named, *filter_columns}
+    return [column for column in columns if column in wanted]
+
+
 def _sample_counts(frame: pl.DataFrame, base_rows: int) -> dict[str, int]:
     """n_used, n_excluded (no recorded value) and n_filtered_out (removed by the question's
     limits) from a frame with n and n_rows; the three add up to the dataset row count."""
@@ -2250,9 +2293,10 @@ class SemanticLayer:
             # filtered base view the plan validated, not from get_cohort().
             from clinical_analytics.analysis.compute import compute_analysis_by_type
 
-            base_rows = self._filtered_view(query_plan).execute()
-            if isinstance(base_rows, pd.DataFrame):
-                base_rows = pl.from_pandas(base_rows)
+            view = self._filtered_view(query_plan)
+            needed = _analysis_columns(query_plan, context, list(view.columns))
+            # Only the columns the analysis reads leave DuckDB, straight into Polars.
+            base_rows = (view.select(needed) if needed is not None else view).to_polars()
             if cohort is not None:
                 logger.debug(
                     "non_count_format_uses_base_view cohort_passed=%s intent=%s",
@@ -2712,30 +2756,31 @@ class SemanticLayer:
         return {str(value) for value in frame.get_column(column).to_list() if value is not None}
 
     def _cohort_sql(self, view: Any, sql_template: str, column: str) -> Any:
+        """The rows ``sql_template`` keeps of ``view``, as a lazy Ibis table.
+
+        The view is compiled into the SQL as the ``_cohort_in`` CTE and the query is kept as a
+        temporary DuckDB view: nothing is exported to Python or materialised, and DuckDB plans
+        the cutoff together with whatever reads it next. The view is named by its own SQL, so
+        asking again reuses it, and a later step that reads this one never replaces it.
+        """
         quoted = '"' + column.replace('"', '""') + '"'
-        frame = view.to_pyarrow()
-        raw = self.con.con
-        raw.register("_cohort_in", frame)
-        try:
-            raw.execute("DROP TABLE IF EXISTS _cohort_out")
-            raw.execute("CREATE TEMP TABLE _cohort_out AS " + sql_template.format(col=quoted))
-        finally:
-            raw.unregister("_cohort_in")
-        return self.con.table("_cohort_out")
+        sql = _with_cohort_cte(self.con.compile(view), sql_template.format(col=quoted))
+        name = "_cohort_" + hashlib.sha256(sql.encode()).hexdigest()[:24]
+        self.con.con.execute(f"CREATE OR REPLACE TEMP VIEW {name} AS {sql}")
+        return self.con.table(name)
 
     def _duck_aggregate(self, view: Any, sql: str) -> pl.DataFrame:
-        frame = view.to_pyarrow()
-        raw = self.con.con
-        raw.register("_cohort_in", frame)
-        try:
-            # Arrow straight into Polars: no pandas round trip.
-            table = raw.execute(sql).to_arrow_table()
-            frame_out = pl.from_arrow(table)
-            if not isinstance(frame_out, pl.DataFrame):
-                raise TypeError("DuckDB aggregate did not return a table")
-            return frame_out
-        finally:
-            raw.unregister("_cohort_in")
+        """Run ``sql`` over ``view`` (named ``_cohort_in``) in DuckDB, as a Polars frame.
+
+        The view is compiled into the query as a CTE, so DuckDB reads only the columns and rows
+        the aggregate needs; no row-level frame crosses into Python.
+        """
+        # Arrow straight into Polars: no pandas round trip.
+        table = self.con.con.execute(_with_cohort_cte(self.con.compile(view), sql)).to_arrow_table()
+        frame_out = pl.from_arrow(table)
+        if not isinstance(frame_out, pl.DataFrame):
+            raise TypeError("DuckDB aggregate did not return a table")
+        return frame_out
 
     def _share_sql(self, view: Any, column: str, value: Any, group: str | None) -> str:
         """Share of patients whose ``column`` equals ``value``, among those with it recorded.
