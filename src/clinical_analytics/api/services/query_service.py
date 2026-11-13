@@ -75,6 +75,7 @@ class AsyncQueryResult:
     requires_confirmation: bool = False
     failure_reason: str | None = None
     plan_line: str | None = None
+    plan_hash: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
 
@@ -143,6 +144,7 @@ class AsyncQueryService:
         context: Mapping[str, Any] | None = None,
         confirmed: bool = False,
         confirm_plan_line: str | None = None,
+        confirm_plan_hash: str | None = None,
     ) -> str:
         """
         Submit query for async execution, returns query_id immediately.
@@ -151,7 +153,8 @@ class AsyncQueryService:
             query: Natural language query text
             dataset_id: Dataset to query
             session_id: Optional session ID for conversation context
-            confirmed: Release a low-confidence execution hold
+            confirmed: Release a held plan (only with confirm_plan_hash of that exact plan)
+            confirm_plan_hash: Hash of the reviewed plan, from the hold
 
         Returns:
             Unique query ID for tracking
@@ -177,7 +180,7 @@ class AsyncQueryService:
         # Start query execution in background
         asyncio.create_task(
             self._execute_query_background(
-                query_id, query, dataset_id, session_id, context, confirmed, confirm_plan_line
+                query_id, query, dataset_id, session_id, context, confirmed, confirm_plan_line, confirm_plan_hash
             )
         )
 
@@ -201,6 +204,7 @@ class AsyncQueryService:
         self._queries[query_id].requires_confirmation = result.requires_confirmation
         self._queries[query_id].failure_reason = result.failure_reason
         self._queries[query_id].plan_line = result.plan_line
+        self._queries[query_id].plan_hash = result.plan_hash
         self._queries[query_id].completed_at = datetime.now(UTC)
 
         if result.requires_confirmation:
@@ -215,6 +219,7 @@ class AsyncQueryService:
                     "intent_type": intent_type,
                     "failure_reason": result.failure_reason,
                     "plan_line": result.plan_line,
+                    "plan_hash": result.plan_hash,
                     "confidence": result.confidence,
                 },
             )
@@ -273,6 +278,7 @@ class AsyncQueryService:
         context: Mapping[str, Any] | None = None,
         confirmed: bool = False,
         confirm_plan_line: str | None = None,
+        confirm_plan_hash: str | None = None,
     ) -> None:
         """Execute query in background and emit SSE events."""
         try:
@@ -303,6 +309,7 @@ class AsyncQueryService:
                 conversation_history=self.conversation_history(session_id, context),
                 confirmed=confirmed,
                 confirm_plan_line=confirm_plan_line,
+                confirm_plan_hash=confirm_plan_hash,
             )
 
             # Emit progress event
@@ -460,6 +467,7 @@ class AsyncQueryService:
         session_id: str | None = None,
         confirmed: bool = False,
         confirm_plan_line: str | None = None,
+        confirm_plan_hash: str | None = None,
     ) -> AsyncQueryResult:
         """
         Execute query synchronously (blocking) and return result.
@@ -470,7 +478,8 @@ class AsyncQueryService:
             query: Natural language query text
             dataset_id: Dataset to query
             session_id: Optional session ID for conversation context
-            confirmed: Release a low-confidence execution hold
+            confirmed: Release a held plan (only with confirm_plan_hash of that exact plan)
+            confirm_plan_hash: Hash of the reviewed plan, from the hold
 
         Returns:
             AsyncQueryResult with query results
@@ -494,6 +503,7 @@ class AsyncQueryService:
             conversation_history=self.conversation_history(session_id),
             confirmed=confirmed,
             confirm_plan_line=confirm_plan_line,
+            confirm_plan_hash=confirm_plan_hash,
         )
 
         # Check for errors
@@ -530,6 +540,7 @@ class AsyncQueryService:
             requires_confirmation=result.requires_confirmation,
             failure_reason=result.failure_reason,
             plan_line=result.plan_line,
+            plan_hash=result.plan_hash,
             error=(
                 "; ".join(i["message"] for i in result.issues if i.get("severity") == "error")
                 if status == "failed"

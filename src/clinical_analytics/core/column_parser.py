@@ -103,7 +103,7 @@ def _extract_display_name(column_name: str) -> str:
         r"_mg_dl$",
         r"_g_dl$",
         r"_mmol_l$",
-        r"_years?$",
+        r"_years$",
         r"_days?$",
         r"_months?$",
         r"_hours?$",

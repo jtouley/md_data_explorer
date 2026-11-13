@@ -250,6 +250,11 @@ describe('buildConfirmationHoldPresentation', () => {
     expect(hold.result.sessionId).toBe('sess_1');
   });
 
+  it('keeps the plan hash so Confirm can bind to the exact plan', () => {
+    const hold = buildConfirmationHoldPresentation({ plan_line: 'p', plan_hash: 'abc123' }, 'q');
+    expect(hold.result.planHash).toBe('abc123');
+  });
+
   it('leaves the binding empty when none is given', () => {
     const hold = buildConfirmationHoldPresentation({ plan_line: 'p' }, 'q');
     expect(hold.result.datasetId).toBeNull();

@@ -66,17 +66,21 @@ class QueryRequest(BaseModel):
     )
     confirm_plan_line: str | None = Field(
         None,
+        description="The plan line the user reviewed (display only; the hash is what binds).",
+    )
+    confirm_plan_hash: str | None = Field(
+        None,
         description=(
-            "The plan line the user confirmed; required when confirmed is true. The hold is "
-            "released only if the query still parses to exactly this plan; otherwise it is "
-            "held again with the new plan."
+            "The plan_hash from the hold the user confirmed; required when confirmed is true. "
+            "The hold is released only if the query still parses to exactly this executable "
+            "plan; otherwise it is held again with the new plan."
         ),
     )
 
     @model_validator(mode="after")
     def _confirmation_names_its_plan(self) -> "QueryRequest":
-        if self.confirmed and not (self.confirm_plan_line or "").strip():
-            raise ValueError("confirmed=true requires confirm_plan_line: the plan line the user reviewed")
+        if self.confirmed and not (self.confirm_plan_hash or "").strip():
+            raise ValueError("confirmed=true requires confirm_plan_hash: the hash of the plan the user reviewed")
         return self
 
     context: dict[str, Any] | None = Field(
@@ -118,6 +122,7 @@ class QueryResult(BaseModel):
     requires_confirmation: bool = Field(False, description="True when execution is held for confirmation")
     failure_reason: str | None = Field(None, description="Hold or refuse reason from the execution gate")
     plan_line: str | None = Field(None, description="One-line plan summary shown on confirmation hold")
+    plan_hash: str | None = Field(None, description="Hash of the held plan; send it back as confirm_plan_hash")
 
 
 # ============================================================================

@@ -6,6 +6,7 @@ const HELD = {
   pendingQuery: 'Compare LDL by treatment in older patients',
   planLine:
     'COMPARE_GROUPS · outcome ldl · grouping treatment · filters age > 65 · test Welch t-test',
+  planHash: 'abc123',
   datasetId: 'ds_a',
   sessionId: 'sess_held',
 };
@@ -24,13 +25,14 @@ describe('buildConfirmRequest', () => {
         datasetId: 'ds_a',
         queryText: HELD.pendingQuery,
         planLine: HELD.planLine,
+        planHash: 'abc123',
       },
     });
   });
 
   it('buildConfirmRequest_holdWithoutBinding_usesCurrentDatasetAndSession', () => {
     // Arrange
-    const held = { pendingQuery: 'q', planLine: 'DESCRIBE · outcome age' };
+    const held = { pendingQuery: 'q', planLine: 'DESCRIBE · outcome age', planHash: 'h' };
     // Act
     const result = buildConfirmRequest(held, { currentDatasetId: 'ds_b', fallbackSessionId: 's1' });
     // Assert
@@ -42,11 +44,13 @@ describe('buildConfirmRequest', () => {
     [null, 'This plan can no longer be run. Ask the question again.'],
     [{ ...HELD, pendingQuery: '' }, 'This plan can no longer be run. Ask the question again.'],
     [{ ...HELD, planLine: '' }, 'This plan can no longer be run. Ask the question again.'],
+    [{ ...HELD, planHash: '' }, 'This plan can no longer be run. Ask the question again.'],
+    [{ ...HELD, planHash: '   ' }, 'This plan can no longer be run. Ask the question again.'],
     [
       { ...HELD, datasetId: 'ds_other' },
       'This plan was for a different cohort. Ask the question again on this one.',
     ],
-    [{ pendingQuery: 'q', planLine: 'p' }, 'Choose a cohort, then ask the question again.'],
+    [{ pendingQuery: 'q', planLine: 'p', planHash: 'h' }, 'Choose a cohort, then ask the question again.'],
   ])('buildConfirmRequest_invalid_case%#_refusesWithMessage', (held, message) => {
     // Arrange
     const context = {
@@ -76,7 +80,8 @@ describe('submitConfirmation', () => {
       'ds_a',
       HELD.pendingQuery,
       true,
-      HELD.planLine
+      HELD.planLine,
+      'abc123'
     );
     expect(response).toEqual({ query_id: 'q1' });
   });
