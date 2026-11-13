@@ -30,8 +30,9 @@ weeks old that still covers the platforms above.
   its official ONNX export, run with ONNX Runtime and HF `tokenizers` (`core/embeddings.py`).
   Apache-2.0; see `THIRD_PARTY_NOTICES.md`.
 - Build step: `make fetch-embedding-model` downloads the pinned files once and checks each
-  SHA-256 (`scripts/fetch_embedding_model.py`). Run it before `uv build`; the wheel includes the
-  model (hatch `artifacts`).
+  SHA-256 (`scripts/fetch_embedding_model.py`). Run it before `uv build`; the sdist and the wheel
+  both include the model (`[tool.hatch.build] artifacts`; a plain `uv build` builds the wheel from
+  the sdist, so it has to be in both).
 - At start, `serve.py` checks the model is present and its SHA-256 is the pinned one (cached by
   size and mtime in the data home), and otherwise exits with code 2 and one line. It is never
   downloaded at runtime. `CLINICAL_ANALYTICS_EMBEDDING_MODEL_DIR` points at a model elsewhere.
@@ -47,20 +48,29 @@ Electron main (`electron/src/backendSidecar.js`) starts, checks and stops the ba
 | `CLINICAL_ANALYTICS_BACKEND_TIMEOUT_MS` | 60000 | Whole startup wait; each request also times out after 3 s |
 | `CLINICAL_ANALYTICS_EXTERNAL_BACKEND=1` | off | Dev flow: use an already-running API (`make run-api`, `scripts/run_app.sh`) |
 
-- Spawned as `python -m clinical_analytics.api.serve --host 127.0.0.1 --port P
-  --exit-with-parent <electron pid> --stop-on-stdin-close`, with this launch's API token.
+- Spawned as `python -P -m clinical_analytics.api.serve --host 127.0.0.1 --port P
+  --exit-with-parent <electron pid> --stop-on-stdin-close`, with this launch's API token, from
+  `<userData>/backend` (a folder of the app's own, not the home directory). `-P` keeps the
+  working directory off Python's import path and `PYTHONPATH` is not passed on, so a `json.py`
+  in the user's files is never imported in place of the real module.
+- A bad `CLINICAL_ANALYTICS_API_PORT` or `CLINICAL_ANALYTICS_BACKEND_TIMEOUT_MS` stops startup
+  with a message naming the variable.
 - A startup window shows while it boots; the main window opens once `/health` answers and the
   server proves it knows the token. Failures show an error window (on exit code 2, serve.py's
   one-line reason). A backend that dies later gets a Restart / Quit dialog.
 - The page's CSP header allows `connect-src` to exactly that backend's origin.
 - Stop on quit: POSIX SIGTERM to the process group, SIGKILL after 10 s; Windows closes the
   backend's stdin (graceful), then `taskkill /T /F` after 10 s. If Electron dies, the closed stdin
-  and the parent watchdog (`os.getppid()` on POSIX) shut the backend down gracefully; it hard-exits
-  only if that has not finished after 120 s.
+  and the parent watchdog shut the backend down gracefully; it hard-exits only if that has not
+  finished after 120 s. The watchdog checks that Electron's PID is still running (on Linux also
+  that it is the same process, by start time), not that it is the direct parent, so a launcher
+  between Electron and the interpreter is fine. Both lifelines set uvicorn's `should_exit` once
+  the server has started; neither raises a signal.
 
 ## Checks
 
-- `make smoke-installed`: builds the wheel, installs it in a fresh venv outside the repo, starts
+- `make smoke-installed`: runs the default `uv build` (sdist, then the wheel from it), checks the
+  wheel contains the model, installs it in a fresh venv outside the repo, starts
   the API from an unrelated cwd with a temp HOME/XDG data home (in a loopback-only network
   namespace when available), uploads the synthetic cohort and runs a query. Also in CI.
 - `cd electron && xvfb-run -a npx playwright test -c playwright.native.config.js`: the app starts
