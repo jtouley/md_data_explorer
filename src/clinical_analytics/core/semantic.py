@@ -38,6 +38,7 @@ from clinical_analytics.core.query_plan import (
     CohortStep,
     CohortStepError,
     generate_chart_spec,
+    grouped_statistic,
 )
 
 logger = logging.getLogger(__name__)
@@ -217,7 +218,7 @@ def _format_share_result(frame: pl.DataFrame, plan: "QueryPlan", group: str | No
 
 def _format_grouped_statistic(frame: pl.DataFrame, plan: "QueryPlan", base_rows: int) -> dict[str, Any]:
     """One statistic of the metric per group, as the plan computed it."""
-    statistic = plan.statistic or "mean"
+    statistic = grouped_statistic(plan) or "mean"
     group = str(plan.group_by)
     return {
         "type": "grouped_statistic",
@@ -2236,7 +2237,7 @@ class SemanticLayer:
             formatted = _format_share_result(result_df_pl, query_plan, None, self.get_base_row_count())
         elif query_plan.rate_column and query_plan.group_by:
             formatted = _format_share_result(result_df_pl, query_plan, query_plan.group_by, self.get_base_row_count())
-        elif query_plan.intent == "DESCRIBE" and query_plan.metric and query_plan.group_by:
+        elif grouped_statistic(query_plan) is not None:
             formatted = _format_grouped_statistic(result_df_pl, query_plan, self.get_base_row_count())
         elif query_plan.intent == "COUNT":
             formatted = self._format_count_result(result_df_pl, query_plan, context)
@@ -2358,6 +2359,18 @@ class SemanticLayer:
         # Check group_by exists
         if plan.group_by and plan.group_by not in available_columns:
             return {"valid": False, "error": f"Column '{plan.group_by}' not found in dataset"}
+
+        # A share counts one stored value; several at once ("north or west") is not computed here.
+        for share_column, share_value in (
+            (plan.proportion_column, plan.proportion_value),
+            (plan.rate_column, plan.rate_value),
+        ):
+            if share_column and isinstance(share_value, list | tuple | set):
+                return {
+                    "valid": False,
+                    "error": f"A share of several values of '{share_column}' at once is not supported; "
+                    "ask about one value at a time.",
+                }
 
         # Check filter columns exist and operators are valid
         valid_operators = {"==", "!=", ">", ">=", "<", "<=", "IN", "NOT_IN"}
@@ -2779,10 +2792,10 @@ class SemanticLayer:
             else:
                 # Total count
                 result = view.count()
-        elif plan.intent == "DESCRIBE":
-            # DESCRIBE: Type-aware aggregation
+        elif grouped_statistic(plan) is not None:
+            # One statistic per group: DESCRIBE, or a comparison that asked for a median etc.
             if plan.metric and plan.group_by:
-                statistic = plan.statistic or "mean"
+                statistic = grouped_statistic(plan) or "mean"
                 if not view[plan.metric].type().is_numeric():
                     raise CohortStepError(_text_statistic_message(statistic, plan.metric))
                 metric_col = view[plan.metric]
@@ -2793,7 +2806,9 @@ class SemanticLayer:
                     .aggregate([aggregate.name(statistic), metric_col.count().name("n"), _.count().name("n_rows")])
                     .order_by(plan.group_by)
                 )
-            elif plan.metric:
+        elif plan.intent == "DESCRIBE":
+            # DESCRIBE: Type-aware aggregation
+            if plan.metric:
                 # Detect if categorical or numeric
                 is_categorical = self._detect_categorical_encoding(view[plan.metric])
                 if is_categorical:

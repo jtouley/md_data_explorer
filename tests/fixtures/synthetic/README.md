@@ -24,7 +24,7 @@ questions (`tests/eval/golden_questions.yaml`, `config/golden_examples.yaml`) ar
 questions with expected intents and run against an in-memory synthetic semantic layer.
 
 `make golden` also runs the word-accounting suites in `tests/eval` (generated golden questions,
-hard questions, adversarial, reviewer and reverse-accounting probes). They read `cohort.csv` or
+hard questions, adversarial, reviewer, reverse-accounting and over-holding probes). They read `cohort.csv` or
 seeded in-memory frames and compute every expected value with Polars at test time, so they add
 no golden file. Each question must be answered with the computed value or held with a reason;
 a different value fails the suite.

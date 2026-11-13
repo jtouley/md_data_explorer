@@ -125,7 +125,7 @@ function installMock({
           {
             plan_line: window.__holdPlanLine ?? planLine,
             plan_hash: 'plan_hash_mock',
-            failure_reason: "I couldn't place the word 'recently', so it is not in the plan.",
+            failure_reason: "I couldn't use the word 'recently' in the plan; rephrase it with a column or value from your data.",
             confidence: 0.6,
           },
         ]);

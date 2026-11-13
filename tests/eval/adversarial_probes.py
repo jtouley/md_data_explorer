@@ -63,6 +63,12 @@ def by(df: pl.DataFrame, e: Any, g: str, col: str | None = None) -> dict[str, An
     return {str(k): v for k, v in r.iter_rows()}
 
 
+def rate(df: pl.DataFrame, g: str, cond: pl.Expr) -> dict[str, Any]:
+    """Share of rows meeting ``cond`` within each value of ``g`` ("are men more likely to ...")."""
+    r = df.group_by(g).agg(cond.mean().alias("v"))
+    return {str(k): v for k, v in r.iter_rows()}
+
+
 H = None  # must hold or refuse
 
 
@@ -136,7 +142,8 @@ def probes(coh: pl.DataFrame, own: pl.DataFrame) -> list[tuple[str, str, Any]]:
         ("coh", "what percentage of drug patients are on statin?", prop(coh, c("treatment") == "drug", S == 1)),
         ("coh", "what proportion of statin users are women?", prop(coh, S == 1, c("sex") == "F")),
         ("coh", "are statin users more likely to be women?", H),
-        ("coh", "are men more likely to use statins than women?", by(coh, True, "sex", None)),
+        # The review script gave counts by sex here; the question asks for the statin rate of each sex.
+        ("coh", "are men more likely to use statins than women?", rate(coh, "sex", S == 1)),
         ("coh", "what share of women are not on statin?", prop(coh, c("sex") == "F", S == 2)),
         (
             "coh",
@@ -219,8 +226,14 @@ def probes(coh: pl.DataFrame, own: pl.DataFrame) -> list[tuple[str, str, Any]]:
             "what proportion of smokers were readmitted?",
             prop(own, c("Smoker 1: Yes 2: No") == 1, c("readmitted") == "yes"),
         ),
-        ("own", "are smokers more likely to be readmitted?", H),
-        ("own", "are men more likely to be readmitted?", by(own, True, "Gender", None)),
+        # Readmission rate by smoking status / by gender (the review script held the first and
+        # gave counts for the second; both have one correct answer, the rate within each group).
+        (
+            "own",
+            "are smokers more likely to be readmitted?",
+            rate(own, "Smoker 1: Yes 2: No", c("readmitted") == "yes"),
+        ),
+        ("own", "are men more likely to be readmitted?", rate(own, "Gender", c("readmitted") == "yes")),
         ("own", "average hba1c in type 1 diabetes", mean(own, "hba1c", c("diabetes_type") == "Type 1")),
         ("own", "average hba1c above 7", H),
         ("own", "how many patients with hba1c over 7?", cnt(own, c("hba1c") > 7)),

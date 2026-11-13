@@ -16,6 +16,15 @@ from typing import Any
 
 from clinical_analytics.core.column_parser import parse_column_name
 from clinical_analytics.core.query_plan import STATISTIC_WORDS, CohortStep, Statistic
+from clinical_analytics.core.question_vocabulary import (
+    NEGATION_CUES,
+    NO_LIMIT_WORDS,
+    RANGE_PATTERN,
+    NegationScope,
+    negation_scope,
+    range_ends,
+    range_in_order,
+)
 
 _OVER = re.compile(r"\b(?:over|above|older than)\s+(\d+(?:\.\d+)?)\b", re.IGNORECASE)
 # Comparisons: "<direction> N" and "N <direction>" ("65+", "65 or older", "at least 65").
@@ -26,7 +35,7 @@ _PRE_COMPARE = re.compile(
 )
 _POST_COMPARE = re.compile(
     r"\b(?P<num>\d+(?:\.\d+)?)\s*(?P<dir>\+|plus\b|(?:or|and) (?:more|older|over|above|greater|higher|less|fewer|"
-    r"younger|under|below|lower)\b(?! than))",
+    r"younger|under|below|lower)\b(?! than)(?!\s+\d))",
     re.IGNORECASE,
 )
 _PRE_OPS = {"at least": "ge", "at most": "le"}
@@ -49,12 +58,10 @@ _COMPARE_SPLIT = re.compile(
 _BY_GROUP = re.compile(r"\bby\s+(?P<group>[a-z0-9 :]+?)\s*[?.]?$", re.IGNORECASE)
 # "in each site", "per site": the same grouping as "by site".
 _EACH_GROUP = re.compile(r"\b(?:each|per)\s+(?P<group>[a-z0-9 :]+?)\s*[?.]?$", re.IGNORECASE)
-# Words that turn "<value>" into "everyone except <value>". Binding the value as an
-# equality would answer for exactly the patients the question excludes.
-_NEGATION = re.compile(
-    r"\b(?:not|non|never|outside|remove|removing|exclude|excluding|without|except|drop|omit|other than|"
-    r"get rid of|don'?t want|do not want|no longer)\b",
-    re.IGNORECASE,
+# Words that end the measure named after a statistic word and start a limit or a grouping.
+_METRIC_END = re.compile(
+    r"\b(?:in|for|who|with|on|among|by|within|of|from|at|over|under|above|below|aged|older|younger|between|"
+    r"excluding|except|outside|not|without)\b"
 )
 # "proportion of <denominator> are/who/have ... <numerator>": the words before the verb name
 # the population, the words after it the thing being counted.
@@ -171,11 +178,31 @@ def peel_cohort(
     steps: list[tuple[int, CohortStep]] = []
 
     age = _best_column(columns, {"age"})
+    ranged: set[int] = set()
+    for match in RANGE_PATTERN.finditer(lowered):
+        # Both ends belong to the column the words before the lower end name. Unknown owner,
+        # any negation that may reach it ("not between 50 and 65"), or a reversed range
+        # ("between 65 and 50"): leave it unbound, so the plan holds.
+        _low, _high, lo_group, hi_group = range_ends(match)
+        ranged |= {match.start(lo_group), match.start(hi_group)}
+        if _scope(lowered, match.start()) != "clear" or not range_in_order(match):
+            continue
+        tokens_before = _owner_tokens(lowered[: match.end(lo_group)])
+        named = _owner_of(tokens_before, columns, values_for)
+        if named:
+            low, high = float(match.group(lo_group)), float(match.group(hi_group))
+            steps.append((0, CohortStep("ge", named, low)))
+            steps.append((0, CohortStep("le", named, high)))
+            consumed |= _tokens(named)
+            hidden.append(match.group(0))
     for match, op in _comparisons(lowered):
+        if match.start("num") in ranged:
+            continue
         # The number belongs to the column the question names before it ("bmi over 30");
-        # age only when the words say so. Unknown owner or a negated comparison: leave it
-        # unbound, so the plan holds instead of guessing.
-        if _negated(lowered, match.start()):
+        # age only when the words say so. Unknown owner: leave it unbound, so the plan holds
+        # instead of guessing. A negation that may reach the comparison ("not over 65",
+        # "excluding those with ldl over 160") is never bound, as asked or inverted.
+        if _scope(lowered, match.start()) != "clear":
             continue
         named = _number_owner(lowered, match, columns, values_for)
         if named:
@@ -214,8 +241,17 @@ def peel_cohort(
     value_hits = _value_hits(lowered, columns, values_for)
     name_tokens = set().union(*(_tokens(column) for column in columns)) if columns else set()
     comparing = re.search(r"\bcompare\b|\bby sex\b|\bby gender\b", lowered) is not None
+    # Sex words are the comparison's groups unless it names another grouping column
+    # ("compare ldl by treatment in women": women is a limit).
+    compare_split = _COMPARE_SPLIT.search(lowered) if comparing else None
+    compare_by = _best_column(columns, _tokens(compare_split.group("group"))) if compare_split else None
+    sex_is_group = comparing and (compare_by is None or _is_group(compare_by))
     rating = re.search(r"\b(proportion|share|percentage|percent|fraction|more likely)\b", lowered) is not None
     more_likely = re.search(r"\bmore likely\b", lowered) is not None
+    # "are <group> more likely to <rate>": the words before "more likely" name the groups
+    # compared, the words after it the thing whose rate is compared. Never the other way.
+    rate_at = lowered.find("more likely") if more_likely else None
+    rate_groups: set[str] = set()
     # Share questions: denominator before the verb, numerator after it. Without that
     # structure the direction is unknown, so no proportion is set and the plan holds.
     share_split = _SHARE_SPLIT.search(lowered) if rating and not more_likely else None
@@ -231,16 +267,25 @@ def peel_cohort(
             bound_columns.add(grouping_column)
 
     for column, value, at in value_hits:
-        if _negated(lowered, at):
-            # Leave exclusions to the parser's != / NOT_IN filters; never bind them as ==.
+        if _scope(lowered, at) != "clear":
+            # "not on placebo", "drug A non-users", "excluding women on placebo": a value a
+            # negation may reach is never bound, as asked or as "every other value". Unbound,
+            # so the plan holds.
+            continue
+        if rate_at is not None:
+            if at < rate_at:
+                rate_groups.add(column)
+                bound_columns.add(column)
+            # A value after "more likely" is not a rate this plan can compute: leave it unbound.
             continue
         if (
             column in bound_columns
-            or (comparing and _is_group(column))
+            or (sex_is_group and _is_group(column))
             or (re.search(r"\bmore likely\b", lowered) and _is_group(column))
         ):
             continue
-        overlap = _tokens(str(value)) & _tokens(lowered)
+        # Digits count: "Type 2" is named by "type 2", not by the column word "type" alone.
+        overlap = _tokens(str(value), digits=True) & _tokens(lowered, digits=True)
         foreign = name_tokens - _tokens(column)
         if overlap and overlap <= foreign:
             continue
@@ -258,7 +303,7 @@ def peel_cohort(
 
     binary_hits = []
     for column, at in mentioned:
-        if column in bound_columns:
+        if column in bound_columns or _qualified(lowered, at, columns, values_for):
             continue
         polarity = _binary_polarity(column, values_for(column), lowered, at)
         if polarity is None:
@@ -270,6 +315,9 @@ def peel_cohort(
         binary_hits.append((at, column, polarity))
 
     binary_hits.sort(key=lambda item: item[0])
+    if rate_at is not None:
+        rate_groups |= {column for at, column, _polarity in binary_hits if at < rate_at}
+        binary_hits = [hit for hit in binary_hits if hit[0] > rate_at]
     outcome = binary_hits[-1][1] if binary_hits and (counting or rating) else None
     proportion_column = None
     proportion_value = None
@@ -320,8 +368,12 @@ def peel_cohort(
     elif _EACH_GROUP.search(lowered) and not rating:
         each = _EACH_GROUP.search(lowered)
         locked_group = _best_column(columns, _tokens(each.group("group"))) if each else None
-    elif rate_column and _best_column(columns, {"sex", "gender"}):
-        locked_group = _best_column(columns, {"sex", "gender"})
+    elif rate_column and rate_at is not None:
+        # The groups are what the words before "more likely" name; sex only when they say so.
+        if len(rate_groups) == 1:
+            locked_group = next(iter(rate_groups))
+        elif not rate_groups and _tokens(lowered[:rate_at]) & _SEX_WORDS:
+            locked_group = _best_column(columns, {"sex", "gender"})
 
     ordered = [step for _phase, step in sorted(steps, key=lambda item: item[0])]
     keep: set[str] = set()
@@ -330,7 +382,10 @@ def peel_cohort(
         lowered,
     )
     if stat_phrase and locked_metric is None:
-        phrase = re.split(r"\b(?:in|for|who|with|on|among|by)\b", stat_phrase.group(1))[0]
+        # The measure is the words right after the statistic word, up to the first word that
+        # starts a limit ("average ldl within the south site", "average ldl of diabetics").
+        segments = re.split(_METRIC_END, stat_phrase.group(1))
+        phrase = next((segment for segment in segments if _tokens(segment)), "")
         chosen = _best_column(columns, _tokens(phrase))
         if chosen:
             keep = _tokens(chosen)
@@ -452,7 +507,7 @@ def unapplied_constraints(
             if token not in tokens or len(owners_for_token) != 1:
                 continue
             column = owners_for_token[0]
-            if column not in used and token not in _STOP:
+            if column not in used and token not in _STOP and token not in NO_LIMIT_WORDS:
                 gaps.append(token)
     if (
         re.search(r"\bhow many\b", text)
@@ -464,11 +519,10 @@ def unapplied_constraints(
         for column in used:
             used_tokens |= _tokens(str(column))
         # Words word accounting treats as carrying no limit ("are there", "patients", "taking")
-        # are not gaps: the two checks share one vocabulary.
-        from clinical_analytics.core.word_accounting import FUNCTION_WORDS, LINK_WORDS, SUBJECT_WORDS
-
-        # Name the words themselves: the user sees this list.
-        gaps.extend(sorted(tokens - used_tokens - FUNCTION_WORDS - SUBJECT_WORDS - LINK_WORDS))
+        # are not gaps: the two checks share one vocabulary. Name the words themselves: the
+        # user sees this list.
+        grouping = {"by", "each", "per"} if getattr(plan, "group_by", None) else set()
+        gaps.extend(sorted(tokens - used_tokens - NO_LIMIT_WORDS - grouping))
     return gaps
 
 
@@ -498,6 +552,7 @@ def _value_hits(
     columns: list[str],
     values_for: Callable[[str], list[Any]],
 ) -> list[tuple[str, Any, int]]:
+    """(column, value, position) of each stored value the question names, one value per column."""
     hits: list[tuple[str, Any, int]] = []
     tokens = _tokens(text, digits=True)
     for column in columns:
@@ -530,6 +585,8 @@ def _value_hits(
         best = found_values[0]
         tied = [item for item in found_values if item[:2] == best[:2]]
         if len(tied) > 1:
+            # "north or west", "north and south": several values of one column are never
+            # bound as a list. Unbound, so the plan holds.
             continue
         hits.append((column, best[3], best[2]))
     hits.sort(key=lambda item: item[2])
@@ -540,12 +597,21 @@ def _label_at(text: str, tokens: set[str], label: str) -> tuple[int, int] | None
     """(rank, position) of a stored value named in the question, or None.
 
     Rank 0 is every word of the value, 1 an English inflection, 2 a word that starts a
-    word of the value ("diabet" for "diabetes"). A word inside another word does not
-    count: "male" is inside "female" and must never select it.
+    word of the value ("diabet" for "diabetes") or shares its stem ("northern" for "North").
+    A word inside another word does not count: "male" is inside "female" and must never
+    select it. A value with a one-letter or number word ("drug A", "Type 2") is named only
+    by those words in that order: "on a drug" does not name "drug A".
     """
+    from clinical_analytics.core.word_accounting import stem_match
+
+    words = re.findall(r"[a-z0-9]+", label)
+    if len(words) > 1 and any(len(word) == 1 or word.isdigit() for word in words):
+        # "type 2" is not inside "type 2.2": the label ends where its last word ends.
+        phrase = re.search(r"\b" + r"[\s_-]+".join(re.escape(word) for word in words) + r"\b(?![.,]\d)", text)
+        return (0, phrase.start()) if phrase else None
     label_tokens = _tokens(label, digits=True)
     if label_tokens and label_tokens <= tokens:
-        return 0, _word_at(text, next(iter(label_tokens)))
+        return 0, min(_word_at(text, word) for word in label_tokens)
     inflections = _VALUE_INFLECTIONS.get(label, set())
     shared = inflections & tokens
     if shared:
@@ -553,7 +619,9 @@ def _label_at(text: str, tokens: set[str], label: str) -> tuple[int, int] | None
     prefixed = [
         token
         for token in tokens
-        if len(token) >= 4 and not token.isdigit() and any(part.startswith(token) for part in label_tokens)
+        if len(token) >= 4
+        and not token.isdigit()
+        and any(part.startswith(token) or stem_match(token, part) for part in label_tokens)
     ]
     if prefixed:
         return 2, min(_word_at(text, token) for token in prefixed)
@@ -571,15 +639,65 @@ def _binary_polarity(
     text: str,
     at: int,
 ) -> Any:
+    """The value a yes/no column the question names selects, as on main: its stated "Yes"
+    value, or its stated "No" value when a negation stands right before it ("not on statin").
+
+    Only a column whose own values or header codebook say which is Yes and which is No; a 0/1
+    column or an absence label ("none") is never read as yes/no. None, so nothing is bound and
+    the plan holds, when a negation may or may not reach the word ("without diabetes and
+    hypertension", "statin non-users").
+    """
     yes, no = yes_no_values(column, values)
     if yes is None or no is None:
         return None
-    return no if _negated(text, at) else yes
+    scope = _scope(text, at)
+    if scope == "uncertain":
+        return None
+    return no if scope == "negated" else yes
 
 
-def _negated(text: str, at: int) -> bool:
-    """True when a negation word sits in the few words before position ``at``."""
-    return _NEGATION.search(text[max(0, at - 48) : at]) is not None
+# Words that may stand right before a yes/no column without changing what it means.
+_PLAIN_LEAD = frozenset(
+    {"how", "many", "number", "count", "total", "proportion", "share", "percentage", "percent", "fraction"}
+)
+
+
+def _qualified(text: str, at: int, columns: list[str], values_for: Callable[[str], list[Any]]) -> bool:
+    """True when a word qualifies the column word, so it is not bound as yes/no.
+
+    "status" alone could be read as status = yes; "unknown status" is something else, so the
+    column is not bound and the qualifying word holds the plan. A statistic word before it
+    ("average outcome", "mean of outcome") makes the column the measure, never a limit on
+    itself. A word that names a column or a stored value ("female smokers") is a limit of
+    its own, not a qualifier.
+    """
+    before = re.findall(r"[a-z0-9]+", text[:at])
+    content = [word for word in before if word not in NO_LIMIT_WORDS]
+    if content and content[-1] in STATISTIC_WORDS:
+        return True
+    if not before:
+        return False
+    word = before[-1]
+    if word in NO_LIMIT_WORDS or word in _PLAIN_LEAD or word.isdigit() or word in NEGATION_CUES:
+        return False
+    if any(_tokens(word) & _tokens(column) for column in columns):
+        return False
+    return not _value_hits(word, columns, values_for)
+
+
+def _scope(text: str, at: int) -> NegationScope:
+    """Negation scope of the word at ``at``, by the rule the gate and the justifier share
+    (question_vocabulary.negation_scope). A "non" in the few words after it ("statin
+    non-users", "drug A non-users") may negate it from behind: "uncertain"."""
+    from clinical_analytics.core.word_accounting import tokenize
+
+    if "non" in tokenize(text[at:])[:_POSTFIX_REACH]:
+        return "uncertain"
+    return negation_scope(tokenize(text[:at]))
+
+
+# How many words after a value a trailing "non" ("Type 2 diabetes non-users") can reach back.
+_POSTFIX_REACH = 5
 
 
 def yes_no_values(column: str, values: list[Any]) -> tuple[Any, Any]:
@@ -594,6 +712,8 @@ def yes_no_values(column: str, values: list[Any]) -> tuple[Any, Any]:
         return labels["yes"], labels["no"]
     parsed = parse_column_name(column)
     mapping = parsed.value_mapping or {}
+    # Only stored Yes/No labels or a header codebook say which value is yes. A 0/1 column
+    # with no codebook is not read as yes/no: 1 could be the event or its absence.
     yes_code = next((code for code, label in mapping.items() if label.strip().lower() == "yes"), None)
     no_code = next((code for code, label in mapping.items() if label.strip().lower() == "no"), None)
     if yes_code is None or no_code is None:
@@ -627,23 +747,36 @@ def _temporal_value(values: list[Any]) -> bool | None:
 
 
 def _mentioned(text: str, columns: list[str], tokens: set[str]) -> list[tuple[str, int]]:
-    found: list[tuple[str, int, int]] = []
-    for column, score in _ranked(columns, tokens):
+    """Columns the question names, with where. A word names a column word when the gate would
+    say so too (word_accounting.stem_match): "diabetic" names "diabetes", "events" "event"."""
+    from clinical_analytics.core.word_accounting import stem_match
+
+    found: list[tuple[str, int, int, set[str]]] = []
+    for column in columns:
+        column_tokens = _tokens(column)
+        # Exact words first (the scoring the parser has always used); a stem only when no
+        # word of the column is written out ("diabetic" for "diabetes").
+        named = column_tokens & tokens
+        words = set(named)
+        if not named:
+            words = {word for word in tokens if any(stem_match(word, part) for part in column_tokens)}
+            named = {part for part in column_tokens if any(stem_match(word, part) for word in words)}
+        if not words:
+            continue
+        score = len(named) * 3 - len(column_tokens - named)
         if score <= 0:
             continue
-        column_tokens = _tokens(column) & tokens
-        if not column_tokens:
-            continue
-        at = min(text.find(token) for token in column_tokens if text.find(token) >= 0)
-        found.append((column, score, at))
+        # Where the column is named: its own word, not a linking word it shares ("use").
+        anchors = [word for word in words if word not in NO_LIMIT_WORDS] or list(words)
+        at = min(_word_at(text, word) for word in anchors)
+        found.append((column, score, at, words))
     found.sort(key=lambda item: -item[1])
     claimed: set[str] = set()
     kept: list[tuple[str, int]] = []
-    for column, score, at in found:
-        tokens_here = _tokens(column) & tokens
-        if tokens_here & claimed:
+    for column, _score_value, at, words in found:
+        if words & claimed:
             continue
-        claimed |= tokens_here
+        claimed |= words
         kept.append((column, at))
     return kept
 
@@ -711,11 +844,31 @@ def _number_owner(
     values_for: Callable[[str], list[Any]],
 ) -> str | None:
     """Column the compared number belongs to (shared rule with the word-accounting gate)."""
-    from clinical_analytics.core.word_accounting import _is_measure, number_owner, numeric_ranges, tokenize
+    tokens = _owner_tokens(lowered[: match.end("num")])
+    # The word after the number can be its unit ("over 100 kg").
+    following = _owner_tokens(lowered[match.end("num") :])[:2]
+    return _owner_of(tokens, columns, values_for, following)
 
-    tokens = tokenize(lowered[: match.end("num")])
+
+def _owner_tokens(text_to_number: str) -> list[str]:
+    from clinical_analytics.core.word_accounting import tokenize
+
+    return tokenize(text_to_number)
+
+
+def _owner_of(
+    tokens: list[str],
+    columns: list[str],
+    values_for: Callable[[str], list[Any]],
+    following: list[str] | None = None,
+) -> str | None:
+    """Owner of the number that ends ``tokens``, by the word-accounting gate's own rule."""
+    from clinical_analytics.core.word_accounting import _is_measure, number_owner, numeric_ranges
+
     numeric = {column for column in columns if _is_measure(values_for(column))}
-    return number_owner(tokens, len(tokens) - 1, columns, numeric, ranges=numeric_ranges(columns, values_for))
+    return number_owner(
+        [*tokens, *(following or [])], len(tokens) - 1, columns, numeric, ranges=numeric_ranges(columns, values_for)
+    )
 
 
 def _is_group(column: str) -> bool:
