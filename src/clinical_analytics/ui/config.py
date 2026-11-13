@@ -4,14 +4,14 @@ UI Configuration Module.
 Feature flags and configuration settings for the Clinical Analytics UI.
 Single source of truth for feature toggles.
 
-Configuration is loaded from config/ui.yaml via config_loader.
+Configuration is loaded from resources/config/ui.yaml via config_loader.
 Environment variables take precedence over YAML values.
 """
 
 from clinical_analytics.core.config_loader import load_ui_config
 
 # Load configuration from YAML via config_loader
-# This loads from config/ui.yaml with environment variable overrides
+# This loads from resources/config/ui.yaml with environment variable overrides
 _config = load_ui_config()
 
 # Feature flags - single source of truth

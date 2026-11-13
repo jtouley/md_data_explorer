@@ -3,7 +3,7 @@
 # These are domain config, not code - adjust without code changes.
 #
 # Environment variables take precedence over YAML values.
-# See config/README.md for environment variable mapping.
+# See README.md in this directory for environment variable mapping.
 
 # Confidence thresholds for tier matching
 tier_1_pattern_match_threshold: 0.9  # Pattern matching requires high confidence
@@ -42,8 +42,8 @@ tier_precedence:
   # If semantic confidence >= this, skip pattern tier entirely
   pattern_fallback_threshold: 0.85
 
-# Ollama LLM Configuration (loaded from config/ollama.yaml, but values here for reference)
-# These values are loaded from config/ollama.yaml via _load_ollama_config()
+# Ollama LLM Configuration. The app reads these values from this file
+# (config_loader.load_nl_query_config); ollama.yaml next to it is reference only and is not read.
 # Environment variables take precedence over YAML config
 ollama_base_url: "http://localhost:11434"
 ollama_default_model: "llama3.1:8b"

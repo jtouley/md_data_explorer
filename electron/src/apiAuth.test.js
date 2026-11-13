@@ -3,6 +3,7 @@ import { webcrypto } from 'node:crypto';
 import {
   DEFAULT_API_BASE_URL,
   MAX_STREAM_RECONNECTS,
+  apiBaseUrlFromArgv,
   apiErrorMessage,
   enrichmentDecisionResult,
   createReplayFilter,
@@ -248,7 +249,116 @@ describe('API address', () => {
 
     // Assert
     expect(preload).not.toMatch(/localhost:8000/);
-    expect(csp.trim()).toBe('http://127.0.0.1:8000');
+    // Outer bound for any context (the sidecar's port varies); main's header narrows it to the
+    // exact port, see contentSecurityPolicy.
+    expect(csp.trim()).toBe('http://127.0.0.1:*');
+  });
+});
+
+describe('external (dev) backend address: one value for the CSP header and the preload', () => {
+  test('VITE_API_URL on another port is the address the CSP header allows', async () => {
+    // Arrange
+    const { externalApiBaseUrl } = await import('./apiAuth.js');
+    const { contentSecurityPolicy } = await import('./apiToken.js');
+
+    // Act
+    const base = externalApiBaseUrl('http://127.0.0.1:8001');
+    const csp = contentSecurityPolicy(base);
+
+    // Assert
+    expect(base).toBe('http://127.0.0.1:8001');
+    expect(csp).toContain('connect-src http://127.0.0.1:8001');
+    expect(csp).not.toContain(':8000');
+  });
+
+  test.each([[undefined], [''], ['   ']])('VITE_API_URL %j: the default address', async (value) => {
+    const { externalApiBaseUrl } = await import('./apiAuth.js');
+    expect(externalApiBaseUrl(value)).toBe(DEFAULT_API_BASE_URL);
+  });
+
+  test.each([
+    ['http://localhost:8001'],
+    ['https://127.0.0.1:8001'],
+    ['http://127.0.0.1:8001/'],
+    ['http://127.0.0.1:8001/api'],
+    ['http://127.0.0.1:0'],
+    ['http://127.0.0.1:70000'],
+    ['http://192.168.1.5:8000'],
+    ['8001'],
+  ])('VITE_API_URL %j is refused loudly, never replaced by the default', async (value) => {
+    const { externalApiBaseUrl } = await import('./apiAuth.js');
+    expect(() => externalApiBaseUrl(value)).toThrow(
+      /VITE_API_URL must be http:\/\/127\.0\.0\.1:<port>/
+    );
+  });
+
+  test('main builds the CSP from the address it hands the preload, with no default of its own', async () => {
+    // Arrange
+    const { readFileSync } = await import('node:fs');
+    const main = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
+
+    // Assert: one variable feeds both; an unset address throws in contentSecurityPolicy
+    expect(main).toContain('const pageCsp = () => contentSecurityPolicy(apiBaseUrl);');
+    expect(main).toContain('`${API_BASE_URL_ARG_PREFIX}${apiBaseUrl}`,');
+    expect(main).toContain('apiBaseUrl = externalApiBaseUrl(import.meta.env.VITE_API_URL);');
+    expect(main).not.toContain('DEFAULT_API_BASE_URL');
+  });
+});
+
+describe('contentSecurityPolicy (header from main)', () => {
+  test('connect-src is exactly the backend origin of this launch', async () => {
+    // Arrange
+    const { contentSecurityPolicy } = await import('./apiToken.js');
+
+    // Act
+    const csp = contentSecurityPolicy('http://127.0.0.1:51234');
+
+    // Assert
+    const connect = csp.match(/connect-src ([^;]*)/)[1].trim();
+    expect(connect).toBe('http://127.0.0.1:51234');
+    expect(csp).not.toMatch(/\*/);
+    expect(csp).toContain("default-src 'self'");
+  });
+
+  test.each([
+    'http://127.0.0.1:*',
+    'http://localhost:8000',
+    'http://127.0.0.1:0',
+    'http://127.0.0.1:65536',
+    'https://127.0.0.1:8000',
+    '',
+    null,
+  ])('refuses %j', async (url) => {
+    const { contentSecurityPolicy } = await import('./apiToken.js');
+    expect(() => contentSecurityPolicy(url)).toThrow(/127\.0\.0\.1/);
+  });
+});
+
+describe('apiBaseUrlFromArgv', () => {
+  test.each([
+    [
+      'sidecar port',
+      ['electron', '--clinical-api-base-url=http://127.0.0.1:54321'],
+      'http://127.0.0.1:54321',
+    ],
+    ['lowest port', ['--clinical-api-base-url=http://127.0.0.1:1'], 'http://127.0.0.1:1'],
+    ['highest port', ['--clinical-api-base-url=http://127.0.0.1:65535'], 'http://127.0.0.1:65535'],
+    ['no argument', ['electron', '.'], null],
+    ['undefined argv', undefined, null],
+    ['port zero', ['--clinical-api-base-url=http://127.0.0.1:0'], null],
+    ['port too large', ['--clinical-api-base-url=http://127.0.0.1:65536'], null],
+    ['localhost', ['--clinical-api-base-url=http://localhost:8000'], null],
+    ['remote host', ['--clinical-api-base-url=http://evil.example:8000'], null],
+    ['https', ['--clinical-api-base-url=https://127.0.0.1:8000'], null],
+    ['path suffix', ['--clinical-api-base-url=http://127.0.0.1:8000/x'], null],
+    ['userinfo', ['--clinical-api-base-url=http://a@127.0.0.1:8000'], null],
+    ['empty value', ['--clinical-api-base-url='], null],
+  ])('%s', (_name, argv, expected) => {
+    // Act
+    const url = apiBaseUrlFromArgv(argv);
+
+    // Assert
+    expect(url).toBe(expected);
   });
 });
 
@@ -317,5 +427,42 @@ describe('enrichmentDecisionResult', () => {
         'Accept'
       )
     ).toThrow('nope');
+  });
+});
+
+describe('parseLoopbackApiUrl: the preload address and the CSP header accept the same addresses', () => {
+  test.each([
+    ['http://127.0.0.1:8000', 8000],
+    ['http://127.0.0.1:1', 1],
+    ['http://127.0.0.1:65535', 65535],
+    ['http://127.0.0.1:0', null],
+    ['http://127.0.0.1:65536', null],
+    ['http://localhost:8000', null],
+    ['http://[::1]:8000', null],
+    ['http://127.0.0.1:8000/', null],
+    ['https://127.0.0.1:8000', null],
+    ['', null],
+    [null, null],
+  ])('%j -> port %j in both places', async (value, port) => {
+    // Arrange
+    const { parseLoopbackApiUrl, apiBaseUrlFromArgv, API_BASE_URL_ARG_PREFIX } =
+      await import('./apiAuth.js');
+    const { contentSecurityPolicy } = await import('./apiToken.js');
+
+    // Act
+    const parsed = parseLoopbackApiUrl(value);
+    const fromArgv = apiBaseUrlFromArgv([`${API_BASE_URL_ARG_PREFIX}${value ?? ''}`]);
+    let csp = null;
+    try {
+      csp = contentSecurityPolicy(value);
+    } catch {
+      csp = null;
+    }
+
+    // Assert
+    expect(parsed?.port ?? null).toBe(port);
+    expect(fromArgv).toBe(port === null ? null : `http://127.0.0.1:${port}`);
+    if (port === null) expect(csp).toBeNull();
+    else expect(csp).toContain(`connect-src http://127.0.0.1:${port}`);
   });
 });

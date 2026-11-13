@@ -12,6 +12,8 @@ from typing import Any
 import structlog
 import yaml  # type: ignore[import-untyped]
 
+from clinical_analytics.core.resources import config_file
+
 logger = structlog.get_logger(__name__)
 
 
@@ -41,10 +43,7 @@ class LearningConfig:
     def load(cls, config_path: Path | None = None) -> "LearningConfig":
         """Load configuration from YAML file."""
         if config_path is None:
-            # Get project root: prompt_optimizer.py → core/ → clinical_analytics/ → src/ → project_root
-            current_file = Path(__file__)
-            project_root = current_file.parent.parent.parent.parent
-            config_path = project_root / "config" / "prompt_learning.yaml"
+            config_path = config_file("prompt_learning.yaml")
 
         # Ensure config_path is a Path object
         config_path = Path(config_path) if not isinstance(config_path, Path) else config_path
