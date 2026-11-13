@@ -26,7 +26,7 @@ dependencies = [
     # (core/embeddings.py). No torch: the model is bundled at build time (make fetch-embedding-model).
     # Pinned: newest release >= 2 weeks old with macOS 13 arm64 + x86_64 wheels for cp311-cp313
     # (1.24+ dropped Intel macOS and needs macOS 14). Supported minimum: macOS 13.
-    "onnxruntime==1.23.2",
+    "onnxruntime==1.31.1",
     "tokenizers>=0.22.1,<0.24",
     "scikit-learn>=1.8.0",
     "seaborn>=0.13.2",
