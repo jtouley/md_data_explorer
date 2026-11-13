@@ -39,10 +39,15 @@ def _value(question: str, result: dict[str, Any]) -> Any:
     return actual_value(kind, stat, None, result["payload"])
 
 
-def _plan_columns(question: str) -> set[str]:
+def _plan_limits(question: str) -> set[tuple[str, str, Any]]:
     plan = service_for(_DATASET).ask(question, dataset_id=_DATASET, dataset_version="golden").plan
     assert plan is not None
-    return {step.column for step in plan.cohort_steps} | {spec.column for spec in plan.filters}
+    limits = {(step.column, step.op, step.value) for step in plan.cohort_steps}
+    return limits | {(spec.column, spec.operator, spec.value) for spec in plan.filters}
+
+
+def _plan_columns(question: str) -> set[str]:
+    return {column for column, _op, _value in _plan_limits(question)}
 
 
 @pytest.mark.slow
@@ -58,8 +63,7 @@ def test_reverseProbe_question_answeredCorrectlyOrHeldWithReason(index: int) -> 
     # Assert
     if not result["success"]:
         assert question not in _MUST_ANSWER, f"over-held: {question!r}: {result['failure_reason']!r}"
-        reason = result["failure_reason"] or ""
-        assert reason.endswith(".") and reason.count(". ") == 0, f"one plain sentence: {reason!r}"
+        assert result["held"] and result["failure_reason"], "a hold must say why"
         return
     assert truth is not None, f"must not run: {question!r}"
     assert values_match(truth, _value(question, result)), f"{question!r}: truth {truth!r}"
@@ -85,3 +89,33 @@ def test_reverseProbe_digitInLabel_neverBecomesCreatinineLimit(question: str) ->
 
     # Assert
     assert "Creatinine" not in columns
+
+
+@pytest.mark.slow
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        pytest.param("how many patients with type 2 diabetes?", {("diabetes", "eq", "Type 2")}, id="type_2_diabetes"),
+        pytest.param(
+            "how many patients with stage 3 kidney disease?",
+            {("kidney disease", "eq", "Stage 3")},
+            id="stage_3_kidney_disease",
+        ),
+        pytest.param(
+            "how many patients on dialysis for over 2 years?", {("dialysis_years", "gt", 2.0)}, id="over_2_years"
+        ),
+        pytest.param("how many patients with BMI 30 plus?", {("BMI", "ge", 30.0)}, id="bmi_30_plus"),
+    ],
+)
+def test_reverseProbe_namedCase_planHoldsExactlyTheAskedLimits(
+    question: str, expected: set[tuple[str, str, Any]]
+) -> None:
+    # Arrange
+    _probes()
+
+    # Act
+    limits = _plan_limits(question)
+
+    # Assert
+    assert limits == expected

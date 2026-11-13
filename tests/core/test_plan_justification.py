@@ -107,6 +107,18 @@ CREAT_22 = CohortStep("eq", "Creatinine", 2.2)
             ["Creatinine < 2"],
             id="reversed_operator",
         ),
+        pytest.param(
+            "how many type 2 diabetes patients on dialysis?",
+            _count(TYPE_2, CohortStep("eq", "dialysis_years", 2)),
+            ["dialysis_years = 2"],
+            id="label_digit_not_reused_as_value",
+        ),
+        pytest.param(
+            "how many dialysis patients with stage 3 or more kidney disease?",
+            _count(CohortStep("eq", "kidney disease", "Stage 3"), CohortStep("ge", "dialysis_years", 3.0)),
+            ["dialysis_years >= 3"],
+            id="label_digit_not_reused_as_cutoff",
+        ),
         pytest.param("average age", _mean("Creatinine"), ["outcome Creatinine"], id="metric_not_asked"),
         pytest.param("how many patients?", _count(group_by="Region"), ["grouping Region"], id="group_not_asked"),
     ],

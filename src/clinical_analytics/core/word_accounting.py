@@ -664,6 +664,33 @@ class _Justifier:
         self.all_columns = [*columns, *sorted(referenced - set(columns))]
         self.numeric = {column for column in self.all_columns if _is_measure(values_for(column))}
         self.ranges = numeric_ranges(self.all_columns, values_for)
+        self.label_digits = self._digits_inside_labels()
+
+    def _digits_inside_labels(self) -> dict[int, str]:
+        """Number tokens that are part of a stored label the question spells out, by position.
+
+        The 2 of "type 2 diabetes" belongs to the label "Type 2" of the diabetes column. It can
+        justify that value only: never a number on another column ("Creatinine = 2.2").
+        """
+        claimed: dict[int, str] = {}
+        for column in self.all_columns:
+            labels = [str(value) for value in self.values_for(column) if isinstance(value, str)]
+            labels += list((parse_column_name(column).value_mapping or {}).values())
+            for label in labels:
+                phrase = name_tokens(label)
+                if len(phrase) < 2 or not any(_NUMBER_TOKEN.fullmatch(part) for part in phrase):
+                    continue
+                size = len(phrase)
+                for start in range(len(self.tokens) - size + 1):
+                    if self.tokens[start : start + size] != phrase:
+                        continue
+                    for at in range(start, start + size):
+                        if _NUMBER_TOKEN.fullmatch(self.tokens[at]):
+                            claimed.setdefault(at, column)
+        return claimed
+
+    def _number_free_for(self, at: int, column: str) -> bool:
+        return self.label_digits.get(at, column) == column
 
     def column_named(self, column: str) -> bool:
         if column == self.age and any(token in _AGE_JUSTIFY for token in self.tokens):
@@ -691,7 +718,7 @@ class _Justifier:
         if code_label and self._words_named(name_tokens(code_label.lower())):
             return True
         if _NUMBER_TOKEN.fullmatch(label):
-            return self.column_named(column) and self._bare_number_present(float(label))
+            return self.column_named(column) and self._bare_number_present(column, float(label))
         inflections = _SEX_INFLECTIONS.get(label, set())
         if inflections & set(self.tokens):
             return True
@@ -732,7 +759,7 @@ class _Justifier:
             return False
         between = "between" in self.tokens
         for at, token in enumerate(self.tokens):
-            if not _NUMBER_TOKEN.fullmatch(token) or float(token) != number:
+            if not _NUMBER_TOKEN.fullmatch(token) or float(token) != number or not self._number_free_for(at, column):
                 continue
             ops = {
                 DIRECTION_OPS[self.tokens[near]]
@@ -746,10 +773,10 @@ class _Justifier:
                 return True
         return False
 
-    def _bare_number_present(self, number: float) -> bool:
+    def _bare_number_present(self, column: str, number: float) -> bool:
         """The number is in the question with no comparison word on either side ("creatinine 2.2")."""
         for at, token in enumerate(self.tokens):
-            if not _NUMBER_TOKEN.fullmatch(token) or float(token) != number:
+            if not _NUMBER_TOKEN.fullmatch(token) or float(token) != number or not self._number_free_for(at, column):
                 continue
             if not any(
                 0 <= near < len(self.tokens) and self.tokens[near] in DIRECTION_OPS for near in (at - 1, at + 1)

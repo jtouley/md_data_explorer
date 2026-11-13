@@ -19,7 +19,7 @@ from clinical_analytics.core.nl_query_engine import NLQueryEngine
 from clinical_analytics.core.query_plan import CohortStepError, QueryPlan
 from clinical_analytics.core.result_presentation import present_analysis
 from clinical_analytics.core.semantic import SemanticLayer
-from clinical_analytics.core.word_accounting import hold_reason, unused_words
+from clinical_analytics.core.word_accounting import hold_reason, unjustified_elements, unjustified_reason, unused_words
 
 _GROUP_SIZE_COLUMNS = frozenset({"n", "count", "len"})
 
@@ -251,9 +251,10 @@ class QueryService:
         # Word accounting (all tiers): a plan that leaves a word of the question unused answers
         # a different question. Hold it for review regardless of confidence; only the user's
         # confirmation of this exact plan (by hash) releases it.
+        # Reverse accounting: every element of the plan must also be asked for by the question.
         if not confirmed:
-            unused = self._unused_words(normalized_query, query_plan, context)
-            if unused:
+            accounting_reason = self._accounting_hold_reason(normalized_query, query_plan, context)
+            if accounting_reason:
                 return QueryResult(
                     plan=query_plan,
                     issues=issues,
@@ -262,7 +263,7 @@ class QueryService:
                     run_key=None,
                     context=context,
                     requires_confirmation=True,
-                    failure_reason=hold_reason(unused),
+                    failure_reason=accounting_reason,
                     plan_line=shown_plan_line,
                     plan_hash=plan_hash,
                 )
@@ -324,17 +325,23 @@ class QueryService:
             plan_hash=plan_hash,
         )
 
-    def _unused_words(self, question: str, plan: QueryPlan, context: AnalysisContext) -> list[str]:
+    def _accounting_hold_reason(self, question: str, plan: QueryPlan, context: AnalysisContext) -> str | None:
+        """Why this plan must be reviewed before it runs, or None when question and plan agree.
+
+        Forward: a word of the question the plan does not use. Reverse: an element of the plan
+        the question does not ask for.
+        """
         columns = list(self.semantic_layer.get_base_view().columns)
-        alias_index = self.semantic_layer.get_column_alias_index()
-        return unused_words(
-            question,
-            plan,
-            columns,
-            self.nl_engine._distinct_values,
-            alias_index=alias_index if isinstance(alias_index, dict) else None,
-            context=context,
-        )
+        raw_index = self.semantic_layer.get_column_alias_index()
+        alias_index = raw_index if isinstance(raw_index, dict) else None
+        values_for = self.nl_engine._distinct_values
+        unused = unused_words(question, plan, columns, values_for, alias_index=alias_index, context=context)
+        if unused:
+            return hold_reason(unused)
+        unasked = unjustified_elements(question, plan, columns, values_for, alias_index=alias_index, context=context)
+        if unasked:
+            return unjustified_reason(unasked)
+        return None
 
     def _generate_run_key(self, plan: QueryPlan, query_text: str) -> str:
         """
