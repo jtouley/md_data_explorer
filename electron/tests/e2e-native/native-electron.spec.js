@@ -395,8 +395,8 @@ test.describe.serial('Native Electron binary harness', () => {
         .poll(() => app.evaluate(() => globalThis.__crashDialogs.length), { timeout: 15000 })
         .toBe(1);
       const shown = await app.evaluate(() => globalThis.__crashDialogs[0]);
-      expect(shown.message).toMatch(/stopped unexpectedly/);
-      expect(shown.buttons).toEqual(['Restart', 'Quit']);
+      expect(shown.message).toBe('The analysis engine stopped.');
+      expect(shown.buttons).toEqual(['Restart engine', 'Quit']);
       await expect
         .poll(() => sidecarPids(electronPid).filter((pid) => pid !== firstPid).length, {
           timeout: 60000,
@@ -411,6 +411,50 @@ test.describe.serial('Native Electron binary harness', () => {
     }
     await expect.poll(() => sidecarPids(electronPid), { timeout: 20000 }).toEqual([]);
     cleanup();
+  });
+
+  test('closing the startup window while the backend starts quits quietly: no error, no backend left', async () => {
+    // Arrange: a "python" that never serves, so the app stays on its startup window
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const dir = fs.mkdtempSync(require('node:path').join(os.tmpdir(), 'ca-slow-python-'));
+    const slowPython = require('node:path').join(dir, 'python');
+    fs.writeFileSync(slowPython, '#!/bin/sh\nexec sleep 300\n', { mode: 0o755 });
+    const env = {
+      ...process.env,
+      ELECTRON_DISABLE_SANDBOX: '1',
+      CLINICAL_ANALYTICS_PYTHON: slowPython,
+    };
+    delete env.ELECTRON_RUN_AS_NODE;
+    delete env.CLINICAL_ANALYTICS_EXTERNAL_BACKEND;
+    delete env.CLINICAL_ANALYTICS_DEV_NO_AUTH;
+    delete env.CLINICAL_ANALYTICS_API_TOKEN;
+    const app = await electron.launch({ args: ['--no-sandbox', ELECTRON_ROOT], env });
+    const child = app.process();
+    let output = '';
+    child.stdout.on('data', (chunk) => (output += chunk));
+    child.stderr.on('data', (chunk) => (output += chunk));
+    const exited = new Promise((resolve) => child.once('exit', (code) => resolve(code)));
+    try {
+      const startup = await app.firstWindow();
+      expect(startup.url().startsWith('data:text/html')).toBe(true);
+      await expect.poll(() => output).toContain('Backend starting at');
+
+      // Act: the user closes the startup window (the same as quitting during startup)
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+      const code = await Promise.race([
+        exited,
+        new Promise((resolve) => setTimeout(() => resolve('still running'), 20000)),
+      ]);
+
+      // Assert: a clean quit; an error box would have kept the app open
+      expect(code).toBe(0);
+      expect(output).not.toMatch(/could not start/);
+      expect(output).toContain('Backend stopped (terminated)');
+    } finally {
+      if (child.exitCode === null) child.kill('SIGKILL');
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test('a killed app (no quit handler) still leaves no backend', async () => {

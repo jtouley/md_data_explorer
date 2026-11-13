@@ -7,11 +7,12 @@
  * 2. Spawn `<python> -m clinical_analytics.api.serve --host 127.0.0.1 --port <port>
  *    --exit-with-parent <electron pid> --stop-on-stdin-close` with this launch's API token in its environment
  *    (never the dev no-auth opt-out, never Ollama auto-download).
- * 3. Wait for /health, then check the server proves it knows the token (apiAuth.js), so a
- *    program squatting on the port is never used.
+ * 3. Wait until anything answers /health, then check the server proves it knows the token
+ *    (apiAuth.js), so a program squatting on the port is never used.
  * 4. On quit: SIGTERM to the process group (Windows: close its stdin), then a forced kill of the
- *    tree after a grace period. If Electron itself dies, its stdin closes and serve.py's parent
- *    watchdog notices too, so the backend shuts down either way.
+ *    tree after a grace period, and a bounded wait for that kill (quit never hangs on it). If
+ *    Electron itself dies, its stdin closes and serve.py's parent watchdog notices too, so the
+ *    backend shuts down either way.
  *
  * The dev flow (separate Vite and `make run-api`, or scripts/run_app.sh) sets
  * CLINICAL_ANALYTICS_EXTERNAL_BACKEND=1 and keeps using an already-running API.
@@ -29,6 +30,13 @@ export const HEALTH_TIMEOUT_ENV = 'CLINICAL_ANALYTICS_BACKEND_TIMEOUT_MS';
 export const DEFAULT_PREFERRED_PORT = 8000;
 export const DEFAULT_HEALTH_TIMEOUT_MS = 60000;
 export const DEFAULT_STOP_GRACE_MS = 10000; // uvicorn drains in-flight requests (an upload) first
+/** How long stop() waits for the exit after the forced kill before giving up (quit goes on). */
+export const DEFAULT_FORCE_KILL_WAIT_MS = 5000;
+/**
+ * After 'exit', how long to wait for 'close' (stdout/stderr drained) before reporting the exit
+ * anyway: a grandchild that inherited the pipes can hold them open after the backend is gone.
+ */
+export const DEFAULT_STDIO_DRAIN_MS = 1000;
 /** serve.py exits with this code after printing one "cannot start" line (store check, model). */
 export const STORE_CHECK_FAILED_EXIT = 2;
 const STDERR_TAIL_LINES = 40;
@@ -143,6 +151,8 @@ export async function choosePort(preferred, deps = {}) {
   return pickFree();
 }
 
+const CANNOT_START_PREFIX = 'Clinical Analytics cannot start:';
+
 /**
  * The one-line reason serve.py printed before exiting with STORE_CHECK_FAILED_EXIT, if any.
  * @param {string} stderrText
@@ -152,13 +162,22 @@ export function cannotStartLine(stderrText) {
   const lines = String(stderrText || '')
     .split(/\r?\n/)
     .map((l) => l.trim())
-    .filter((l) => l.startsWith('Clinical Analytics cannot start:'));
+    .filter((l) => l.startsWith(CANNOT_START_PREFIX));
   return lines.length ? lines[lines.length - 1] : null;
 }
 
+const START_AGAIN = 'Start Clinical Analytics again.';
+
+/** "exit code 1" / "signal SIGKILL": how the process ended, for the detail line of a message. */
+function exitDescription({ code, signal }) {
+  return signal ? `signal ${signal}` : `exit code ${code}`;
+}
+
 /**
- * Text for the error window when the backend did not start.
- * @param {{ reason: 'exited' | 'timeout' | 'untrusted' | 'spawn', code?: number | null,
+ * Text for the error window when the backend did not start. Every message says what happened
+ * and what to do next; the wording follows the copy deck in docs/app/DESIGN.md ("analysis
+ * engine", "on this computer").
+ * @param {{ reason: 'exited' | 'timeout' | 'untrusted' | 'spawn' | 'config', code?: number | null,
  *   signal?: string | null, stderrText?: string, detail?: string, timeoutMs?: number }} failure
  * @returns {{ title: string, message: string }}
  */
@@ -166,33 +185,43 @@ export function startupFailureMessage(failure) {
   const title = 'Clinical Analytics could not start';
   if (failure.reason === 'exited') {
     const line = cannotStartLine(failure.stderrText || '');
-    if (failure.code === STORE_CHECK_FAILED_EXIT && line) return { title, message: line };
-    const how = failure.signal
-      ? `was stopped (${failure.signal})`
-      : `exited with code ${failure.code}`;
+    if (failure.code === STORE_CHECK_FAILED_EXIT && line) {
+      // serve.py's own one-line reason (it already says what to do); the title carries the rest.
+      return { title, message: line.slice(CANNOT_START_PREFIX.length).trim() || line };
+    }
     const tail = lastLines(failure.stderrText || '', 5);
     return {
       title,
-      message: `The analysis service ${how} while starting.${tail ? `\n\nLast output:\n${tail}` : ''}`,
+      message:
+        `The analysis engine stopped before it was ready (${exitDescription(failure)}). ` +
+        `${START_AGAIN} If this keeps happening, reinstall the app.` +
+        (tail ? `\n\nLast output:\n${tail}` : ''),
     };
   }
   if (failure.reason === 'timeout') {
     return {
       title,
-      message: `The analysis service did not become ready within ${Math.round((failure.timeoutMs || 0) / 1000)} seconds.`,
+      message:
+        `The analysis engine was not ready after ${Math.round((failure.timeoutMs || 0) / 1000)} ` +
+        `seconds. ${START_AGAIN}`,
     };
   }
   if (failure.reason === 'untrusted') {
     return {
       title,
       message:
-        'Another program answered on the analysis service port and could not prove it is this ' +
-        "app's service, so the app will not use it.",
+        'Another program is using the port Clinical Analytics chose for its analysis engine, ' +
+        `so the app did not connect to it. ${START_AGAIN} It will choose a free port.`,
     };
+  }
+  if (failure.reason === 'config') {
+    return { title, message: failure.detail || 'A startup setting is not valid.' };
   }
   return {
     title,
-    message: `The analysis service could not be started: ${failure.detail || 'unknown error'}`,
+    message:
+      `The analysis engine could not be started (${failure.detail || 'unknown error'}). ` +
+      'Reinstall Clinical Analytics.',
   };
 }
 
@@ -202,15 +231,15 @@ export function startupFailureMessage(failure) {
  * @returns {{ title: string, message: string, detail: string, buttons: string[] }}
  */
 export function unexpectedExitMessage(info) {
-  const how = info.signal ? `was stopped (${info.signal})` : `exited with code ${info.code}`;
   const tail = lastLines(info.stderrText || '', 3);
   return {
     title: 'Clinical Analytics',
-    message: 'The analysis service stopped unexpectedly.',
+    message: 'The analysis engine stopped.',
     detail:
-      `It ${how}. Restart it to keep working; your datasets are kept on this computer.` +
+      'Restart it to keep working. Your cohorts are still on this computer.' +
+      `\n\nDetails: ${exitDescription(info)}.` +
       (tail ? `\n\nLast output:\n${tail}` : ''),
-    buttons: ['Restart', 'Quit'],
+    buttons: ['Restart engine', 'Quit'],
   };
 }
 
@@ -256,13 +285,17 @@ export function timedFetch(fetchFn, attemptMs, remainingMs) {
 }
 
 /**
- * Poll /health until it answers, then require the token proof. Every request has its own
- * timeout and the whole wait has one deadline (a port squatter that accepts the connection and
- * never answers ends in a 'timeout' or 'untrusted' failure, not a stall). Resolves 'ready', or
- * rejects with a failure object for startupFailureMessage.
+ * Poll /health until anything answers, then require the token proof. Any HTTP response counts as
+ * an answer, whatever its status: something is listening, and only the token check can say
+ * whether it is this app's backend (a program on the port that answers 404 is refused at once as
+ * 'untrusted', not polled until the deadline). Every request has its own timeout and the whole
+ * wait has one deadline (a port squatter that accepts the connection and never answers ends in
+ * a 'timeout' or 'untrusted' failure, not a stall). Resolves 'ready', or rejects with a failure
+ * object for startupFailureMessage; { reason: 'stopped' } means the app itself asked the backend
+ * to stop (the user quit), which is not a failure to report.
  * @param {{ baseUrl: string, token: string, fetchFn: typeof fetch, cryptoImpl: Crypto,
  *   timeoutMs: number, pollMs?: number, attemptMs?: number, exited: () => object | null,
- *   now?: () => number, wait?: (ms: number) => Promise<void> }} opts
+ *   stopped?: () => boolean, now?: () => number, wait?: (ms: number) => Promise<void> }} opts
  */
 export async function waitForHealth(opts) {
   const { baseUrl, token, cryptoImpl, timeoutMs } = opts;
@@ -275,13 +308,18 @@ export async function waitForHealth(opts) {
     opts.attemptMs ?? HEALTH_ATTEMPT_TIMEOUT_MS,
     () => deadline - now()
   );
-  for (;;) {
+  const stopped = opts.stopped || (() => false);
+  const failIfGone = () => {
+    if (stopped()) throw { reason: 'stopped' };
     const exit = opts.exited();
     if (exit) throw { reason: 'exited', ...exit };
-    let answered = false;
+  };
+  for (;;) {
+    failIfGone();
+    let answered;
     try {
-      const res = await fetchFn(`${baseUrl}/health`);
-      answered = res.ok;
+      await fetchFn(`${baseUrl}/health`);
+      answered = true; // any status: something listens here; the token check decides what it is
     } catch {
       answered = false; // not listening yet, or no answer within the attempt timeout
     }
@@ -295,9 +333,8 @@ export async function waitForHealth(opts) {
           reason: error?.name === 'TimeoutError' ? 'no-answer' : 'probe-failed',
         };
       }
+      failIfGone();
       if (verdict.ok) return 'ready';
-      const exitAfter = opts.exited();
-      if (exitAfter) throw { reason: 'exited', ...exitAfter };
       throw { reason: 'untrusted', detail: verdict.reason };
     }
     if (now() >= deadline) throw { reason: 'timeout', timeoutMs };
@@ -306,20 +343,25 @@ export async function waitForHealth(opts) {
 }
 
 /**
- * Stop the backend and everything it started. Resolves once the child has exited.
+ * Stop the backend and everything it started. Resolves once the child has exited, or with
+ * 'not-stopped' when it is still running forceWaitMs after the forced kill (taskkill refused,
+ * a process in another session): the caller must be able to quit either way.
  *
  * POSIX: SIGTERM to the process group (uvicorn drains requests), SIGKILL after the grace period.
  * Windows has no SIGTERM for a windowless console child and `taskkill /T` without /F cannot close
  * one, so the graceful request is closing the backend's stdin (serve.py --stop-on-stdin-close);
  * only after the grace period does `taskkill /T /F` end the tree.
  * @param {import('node:child_process').ChildProcess} child
- * @param {{ platform?: string, graceMs?: number, killFn?: (pid: number, sig: string) => void,
- *   execFileFn?: typeof nodeExecFile, isExited: () => boolean, onExit: Promise<unknown> }} opts
- * @returns {Promise<'already-exited' | 'terminated' | 'killed'>}
+ * @param {{ platform?: string, graceMs?: number, forceWaitMs?: number,
+ *   killFn?: (pid: number, sig: string) => void, execFileFn?: typeof nodeExecFile,
+ *   isExited: () => boolean, onExit: Promise<unknown>, log?: (line: string) => void }} opts
+ * @returns {Promise<'already-exited' | 'terminated' | 'killed' | 'not-stopped'>}
  */
 export async function stopProcessTree(child, opts) {
   const platform = opts.platform || process.platform;
   const graceMs = opts.graceMs ?? DEFAULT_STOP_GRACE_MS;
+  const forceWaitMs = opts.forceWaitMs ?? DEFAULT_FORCE_KILL_WAIT_MS;
+  const log = opts.log || (() => {});
   const killFn = opts.killFn || ((pid, sig) => process.kill(pid, sig));
   const execFileFn = opts.execFileFn || nodeExecFile;
   if (opts.isExited() || !child.pid) return 'already-exited';
@@ -333,21 +375,27 @@ export async function stopProcessTree(child, opts) {
   };
   const forceKill = () => {
     if (platform === 'win32') {
-      execFileFn('taskkill', ['/pid', String(child.pid), '/T', '/F'], () => {});
+      execFileFn('taskkill', ['/pid', String(child.pid), '/T', '/F'], (error) => {
+        if (error) log(`[backend] taskkill failed: ${error.message || error}`);
+      });
       return;
     }
     signalGroup(killFn, child.pid, 'SIGKILL');
   };
+  const exitsWithin = (ms) => {
+    let timer;
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(() => resolve(false), ms);
+    });
+    return Promise.race([opts.onExit.then(() => true), timeout]).finally(() => clearTimeout(timer));
+  };
 
   gracefulRequest();
-  const exitedInTime = await Promise.race([
-    opts.onExit.then(() => true),
-    sleep(graceMs).then(() => false),
-  ]);
-  if (exitedInTime) return 'terminated';
+  if (await exitsWithin(graceMs)) return 'terminated';
   forceKill();
-  await opts.onExit;
-  return 'killed';
+  if (await exitsWithin(forceWaitMs)) return 'killed';
+  log(`[backend] still running ${forceWaitMs} ms after the forced kill (pid ${child.pid})`);
+  return 'not-stopped';
 }
 
 function signalGroup(killFn, pid, signal) {
@@ -368,7 +416,7 @@ export class BackendSidecar {
    *   preferredPort: number, healthTimeoutMs: number, parentPid: number, cwd: string,
    *   spawnFn?: typeof nodeSpawn, fetchFn?: typeof fetch, cryptoImpl?: Crypto,
    *   choosePortFn?: (preferred: number) => Promise<number>, platform?: string,
-   *   stopGraceMs?: number, killFn?: (pid: number, sig: string) => void,
+   *   stopGraceMs?: number, forceKillWaitMs?: number, stdioDrainMs?: number, killFn?: (pid: number, sig: string) => void,
    *   execFileFn?: typeof nodeExecFile, log?: (line: string) => void, pollMs?: number,
    *   attemptMs?: number, onUnexpectedExit?: (info: object) => void }} opts
    */
@@ -392,6 +440,8 @@ export class BackendSidecar {
     const o = this.opts;
     const platform = o.platform || process.platform;
     this.port = await (o.choosePortFn || ((p) => choosePort(p)))(o.preferredPort);
+    // stop() ran while the port was being chosen (the user quit): do not start anything.
+    if (this.stopping) throw { reason: 'stopped' };
     const spawnFn = o.spawnFn || nodeSpawn;
     const log = o.log || (() => {});
     try {
@@ -407,13 +457,28 @@ export class BackendSidecar {
       throw { reason: 'spawn', detail: error?.message || String(error) };
     }
     this.exitPromise = new Promise((resolve) => {
-      this.child.once('exit', (code, signal) => {
+      // 'exit' can fire before the last stderr chunk is delivered (the pipes drain afterwards),
+      // and that chunk is where serve.py's "cannot start" line is. So the exit is reported on
+      // 'close' (stdio drained), or stdioDrainMs after 'exit' if the pipes never close.
+      let drainTimer = null;
+      const report = (code, signal) => {
+        clearTimeout(drainTimer);
+        if (this.exitInfo) return;
         this.exitInfo = { code, signal: signal || null, stderrText: this.stderrLines.join('\n') };
         resolve(this.exitInfo);
         // Died after it was ready, and nobody asked it to stop: the app offers a restart.
         if (this.ready && !this.stopping) o.onUnexpectedExit?.(this.exitInfo);
+      };
+      this.child.once('exit', (code, signal) => {
+        drainTimer = setTimeout(
+          () => report(code, signal),
+          o.stdioDrainMs ?? DEFAULT_STDIO_DRAIN_MS
+        );
       });
+      this.child.once('close', (code, signal) => report(code, signal));
       this.child.once('error', (error) => {
+        clearTimeout(drainTimer);
+        if (this.exitInfo) return;
         // ENOENT etc.: the process never started.
         this.exitInfo = {
           code: null,
@@ -454,6 +519,7 @@ export class BackendSidecar {
         pollMs: o.pollMs,
         attemptMs: o.attemptMs,
         exited: () => this.exitInfo,
+        stopped: () => this.stopping,
       });
       this.ready = true;
       return result;
@@ -465,13 +531,15 @@ export class BackendSidecar {
     }
   }
 
-  /** Stop the backend (idempotent). */
+  /** Stop the backend (idempotent). Also ends a spawn() or waitUntilReady() still in progress. */
   async stop() {
-    if (!this.child) return 'not-started';
     this.stopping = true;
+    if (!this.child) return 'not-started';
     return stopProcessTree(this.child, {
       platform: this.opts.platform,
       graceMs: this.opts.stopGraceMs,
+      forceWaitMs: this.opts.forceKillWaitMs,
+      log: this.opts.log,
       killFn: this.opts.killFn,
       execFileFn: this.opts.execFileFn,
       isExited: () => this.exitInfo !== null,

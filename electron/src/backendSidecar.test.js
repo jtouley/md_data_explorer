@@ -26,8 +26,8 @@ import {
 } from './backendSidecar.js';
 
 const TOKEN = 'a'.repeat(43);
-const STORE_LINE =
-  'Clinical Analytics cannot start: The data store is open in another program. Close it and start again.';
+const STORE_REASON = 'The data store is open in another program. Close it and start again.';
+const STORE_LINE = `Clinical Analytics cannot start: ${STORE_REASON}`;
 
 /** A child process stand-in: emits stdout/stderr data and exit like ChildProcess. */
 function makeFakeChild({ pid = 4321, exitOnSignal = 'SIGTERM' } = {}) {
@@ -85,6 +85,8 @@ function makeSidecar(overrides = {}) {
     cryptoImpl: webcrypto,
     choosePortFn: async () => 51234,
     stopGraceMs: 50,
+    forceKillWaitMs: 50,
+    stdioDrainMs: 5,
     pollMs: 1,
     ...overrides,
   });
@@ -214,7 +216,7 @@ describe('port selection', () => {
 });
 
 describe('startup failure messages', () => {
-  test('exit code 2 shows exactly the one-line reason serve.py printed', () => {
+  test('exit code 2 shows the one-line reason serve.py printed, without repeating the title', () => {
     // Act
     const { title, message } = startupFailureMessage({
       reason: 'exited',
@@ -224,28 +226,58 @@ describe('startup failure messages', () => {
     });
 
     // Assert
-    expect(title).toMatch(/could not start/);
-    expect(message).toBe(STORE_LINE);
+    expect(title).toBe('Clinical Analytics could not start');
+    expect(message).toBe(STORE_REASON);
   });
 
   test.each([
     [
       { reason: 'exited', code: 1, signal: null, stderrText: 'Traceback\nImportError: boom' },
-      /exited with code 1[\s\S]*ImportError: boom/,
+      /stopped before it was ready \(exit code 1\)\. Start Clinical Analytics again\.[\s\S]*ImportError: boom/,
     ],
     [
       { reason: 'exited', code: 2, signal: null, stderrText: 'usage: serve.py [-h]' },
-      /exited with code 2/,
+      /\(exit code 2\)/,
     ],
     [
       { reason: 'exited', code: null, signal: 'SIGKILL', stderrText: '' },
-      /was stopped \(SIGKILL\) while starting\.$/,
+      /stopped before it was ready \(signal SIGKILL\)\. Start Clinical Analytics again\. If this keeps happening, reinstall the app\.$/,
     ],
-    [{ reason: 'timeout', timeoutMs: 60000 }, /within 60 seconds/],
-    [{ reason: 'untrusted', detail: 'proof' }, /could not prove/],
-    [{ reason: 'spawn', detail: 'spawn /x/python ENOENT' }, /ENOENT/],
+    [
+      { reason: 'timeout', timeoutMs: 60000 },
+      /^The analysis engine was not ready after 60 seconds\. Start Clinical Analytics again\.$/,
+    ],
+    [
+      { reason: 'untrusted', detail: 'proof' },
+      /^Another program is using the port .* Start Clinical Analytics again\. It will choose a free port\.$/,
+    ],
+    [
+      { reason: 'spawn', detail: 'spawn /x/python ENOENT' },
+      /could not be started \(spawn \/x\/python ENOENT\)\. Reinstall Clinical Analytics\.$/,
+    ],
+    [{ reason: 'spawn' }, /\(unknown error\)/],
+    [
+      { reason: 'config', detail: 'VITE_API_URL must be http://127.0.0.1:<port>' },
+      /^VITE_API_URL must be/,
+    ],
+    [{ reason: 'config' }, /^A startup setting is not valid\.$/],
   ])('%o', (failure, pattern) => {
     expect(startupFailureMessage(failure).message).toMatch(pattern);
+  });
+
+  test.each([
+    [{ reason: 'exited', code: 1, signal: null, stderrText: 'x' }],
+    [{ reason: 'timeout', timeoutMs: 1000 }],
+    [{ reason: 'untrusted' }],
+    [{ reason: 'spawn', detail: 'EACCES' }],
+  ])("%o: says what to do next, in the copy deck's words", (failure) => {
+    // Act
+    const { message } = startupFailureMessage(failure);
+
+    // Assert: "analysis engine" (DESIGN.md), a next step, no "service", no exclamation
+    expect(message).toMatch(/analysis engine/);
+    expect(message).toMatch(/Start Clinical Analytics again|Reinstall Clinical Analytics/);
+    expect(message).not.toMatch(/service|!|Oops|Please/);
   });
 
   test.each([
@@ -289,6 +321,43 @@ describe('waitForHealth', () => {
       reason: 'untrusted',
       detail: 'proof',
     });
+  });
+
+  test.each([[404], [500], [503], [301]])(
+    'a program on the port that answers /health with %i goes to the token check and is refused at once',
+    async (status) => {
+      // Arrange: not this app's backend (no auth_required, no proof); a long deadline
+      const fetchFn = vi.fn(async () => ({ ok: false, status, json: async () => ({}) }));
+      const started = Date.now();
+
+      // Act
+      const failure = await waitForHealth({
+        ...base,
+        fetchFn,
+        timeoutMs: 60000,
+        exited: () => null,
+      }).catch((f) => f);
+
+      // Assert: 'untrusted' promptly, not a 60 s wait ending in 'timeout'
+      expect(failure).toMatchObject({ reason: 'untrusted', detail: 'health' });
+      expect(Date.now() - started).toBeLessThan(2000);
+      expect(fetchFn).toHaveBeenCalledTimes(2); // /health, then /health?nonce=
+      expect(startupFailureMessage(failure).message).toMatch(/Another program is using the port/);
+    }
+  );
+
+  test('stopped by the app while waiting: rejects with "stopped" before any other reason', async () => {
+    const fetchFn = makeBackendFetch({ refuseFirst: 1000 });
+    const exit = { code: null, signal: 'SIGTERM', stderrText: '' };
+    await expect(
+      waitForHealth({
+        ...base,
+        fetchFn,
+        timeoutMs: 5000,
+        exited: () => exit,
+        stopped: () => true,
+      })
+    ).rejects.toEqual({ reason: 'stopped' });
   });
 
   test('stops waiting as soon as the backend exits', async () => {
@@ -369,7 +438,77 @@ describe('BackendSidecar', () => {
 
     // Assert
     expect(failure).toMatchObject({ reason: 'exited', code: 2 });
-    expect(startupFailureMessage(failure).message).toBe(STORE_LINE);
+    expect(startupFailureMessage(failure).message).toBe(STORE_REASON);
+  });
+
+  test("'exit' before the last stderr chunk: the reason that arrives before 'close' is kept", async () => {
+    // Arrange: Node may emit 'exit' while stderr still holds the final line
+    const { sidecar, child } = makeSidecar({
+      fetchFn: makeBackendFetch({ refuseFirst: 1e9 }),
+      stdioDrainMs: 5000,
+    });
+    await sidecar.spawn();
+    const waiting = sidecar.waitUntilReady().catch((f) => f);
+
+    // Act
+    child.emit('exit', STORE_CHECK_FAILED_EXIT, null);
+    await new Promise((resolve) => setTimeout(resolve, 20)); // polls run; the exit is not final yet
+    child.stderr.emit('data', Buffer.from(`${STORE_LINE}\n`));
+    child.emit('close', STORE_CHECK_FAILED_EXIT, null);
+    const failure = await waiting;
+
+    // Assert
+    expect(failure).toMatchObject({ reason: 'exited', code: 2, stderrText: STORE_LINE });
+    expect(startupFailureMessage(failure).message).toBe(STORE_REASON);
+  });
+
+  test("pipes held open after 'exit' (no 'close'): the exit is still reported after the drain wait", async () => {
+    // Arrange
+    const { sidecar, child } = makeSidecar({ stdioDrainMs: 10 });
+    await sidecar.spawn();
+
+    // Act
+    child.emit('exit', 1, null);
+    const info = await sidecar.exitPromise;
+
+    // Assert
+    expect(info).toMatchObject({ code: 1, signal: null });
+  });
+
+  test('stop() while still starting: the wait ends as "stopped", not as a failure to report', async () => {
+    // Arrange: the backend never answers; the user quits during the wait
+    const { sidecar, killFn } = makeSidecar({
+      fetchFn: makeBackendFetch({ refuseFirst: 1e9 }),
+      healthTimeoutMs: 5000,
+    });
+    await sidecar.spawn();
+    const waiting = sidecar.waitUntilReady().catch((f) => f);
+
+    // Act
+    const how = await sidecar.stop();
+    const failure = await waiting;
+
+    // Assert: SIGTERM was the app's own request, so there is nothing to tell the user
+    expect(how).toBe('terminated');
+    expect(killFn).toHaveBeenCalledWith(-4321, 'SIGTERM');
+    expect(failure).toEqual({ reason: 'stopped' });
+  });
+
+  test('stop() while the port is still being chosen: nothing is spawned', async () => {
+    // Arrange
+    let releasePort;
+    const { sidecar, spawnFn } = makeSidecar({
+      choosePortFn: () => new Promise((resolve) => (releasePort = () => resolve(51234))),
+    });
+    const spawning = sidecar.spawn().catch((f) => f);
+
+    // Act
+    await expect(sidecar.stop()).resolves.toBe('not-started');
+    releasePort();
+
+    // Assert
+    expect(await spawning).toEqual({ reason: 'stopped' });
+    expect(spawnFn).not.toHaveBeenCalled();
   });
 
   test('a missing python (spawn error event) is reported as a spawn failure', async () => {
@@ -509,6 +648,57 @@ describe('stopProcessTree on Windows', () => {
     ]);
   });
 
+  test.each([
+    ['taskkill reports an error', new Error('ERROR: Access is denied.')],
+    ['taskkill reports success but the process stays', null],
+  ])('%s: stop gives up after the bounded wait instead of hanging quit', async (_name, error) => {
+    // Arrange: nothing ever ends this child
+    const child = makeFakeChild({ exitOnSignal: 'NONE' });
+    child.stdin = { end: vi.fn() };
+    const execFileFn = vi.fn((cmd, args, cb) => cb(error));
+    const log = vi.fn();
+    const started = Date.now();
+
+    // Act
+    const how = await stopProcessTree(child, {
+      platform: 'win32',
+      graceMs: 10,
+      forceWaitMs: 30,
+      execFileFn,
+      isExited: () => false,
+      onExit: new Promise(() => {}),
+      log,
+    });
+
+    // Assert
+    expect(how).toBe('not-stopped');
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(execFileFn).toHaveBeenCalledTimes(1);
+    const logged = log.mock.calls.map((c) => c[0]).join('\n');
+    expect(logged).toMatch(/still running 30 ms after the forced kill/);
+    if (error) expect(logged).toMatch(/taskkill failed: ERROR: Access is denied\./);
+  });
+
+  test('POSIX: a process that survives SIGKILL does not hang stop either', async () => {
+    // Arrange
+    const child = makeFakeChild({ exitOnSignal: 'NONE' });
+    const killFn = vi.fn();
+
+    // Act
+    const how = await stopProcessTree(child, {
+      platform: 'linux',
+      graceMs: 5,
+      forceWaitMs: 20,
+      killFn,
+      isExited: () => false,
+      onExit: new Promise(() => {}),
+    });
+
+    // Assert
+    expect(how).toBe('not-stopped');
+    expect(killFn.mock.calls.map((c) => c[1])).toEqual(['SIGTERM', 'SIGKILL']);
+  });
+
   test('POSIX never touches stdin: SIGTERM to the group is the graceful request', async () => {
     // Arrange
     const child = makeFakeChild();
@@ -621,8 +811,11 @@ describe('unexpected exit after startup', () => {
     // Assert
     expect(onUnexpectedExit).toHaveBeenCalledTimes(1);
     const text = unexpectedExitMessage(onUnexpectedExit.mock.calls[0][0]);
-    expect(text.buttons).toEqual(['Restart', 'Quit']);
-    expect(text.detail).toMatch(/stopped \(SIGKILL\)[\s\S]*MemoryError/);
+    expect(text.message).toBe('The analysis engine stopped.');
+    expect(text.buttons).toEqual(['Restart engine', 'Quit']);
+    expect(text.detail).toMatch(
+      /^Restart it to keep working\. Your cohorts are still on this computer\.\n\nDetails: signal SIGKILL\.[\s\S]*MemoryError/
+    );
   });
 
   test.each([

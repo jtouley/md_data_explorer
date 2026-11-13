@@ -66,6 +66,7 @@ let sidecar = null;
  * exactly this value, so they cannot disagree.
  */
 let apiBaseUrl = null;
+/** Set once quitting has begun (before-quit): a backend that stops after this did not fail. */
 let backendStopped = false;
 /** @type {BrowserWindow | null} shown while the backend starts */
 let startupWindow = null;
@@ -277,7 +278,16 @@ function failStartup(failure) {
   app.quit();
 }
 
-/** Spawn the backend and wait until it is ready; false when it failed (error already shown). */
+/**
+ * True when the backend stopped because the app is quitting (the user closed the startup window
+ * or quit while it was starting). That is what they asked for, so no error is shown.
+ */
+const stoppedByApp = (failure) => backendStopped || failure?.reason === 'stopped';
+
+/**
+ * Spawn the backend and wait until it is ready; false when it did not start (a failure was
+ * already shown; quitting during startup shows nothing).
+ */
 async function startBackend() {
   try {
     sidecar = new BackendSidecar({
@@ -293,6 +303,7 @@ async function startBackend() {
     });
     apiBaseUrl = await sidecar.spawn();
   } catch (failure) {
+    if (stoppedByApp(failure)) return false;
     failStartup(failure instanceof Error ? { reason: 'spawn', detail: failure.message } : failure);
     return false;
   }
@@ -301,6 +312,7 @@ async function startBackend() {
   try {
     await sidecar.waitUntilReady();
   } catch (failure) {
+    if (stoppedByApp(failure)) return false;
     failStartup(failure);
     return false;
   }
@@ -356,14 +368,18 @@ app.whenReady().then(async () => {
   });
 });
 
-// Stop the backend before quitting: SIGTERM, then a kill after the grace period.
+// Stop the backend before quitting: SIGTERM, then a kill after the grace period. stop() always
+// settles (the wait after the forced kill is bounded), so quitting cannot hang here.
 app.on('before-quit', (event) => {
   if (!sidecar || backendStopped) return;
   event.preventDefault();
   backendStopped = true;
   sidecar
     .stop()
-    .then((how) => console.log(`🛑 Backend stopped (${how})`))
+    .then((how) => {
+      if (how === 'not-stopped') console.error('Could not stop the backend; quitting anyway');
+      else console.log(`🛑 Backend stopped (${how})`);
+    })
     .catch((error) => console.error('Could not stop the backend:', error?.message || error))
     .finally(() => app.quit());
 });
