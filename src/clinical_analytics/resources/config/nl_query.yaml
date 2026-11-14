@@ -86,6 +86,9 @@ llm_timeout_max_s: 30.0
 # Enable/disable LLM-enhanced features independently
 enable_result_interpretation: true
 
+# Governed SQL (POST /api/queries/sql): user-typed SQL over one dataset. Off by default.
+enable_sql_queries: false
+
 # ADR004: Feature Flags for Surgical Rollback
 # Enable/disable each phase independently for operational safety
 adr004_enable_doc_extraction: true  # Phase 1: PDF/MD/TXT extraction from ZIP uploads

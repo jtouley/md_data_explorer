@@ -1,38 +1,16 @@
-"""Fixtures for data-contract tests (none existed in tests/conftest.py for contracts)."""
+"""Fixtures for data-contract tests (``make_contract`` is shared: tests/conftest.py)."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
 
 import polars as pl
 import pytest
-from open_data_contract_standard.model import OpenDataContractStandard
-
-from clinical_analytics.contracts.builder import ContractInputs, build_contract
 
 DEXA = "DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis"
 STATIN = "Statin use 1: Yes 2: No"
 FIXED_TS = datetime(2026, 11, 3, tzinfo=UTC)
-
-
-@pytest.fixture
-def make_contract() -> Callable[..., OpenDataContractStandard]:
-    """Factory: contract for ``df`` with test defaults (upload u1, version v1, id patient_id)."""
-
-    def _make(df: pl.DataFrame, **overrides: Any) -> OpenDataContractStandard:
-        fields: dict[str, Any] = {
-            "upload_id": "u1",
-            "dataset_version": "v1",
-            "dataset_name": "test cohort",
-            "id_column": "patient_id",
-            "created_at": FIXED_TS,
-        }
-        fields.update(overrides)
-        return build_contract(df, ContractInputs(**fields))
-
-    return _make
 
 
 @pytest.fixture

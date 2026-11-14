@@ -247,6 +247,9 @@ LLM_TIMEOUT_MAX_S: float = _config["llm_timeout_max_s"]
 # Enable/disable LLM-enhanced features independently
 ENABLE_RESULT_INTERPRETATION: bool = _config["enable_result_interpretation"]
 
+# Governed SQL path (ADR013 step 4): POST /api/queries/sql answers 404 unless this is on.
+ENABLE_SQL_QUERIES: bool = _config["enable_sql_queries"]
+
 # ADR004: Feature Flags for Surgical Rollback
 # Enable/disable each phase independently for operational safety
 # Defaults to True for backward compatibility - phases are enabled unless explicitly disabled

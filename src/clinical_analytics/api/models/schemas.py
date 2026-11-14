@@ -89,6 +89,26 @@ class QueryRequest(BaseModel):
     )
 
 
+class SqlQueryRequest(BaseModel):
+    """A user-typed SQL query on one dataset (governed: read-only, checked, small cells hidden)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_id: str = Field(..., min_length=1, description="Dataset to query")
+    sql: str = Field(..., min_length=1, max_length=10_000, description="One SELECT over the table unified")
+
+
+class SqlQueryResult(BaseModel):
+    """The governed answer, or why the query was refused. ``sql`` is the checked query as run."""
+
+    status: Literal["answered", "refused"]
+    sql: str | None = Field(None, description="The checked query (shown with every answer)")
+    columns: list[str] = Field(default_factory=list)
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    reason: str | None = Field(None, description="Why the query was refused (plain language)")
+
+
 class QueryResponse(BaseModel):
     """Response after submitting a query (async processing)."""
 

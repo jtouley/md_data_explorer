@@ -1716,6 +1716,30 @@ def get_dataset_by_name(dataset_registry):
 
 
 @pytest.fixture
+def make_contract():
+    """Factory: ODCS contract for ``df`` with test defaults (upload u1, version v1, id patient_id).
+
+    Shared by the data-contract tests and the governed SQL tests (the contract is SQL's schema).
+    """
+    from datetime import UTC, datetime
+
+    from clinical_analytics.contracts.builder import ContractInputs, build_contract
+
+    def _make(df: pl.DataFrame, **overrides):
+        fields = {
+            "upload_id": "u1",
+            "dataset_version": "v1",
+            "dataset_name": "test cohort",
+            "id_column": "patient_id",
+            "created_at": datetime(2026, 11, 3, tzinfo=UTC),
+        }
+        fields.update(overrides)
+        return build_contract(df, ContractInputs(**fields))
+
+    return _make
+
+
+@pytest.fixture
 def upload_storage(tmp_path):
     """
     Create UserDatasetStorage with temp directory.
