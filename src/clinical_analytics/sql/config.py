@@ -23,5 +23,9 @@ MAX_GROUPS: Final = 200
 MAX_DISCRETE_LEVELS: Final = 20
 # Quantiles a query may ask for: a fine grid of quantiles would trace one patient's position.
 ALLOWED_QUANTILES: Final = frozenset({0.1, 0.25, 0.5, 0.75, 0.9})
+# Conditions one answer may have: the AND terms of its WHERE, FILTERs and count_ifs, plus an
+# IS NOT NULL for each column a count(column) or value aggregate reads. Every combination is a
+# cell per group (2^4 = 16; 3,200 at MAX_GROUPS), so more are refused, never checked in part.
+MAX_CONDITIONS: Final = 4
 TIMEOUT_SECONDS: Final = 10.0
 SMALL_CELL: Final = SMALL_CELL_THRESHOLD

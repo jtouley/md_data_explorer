@@ -1,35 +1,25 @@
 # SPDX-License-Identifier: MIT
 """Run a governed query and show only what keeps every count of 1-10 patients hidden.
 
-The query is never run as written. One generated query computes, per group, the user's measures
-and the patient counts behind them, over the WHOLE table: the WHERE clause becomes a FILTER, so
-the same pass counts the patients the WHERE removes. Those counts are cells, and the totals a
-reader can get by running the query again without its WHERE or without its GROUP BY are lines.
-``core.result_presentation._suppress_lines`` (primary and secondary suppression) then decides what
-is hidden, and ``_small_parts`` / ``_fold_rows`` fold small groups into one row, as on the intent
-path.
+The query is never run as written. The answer's conditions are every AND term of its WHERE, of
+each FILTER and of each count_if, plus ``<column> IS NOT NULL`` for each column a count(column) or
+value aggregate reads (ADR013 section 4.5). Each becomes an indicator, ``coalesce(TRY(term),
+false)``. One grouped query counts patients per group and per combination of indicators (a bit
+mask: 2^k cells per group, at most ``MAX_CONDITIONS`` conditions), split per value of each coded
+column a value aggregate reads (at most ``MAX_DISCRETE_LEVELS`` values), over the WHOLE table:
+rows the WHERE removes are cells too. Rows are patients (``patient_rows``).
 
-Cells, per group g (rows are patients: the dataset must be one row per patient, shown by a
-patient ID on every row that never repeats, or confirmed by the user for this dataset version
-when there is no ID; see ``patient_rows``):
+Lines (totals a reader knows or can learn): a group's cells add up to the group; each cell across
+groups adds up to the same query without GROUP BY; the step-by-step count (the dataset total,
+then each WHERE term in the order written) adds up cells too. ``_suppress_lines`` (primary and
+secondary suppression) decides what is hidden. A group's measures are shown only when none of
+its cells is hidden; an ungrouped answer with a hidden cell is withheld. Every count a shown
+answer reveals about its conditions is then a sum of cells that are each 0 or at least 11, so
+dropping any set of filters, differencing FILTERs or count_ifs inside one answer, and a filter
+that removes few patients in one group only are all covered.
 
-* base: patients in g kept by WHERE (w) and removed by it (o);
-* per aggregate, its partition of g: the rows it reads (``FILTER``, ``count_if``, non-null
-  column), split per value when the column has at most ``MAX_DISCRETE_LEVELS`` values (so avg
-  and stddev of a coded column cannot reveal a value held by 3 patients), and the rest; each part
-  counted under w and under o.
-
-Lines (totals a reader knows or can learn): the parts of each partition within g (total: g's
-count), w + o of each part (total: the query without WHERE), each kind of cell across groups
-(total: the query without GROUP BY), and w + o across groups.
-
-A measure is shown for g only when g's own count is shown and no cell of its aggregates'
-partitions is hidden; a value aggregate (avg, median, ...) also needs at least 11 patients with a
-value. So a difference with the same query without its WHERE, a FILTER that drops 3 patients, or
-a count_if that is 1-10 never shows.
-
-Not covered (documented residual risk): differences between two queries with different WHERE
-clauses (``count(A)`` then ``count(A and B)``), which no single answer can detect.
+Not covered (documented residual risk, ``docs/security/THREAT_MODEL.md``): two answers whose
+conditions are not nested, or that group differently.
 """
 
 from __future__ import annotations
@@ -38,7 +28,7 @@ import functools
 import math
 from collections.abc import Hashable
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 
 import structlog
 from sqlglot import exp
@@ -56,12 +46,10 @@ from clinical_analytics.sql.catalog import SqlCatalog
 from clinical_analytics.sql.errors import SqlRefusedError
 from clinical_analytics.sql.render import render
 from clinical_analytics.sql.sandbox import SandboxConnection
-from clinical_analytics.sql.validate import AGG_MARKER, Aggregate, GovernedQuery
+from clinical_analytics.sql.validate import AGG_MARKER, GovernedQuery
 
 logger = structlog.get_logger()
 
-Row = Literal["w", "o"]  # kept by the WHERE clause / removed by it
-CellKey = tuple[int, int, Row, int | str]  # (group, partition (-1: base), row, part)
 
 VISIT_ROWS = (
     "Some patient IDs are on more than one row, so rows are visits, not patients. "
@@ -79,8 +67,16 @@ TOO_MANY_GROUPS = (
     f"The grouping has more than {config.MAX_GROUPS} groups, too many to check for small groups. "
     "Group by something coarser (a range, a year)."
 )
+TOO_MANY_CONDITIONS = (
+    f"This answer has more than {config.MAX_CONDITIONS} conditions (the AND terms of WHERE, FILTER and "
+    "count_if, and a not-missing check for each column summarised), and every combination of them is "
+    "checked for small groups. Ask with fewer, or combine ranges with BETWEEN or IN."
+)
+WITHHELD = (
+    f"This answer, with its filters, would let a reader work out a count of 1 to {config.SMALL_CELL - 1} "
+    "patients. Ask with fewer filters or a coarser grouping."
+)
 NO_VALUE_LABEL = "(no value)"
-_REST = "rest"
 
 
 class PatientRowsUnconfirmedError(SqlRefusedError):
@@ -101,9 +97,36 @@ class SqlAnswer:
     notes: list[str] = field(default_factory=list)
 
 
+Cell = tuple[int, int, tuple[int, ...]]  # (group, condition bit mask, value index per coded column)
+
+
 @dataclass(frozen=True)
-class _Partition:
-    parts: tuple[exp.Expr, ...]  # disjoint predicates; the rest of the group is implied
+class _Conditions:
+    """The answer's conditions, numbered once (by their rendered text); a set of them is a bit mask."""
+
+    terms: tuple[exp.Expr, ...]
+    where: tuple[int, ...]  # the WHERE clause's terms, in the order written
+    of_aggregate: tuple[int, ...]  # per aggregate: the mask of its own terms
+
+    @property
+    def where_mask(self) -> int:
+        return sum(1 << i for i in self.where)
+
+    def indicator(self, i: int) -> exp.Expr:
+        """True when the row meets term i; an error or NULL is false (never "not p")."""
+        return exp.func("coalesce", exp.Try(this=self.terms[i].copy()), exp.false())
+
+    def predicate(self, mask: int) -> exp.Expr:
+        chosen = [self.indicator(i) for i in range(len(self.terms)) if mask >> i & 1]
+        return exp.and_(*chosen) if chosen else exp.true()
+
+
+@dataclass(frozen=True)
+class _Coded:
+    """Columns read by a value aggregate that have few values: each cell is split per value."""
+
+    columns: tuple[str, ...]
+    values: tuple[tuple[Any, ...], ...]
 
 
 def answer_query(
@@ -121,18 +144,23 @@ def answer_query(
 
     Raises:
         PatientRowsUnconfirmedError: no ID on some or all rows, and no matching confirmation.
-        SqlRefusedError: rows are visits, too many groups, or the query could not run.
+        SqlRefusedError: rows are visits, too many groups or conditions, the query could not
+            run, or (ungrouped) the answer would let a small count be worked out.
     """
     confirmed = patient_rows(sandbox, catalog, confirmed_patient_rows)
-    partitions, part_of = _partitions(query, sandbox)
-    frame = sandbox.run_unsuppressed(_core_sql(query, partitions))
+    conditions = _conditions(query)
+    coded = _coded(query, sandbox)
+    frame = sandbox.run_unsuppressed(_core_sql(query, conditions))
     if frame.height > config.MAX_GROUPS:
         raise SqlRefusedError(TOO_MANY_GROUPS)
     records = frame.to_dicts()
-    cells, lines = _cells_and_lines(records, partitions)
+    cells = _cells(query, sandbox, conditions, coded, records)
+    lines = _lines(cells, conditions, len(records))
     hidden = _suppress_lines(cells, lines)
     logger.info("governed_sql_answered", groups=frame.height, measures=len(query.measures), hidden=len(hidden))
-    return _present(query, records, cells, hidden, partitions, part_of, confirmed)
+    if query.dimension is None and hidden:
+        raise SqlRefusedError(WITHHELD)
+    return _present(query, records, cells, hidden, conditions, confirmed)
 
 
 def patient_rows(sandbox: SandboxConnection, catalog: SqlCatalog, confirmed_rows: int | None) -> bool:
@@ -188,34 +216,61 @@ def _levels(column: str, sandbox: SandboxConnection) -> list[Any] | None:
     return sorted(values)
 
 
-def _partitions(query: GovernedQuery, sandbox: SandboxConnection) -> tuple[list[_Partition], list[int]]:
-    """One partition per distinct set of parts, and each aggregate's partition."""
-    levels: dict[str, list[Any] | None] = {}
-    partitions: list[_Partition] = []
-    index: dict[tuple[str, ...], int] = {}
-    part_of: list[int] = []
+def _conjuncts(expression: exp.Expr | None) -> list[exp.Expr]:
+    """The top-level AND terms of a predicate (none for no predicate)."""
+    if expression is None:
+        return []
+    node = expression
+    while isinstance(node, exp.Paren):
+        node = node.this
+    if isinstance(node, exp.And):
+        return _conjuncts(node.this) + _conjuncts(node.expression)
+    return [node]
+
+
+def _not_null(column: str) -> exp.Expr:
+    return exp.Not(this=exp.Is(this=exp.column(column, quoted=True), expression=exp.Null()))
+
+
+def _conditions(query: GovernedQuery) -> _Conditions:
+    """Number every condition of the answer once.
+
+    Raises:
+        SqlRefusedError: more than ``MAX_CONDITIONS`` (never checked in part).
+    """
+    terms: list[exp.Expr] = []
+    numbered: dict[str, int] = {}
+
+    def number(term: exp.Expr) -> int:
+        key = render(term)
+        if key not in numbered:
+            numbered[key] = len(terms)
+            terms.append(term.copy())
+        return numbered[key]
+
+    where = tuple(dict.fromkeys(number(t) for t in _conjuncts(query.where)))
+    own: list[int] = []
     for agg in query.aggregates:
-        parts = _parts(agg, levels, sandbox)
-        key = tuple(render(p) for p in parts)
-        if key not in index:
-            index[key] = len(partitions)
-            partitions.append(_Partition(parts))
-        part_of.append(index[key])
-    return partitions, part_of
+        mask = 0
+        for term in _conjuncts(agg.condition) + ([_not_null(agg.column)] if agg.column is not None else []):
+            mask |= 1 << number(term)
+        own.append(mask)
+    if len(terms) > config.MAX_CONDITIONS:
+        raise SqlRefusedError(TOO_MANY_CONDITIONS)
+    return _Conditions(tuple(terms), where, tuple(own))
 
 
-def _parts(agg: Aggregate, levels: dict[str, list[Any] | None], sandbox: SandboxConnection) -> tuple[exp.Expr, ...]:
-    condition = _try(agg.condition)
-    if agg.column is None:
-        return (condition.copy(),)
-    ref = exp.column(agg.column, quoted=True)
-    if agg.kind == "value":
-        if agg.column not in levels:
-            levels[agg.column] = _levels(agg.column, sandbox)
-        values = levels[agg.column]
-        if values is not None:
-            return tuple(_and(condition, exp.EQ(this=ref.copy(), expression=exp.convert(v))) for v in values)
-    return (_and(condition, exp.Not(this=exp.Is(this=ref.copy(), expression=exp.Null()))),)
+def _coded(query: GovernedQuery, sandbox: SandboxConnection) -> _Coded:
+    columns: list[str] = []
+    values: list[tuple[Any, ...]] = []
+    for agg in query.aggregates:
+        if agg.kind != "value" or agg.column is None or agg.column in columns:
+            continue
+        found = _levels(agg.column, sandbox)
+        if found is not None:
+            columns.append(agg.column)
+            values.append(tuple(found))
+    return _Coded(tuple(columns), tuple(values))
 
 
 def _try(expression: exp.Expr | None) -> exp.Expr:
@@ -225,21 +280,15 @@ def _try(expression: exp.Expr | None) -> exp.Expr:
     return exp.true() if expression is None else exp.Try(this=expression.copy())
 
 
-def _and(left: exp.Expr, right: exp.Expr) -> exp.Expr:
-    return exp.and_(exp.paren(left.copy()), exp.paren(right.copy()))
-
-
-def _count_where(predicate: exp.Expr) -> exp.Expr:
-    return exp.Filter(this=exp.Count(this=exp.Star()), expression=exp.Where(this=predicate))
-
-
-def _core_sql(query: GovernedQuery, partitions: list[_Partition]) -> str:
-    """Measures and every cell, per group, over the whole table (WHERE as FILTER)."""
-    where = _try(query.where)
+def _core_sql(query: GovernedQuery, conditions: _Conditions) -> str:
+    """The measures per group, each aggregate over the rows meeting the WHERE's and its own terms."""
     dimension = _try(query.dimension) if query.dimension is not None else None
     rewritten = [
-        exp.Filter(this=agg.function.copy(), expression=exp.Where(this=_and(where, _try(agg.condition))))
-        for agg in query.aggregates
+        exp.Filter(
+            this=agg.function.copy(),
+            expression=exp.Where(this=conditions.predicate(conditions.where_mask | conditions.of_aggregate[k])),
+        )
+        for k, agg in enumerate(query.aggregates)
     ]
 
     def measure(template: exp.Expr) -> exp.Expr:
@@ -262,11 +311,6 @@ def _core_sql(query: GovernedQuery, partitions: list[_Partition]) -> str:
     if dimension is not None:
         columns.append(exp.alias_(dimension.copy(), "__d"))
     columns += [exp.alias_(measure(m.template), f"__m{i}") for i, m in enumerate(query.measures)]
-    columns += [exp.alias_(exp.Count(this=exp.Star()), "__all"), exp.alias_(_count_where(where.copy()), "__n")]
-    for p, partition in enumerate(partitions):
-        for j, part in enumerate(partition.parts):
-            columns.append(exp.alias_(_count_where(_and(where, part)), f"__w{p}_{j}"))
-            columns.append(exp.alias_(_count_where(part.copy()), f"__a{p}_{j}"))
     select = exp.select(*columns).from_(config.TABLE_NAME)
     if dimension is not None:
         select = select.group_by(dimension.copy())
@@ -274,37 +318,69 @@ def _core_sql(query: GovernedQuery, partitions: list[_Partition]) -> str:
     return render(wrapped)
 
 
-def _cells_and_lines(
-    records: list[dict[str, Any]], partitions: list[_Partition]
-) -> tuple[dict[CellKey, int], list[list[CellKey]]]:
-    cells: dict[CellKey, int] = {}
-    parts_of: dict[int, list[int | str]] = {-1: [0]}
-    for p, partition in enumerate(partitions):
-        parts_of[p] = [*range(len(partition.parts)), _REST]
-    for g, record in enumerate(records):
-        n = int(record["__n"])
-        o = int(record["__all"]) - n
-        cells[(g, -1, "w", 0)], cells[(g, -1, "o", 0)] = n, o
-        for p, partition in enumerate(partitions):
-            kept = [int(record[f"__w{p}_{j}"]) for j in range(len(partition.parts))]
-            removed = [int(record[f"__a{p}_{j}"]) - k for j, k in enumerate(kept)]
-            for j, (k, r) in enumerate(zip(kept, removed, strict=True)):
-                cells[(g, p, "w", j)], cells[(g, p, "o", j)] = k, r
-            cells[(g, p, "w", _REST)], cells[(g, p, "o", _REST)] = n - sum(kept), o - sum(removed)
+def _group_key(value: Any) -> Any:
+    """A group value as a dict key (NaN never equals itself)."""
+    return "__nan__" if isinstance(value, float) and math.isnan(value) else value
 
-    rows: tuple[Row, Row] = ("w", "o")
-    groups = range(len(records))
-    lines: list[list[CellKey]] = []
-    for g in groups:
-        for p, parts in parts_of.items():
-            if p >= 0:
-                lines += [[(g, p, r, j) for j in parts] for r in rows]  # the partition of g's w / o
-            lines += [[(g, p, "w", j), (g, p, "o", j)] for j in parts]  # same query without WHERE
-    for p, parts in parts_of.items():
-        for part in parts:
-            lines += [[(g, p, r, part) for g in groups] for r in rows]  # same query without GROUP BY
-            lines.append([(g, p, r, part) for g in groups for r in rows])  # without either
-    return cells, lines
+
+def _cells(
+    query: GovernedQuery,
+    sandbox: SandboxConnection,
+    conditions: _Conditions,
+    coded: _Coded,
+    records: list[dict[str, Any]],
+) -> dict[Cell, int]:
+    """Patients per group, per combination of conditions and per value of each coded column."""
+    keys: list[exp.Expr] = []
+    if query.dimension is not None:
+        keys.append(exp.alias_(_try(query.dimension), "__d"))
+    mask: exp.Expr = exp.Literal.number(0)
+    for i in range(len(conditions.terms)):
+        bit = exp.Mul(
+            this=exp.Cast(this=conditions.indicator(i), to=exp.DataType.build("INTEGER")),
+            expression=exp.Literal.number(1 << i),
+        )
+        mask = exp.Add(this=mask, expression=bit)
+    keys.append(exp.alias_(mask, "__k"))
+    for c, (column, values) in enumerate(zip(coded.columns, coded.values, strict=True)):
+        case = exp.case()
+        ref = exp.column(column, quoted=True)
+        for j, value in enumerate(values):
+            case = case.when(exp.EQ(this=ref.copy(), expression=exp.convert(value)), exp.Literal.number(j))
+        keys.append(exp.alias_(case.else_(exp.Literal.number(-1)), f"__v{c}"))
+    select = exp.select(*keys, exp.alias_(exp.Count(this=exp.Star()), "__n")).from_(config.TABLE_NAME)
+    select = select.group_by(*[exp.column(k.alias) for k in keys])
+    index = {_group_key(record.get("__d")): g for g, record in enumerate(records)}
+    cells: dict[Cell, int] = {}
+    for row in sandbox.run_unsuppressed(render(select)).iter_rows(named=True):
+        g = index.get(_group_key(row["__d"])) if query.dimension is not None else 0
+        if g is None:  # both queries group by the same TRY(expression): never, so fail closed
+            raise SqlRefusedError("The query could not run on this dataset.")
+        levels = tuple(int(row[f"__v{c}"]) for c in range(len(coded.columns)))
+        cells[(g, int(row["__k"]), levels)] = int(row["__n"])
+    return cells
+
+
+def _steps(conditions: _Conditions) -> list[int]:
+    """The step-by-step count's masks: no condition, then each WHERE term added in order."""
+    masks, mask = [0], 0
+    for i in conditions.where:
+        mask |= 1 << i
+        masks.append(mask)
+    return masks
+
+
+def _lines(cells: dict[Cell, int], conditions: _Conditions, groups: int) -> list[list[Cell]]:
+    """A group's cells (total: the group); each cell across groups (total: the query without
+    GROUP BY); the cells of each step of the step-by-step count (total: that step)."""
+    by_group: dict[int, list[Cell]] = {}
+    by_key: dict[tuple[int, tuple[int, ...]], list[Cell]] = {}
+    for cell in cells:
+        by_group.setdefault(cell[0], []).append(cell)
+        by_key.setdefault((cell[1], cell[2]), []).append(cell)
+    lines = [*by_group.values(), *by_key.values()]
+    lines += [[c for c in cells if c[1] & step == step] for step in _steps(conditions)]
+    return lines
 
 
 def _label(value: Any) -> str:
@@ -314,35 +390,28 @@ def _label(value: Any) -> str:
 def _present(
     query: GovernedQuery,
     records: list[dict[str, Any]],
-    cells: dict[CellKey, int],
+    cells: dict[Cell, int],
     hidden: set[Any],
-    partitions: list[_Partition],
-    part_of: list[int],
+    conditions: _Conditions,
     confirmed: bool,
 ) -> SqlAnswer:
     grouped = query.dimension is not None
     min_values = config.SMALL_CELL
-
-    def partition_hidden(g: int, p: int) -> bool:
-        parts: list[int | str] = [*range(len(partitions[p].parts)), _REST]
-        return any((g, p, r, j) in hidden for r in ("w", "o") for j in parts)
+    where = conditions.where_mask
+    base = {g: 0 for g in range(len(records))}
+    hidden_groups_at = set()
+    for (g, mask, _levels_of), count in cells.items():
+        if mask & where == where:
+            base[g] += count
+    for g, mask, _levels_of in hidden:
+        hidden_groups_at.add(g)
 
     def shown(g: int, measure_index: int) -> bool:
-        if (g, -1, "w", 0) in hidden:
-            return False
-        for k in query.measures[measure_index].aggregates:
-            p = part_of[k]
-            if partition_hidden(g, p):
-                return False
-            if query.aggregates[k].kind == "value":
-                with_value = sum(cells[(g, p, "w", j)] for j in range(len(partitions[p].parts)))
-                if 0 < with_value < min_values:
-                    return False
-        return True
+        return g not in hidden_groups_at  # a group's measures need every one of its cells shown
 
     measure_names = [m.name for m in query.measures]
     columns = ([query.dimension_name or ""] if grouped else []) + measure_names
-    displayed = [g for g in range(len(records)) if not grouped or cells[(g, -1, "w", 0)] > 0]
+    displayed = [g for g in range(len(records)) if not grouped or base[g] > 0]
     rows: list[dict[str, Any]] = []
     raw: dict[int, Any] = {}
     withheld = False
@@ -367,8 +436,11 @@ def _present(
     table = _table(rows)
     if grouped and table is not None:
         assert query.dimension_name is not None
-        sizes: dict[Hashable, Any] = {_label(records[g]["__d"]): cells[(g, -1, "w", 0)] for g in displayed}
-        hidden_groups = {_label(records[g]["__d"]) for g in displayed if (g, -1, "w", 0) in hidden}
+        sizes: dict[Hashable, Any] = {_label(records[g]["__d"]): base[g] for g in displayed}
+        # The group's count is hidden when a cell it adds up (the rows the WHERE keeps) is hidden.
+        hidden_groups = {
+            _label(records[g]["__d"]) for g in displayed if any(h[0] == g and h[1] & where == where for h in hidden)
+        }
         fold = _small_parts(sizes, hidden_groups)
         folded = _fold_rows(table, set(fold), fold.label)
         assert folded is not None
@@ -382,6 +454,9 @@ def _present(
         table = _limited(table, query.limit, fold.label if fold else None)
     elif table is not None and query.limit is not None:
         table = {"columns": table["columns"], "rows": table["rows"][: query.limit]}
+    steps = _step_note(cells, hidden, conditions)
+    if steps is not None:
+        notes.append(steps)
     if withheld:
         notes.append(
             f'Values marked "{SECONDARY_SUPPRESSED}" are hidden: showing them would show, or let a reader '
@@ -393,6 +468,21 @@ def _present(
         rows=table["rows"] if table is not None else [],
         notes=notes,
     )
+
+
+def _step_note(cells: dict[Cell, int], hidden: set[Any], conditions: _Conditions) -> str | None:
+    """The step-by-step count, CONSORT style: the patients, then each WHERE term in order. A count
+    is hidden when any cell it adds up is hidden (the dataset total is shown by the app anyway)."""
+    if not conditions.where:
+        return None
+    parts = []
+    for n, step in enumerate(_steps(conditions)):
+        summed = [c for c in cells if c[1] & step == step]
+        count = sum(cells[c] for c in summed)
+        text = SECONDARY_SUPPRESSED if n and any(c in hidden for c in summed) else f"{count:,}"
+        label = "patients" if n == 0 else f"with {render(conditions.terms[conditions.where[n - 1]])}"
+        parts.append(f"{text} {label}")
+    return "Step by step: " + " → ".join(parts) + "."
 
 
 def _ordered(rows: list[dict[str, Any]], query: GovernedQuery, raw: dict[int, Any]) -> list[dict[str, Any]]:

@@ -8,6 +8,7 @@ independently with Polars, and against what a reader could subtract from other s
 from __future__ import annotations
 
 import dataclasses
+from collections import defaultdict
 from collections.abc import Callable
 from datetime import date
 from typing import Any
@@ -21,7 +22,13 @@ from clinical_analytics.contracts.declarations import LevelMapping
 from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED
 from clinical_analytics.sql.catalog import SqlCatalog
 from clinical_analytics.sql.errors import SqlRefusedError
-from clinical_analytics.sql.privacy import NO_VALUE_LABEL, PatientRowsUnconfirmedError, SqlAnswer, _ordered
+from clinical_analytics.sql.privacy import (
+    NO_VALUE_LABEL,
+    WITHHELD,
+    PatientRowsUnconfirmedError,
+    SqlAnswer,
+    _ordered,
+)
 from clinical_analytics.sql.validate import validate_sql
 from tests.sql.conftest import N_PATIENTS, synthetic_cohort
 
@@ -29,8 +36,26 @@ SMALL = range(1, 11)
 Ask = Callable[..., SqlAnswer]
 
 
-def _numbers(answer: SqlAnswer, column: str) -> dict[str, Any]:
+def _shown(ask: Ask, sql: str, catalog: SqlCatalog | None = None) -> SqlAnswer | None:
+    """The answer, or None when it is withheld whole (an ungrouped answer with a hidden cell)."""
+    try:
+        return ask(sql, catalog)
+    except SqlRefusedError as refused:
+        if refused.reason != WITHHELD:
+            raise
+        return None
+
+
+def _row(ask: Ask, sql: str, catalog: SqlCatalog | None = None) -> dict[str, Any]:
+    """The first row; a withheld answer reads as every value hidden."""
+    answer = _shown(ask, sql, catalog)
+    return answer.rows[0] if answer is not None else defaultdict(lambda: SECONDARY_SUPPRESSED)
+
+
+def _numbers(answer: SqlAnswer | None, column: str) -> dict[str, Any]:
     """Shown values of ``column`` by group label ("" when ungrouped); hidden ones left out."""
+    if answer is None:
+        return {}
     label_col = answer.columns[0] if len(answer.columns) > 1 and answer.columns[0] != column else None
     shown = {}
     for row in answer.rows:
@@ -72,7 +97,7 @@ def test_privacy_smallGroup_complementHiddenSoTotalCannotRecoverIt(ask_sql: Ask)
     sql = "SELECT ward, count(*) AS n FROM unified GROUP BY ward"
 
     # Act
-    shown = _numbers(ask_sql(sql), "n")
+    shown = _numbers(_shown(ask_sql, sql), "n")
 
     # Assert
     assert N_PATIENTS - sum(shown.values()) not in SMALL
@@ -157,7 +182,7 @@ def test_privacy_sameQueryWithoutWhere_differenceNeverSmall(ask_sql: Ask, narrow
     # Arrange: the attacker runs the query with and without its WHERE clause
 
     # Act
-    with_where, without = _numbers(ask_sql(narrow), "n"), _numbers(ask_sql(wide), "n")
+    with_where, without = _numbers(_shown(ask_sql, narrow), "n"), _numbers(_shown(ask_sql, wide), "n")
 
     # Assert
     for label in with_where.keys() & without.keys():
@@ -177,7 +202,7 @@ def test_privacy_twoMeasuresInOneAnswer_differenceNeverSmall(ask_sql: Ask, sql: 
     # Arrange: a FILTER or count_if that leaves out a few patients, next to the full count
 
     # Act
-    answer = ask_sql(sql)
+    answer = _shown(ask_sql, sql)
 
     # Assert
     a, b = _numbers(answer, "a"), _numbers(answer, "b")
@@ -190,10 +215,10 @@ def test_privacy_arithmeticOverCounts_cannotIsolateSmallGroup(ask_sql: Ask) -> N
     sql = "SELECT count(*) - count_if(ward <> 'ICU') AS icu FROM unified"
 
     # Act
-    answer = ask_sql(sql)
+    row = _row(ask_sql, sql)
 
     # Assert
-    assert answer.rows[0]["icu"] == SECONDARY_SUPPRESSED
+    assert row["icu"] == SECONDARY_SUPPRESSED
 
 
 def test_privacy_valueDifferenceViaFilter_cannotRecoverSmallGroupSum(ask_sql: Ask) -> None:
@@ -201,7 +226,7 @@ def test_privacy_valueDifferenceViaFilter_cannotRecoverSmallGroupSum(ask_sql: As
     sql = "SELECT sum(age) AS s, sum(age) FILTER (WHERE ward <> 'ICU') AS s2 FROM unified"
 
     # Act
-    row = ask_sql(sql).rows[0]
+    row = _row(ask_sql, sql)
 
     # Assert: never both, or s - s2 is the three ICU patients' ages
     assert SECONDARY_SUPPRESSED in (row["s"], row["s2"])
@@ -209,8 +234,8 @@ def test_privacy_valueDifferenceViaFilter_cannotRecoverSmallGroupSum(ask_sql: As
 
 def test_privacy_valueDifferenceViaWhere_cannotRecoverSmallGroupMean(ask_sql: Ask) -> None:
     # Arrange: the mean with and without the 10 patients aged 18
-    narrow = ask_sql("SELECT sum(ldl) AS s FROM unified WHERE age > 18").rows[0]["s"]
-    wide = ask_sql("SELECT sum(ldl) AS s FROM unified").rows[0]["s"]
+    narrow = _row(ask_sql, "SELECT sum(ldl) AS s FROM unified WHERE age > 18")["s"]
+    wide = _row(ask_sql, "SELECT sum(ldl) AS s FROM unified")["s"]
 
     # Act / Assert: at most one of them is shown
     assert SECONDARY_SUPPRESSED in (narrow, wide)
@@ -218,11 +243,11 @@ def test_privacy_valueDifferenceViaWhere_cannotRecoverSmallGroupMean(ask_sql: As
 
 def test_privacy_groupsVersusTotal_hiddenMassNeverSmall(ask_sql: Ask) -> None:
     # Arrange: deaths per ward, against total deaths (a query without GROUP BY)
-    grouped = _numbers(ask_sql("SELECT ward, count_if(died = 1) AS n FROM unified GROUP BY ward"), "n")
-    total = _numbers(ask_sql("SELECT count_if(died = 1) AS n FROM unified"), "n")
+    grouped = _numbers(_shown(ask_sql, "SELECT ward, count_if(died = 1) AS n FROM unified GROUP BY ward"), "n")
+    total = _numbers(_shown(ask_sql, "SELECT count_if(died = 1) AS n FROM unified"), "n")
 
     # Act
-    hidden_mass = total[""] - sum(grouped.values())
+    hidden_mass = total[""] - sum(grouped.values()) if total else 0
 
     # Assert
     assert hidden_mass not in SMALL
@@ -247,10 +272,10 @@ def test_privacy_momentsOfCodedColumn_hiddenWhenAValueIsRare(ask_sql: Ask, sql: 
     # would give every value's count.
 
     # Act
-    answer = ask_sql(sql)
+    answer = _shown(ask_sql, sql)
 
-    # Assert: no row shows both moments
-    for row in answer.rows:
+    # Assert: no row shows both moments (a withheld answer shows none)
+    for row in answer.rows if answer is not None else []:
         assert SECONDARY_SUPPRESSED in (row["m"], row["v"])
 
 
@@ -259,10 +284,10 @@ def test_privacy_meanOfBinaryColumn_hiddenWhenOutcomeCountSmall(ask_sql: Ask) ->
     sql = "SELECT avg(died) AS rate FROM unified WHERE age = 18"
 
     # Act
-    answer = ask_sql(sql)
+    row = _row(ask_sql, sql)
 
     # Assert
-    assert answer.rows[0]["rate"] == SECONDARY_SUPPRESSED
+    assert row["rate"] == SECONDARY_SUPPRESSED
 
 
 def test_privacy_meanOfContinuousColumn_shownForLargeGroups(ask_sql: Ask) -> None:
@@ -420,7 +445,7 @@ def test_privacy_zeroAndEmpty_shownAsTheyAre(ask_sql: Ask, sql: str, column: str
     # Arrange: zeros reveal no patient, so they are shown
 
     # Act
-    value = ask_sql(sql).rows[0][column]
+    value = _row(ask_sql, sql)[column]
 
     # Assert
     assert value == expected
@@ -556,11 +581,11 @@ def test_privacy_dataDependentError_neverFailsTheQuery(
         df = df.with_columns(pl.when(pl.col("ward") == "ICU").then(pl.lit("A")).otherwise(pl.col("ward")).alias("ward"))
     catalog = make_sql_catalog(df)
 
-    # Act: no exception, whichever dataset
-    answer = ask_sql(sql, catalog)
+    # Act: no failure, whichever dataset (an answer withheld for a small cell is not a failure)
+    answer = _shown(ask_sql, sql, catalog)
 
     # Assert
-    assert answer.rows
+    assert answer is None or answer.rows
 
 
 def test_privacy_castAroundSummary_refusedBecauseItCanFail(ask_sql: Ask) -> None:
@@ -701,14 +726,15 @@ def test_privacy_phiInWhereOrFilter_countedAndSuppressed(phi_catalog: SqlCatalog
     # Arrange: one zip (5 patients) picked out in WHERE and in FILTER
 
     # Act
-    answer = ask_sql(
+    row = _row(
+        ask_sql,
         "SELECT count(*) AS n, count(*) FILTER (WHERE zip = 10001) AS z FROM unified WHERE zip_text = '10001'",
         phi_catalog,
     )
 
     # Assert
-    assert answer.rows[0]["n"] == SECONDARY_SUPPRESSED
-    assert answer.rows[0]["z"] == SECONDARY_SUPPRESSED
+    assert row["n"] == SECONDARY_SUPPRESSED
+    assert row["z"] == SECONDARY_SUPPRESSED
 
 
 def test_privacy_valueAggregates_numbersNotText(make_sql_catalog: Callable[..., SqlCatalog], ask_sql: Ask) -> None:
@@ -746,3 +772,247 @@ def test_privacy_orderTies_brokenByGroupWhateverTheEngineOrder(
 
     # Assert: the shown value first, then the hidden ones by group, never by arrival
     assert [row["ward"] for row in ordered] == ["B", "A", "C"]
+
+
+# ---------------------------------------------------------------------------------------------
+# Filters differenced against each other: within one answer, across nested WHERE clauses, per group
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # Reported shape: nested FILTERs, no WHERE (here ICU men: 1 patient)
+        "SELECT count(*) FILTER (WHERE sex = 'M') - count(*) FILTER (WHERE sex = 'M' AND ward <> 'ICU') AS d "
+        "FROM unified",
+        "SELECT count_if(sex = 'M') - count_if(sex = 'M' AND ward <> 'ICU') AS d FROM unified",
+        # Not nested as written: (ICU or F) minus F is the ICU men
+        "SELECT count(*) FILTER (WHERE ward = 'ICU' OR sex = 'F') - count(*) FILTER (WHERE sex = 'F') AS d "
+        "FROM unified",
+        # FILTER differences inside a WHERE
+        "SELECT count_if(ward <> 'B') - count_if(ward = 'A') AS d FROM unified WHERE sex = 'M'",
+        # A value aggregate's rows differenced against a count
+        "SELECT count(ldl) FILTER (WHERE sex = 'M') - count(*) FILTER (WHERE sex = 'M' AND ldl IS NOT NULL "
+        "AND ward <> 'ICU') AS d FROM unified",
+    ],
+)
+def test_privacy_filtersDifferencedInOneMeasure_neverSmall(ask_sql: Ask, sql: str) -> None:
+    # Arrange: two counts whose filters differ by a few patients, subtracted in the query
+
+    # Act
+    value = _row(ask_sql, sql)["d"]
+
+    # Assert
+    assert value == SECONDARY_SUPPRESSED or value not in SMALL
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ("count(*) FILTER (WHERE sex = 'M')", "count(*) FILTER (WHERE sex = 'M' AND ward <> 'ICU')"),
+        ("count_if(ward = 'ICU' OR sex = 'F')", "count_if(sex = 'F')"),
+        ("count_if(ward <> 'B')", "count_if(ward = 'A')"),
+        ("count(*) FILTER (WHERE score >= 2)", "count(*) FILTER (WHERE score = 2)"),
+    ],
+)
+@pytest.mark.parametrize("grouped", [False, True])
+def test_privacy_filtersDifferencedAcrossColumns_neverSmall(ask_sql: Ask, a: str, b: str, grouped: bool) -> None:
+    # Arrange: the same two counts as separate outputs, for the reader to subtract (per group too)
+    sql = (
+        f"SELECT sex, {a} AS a, {b} AS b FROM unified GROUP BY sex"
+        if grouped
+        else f"SELECT {a} AS a, {b} AS b FROM unified"
+    )
+
+    # Act
+    answer = _shown(ask_sql, sql)
+
+    # Assert
+    shown_a, shown_b = _numbers(answer, "a"), _numbers(answer, "b")
+    for label in shown_a.keys() & shown_b.keys():
+        assert shown_a[label] - shown_b[label] not in SMALL
+
+
+def _three_filter_cohort() -> pl.DataFrame:
+    """A=1 on 205 patients: 200 also have B=1 and C=1, 5 have neither. No patient with A fails
+    only B or only C, so dropping one filter at a time changes nothing; dropping both drops 5."""
+    n_abc, n_a_only, n_rest = 200, 5, 95
+    flags = [(1, 1, 1)] * n_abc + [(1, 0, 0)] * n_a_only + [(0, i % 2, (i // 2) % 2) for i in range(n_rest)]
+    return pl.DataFrame(
+        {
+            "patient_id": [f"P{i:04d}" for i in range(len(flags))],
+            "sex": ["F" if i % 2 else "M" for i in range(len(flags))],
+            "a": [f[0] for f in flags],
+            "b": [f[1] for f in flags],
+            "c": [f[2] for f in flags],
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("narrow", "wide"),
+    [
+        (
+            "SELECT count(*) AS n FROM unified WHERE a = 1 AND b = 1 AND c = 1",
+            "SELECT count(*) AS n FROM unified WHERE a = 1",
+        ),
+        (
+            "SELECT count(*) AS n FROM unified WHERE a = 1 AND b = 1 AND c = 1",
+            "SELECT count(*) AS n FROM unified WHERE a = 1 AND b = 1",
+        ),
+        (
+            "SELECT count_if(a = 1 AND b = 1 AND c = 1) AS n FROM unified",
+            "SELECT count_if(a = 1) AS n FROM unified",
+        ),
+        (
+            "SELECT count(*) FILTER (WHERE b = 1 AND c = 1) AS n FROM unified WHERE a = 1",
+            "SELECT count(*) AS n FROM unified WHERE a = 1",
+        ),
+        (
+            "SELECT sex, count(*) AS n FROM unified WHERE a = 1 AND b = 1 AND c = 1 GROUP BY sex",
+            "SELECT sex, count(*) AS n FROM unified WHERE a = 1 GROUP BY sex",
+        ),
+    ],
+)
+def test_privacy_severalFiltersDropped_differenceNeverSmall(
+    make_sql_catalog: Callable[..., SqlCatalog], ask_sql: Ask, narrow: str, wide: str
+) -> None:
+    # Arrange: dropping B or C alone changes nothing; dropping both drops 5 patients
+    catalog = make_sql_catalog(_three_filter_cohort())
+
+    # Act
+    with_all, with_fewer = (
+        _numbers(_shown(ask_sql, narrow, catalog), "n"),
+        _numbers(_shown(ask_sql, wide, catalog), "n"),
+    )
+
+    # Assert
+    for label in with_all.keys() & with_fewer.keys():
+        assert with_fewer[label] - with_all[label] not in SMALL
+
+
+def test_privacy_severalFiltersDroppedInOneAnswer_neverSmall(
+    make_sql_catalog: Callable[..., SqlCatalog], ask_sql: Ask
+) -> None:
+    # Arrange
+    catalog = make_sql_catalog(_three_filter_cohort())
+    sql = "SELECT count_if(a = 1) AS x, count_if(a = 1 AND b = 1 AND c = 1) AS y FROM unified"
+
+    # Act
+    row = _row(ask_sql, sql, catalog)
+
+    # Assert
+    assert SECONDARY_SUPPRESSED in (row["x"], row["y"]) or row["x"] - row["y"] not in SMALL
+
+
+def test_privacy_whereRemovesFewInOneGroupOnly_thatGroupHidden(
+    make_sql_catalog: Callable[..., SqlCatalog], ask_sql: Ask
+) -> None:
+    # Arrange: age > 65 removes 40 patients overall but only 3 women
+    old_men, old_women = 37, 3
+    n = 300
+    df = pl.DataFrame(
+        {
+            "patient_id": [f"P{i:04d}" for i in range(n)],
+            "sex": ["M" if i < 150 else "F" for i in range(n)],
+            "age": [70 if i < old_men or 150 <= i < 150 + old_women else 50 for i in range(n)],
+        }
+    )
+    catalog = make_sql_catalog(df)
+
+    # Act
+    narrow = _numbers(
+        _shown(ask_sql, "SELECT sex, count(*) AS n FROM unified WHERE age <= 65 GROUP BY sex", catalog), "n"
+    )
+    wide = _numbers(_shown(ask_sql, "SELECT sex, count(*) AS n FROM unified GROUP BY sex", catalog), "n")
+    total_narrow = _numbers(_shown(ask_sql, "SELECT count(*) AS n FROM unified WHERE age <= 65", catalog), "n")
+
+    # Assert: the women's row is hidden, and totals can't give it back
+    assert "F" not in narrow
+    for label in narrow.keys() & wide.keys():
+        assert wide[label] - narrow[label] not in SMALL
+    if "" in total_narrow and "M" in narrow:
+        assert wide["F"] - (total_narrow[""] - narrow["M"]) not in SMALL
+
+
+def _old_age_cohort(old_women: int, old_men: int, n: int = 300) -> pl.DataFrame:
+    """Half women; ``old_women`` women and ``old_men`` men are over 65, everyone else is 50."""
+    half = n // 2
+    return pl.DataFrame(
+        {
+            "patient_id": [f"P{i:04d}" for i in range(n)],
+            "sex": ["F" if i < half else "M" for i in range(n)],
+            "age": [70 if i < old_women or half <= i < half + old_men else 50 for i in range(n)],
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # The query reported on #108: 5 men over 65, no WHERE
+        "SELECT count(*) FILTER (WHERE age > 65) - count(*) FILTER (WHERE age > 65 AND sex = 'F') AS d FROM unified",
+        "SELECT count(*) FILTER (WHERE age > 65) AS a, count(*) FILTER (WHERE age > 65 AND sex = 'F') AS d "
+        "FROM unified",
+        "SELECT count_if(age > 65) - count_if(age > 65 AND sex = 'F') AS d FROM unified",
+    ],
+)
+def test_privacy_reportedFilterDifference_withheld(
+    make_sql_catalog: Callable[..., SqlCatalog], ask_sql: Ask, sql: str
+) -> None:
+    # Arrange: 60 women and 5 men over 65
+    catalog = make_sql_catalog(_old_age_cohort(old_women=60, old_men=5))
+
+    # Act / Assert
+    with pytest.raises(SqlRefusedError) as refused:
+        ask_sql(sql, catalog)
+    assert refused.value.reason == WITHHELD
+
+
+def test_privacy_nullConditionAndItsNot_bothCellsChecked(
+    make_sql_catalog: Callable[..., SqlCatalog], ask_sql: Ask
+) -> None:
+    # Arrange: 3 patients have no LDL, so "ldl > 100" and "NOT (ldl > 100)" are both false for them
+    df = synthetic_cohort().with_columns(
+        pl.when(pl.int_range(pl.len()) < 3)
+        .then(None)
+        .otherwise(pl.lit(90.0) + pl.int_range(pl.len()) % 40)
+        .alias("ldl")
+    )
+    catalog = make_sql_catalog(df)
+    sql = "SELECT count_if(ldl > 100) AS a, count_if(NOT (ldl > 100)) AS b FROM unified"
+
+    # Act
+    row = _row(ask_sql, sql, catalog)
+
+    # Assert: a + b would be everyone but the 3
+    assert SECONDARY_SUPPRESSED in (row["a"], row["b"])
+
+
+def test_privacy_stepByStepCount_matchesTheDataAndHidesWithTheCells(
+    make_sql_catalog: Callable[..., SqlCatalog], ask_sql: Ask
+) -> None:
+    # Arrange: 300 patients, 150 women, 60 of them over 65 (and 40 men over 65)
+    catalog = make_sql_catalog(_old_age_cohort(old_women=60, old_men=40))
+
+    # Act
+    shown = ask_sql("SELECT count(*) AS n FROM unified WHERE sex = 'F' AND age > 65", catalog)
+    grouped = ask_sql(
+        "SELECT sex, count(*) AS n FROM unified WHERE age > 65 GROUP BY sex",
+        make_sql_catalog(_old_age_cohort(old_women=3, old_men=40)),
+    )
+
+    # Assert: each step shown when its cells are; with a small cell, the step is hidden
+    assert 'Step by step: 300 patients → 150 with "sex" = \'F\' → 60 with "age" > 65.' in shown.notes
+    step = next(note for note in grouped.notes if note.startswith("Step by step"))
+    assert step == f'Step by step: 300 patients → {SECONDARY_SUPPRESSED} with "age" > 65.'
+
+
+@pytest.mark.parametrize("terms", [5, 6])
+def test_privacy_moreConditionsThanChecked_refused(ask_sql: Ask, terms: int) -> None:
+    # Arrange: 2^k cells per group, so more than MAX_CONDITIONS is refused, never checked in part
+    where = " AND ".join(f"age <> {i}" for i in range(terms))
+
+    # Act / Assert
+    with pytest.raises(SqlRefusedError, match="more than 4 conditions"):
+        ask_sql(f"SELECT count(*) AS n FROM unified WHERE {where}")
