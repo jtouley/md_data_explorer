@@ -7,7 +7,9 @@ Provides real FastAPI server, database, and dataset fixtures for integration tes
 import socket
 import threading
 import time
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
+from typing import Any
 
 import polars as pl
 import pytest
@@ -170,3 +172,105 @@ def uploaded_test_dataset(tmp_path):
     )
 
     return upload_id, storage
+
+
+@pytest.fixture
+def fresh_layer_cache():
+    """The API's semantic-layer cache, empty and private to the test (4 layers, real builder).
+
+    Yields the LayerCache; pending background closes are drained and its thread stopped after.
+    """
+    from unittest.mock import patch
+
+    from clinical_analytics.api import dependencies
+    from clinical_analytics.api.layer_cache import LayerCache
+
+    cache = LayerCache(4, dependencies._build_semantic_layer)
+    with patch.object(dependencies, "_layer_cache", cache):
+        yield cache
+    cache.shutdown()
+
+
+@pytest.fixture
+def seed_layer_cache(fresh_layer_cache):
+    """Put a layer in the private cache as if a question had built it: seed(dataset_id, layer)."""
+
+    def _seed(dataset_id, layer):
+        build = fresh_layer_cache._build
+        fresh_layer_cache._build = lambda _id: layer
+        try:
+            fresh_layer_cache.lease(dataset_id).release()
+        finally:
+            fresh_layer_cache._build = build
+        return layer
+
+    return _seed
+
+
+class FakeLayer:
+    """A layer with the parts the layer cache and the query routes touch: a DuckDB lock,
+    close(), and the upload version its rows were read with."""
+
+    def __init__(self, dataset_id: str, number: int, loaded_version: str | None = None) -> None:
+        self.dataset_id = dataset_id
+        self.number = number
+        self.loaded_version = loaded_version
+        self._con_lock = threading.RLock()
+        self.closed = False
+        self.closed_on: str | None = None
+
+    def close(self) -> None:
+        with self._con_lock:
+            self.closed = True
+            self.closed_on = threading.current_thread().name
+
+
+class Builds:
+    """A layer builder for LayerCache: counts builds per dataset and hands out a new FakeLayer
+    each time. ``versions[dataset_id]`` is the upload version the next build of it reads;
+    ``before_return`` runs inside each build (a re-upload or a stall mid-build)."""
+
+    def __init__(self) -> None:
+        self.count: dict[str, int] = {}
+        self.layers: list[FakeLayer] = []
+        self.by_dataset: dict[str, list[FakeLayer]] = {}
+        self.versions: dict[str, str] = {}
+        self.before_return: Callable[[str], None] | None = None
+
+    def __call__(self, dataset_id: str) -> FakeLayer:
+        self.count[dataset_id] = self.count.get(dataset_id, 0) + 1
+        layer = FakeLayer(dataset_id, self.count[dataset_id], self.versions.get(dataset_id))
+        if self.before_return is not None:
+            self.before_return(dataset_id)
+        self.layers.append(layer)
+        self.by_dataset.setdefault(dataset_id, []).append(layer)
+        return layer
+
+
+@pytest.fixture
+def builds() -> Builds:
+    """A fresh FakeLayer builder (see Builds)."""
+    return Builds()
+
+
+@pytest.fixture
+def make_layer_lease() -> Iterator[Callable[..., Any]]:
+    """Factory: make_layer_lease(layer) -> a real LayerLease on ``layer`` from a private cache.
+
+    For service tests that need a lease (submit_query and execute_query require one) without the
+    API's cache. Each call returns a new lease; the caches are shut down after the test.
+    """
+    from clinical_analytics.api.layer_cache import LayerCache
+
+    caches: list[LayerCache[Any]] = []
+
+    def _make(layer: Any, dataset_id: str = "ds") -> Any:
+        if not hasattr(layer, "close"):
+            layer.close = lambda: None
+        cache: LayerCache[Any] = LayerCache(1, lambda _id: layer)
+        caches.append(cache)
+        return cache.lease(dataset_id)
+
+    yield _make
+    for cache in caches:
+        cache.shutdown()

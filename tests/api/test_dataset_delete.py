@@ -65,7 +65,7 @@ def test_deleteDataset_uploadWithSessionsOverlaysAndResults_leavesNoTraceInDataH
     overlay = default_overlay_dir() / "overlays" / dataset_id / "v1"
     overlay.mkdir(parents=True)
     (overlay / "patches.jsonl").write_text(f'{{"column": "diagnosis", "value": "{marker}"}}\n')
-    queries.get_query_service_for_dataset(dataset_id)
+    queries.lease_query_service(dataset_id)[1].release()
     needles = [dataset_id.encode(), marker.encode()]
     assert _traces(data_home(), needles), "the upload should have left data to delete"
     store = data_home() / "data" / "analytics.duckdb"
@@ -140,7 +140,7 @@ def test_deleteDataset_queryAndPreviewArriveDuringPurge_rejected409AndNothingCac
     assert response.status_code == 200, response.text
     assert seen == {"query": 409, "preview": 409, "detail": 409}
     assert dataset_id not in queries._query_services
-    assert dataset_id not in dependencies._semantic_layer_cache
+    assert dependencies._layer_cache.cached_layer(dataset_id) is None
     assert dataset_id not in dependencies._deleting_datasets
 
 

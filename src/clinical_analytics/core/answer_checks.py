@@ -122,7 +122,7 @@ def missing_key_note(grain: Grain, visits: bool) -> str | None:
 def declared_visits(grain: Grain, declarations: Declarations, dataset_version: str | None) -> bool:
     """Whether the stored grain declaration was made on this dataset version and still matches
     its counts (a corrected re-upload of the same shape is a new version: asked again)."""
-    stored = declarations.grain
+    stored = declarations.grain_for(dataset_version)
     return stored is not None and stored == grain.declaration(dataset_version)
 
 

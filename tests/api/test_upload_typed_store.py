@@ -29,8 +29,8 @@ def test_uploadDataset_mixedDateFormats_readyThenQueryable(test_client: TestClie
         data={"dataset_name": "dates"},
     )
     body = response.json()
-    layer = dependencies.get_semantic_layer(body["upload_id"])
-    frame = layer.get_base_view().to_polars()
+    with dependencies.lease_semantic_layer(body["upload_id"]) as lease:
+        frame = lease.layer.get_base_view().to_polars()
 
     # Assert
     assert response.status_code == 200, body
@@ -110,7 +110,8 @@ def test_uploadDataset_xlsxTitleAboveHeader_readyWithEveryColumn(
         data={"dataset_name": "title_row"},
     )
     body = response.json()
-    frame = dependencies.get_semantic_layer(body["upload_id"]).get_base_view().to_polars()
+    with dependencies.lease_semantic_layer(body["upload_id"]) as lease:
+        frame = lease.layer.get_base_view().to_polars()
 
     # Assert
     assert response.status_code == 200, body
@@ -140,7 +141,8 @@ def test_uploadDataset_xlsxThreeSheets_noteSaysWhichSheetOfHowManyWasRead(
         data={"dataset_name": "three_sheets"},
     )
     body = response.json()
-    frame = dependencies.get_semantic_layer(body["upload_id"]).get_base_view().to_polars()
+    with dependencies.lease_semantic_layer(body["upload_id"]) as lease:
+        frame = lease.layer.get_base_view().to_polars()
 
     # Assert
     assert response.status_code == 200, body
@@ -170,7 +172,8 @@ def test_uploadDataset_xlsxFootnoteBelowBlankRow_readyAndNoteCountsIt(
         data={"dataset_name": "footnote"},
     )
     body = response.json()
-    frame = dependencies.get_semantic_layer(body["upload_id"]).get_base_view().to_polars()
+    with dependencies.lease_semantic_layer(body["upload_id"]) as lease:
+        frame = lease.layer.get_base_view().to_polars()
 
     # Assert
     assert response.status_code == 200, body

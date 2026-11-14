@@ -179,9 +179,11 @@ class NLQueryConfigDefaults:
     enable_proactive_questions: bool = False
     llm_timeout_question_generation_s: float = 5.0
     enable_multi_layer_validation: bool = False
-    # DuckDB limits per semantic layer (each is its own DuckDB, so N open layers may use N times
-    # these): a percentage of RAM or a size ("20%", "2GB"); 0 threads = half the CPUs.
-    duckdb_memory_limit: str = "20%"
+    # Open semantic layers (datasets) the API keeps, and the DuckDB memory they share: a
+    # percentage of RAM or a size ("60%", "8GB"), split evenly, so each layer gets
+    # budget / cache size. Threads are per layer; 0 = half the CPUs.
+    semantic_layer_cache_size: int = 4
+    duckdb_memory_budget: str = "60%"
     duckdb_threads: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -217,9 +219,15 @@ class NLQueryConfigDefaults:
             "enable_proactive_questions": self.enable_proactive_questions,
             "llm_timeout_question_generation_s": self.llm_timeout_question_generation_s,
             "enable_multi_layer_validation": self.enable_multi_layer_validation,
-            "duckdb_memory_limit": self.duckdb_memory_limit,
+            "semantic_layer_cache_size": self.semantic_layer_cache_size,
+            "duckdb_memory_budget": self.duckdb_memory_budget,
             "duckdb_threads": self.duckdb_threads,
         }
+
+
+# Kept as written in the YAML, never coerced to the default's type: nl_query_config validates
+# them at import and stops startup on a bad value ("four" or 2.5 must not become 4 or 2).
+RAW_VALIDATED_KEYS: frozenset[str] = frozenset({"semantic_layer_cache_size", "duckdb_memory_budget", "duckdb_threads"})
 
 
 def _is_critical_config(key: str) -> bool:
@@ -274,7 +282,9 @@ def load_nl_query_config(config_path: Path | None = None) -> dict[str, Any]:
                 yaml_data = yaml.safe_load(f) or {}
                 # Merge YAML data into defaults
                 for key, value in yaml_data.items():
-                    if key in defaults:
+                    if key in RAW_VALIDATED_KEYS:
+                        config[key] = value
+                    elif key in defaults:
                         # Coerce type based on default value type
                         target_type = type(defaults[key])
                         try:
@@ -326,7 +336,8 @@ def load_nl_query_config(config_path: Path | None = None) -> dict[str, Any]:
         "ENABLE_RESULT_INTERPRETATION": "enable_result_interpretation",
         "ENABLE_PROACTIVE_QUESTIONS": "enable_proactive_questions",
         "LLM_TIMEOUT_QUESTION_GENERATION_S": "llm_timeout_question_generation_s",
-        "DUCKDB_MEMORY_LIMIT": "duckdb_memory_limit",
+        "SEMANTIC_LAYER_CACHE_SIZE": "semantic_layer_cache_size",
+        "DUCKDB_MEMORY_BUDGET": "duckdb_memory_budget",
         "DUCKDB_THREADS": "duckdb_threads",
     }
 

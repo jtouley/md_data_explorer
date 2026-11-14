@@ -25,6 +25,7 @@ from clinical_analytics.datasets.uploaded.patient_id_regeneration import (
     validate_synthetic_id_metadata,
 )
 from clinical_analytics.storage.staging import StagingError
+from clinical_analytics.storage.upload_metadata import normalize_upload_metadata
 from clinical_analytics.ui.storage.user_datasets import StoredDataset, UserDatasetStorage
 
 logger = structlog.get_logger()
@@ -114,8 +115,13 @@ class UploadedDataset(ClinicalDataset):
         self._semantic_initialized = False  # Track lazy init
         self._stored: StoredDataset | None = None
 
-        # Load metadata
-        self.metadata = metadata if metadata is not None else storage.get_upload_metadata(upload_id)
+        # Load metadata. It is external data, normalized at this boundary (the stored file by
+        # get_upload_metadata, the probe's dict here) so its dict and list fields are never None.
+        self.metadata = (
+            normalize_upload_metadata(metadata, upload_id=upload_id)
+            if metadata is not None
+            else storage.get_upload_metadata(upload_id)
+        )
         if not self.metadata:
             raise ValueError(f"Upload {upload_id} not found")
 
@@ -609,6 +615,10 @@ class UploadedDataset(ClinicalDataset):
             log.error("semantic_layer_build_failed", error_type=type(e).__name__)
             raise SemanticLayerBuildError(f"the query view could not be built ({type(e).__name__})") from e
 
+        # The version of the metadata these rows were read with, so a question on this layer is
+        # labelled with it even if the dataset is uploaded again while the question runs.
+        version = self.metadata.get("dataset_version")
+        layer.loaded_version = version if isinstance(version, str) and version else None
         self.semantic = layer
         log.info("semantic_layer_built", tables=len(self.metadata.get("tables") or []))
 
@@ -633,7 +643,7 @@ class UploadedDataset(ClinicalDataset):
                 "categorical_variables": inferred_schema.get("categorical_columns", []),
             },
             # Include variable_types metadata for column type detection
-            "variable_types": safe_get(self.metadata, "variable_types"),
+            "variable_types": safe_get(self.metadata, "variable_types", {}),
         }
         return config
 
@@ -736,7 +746,7 @@ class UploadedDataset(ClinicalDataset):
                 "categorical_variables": categorical_variables,
             },
             # Include variable_types metadata for column type detection
-            "variable_types": metadata_dict.get("variable_types"),
+            "variable_types": metadata_dict.get("variable_types", {}),
         }
         return config
 

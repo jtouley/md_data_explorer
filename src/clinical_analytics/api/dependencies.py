@@ -3,7 +3,7 @@
 
 Provides reusable dependencies for routes:
 - Database session injection
-- Semantic layer singleton (replaces @st.cache_resource)
+- Semantic layers, leased from a bounded cache (replaces @st.cache_resource)
 - Authentication (future)
 
 Reference: docs/architecture/SEMANTIC_LAYER_FASTAPI_ADAPTER.md
@@ -13,32 +13,24 @@ import threading
 import weakref
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Annotated
 
-from fastapi import Depends, HTTPException, Path, status
+from fastapi import HTTPException, status
 
+from clinical_analytics.api.layer_cache import LayerCache, LayerCacheError, LayerLease
+from clinical_analytics.core import nl_query_config
 from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.datasets.uploaded.definition import SemanticLayerBuildError, UploadedDatasetFactory
 from clinical_analytics.storage.datastore import STORE_BUSY_MESSAGE, StoreBusyError
 
 # ============================================================================
-# Semantic Layer Dependency (Singleton Pattern)
+# Semantic Layers (bounded cache, leased per request)
 # ============================================================================
-
-# Module-level cache: one SemanticLayer instance per dataset_id
-# Replaces Streamlit's @st.cache_resource pattern
-# Non-picklable objects (DuckDB connections, Ibis expressions) stored directly
-_semantic_layer_cache: dict[str, SemanticLayer] = {}
-# One lock per dataset_id so concurrent cold requests build a single SemanticLayer
-# (and a single DuckDB connection) instead of racing and orphaning the loser.
-_semantic_layer_locks: dict[str, threading.Lock] = {}
-_semantic_layer_locks_guard = threading.Lock()
-
 
 # Datasets being deleted: requests that would load their rows get 409 until the delete ends.
 _deleting_datasets: set[str] = set()
 
 DATASET_BEING_DELETED = "This dataset is being deleted."
+DATASET_CHANGED_WHILE_LOADING = "This dataset changed while it was loading. Try again."
 
 
 def reject_if_deleting(dataset_id: str) -> None:
@@ -47,20 +39,103 @@ def reject_if_deleting(dataset_id: str) -> None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=DATASET_BEING_DELETED)
 
 
+def _build_semantic_layer(dataset_id: str) -> SemanticLayer:
+    """Load the dataset and build its layer (DuckDB + Ibis). Runs under the dataset's build lock.
+
+    Raises:
+        HTTPException: 409 while the dataset is being deleted, 503 when the store is busy, 404 when
+            the dataset does not exist, 500 when its query view cannot be built (other failures
+            propagate).
+    """
+    # Checked again under the build lock: the delete guard takes the same lock.
+    reject_if_deleting(dataset_id)
+    try:
+        dataset = UploadedDatasetFactory.create_dataset(dataset_id)
+        dataset.load()
+        layer: SemanticLayer = dataset.get_semantic_layer()
+    except StoreBusyError as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=STORE_BUSY_MESSAGE) from e
+    except SemanticLayerBuildError as e:
+        # The dataset exists but its query view could not be built: say so, never "not found".
+        # Nothing is cached, so the next request tries again.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Dataset '{dataset_id}' could not be loaded for questions. Upload it again.",
+        ) from e
+    except (FileNotFoundError, ValueError) as e:
+        # UploadedDataset.__init__ raises ValueError when no metadata exists for
+        # dataset_id at all; UploadedDataset.load() raises FileNotFoundError when
+        # metadata exists but the backing file is missing. Both mean "not found".
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            # No exception text: it carries absolute paths.
+            detail=f"Dataset '{dataset_id}' not found",
+        ) from e
+    # Any other failure is a bug, not a client error: it propagates so FastAPI logs the
+    # traceback and returns a generic 500 without leaking paths or internals.
+    # Only the layers this cache keeps share the budget; probes and other layers keep the
+    # standalone limit they were built with.
+    limited = False
+    try:
+        layer.set_memory_limit(nl_query_config.CACHED_LAYER_MEMORY_LIMIT)
+        limited = True
+    finally:
+        if not limited:
+            layer.close()  # never leave a layer over its share, or open behind a failed build
+    return layer
+
+
+# At most SEMANTIC_LAYER_CACHE_SIZE layers stay open; each gets budget / size of DuckDB memory.
+# A layer is used only through a lease, and closed (on a background thread) once it has left
+# the cache and its last lease is released. See api/layer_cache.py.
+_layer_cache: LayerCache[SemanticLayer] = LayerCache(nl_query_config.SEMANTIC_LAYER_CACHE_SIZE, _build_semantic_layer)
+
+
+def lease_semantic_layer(dataset_id: str) -> LayerLease[SemanticLayer]:
+    """Lease the dataset's layer, building it if needed. Release the lease in ``finally``.
+
+    Blocking (a cold build reads the store): call it off the event loop.
+
+    Raises:
+        HTTPException: as _build_semantic_layer; 503 if the dataset kept changing while it loaded.
+    """
+    reject_if_deleting(dataset_id)
+    try:
+        return _layer_cache.lease(dataset_id)
+    except LayerCacheError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=DATASET_CHANGED_WHILE_LOADING
+        ) from e
+
+
 @contextmanager
 def dataset_deletion_guard(dataset_id: str) -> Iterator[None]:
     """Mark ``dataset_id`` as being deleted and drop its cached layer, atomically w.r.t. builds."""
-    with _semantic_layer_lock(dataset_id):
+    with _layer_cache.build_lock(dataset_id):
         if dataset_id in _deleting_datasets:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=DATASET_BEING_DELETED)
         _deleting_datasets.add(dataset_id)
-        _semantic_layer_cache.pop(dataset_id, None)
+        _layer_cache.invalidate(dataset_id)
     try:
         yield
     finally:
-        with _semantic_layer_lock(dataset_id):
-            _semantic_layer_cache.pop(dataset_id, None)
+        with _layer_cache.build_lock(dataset_id):
+            _layer_cache.invalidate(dataset_id)
             _deleting_datasets.discard(dataset_id)
+
+
+def invalidate_semantic_layer_cache(dataset_id: str) -> None:
+    """Drop the dataset's cached layer: it was deleted, uploaded again or reconfigured.
+
+    Never blocks, so the async upload route may call it on the event loop: a layer in use is
+    closed once its last lease is released, an idle one on the cache's background thread. The
+    next question builds a new layer, and its AsyncQueryService rebinds to it (keeping results,
+    events and history).
+
+    Args:
+        dataset_id: Dataset identifier to invalidate
+    """
+    _layer_cache.invalidate(dataset_id)
 
 
 # One lock per dataset_id around writes of derived files (contracts, quality reports) and the
@@ -80,101 +155,3 @@ def dataset_files_lock(dataset_id: str) -> Iterator[None]:
             _dataset_files_locks[dataset_id] = lock
     with lock:
         yield
-
-
-def _semantic_layer_lock(dataset_id: str) -> threading.Lock:
-    with _semantic_layer_locks_guard:
-        return _semantic_layer_locks.setdefault(dataset_id, threading.Lock())
-
-
-def get_semantic_layer(dataset_id: Annotated[str, Path(..., description="Dataset ID")]) -> SemanticLayer:
-    """Get or create cached semantic layer instance for a dataset.
-
-    Replaces Streamlit's @st.cache_resource pattern:
-    - Single instance per dataset_id (singleton)
-    - Stored in module-level dict (no pickling required)
-    - Reused across all requests for same dataset
-    - Thread-safe (DuckDB handles concurrent access)
-
-    Args:
-        dataset_id: Dataset identifier for cache key
-
-    Returns:
-        SemanticLayer: Cached or newly created semantic layer instance
-
-    Raises:
-        HTTPException: 404 if dataset not found (other load failures propagate)
-
-    Example:
-        @app.get("/api/datasets/{dataset_id}/info")
-        async def get_dataset_info(
-            semantic_layer: Annotated[SemanticLayer, Depends(get_semantic_layer)]
-        ):
-            return semantic_layer.get_dataset_info()
-    """
-    reject_if_deleting(dataset_id)
-    cached = _semantic_layer_cache.get(dataset_id)
-    if cached is not None:
-        return cached
-
-    with _semantic_layer_lock(dataset_id):
-        # Checked again under the lock: the delete guard takes the same lock.
-        reject_if_deleting(dataset_id)
-        # Re-check: another request may have filled the cache while this one waited.
-        if dataset_id not in _semantic_layer_cache:
-            try:
-                # Create dataset instance and load data
-                dataset = UploadedDatasetFactory.create_dataset(dataset_id)
-                dataset.load()
-
-                # Get semantic layer (DuckDB + Ibis)
-                _semantic_layer_cache[dataset_id] = dataset.get_semantic_layer()
-
-            except StoreBusyError as e:
-                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=STORE_BUSY_MESSAGE) from e
-            except SemanticLayerBuildError as e:
-                # The dataset exists but its query view could not be built: say so, never "not found".
-                # Nothing is cached, so the next request tries again.
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Dataset '{dataset_id}' could not be loaded for questions. Upload it again.",
-                ) from e
-            except (FileNotFoundError, ValueError) as e:
-                # UploadedDataset.__init__ raises ValueError when no metadata exists for
-                # dataset_id at all; UploadedDataset.load() raises FileNotFoundError when
-                # metadata exists but the backing file is missing. Both mean "not found".
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    # No exception text: it carries absolute paths.
-                    detail=f"Dataset '{dataset_id}' not found",
-                ) from e
-            # Any other failure is a bug, not a client error: let it propagate so FastAPI logs
-            # the traceback and returns a generic 500 without leaking paths or internals.
-
-        return _semantic_layer_cache[dataset_id]
-
-
-def invalidate_semantic_layer_cache(dataset_id: str) -> None:
-    """Invalidate semantic layer cache for a dataset.
-
-    Call this when:
-    - Dataset is deleted
-    - Dataset is updated (new upload)
-    - Dataset configuration changes
-
-    The next get_query_service_for_dataset() sees a different layer and rebuilds its
-    AsyncQueryService, so dropping the layer here is enough to refresh queries.
-
-    Args:
-        dataset_id: Dataset identifier to invalidate
-    """
-    with _semantic_layer_lock(dataset_id):
-        _semantic_layer_cache.pop(dataset_id, None)
-
-
-# ============================================================================
-# Type Aliases for Route Injection
-# ============================================================================
-
-# Semantic layer dependency annotation
-SemanticLayerDep = Annotated[SemanticLayer, Depends(get_semantic_layer)]

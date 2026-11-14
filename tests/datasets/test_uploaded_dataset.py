@@ -8,8 +8,10 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import polars as pl
 import pytest
 
+from clinical_analytics.core.mapper import ColumnMapper
 from clinical_analytics.datasets.uploaded.definition import UploadedDataset
 
 
@@ -572,3 +574,134 @@ class TestMaybeInitSemantic:
         assert dataset.semantic is not None
         assert dataset.semantic.config["init_params"]["source_path"] == str(Path(converted).resolve())
         assert Path(expected_absolute_path).is_file()  # the legacy CSV is left in place
+
+
+# How a metadata container field can arrive from an upload: null, missing, or the wrong type.
+_FIELD_STATES = [
+    pytest.param(True, None, id="none"),
+    pytest.param(False, None, id="absent"),
+    pytest.param(True, "not-a-container", id="wrong_type"),
+]
+
+
+def _upload_metadata(upload_id: str, path: tuple[str, ...], present: bool, value: object) -> dict:
+    """Upload metadata with a valid schema and mapping, except the field at ``path``."""
+    metadata: dict = {
+        "upload_id": upload_id,
+        "upload_timestamp": "2024-01-01T00:00:00",
+        "variable_types": {"age": {"type": "numeric"}},
+        "inferred_schema": {
+            "column_mapping": {"patient_id": "patient_id"},
+            "outcomes": {"died": {"source_column": "died", "type": "binary"}},
+            "predictors": ["age"],
+        },
+        "variable_mapping": {
+            "patient_id": "patient_id",
+            "outcome": "died",
+            "time_variables": {"time_zero": None},
+            "predictors": ["age"],
+        },
+    }
+    parent = metadata
+    for key in path[:-1]:
+        parent = parent[key]
+    del parent[path[-1]]
+    if present:
+        parent[path[-1]] = value
+    return metadata
+
+
+class TestUploadMetadataNormalizedAtBoundary:
+    """A null, missing or wrong-typed metadata field reaches every config builder and reader as empty.
+
+    Covers the read sites that crashed on a present None: definition.py (both config builders and
+    get_cohort), semantic.py (get_base_view, get_cohort, _find_mapped_column) and mapper.py.
+    """
+
+    @pytest.mark.parametrize(
+        ("path", "config_key"),
+        [
+            pytest.param(("variable_types",), "variable_types", id="variable_types"),
+            pytest.param(("inferred_schema", "outcomes"), "outcomes", id="outcomes"),
+            pytest.param(("inferred_schema", "column_mapping"), "column_mapping", id="column_mapping"),
+        ],
+    )
+    @pytest.mark.parametrize(("present", "value"), _FIELD_STATES)
+    def test_buildConfigFromInferredSchema_fieldMissingOrInvalid_isEmptyDict(
+        self, upload_storage, path, config_key, present, value
+    ):
+        # Arrange
+        metadata = _upload_metadata("u_schema", path, present, value)
+        dataset = UploadedDataset(upload_id="u_schema", storage=upload_storage, metadata=metadata)
+
+        # Act
+        config = dataset._build_config_from_inferred_schema(dataset.metadata["inferred_schema"])
+        mapper = ColumnMapper(config)
+
+        # Assert: the builder and ColumnMapper both see an empty dict, never None
+        assert config[config_key] == {}
+        assert isinstance(mapper.column_mapping, dict)
+        assert isinstance(mapper.outcomes, dict)
+
+    @pytest.mark.slow
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        ("path", "config_check"),
+        [
+            pytest.param(("variable_mapping", "time_variables"), lambda c: c["time_zero"] == {}, id="time_variables"),
+            pytest.param(
+                ("variable_mapping", "predictors"),
+                lambda c: c["analysis"]["default_predictors"] == [],
+                id="predictors",
+            ),
+            pytest.param(("variable_types",), lambda c: c["variable_types"] == {}, id="variable_types"),
+        ],
+    )
+    @pytest.mark.parametrize(("present", "value"), _FIELD_STATES)
+    def test_variableMappingPaths_fieldMissingOrInvalid_buildConfigAndCohort(
+        self, upload_storage, path, config_check, present, value
+    ):
+        # Arrange: a single-table upload (no inferred_schema), so the variable_mapping paths run
+        metadata = _upload_metadata("u_mapping", path, present, value)
+        del metadata["inferred_schema"]
+        pl.DataFrame({"patient_id": ["P001", "P002"], "age": [50, 60], "died": [0, 1]}).write_csv(
+            upload_storage.raw_dir / "u_mapping.csv"
+        )
+        dataset = UploadedDataset(upload_id="u_mapping", storage=upload_storage, metadata=metadata)
+        dataset.load()
+
+        # Act
+        config = dataset._build_config_from_variable_mapping(dataset.metadata["variable_mapping"])
+        cohort = dataset.get_cohort()
+
+        # Assert
+        assert config_check(config)
+        assert cohort.shape[0] == 2
+
+    @pytest.mark.slow
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "path",
+        [
+            pytest.param(("inferred_schema", "outcomes"), id="outcomes"),
+            pytest.param(("inferred_schema", "column_mapping"), id="column_mapping"),
+        ],
+    )
+    @pytest.mark.parametrize(("present", "value"), _FIELD_STATES)
+    def test_semanticLayer_fieldMissingOrInvalid_buildsViewAndCohort(self, upload_storage, path, present, value):
+        # Arrange
+        metadata = _upload_metadata("u_layer", path, present, value)
+        pl.DataFrame({"patient_id": ["P001", "P002"], "age": [50, 60], "died": [0, 1]}).write_csv(
+            upload_storage.raw_dir / "u_layer.csv"
+        )
+        dataset = UploadedDataset(upload_id="u_layer", storage=upload_storage, metadata=metadata)
+        dataset.load()
+
+        # Act: get_base_view reads outcomes and column_mapping; get_cohort reads both again
+        layer = dataset.get_semantic_layer()
+        view_columns = layer.get_base_view().columns
+        cohort = layer.get_cohort()  # SemanticLayer.get_cohort returns pandas (its API)
+
+        # Assert
+        assert {"patient_id", "age"} <= set(view_columns)
+        assert cohort.shape[0] == 2
