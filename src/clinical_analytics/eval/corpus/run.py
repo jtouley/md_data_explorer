@@ -7,6 +7,9 @@ with a new temporary ``CLINICAL_ANALYTICS_DATA_HOME`` and HOME, uploads it throu
 ``POST /api/datasets/upload``, and asks every question through ``/api/queries``: each in a new
 session, a follow-up in its parent's session. A held question is confirmed once only when its
 YAML says ``confirm: true``. The presented answer is graded by ``eval.corpus.score``.
+Questions marked ``heldout: true`` are counted apart from the dev questions: only held-out
+results count toward a step's "done", and no fix is tuned on them. A dataset whose corpus entry
+names a ``pending`` change runs as usual, and the report says what it waits for.
 
 Results (JSON and a markdown table) go to a directory outside the repo; the table is printed.
 Only aggregates are written: the claim and table the app presents, never rows.
@@ -101,6 +104,7 @@ class QuestionResult:
     confirmed: bool
     claim: str | None = None
     table: dict[str, Any] | None = None
+    heldout: bool = False
 
 
 @dataclass
@@ -113,11 +117,13 @@ class RunReport:
     settings: dict[str, Any]
     results: list[QuestionResult] = field(default_factory=list)
 
-    def counts(self) -> dict[str, int]:
+    def counts(self, heldout: bool | None = None) -> dict[str, int]:
+        """Grades of every question, or of the dev (``heldout=False``) or held-out ones only."""
+        chosen = [r for r in self.results if heldout is None or r.heldout == heldout]
         tally = {grade: 0 for grade in ("RIGHT", "WRONG", "HELD", "ERROR")}
-        for result in self.results:
+        for result in chosen:
             tally[result.grade] += 1
-        tally["LEAK"] = sum(result.leak for result in self.results)
+        tally["LEAK"] = sum(result.leak for result in chosen)
         return tally
 
 
@@ -127,12 +133,17 @@ class RunReport:
 def load_questions(dataset: str) -> list[dict[str, Any]]:
     raw = yaml.safe_load((QUESTIONS_DIR / f"{dataset}.yaml").read_text(encoding="utf-8"))
     questions = [{"dataset_id": raw["dataset_id"], **item} for item in raw["questions"]]
-    seen: set[str] = set()
+    split: dict[str, bool] = {}
     for question in questions:
+        heldout = question.get("heldout", False)
+        if not isinstance(heldout, bool):
+            raise AcceptanceError(f"{question['id']}: heldout must be true or false, got {heldout!r}")
         parent = question.get("follow_up_of")
-        if parent is not None and parent not in seen:
+        if parent is not None and parent not in split:
             raise AcceptanceError(f"{question['id']} follows up {parent}, which is not asked before it")
-        seen.add(question["id"])
+        if parent is not None and split[parent] != heldout:
+            raise AcceptanceError(f"{question['id']} and the question it follows up must both be held out or neither")
+        split[question["id"]] = heldout
     return questions
 
 
@@ -470,6 +481,7 @@ def ask_all(
             confirmed=asked.confirmed,
             claim=presentation.get("claim"),
             table=presentation.get("table"),
+            heldout=bool(question.get("heldout", False)),
         )
         results.append(result)
         logger.info("accept_question", id=result.id, grade=result.grade, leak=result.leak, latency_s=result.latency_s)
@@ -508,7 +520,12 @@ def run(
         label=label,
         git_head=_git_head(app_src.parent if app_src else REPO_ROOT),
         started_at=datetime.now(UTC).isoformat(timespec="seconds"),
-        settings={"timeout_s": timeout_s, "llm_timeout_s": llm_timeout_s, "ollama_base_url": ollama_base_url},
+        settings={
+            "timeout_s": timeout_s,
+            "llm_timeout_s": llm_timeout_s,
+            "ollama_base_url": ollama_base_url,
+            "pending": corpus[dataset].pending,
+        },
     )
     work = Path(tempfile.mkdtemp(prefix="mdde-accept-"))
     api = Api(work, server_env(work, secrets.token_urlsafe(32), model, ollama_base_url, llm_timeout_s, app_src))
@@ -543,8 +560,14 @@ def _server_note(code: int | None) -> str:
     return "" if code in (None, -15) else f" · **API process exited with code {code} during the run**"
 
 
+def _tally(counts: dict[str, int]) -> str:
+    return " · ".join(f"{name} {n}" for name, n in counts.items())
+
+
 def markdown(report: RunReport) -> str:
-    counts = report.counts()
+    """The run as a table. Dev and held-out questions are counted on separate lines: only the
+    held-out line counts toward a step's "done", and fixes are never tuned on it."""
+    pending = report.settings.get("pending")
     latencies = [result.latency_s for result in report.results]
     median = statistics.median(latencies) if latencies else 0.0
     llm_ran = sum(result.llm == "ran" for result in report.results)
@@ -553,18 +576,23 @@ def markdown(report: RunReport) -> str:
         "",
         f"Upload: {report.settings.get('upload')} · "
         f"model-call timeout: {report.settings.get('llm_timeout_s') or 'app default'}"
-        + _server_note(report.settings.get("server_exit_code")),
+        + _server_note(report.settings.get("server_exit_code"))
+        + (f" · **pending {pending}**" if pending else ""),
         "",
-        " · ".join(f"{name} {n}" for name, n in counts.items())
-        + f" · median latency {median:.1f}s · LLM tier ran on {llm_ran}/{len(report.results)}",
+        f"dev: {_tally(report.counts(heldout=False))}",
         "",
-        "| id | grade | leak | tier | LLM | latency s | reason |",
-        "|---|---|---|---|---|---|---|",
+        f"held out: {_tally(report.counts(heldout=True))}",
+        "",
+        f"median latency {median:.1f}s · LLM tier ran on {llm_ran}/{len(report.results)}",
+        "",
+        "| id | set | grade | leak | tier | LLM | latency s | reason |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for result in report.results:
         reason = result.reason.replace("|", "\\|").replace("\n", " ")[:180]
         lines.append(
-            f"| {result.id} | {result.grade} | {'LEAK' if result.leak else ''} | {result.tier or '-'} | "
+            f"| {result.id} | {'held out' if result.heldout else 'dev'} | {result.grade} | "
+            f"{'LEAK' if result.leak else ''} | {result.tier or '-'} | "
             f"{result.llm} | {result.latency_s:.1f} | {reason} |"
         )
     return "\n".join(lines) + "\n"
@@ -575,7 +603,12 @@ def write_results(report: RunReport, results_dir: Path) -> Path:
     model = re.sub(r"[^\w.-]", "_", report.model)
     out = results_dir / f"{stamp}-{report.dataset}-{model}-{report.label}"
     out.mkdir(parents=True, exist_ok=True)
-    payload = {**asdict(report), "counts": report.counts()}
+    payload = {
+        **asdict(report),
+        "counts": report.counts(),
+        "counts_dev": report.counts(heldout=False),
+        "counts_heldout": report.counts(heldout=True),
+    }
     (out / "results.json").write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
     (out / "results.md").write_text(markdown(report), encoding="utf-8")
     return out

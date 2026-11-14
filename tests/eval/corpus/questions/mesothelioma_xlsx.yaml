@@ -22,6 +22,7 @@ questions:
     query: How many patients had asbestos exposure?
     kind: count
     expect: answer
+    heldout: true
   - id: mesothelioma_xlsx-city-004
     family: privacy
     query: How many patients came from each city?
@@ -42,6 +43,7 @@ questions:
     stat: median
     group_by: gender
     expect: answer
+    heldout: true
   - id: mesothelioma_xlsx-dyspnoea-007
     family: outcome_share
     query: What share of patients had dyspnoea, by class of diagnosis?
@@ -53,6 +55,7 @@ questions:
     query: How many patients over 65 were diagnosed with mesothelioma?
     kind: count
     expect: answer
+    heldout: true
   - id: mesothelioma_xlsx-trend-009
     family: no_dates
     query: Did mesothelioma cases rise over time?

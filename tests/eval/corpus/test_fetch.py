@@ -228,12 +228,69 @@ class TestPackageEntries:
                 id="file_with_two_entries",
             ),
             pytest.param({"contents": [{"name": "a", "from": "a"}]}, id="zip_without_name"),
+            pytest.param({"zip": "x.zip", "contents": []}, id="zip_without_entries"),
+            pytest.param({"upload": "prebuilt", "zip": "x.zip", "recipe": "r"}, id="prebuilt_without_sha256"),
+            pytest.param({"upload": "prebuilt", "zip": "x.zip", "sha256": "0" * 64}, id="prebuilt_without_recipe"),
         ],
     )
     def test_uploadPackage_inconsistentShape_rejected(self, package):
         # Arrange / Act / Assert
         with pytest.raises(ValidationError):
             UploadPackage.model_validate(package)
+
+
+class TestPrebuiltUpload:
+    @staticmethod
+    def _dataset(body: bytes, make_corpus_dataset):
+        dataset, urls = make_corpus_dataset()
+        dataset.upload_package = UploadPackage.model_validate(
+            {"upload": "prebuilt", "zip": "set.zip", "sha256": hashlib.sha256(body).hexdigest(), "recipe": "snapshot"}
+        )
+        return dataset, urls
+
+    def test_fetchDataset_prebuiltInSeed_linkedIntoCacheAndReturned(
+        self, tmp_path, make_corpus_dataset, make_downloader
+    ):
+        # Arrange
+        body = b"PK-synthetic-prebuilt"
+        dataset, urls = self._dataset(body, make_corpus_dataset)
+        download, _ = make_downloader(urls)
+        seed = tmp_path / "seed"
+        seed.mkdir()
+        (seed / "set.zip").write_bytes(body)
+
+        # Act
+        upload = fetch_dataset(dataset.name, tmp_path / "cache", [seed], download, {dataset.name: dataset})
+
+        # Assert
+        assert upload.read_bytes() == body
+        assert upload.parent == tmp_path / "cache" / dataset.name
+
+    @pytest.mark.parametrize(
+        ("seeded", "cached", "error"),
+        [
+            pytest.param(None, None, CorpusFetchError, id="in_no_seed"),
+            pytest.param(b"other", None, CorpusFetchError, id="seed_differs"),
+            pytest.param(None, b"stale", ChecksumMismatchError, id="cache_differs"),
+        ],
+    )
+    def test_fetchDataset_prebuiltMissingOrChanged_raises(
+        self, tmp_path, make_corpus_dataset, make_downloader, seeded, cached, error
+    ):
+        # Arrange
+        dataset, urls = self._dataset(b"PK-synthetic-prebuilt", make_corpus_dataset)
+        download, _ = make_downloader(urls)
+        seed = tmp_path / "seed"
+        seed.mkdir()
+        if seeded is not None:
+            (seed / "set.zip").write_bytes(seeded)
+        if cached is not None:
+            (tmp_path / "cache" / dataset.name).mkdir(parents=True)
+            (tmp_path / "cache" / dataset.name / "set.zip").write_bytes(cached)
+
+        # Act / Assert
+        with pytest.raises(error):
+            fetch_dataset(dataset.name, tmp_path / "cache", [seed], download, {dataset.name: dataset})
 
 
 class TestShippedCorpus:
@@ -245,7 +302,7 @@ class TestShippedCorpus:
         assert "covid_ms" in corpus
         for dataset in corpus.values():
             package = dataset.upload_package
-            if package.upload == "zip":
+            if package.upload in ("zip", "prebuilt"):
                 assert re.fullmatch(r"[0-9a-f]{64}", package.sha256 or "")
             for entry in package.contents:
                 assert entry.make == "copy" or re.fullmatch(r"[0-9a-f]{64}", entry.sha256 or "")

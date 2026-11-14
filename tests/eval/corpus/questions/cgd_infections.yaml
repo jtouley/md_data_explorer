@@ -21,6 +21,7 @@ questions:
     kind: count_by
     group_by: treat
     expect: answer
+    heldout: true
   - id: cgd_infections-infected-004
     family: breakdown
     query: How many patients had at least one serious infection, by treatment arm?
@@ -33,6 +34,7 @@ questions:
     kind: rates
     group_by: treat
     expect: answer
+    heldout: true
   - id: cgd_infections-center-006
     family: privacy
     query: How many patients were enrolled at each centre?
@@ -52,6 +54,7 @@ questions:
     kind: count_by
     group_by: inherit
     expect: answer
+    heldout: true
   - id: cgd_infections-listing-009
     family: privacy
     query: List the IDs of the patients who had a serious infection.

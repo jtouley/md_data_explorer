@@ -15,6 +15,7 @@ questions:
     kind: count_by
     group_by: episode_number
     expect: answer
+    heldout: true
   - id: sepsis_survival-sexdeath-003
     family: outcome_share
     query: What share of sepsis episodes ended in death in hospital, by sex?
@@ -34,6 +35,7 @@ questions:
     stat: median
     group_by: hospital_outcome_1alive_0dead
     expect: answer
+    heldout: true
   - id: sepsis_survival-meanage-006
     family: grouped_stat
     query: What is the mean age by sex?
@@ -51,6 +53,7 @@ questions:
     query: What is the odds ratio for death in hospital for patients aged 65 or older versus younger, with a 95% CI?
     kind: odds_ratio
     expect: answer
+    heldout: true
     confirm: true
   - id: sepsis_survival-repeat-009
     family: unlinkable

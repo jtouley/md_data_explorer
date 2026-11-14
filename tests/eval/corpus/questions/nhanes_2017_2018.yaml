@@ -22,6 +22,7 @@ questions:
     kind: count_by
     group_by: RIDRETH3
     expect: answer
+    heldout: true
   - id: nhanes_2017_2018-age-004
     family: grouped_stat
     query: What is the mean age of male and female participants?
@@ -47,6 +48,7 @@ questions:
     stat: mean
     group_by: RIAGENDR
     expect: answer
+    heldout: true
   - id: nhanes_2017_2018-hcv-008
     family: filter_count
     query: How many participants tested positive for hepatitis C RNA?
@@ -57,6 +59,7 @@ questions:
     query: What is the survey-weighted prevalence of hepatitis C RNA in the US population, with a 95% CI?
     kind: listing
     expect: held
+    heldout: true
   - id: nhanes_2017_2018-cycles-010
     family: no_dates
     query: How has hepatitis C prevalence changed since earlier survey cycles?

@@ -21,6 +21,7 @@ questions:
     kind: rates
     group_by: rx
     expect: answer
+    heldout: true
   - id: prostate_xls-cause-004
     family: privacy
     query: How many patients are there for each status, including each cause of death?
@@ -39,6 +40,7 @@ questions:
     query: How many patients over 75 died of prostate cancer?
     kind: count
     expect: answer
+    heldout: true
   - id: prostate_xls-stageage-007
     family: grouped_stat
     query: What is the mean age by stage?
@@ -51,6 +53,7 @@ questions:
     query: Among patients on placebo or 5.0 mg estrogen, what is the odds ratio for death from heart or vascular disease on 5.0 mg estrogen versus placebo, with a 95% CI?
     kind: odds_ratio
     expect: answer
+    heldout: true
     confirm: true
   - id: prostate_xls-after2020-009
     family: no_dates

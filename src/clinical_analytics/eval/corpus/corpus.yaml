@@ -234,6 +234,7 @@ datasets:
       sha256: 17d42fc1ed6460c1b56cefba0566c3abf588bfd7b1f6eb3d292845deee0fb74f
     # The oracles read DEMO_J.xpt and its sibling tables in the same directory.
     oracle_input: DEMO_J.xpt
+    pending: feat/corpus-formats (ZIP uploads and .xpt tables)
 
   - name: prostate_xls
     title: Prostate cancer trial (Byar & Green), Vanderbilt Biostatistics .xls
@@ -258,6 +259,7 @@ datasets:
       upload: file
       contents:
         - {name: prostate.xls, from: prostate.xls, make: copy}
+    pending: feat/corpus-formats (the app reads .xls with xlrd; the oracle reads it with xlrd too)
 
   - name: mesothelioma_xlsx
     title: Mesothelioma's disease data set (UCI 351)
@@ -285,3 +287,37 @@ datasets:
           member: Mesothelioma data set.xlsx
           sha256: cb3a7b5b9352ff30224f5080769db031339dd78c5a4ffb6860cb2a2a54cba73f
     oracle_input: Mesothelioma data set.xlsx
+
+  - name: sepsis_2019
+    title: >-
+      Early Prediction of Sepsis from Clinical Data: PhysioNet/Computing in Cardiology Challenge
+      2019 v1.0.0 (training sets A and B)
+    landing_page: https://physionet.org/content/challenge-2019/1.0.0/
+    license:
+      id: ODbL-1.0
+      url: https://opendatacommons.org/licenses/odbl/1-0/
+      terms: >-
+        The shipped LICENSE.txt is ODbL v1.0 (the project page says CC BY 4.0; the stricter is
+        kept). Attribute; share derived databases alike. Cite Reyna et al., Crit Care Med 2020.
+    # One PSV file per ICU patient, one row per hour: the patient ID is only in the file name
+    # (pNNNNNN), "NaN" is missing, Gender is 0 female / 1 male, ICULOS is hours since ICU admission.
+    grain: patient-hour (40,336 patients in 40,336 files; 1,552,210 hours)
+    rows: 1552210
+    id_column: file name stem
+    files:
+      - path: LICENSE.txt
+        url: https://physionet.org/files/challenge-2019/1.0.0/LICENSE.txt?download
+        kind: license
+        sha256: bcdfcd4f31c790e30fb645dc36414907172405897adff329ad379eed85d12017
+        bytes: 25815
+    upload_package:
+      # 40,336 PSV files are too many to list and pin here; the corpus snapshot pins each one
+      # (file_lists/challenge2019_training_set{A,B}.txt) and built this ZIP of them, the manuscript
+      # PDF, the project page text and LICENSE.txt. The oracles read the same ZIP.
+      upload: prebuilt
+      zip: physionet_sepsis_challenge_2019.zip
+      sha256: ca9a6dd092024dc0843cef072854d4d073c290ef8136f5b8add9e7cc474a0e7b
+      recipe: >-
+        corpus snapshot 2026-11-13, scripts/build_uploads.py (sorted entries, fixed 2026-01-01
+        timestamps, deflate level 6); pass the snapshot's upload/ directory as --seed
+    pending: feat/corpus-formats (per-patient PSV file sets in a ZIP)

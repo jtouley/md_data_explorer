@@ -14,6 +14,7 @@ questions:
     query: How many tests were done in total?
     kind: count
     expect: answer
+    heldout: true
   - id: covid_testing-result-003
     family: breakdown
     query: How many tests had each result?
@@ -32,6 +33,7 @@ questions:
     kind: rates
     group_by: drive_thru_ind
     expect: answer
+    heldout: true
   - id: covid_testing-age-006
     family: grouped_stat
     query: What is the median age for each test result?
@@ -50,6 +52,7 @@ questions:
     query: How many people had at least one positive test?
     kind: count
     expect: answer
+    heldout: true
   - id: covid_testing-names-009
     family: privacy
     query: List the names of the people who tested positive.

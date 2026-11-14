@@ -9,8 +9,9 @@ as the page bytes, which change with every site-template or view-count update. A
 hard-linked into the cache when it can be, so a large snapshot is not stored twice.
 
 The upload is packaged the way a user would upload it: a ZIP of the table and its documents, a
-member taken out of the publisher's archive (``make: extract``, its own sha256 pinned), or one
-file as it is (``upload: file``: a workbook, or a CSV uploaded on its own).
+member taken out of the publisher's archive (``make: extract``, its own sha256 pinned), one
+file as it is (``upload: file``: a workbook, or a CSV uploaded on its own), or a ZIP the corpus
+snapshot built from more files than corpus.yaml can list (``upload: prebuilt``).
 
     uv run python -m clinical_analytics.eval.corpus.fetch covid_ms [--seed DIR]
 """
@@ -90,20 +91,28 @@ class PackageEntry(BaseModel):
 
 class UploadPackage(BaseModel):
     """What the user uploads. ``zip``: the entries in one ZIP (``sha256`` pins the ZIP).
-    ``file``: the one entry as it is (a workbook, or a CSV uploaded on its own)."""
+    ``file``: the one entry as it is (a workbook, or a CSV uploaded on its own). ``prebuilt``: a
+    ZIP the corpus snapshot built from files too many to list here (Sepsis 2019's 40,336
+    per-patient files); it is taken from the cache or a seed, checked by ``sha256``, never
+    rebuilt, and ``recipe`` says how the snapshot made it."""
 
     model_config = ConfigDict(extra="forbid")
-    upload: Literal["zip", "file"] = "zip"
+    upload: Literal["zip", "file", "prebuilt"] = "zip"
     zip: str | None = None
-    contents: list[PackageEntry]
+    contents: list[PackageEntry] = Field(default_factory=list)
     sha256: str | None = None
+    recipe: str | None = None
 
     @model_validator(mode="after")
     def _shape_matches_upload(self) -> UploadPackage:
         if self.upload == "file" and (len(self.contents) != 1 or self.zip is not None):
             raise ValueError("upload: file takes exactly one entry and no zip name")
-        if self.upload == "zip" and self.zip is None:
-            raise ValueError("upload: zip needs a zip name")
+        if self.upload in ("zip", "prebuilt") and self.zip is None:
+            raise ValueError(f"upload: {self.upload} needs a zip name")
+        if self.upload == "zip" and not self.contents:
+            raise ValueError("upload: zip needs at least one entry")
+        if self.upload == "prebuilt" and (self.sha256 is None or self.recipe is None or self.contents):
+            raise ValueError("upload: prebuilt is pinned by sha256 and a recipe, with no entries to build")
         return self
 
 
@@ -115,6 +124,8 @@ class CorpusDataset(BaseModel):
     # The file the oracles read, in the dataset's files directory (an extracted member counts).
     # Default: the first ``kind: table`` file, else the uploaded file itself.
     oracle_input: str | None = None
+    # Why the app cannot run this dataset yet (the change it waits for); reported with the run.
+    pending: str | None = None
 
 
 def load_corpus(path: Path = CORPUS_YAML) -> dict[str, CorpusDataset]:
@@ -287,11 +298,13 @@ def build_zip(dataset: CorpusDataset, files_dir: Path, out: Path) -> Path:
     return out
 
 
-def build_upload(dataset: CorpusDataset, root: Path) -> Path:
-    """The file to upload, by ``upload_package.upload``: the built ZIP, or the one entry as it is.
+def build_upload(dataset: CorpusDataset, root: Path, seed_dirs: list[Path] | None = None) -> Path:
+    """The file to upload, by ``upload_package.upload``: the built ZIP, the one entry as it is,
+    or the prebuilt ZIP from the cache or a seed.
 
     Raises:
-        CorpusFetchError: an entry names a file the dataset does not list, or a missing member.
+        CorpusFetchError: an entry names a file the dataset does not list, or a missing member;
+            or a prebuilt ZIP is in neither the cache nor a seed.
         ChecksumMismatchError: the ZIP or an extracted member differs from its pinned sha256.
     """
     package, files_dir = dataset.upload_package, root / "files"
@@ -300,8 +313,20 @@ def build_upload(dataset: CorpusDataset, root: Path) -> Path:
         out = root / entry.name
         out.write_bytes(entry_bytes(dataset, entry, files_dir))
         return out
-    # UploadPackage's validator requires a zip name for upload: zip.
-    return build_zip(dataset, files_dir, root / str(package.zip))
+    # UploadPackage's validator requires a zip name (and, for prebuilt, sha256 and recipe).
+    if package.upload == "zip":
+        return build_zip(dataset, files_dir, root / str(package.zip))
+    out, pinned = root / str(package.zip), str(package.sha256)
+    if out.exists():
+        if (actual := sha256_file(out)) != pinned:
+            raise ChecksumMismatchError(f"cached {out} has sha256 {actual}, expected {pinned}; delete it")
+        return out
+    if _from_seed(out.name, pinned, out, seed_dirs) is None:
+        raise CorpusFetchError(
+            f"{dataset.name}: the prebuilt upload {package.zip} (sha256 {pinned}) is in no seed; "
+            f"build it from the corpus snapshot ({package.recipe}) and pass --seed DIR"
+        )
+    return out
 
 
 def fetch_dataset(
@@ -319,7 +344,7 @@ def fetch_dataset(
     root = (cache_dir or default_cache_dir()) / name
     for item in dataset.files:
         fetch_file(item, root / "files", seed_dirs, download)
-    return build_upload(dataset, root)
+    return build_upload(dataset, root, seed_dirs)
 
 
 def oracle_input(dataset: CorpusDataset, upload: Path) -> Path:

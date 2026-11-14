@@ -16,6 +16,7 @@ questions:
     query: How many unique patients are there?
     kind: count
     expect: answer
+    heldout: true
   - id: diabetes_130-readmitted-003
     family: breakdown
     query: How many encounters fall in each readmission category?
@@ -34,6 +35,7 @@ questions:
     kind: rates
     group_by: gender
     expect: answer
+    heldout: true
   - id: diabetes_130-racerate-006
     family: outcome_share
     query: What is the 30-day readmission rate by race, leaving out encounters where race is unknown?
@@ -47,6 +49,7 @@ questions:
     stat: mean
     group_by: readmitted
     expect: answer
+    heldout: true
   - id: diabetes_130-septicaemia-008
     family: filter_count
     query: How many encounters had a primary diagnosis of septicaemia (ICD-9 038)?

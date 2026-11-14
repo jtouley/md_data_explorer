@@ -183,3 +183,14 @@ class TestShippedQuestionSets:
         assert [q["id"] for q in questions] == list(oracles)
         assert {q["dataset_id"] for q in questions} == {dataset}
         assert all(q["expect"] in ("answer", "held") for q in questions)
+
+    @pytest.mark.parametrize("dataset", sorted(load_corpus()))
+    def test_questionSet_aboutAThirdHeldOut(self, dataset):
+        # Arrange
+        questions = run_module.load_questions(dataset)
+
+        # Act
+        held_out = sum(q.get("heldout", False) for q in questions)
+
+        # Assert
+        assert 0.25 <= held_out / len(questions) <= 0.4

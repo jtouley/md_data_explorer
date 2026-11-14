@@ -21,6 +21,7 @@ questions:
     kind: count_by
     group_by: Sex
     expect: answer
+    heldout: true
   - id: hcv_data-alt-004
     family: grouped_stat
     query: What is the median ALT in each disease category?
@@ -35,6 +36,7 @@ questions:
     stat: mean
     group_by: Sex
     expect: answer
+    heldout: true
   - id: hcv_data-cirrhosis-006
     family: outcome_share
     query: What share of patients are in the cirrhosis category, broken down by sex?
@@ -51,6 +53,7 @@ questions:
     query: How many patients have creatinine above 150?
     kind: count
     expect: answer
+    heldout: true
   - id: hcv_data-trend-009
     family: no_dates
     query: Did hepatitis C prevalence change over time?
