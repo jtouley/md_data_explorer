@@ -11,9 +11,10 @@ import pytest
 from open_data_contract_standard.model import OpenDataContractStandard
 
 from clinical_analytics.contracts.config import UNIFIED_OBJECT_NAME
-from clinical_analytics.sql.catalog import SqlCatalog
+from clinical_analytics.core import nl_query_config
+from clinical_analytics.sql.catalog import ColumnSpec, SqlCatalog
 from clinical_analytics.sql.errors import SqlRefusedError
-from clinical_analytics.sql.sandbox import TIMED_OUT, SandboxConnection
+from clinical_analytics.sql.sandbox import BUSY, TIMED_OUT, UNREADABLE, SandboxConnection, SqlBusyError
 from tests.sql.conftest import synthetic_cohort
 
 
@@ -126,6 +127,73 @@ def test_sandbox_missingParquet_refused(catalog: SqlCatalog) -> None:
     # Act / Assert
     with pytest.raises(SqlRefusedError, match="missing"):
         SandboxConnection(catalog)
+
+
+@pytest.mark.parametrize("damage", ["stale_contract", "truncated_file", "not_parquet"])
+def test_sandbox_unreadableStoredData_refusedWithoutPathOrColumn(catalog: SqlCatalog, damage: str) -> None:
+    # Arrange: a contract column missing from the Parquet, or a damaged file
+    import dataclasses
+
+    if damage == "stale_contract":
+        catalog = dataclasses.replace(
+            catalog, columns=(*catalog.columns, ColumnSpec("gone_column", "string", is_id=False, phi=False))
+        )
+    elif damage == "truncated_file":
+        catalog.parquet_path.write_bytes(catalog.parquet_path.read_bytes()[:200])
+    else:
+        catalog.parquet_path.write_text("patient_id,age\nP1,40\n")
+
+    # Act
+    with pytest.raises(SqlRefusedError) as refused:
+        SandboxConnection(catalog)
+
+    # Assert: a refusal (not a 500), naming neither the file nor the column
+    assert refused.value.reason == UNREADABLE
+    assert str(catalog.parquet_path) not in refused.value.reason
+    assert "gone_column" not in refused.value.reason
+
+
+def test_sandbox_allSlotsTaken_busyAfterTheWaitAndSlotFreedOnClose(catalog: SqlCatalog) -> None:
+    # Arrange: the one sandbox slot taken
+    first = SandboxConnection(catalog)
+
+    # Act / Assert
+    with pytest.raises(SqlBusyError, match=BUSY):
+        SandboxConnection(catalog, timeout_s=0.05)
+    first.close()
+    first.close()  # twice is safe, and frees the slot once
+    with SandboxConnection(catalog, timeout_s=0.05) as second:
+        assert second.run_unsuppressed("SELECT count(*) AS n FROM unified").item() == 300
+
+
+def test_sandbox_failedOpen_freesItsSlot(catalog: SqlCatalog) -> None:
+    # Arrange: a view that cannot bind
+    import dataclasses
+
+    broken = dataclasses.replace(
+        catalog, columns=(*catalog.columns, ColumnSpec("gone_column", "string", is_id=False, phi=False))
+    )
+    with pytest.raises(SqlRefusedError):
+        SandboxConnection(broken)
+
+    # Act / Assert: the slot is free again
+    with SandboxConnection(catalog, timeout_s=0.05):
+        pass
+
+
+def test_sandbox_memoryLimit_isTheSandboxShare(catalog: SqlCatalog) -> None:
+    # Arrange
+    expected = duckdb.connect()
+    expected.execute(f"SET memory_limit = '{nl_query_config.SQL_SANDBOX_MEMORY_LIMIT.sql}'")
+    want = expected.execute("SELECT current_setting('memory_limit')").fetchone()
+
+    # Act
+    with SandboxConnection(catalog) as sandbox:
+        got = sandbox.run_unsuppressed("SELECT current_setting('memory_limit') AS m").item()
+
+    # Assert
+    assert want is not None
+    assert got == want[0]
 
 
 def test_sandbox_viewHasContractColumnsOnly(make_sql_catalog: Callable[..., SqlCatalog]) -> None:

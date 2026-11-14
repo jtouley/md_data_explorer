@@ -11,7 +11,11 @@ The one shape admitted (v1)::
     [WHERE <predicate>] [GROUP BY <dimension>] [ORDER BY <output column>] [LIMIT n]
 
 * at most one dimension: a row-level expression of the contract's columns, never the patient
-  identifier, and a PHI column only as its year or month;
+  identifier, and a PHI column only as its year, quarter or month: the date column itself (or a
+  CAST of it to a date or timestamp) as the direct argument of year(), quarter(), month(),
+  EXTRACT or date_trunc with a unit of year, quarter or month. Anything computed from a PHI
+  column before it reaches the coarsener (string building, date arithmetic, CASE, datediff)
+  could encode the full value in a year, so it is refused;
 * every other output is a measure: arithmetic over aggregates (count, count_if, sum, avg, median,
   quantile_cont, stddev, variance), each with an optional FILTER; a value aggregate reads one bare
   numeric column, so its argument cannot encode a count (``avg(1000 * (x > 5) + x / 1e6)``);
@@ -64,7 +68,7 @@ _SCALAR_NODES: tuple[type[exp.Expr], ...] = (
     exp.Like, exp.ILike, exp.And, exp.Or, exp.Not, exp.Case, exp.If,
     exp.Cast, exp.TryCast, exp.DataType, exp.Coalesce, exp.Nullif,
     exp.Round, exp.Floor, exp.Ceil, exp.Abs, exp.Lower, exp.Upper, exp.Trim, exp.Length, exp.Substring,
-    exp.Year, exp.Month, exp.Extract, exp.DateDiff, exp.TimestampTrunc, exp.DateTrunc,
+    exp.Year, exp.Quarter, exp.Month, exp.Extract, exp.DateDiff, exp.TimestampTrunc, exp.DateTrunc,
     exp.Greatest, exp.Least, exp.StartsWith, exp.Contains, exp.DPipe,
 )  # fmt: skip
 # Around aggregates in a measure: arithmetic and rounding only, on DOUBLE (sql.privacy casts
@@ -80,6 +84,16 @@ _VALUE_AGGS: tuple[type[exp.Expr], ...] = (
 _COUNT_AGGS: tuple[type[exp.Expr], ...] = (exp.Count, exp.CountIf)
 _UNIT_PARENTS: tuple[type[exp.Expr], ...] = (exp.Extract, exp.DateDiff, exp.TimestampTrunc, exp.DateTrunc)
 _COARSE_UNITS = frozenset({"YEAR", "QUARTER", "MONTH"})
+_COARSENERS: tuple[type[exp.Expr], ...] = (exp.Year, exp.Quarter, exp.Month)
+_TRUNCS: tuple[type[exp.Expr], ...] = (exp.TimestampTrunc, exp.DateTrunc)
+# A PHI column is coarsened only when it holds calendar values: a date or timestamp column, or a
+# string column CAST to one (a number cannot be cast to a date, and year() of it fails).
+_CALENDAR_TYPES = frozenset({"date", "timestamp"})
+_CALENDAR_CASTS: tuple[exp.DType, ...] = (
+    exp.DataType.Type.DATE, exp.DataType.Type.DATETIME, exp.DataType.Type.TIMESTAMP,
+    exp.DataType.Type.TIMESTAMPTZ, exp.DataType.Type.TIMESTAMPNTZ, exp.DataType.Type.TIMESTAMPLTZ,
+    exp.DataType.Type.TIMESTAMP_S, exp.DataType.Type.TIMESTAMP_MS, exp.DataType.Type.TIMESTAMP_NS,
+)  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -254,6 +268,8 @@ def _canonical_columns(tree: exp.Select, catalog: SqlCatalog) -> exp.Select:
         qualifier = node.table.casefold()
         if qualifier and qualifier not in (alias, config.TABLE_NAME):
             raise SqlRefusedError(f"Columns are read from the table {config.TABLE_NAME} only.")
+        if not qualifier and node.name.casefold() in aliases and isinstance(node.parent, exp.Ordered):
+            return node  # ORDER BY <name>: the output alias wins over a column of that name, as in SQL
         spec = catalog.column(node.name)
         if spec is None:
             if not qualifier and node.name.casefold() in aliases and _in_order_or_group(node):
@@ -305,26 +321,48 @@ def _check_scalar(node: exp.Expr, catalog: SqlCatalog, where: str) -> None:
 
 
 def _check_dimension_privacy(dimension: exp.Expr, catalog: SqlCatalog) -> None:
+    """Every PHI column in the dimension is coarsened where it is read (see the module docstring)."""
     for column in dimension.find_all(exp.Column):
         spec = catalog.column(column.name)
-        if spec is not None and spec.phi and not _coarsened(column, dimension):
+        if spec is not None and spec.phi and not _coarsened(column, spec, dimension):
             raise SqlRefusedError(
-                f"{spec.name} is personal information: group by its year or month only, "
-                f"for example year({spec.name}) or date_trunc('month', {spec.name})."
+                f"{spec.name} is personal information: group by its year, quarter or month only, "
+                f"read straight from the column: year({spec.name}), month({spec.name}) or "
+                f"date_trunc('month', {spec.name})."
             )
 
 
-def _coarsened(column: exp.Column, root: exp.Expr) -> bool:
-    node: exp.Expr | None = column.parent
-    while node is not None:
-        if isinstance(node, exp.Year):
-            return True
-        if isinstance(node, exp.Extract | exp.TimestampTrunc | exp.DateTrunc):
-            unit = node.this if isinstance(node, exp.Extract) else node.args.get("unit")
-            return unit is not None and unit.name.upper() in _COARSE_UNITS
-        if node is root:
+def _coarsened(column: exp.Column, spec: ColumnSpec, root: exp.Expr) -> bool:
+    """Whether ``column`` is the direct argument (through casts to a date or timestamp only) of a
+    coarsener with a unit of year, quarter or month.
+
+    Only the argument slot counts: a coarsener further up the tree is not enough, since what lies
+    between could encode the full value in a year (``year(DATE '0001-01-01' + 366 * datediff(...))``).
+    """
+    node: exp.Expr = column
+    cast = False
+    while isinstance(node.parent, exp.Cast | exp.TryCast) and node.arg_key == "this" and node is not root:
+        if not node.parent.to.is_type(*_CALENDAR_CASTS):
             return False
-        node = node.parent
+        node, cast = node.parent, True
+    if spec.logical_type not in _CALENDAR_TYPES and not (cast and spec.logical_type == "string"):
+        return False
+    parent = node.parent
+    if node is root or parent is None:
+        return False
+    if isinstance(parent, _COARSENERS):
+        return node.arg_key == "this"
+    if isinstance(parent, exp.Extract):
+        return node.arg_key == "expression" and _coarse_unit(parent.this)
+    if isinstance(parent, _TRUNCS):
+        return node.arg_key == "this" and _coarse_unit(parent.args.get("unit"))
+    return False
+
+
+def _coarse_unit(unit: exp.Expr | None) -> bool:
+    """A unit written as a keyword or a string literal: year, quarter or month."""
+    if isinstance(unit, exp.Var) or (isinstance(unit, exp.Literal) and unit.is_string):
+        return unit.name.upper() in _COARSE_UNITS
     return False
 
 
@@ -350,13 +388,18 @@ def _dimension(tree: exp.Select, bodies: list[exp.Expr], names: list[str]) -> ex
 
 
 def _output_target(item: exp.Expr, bodies: list[exp.Expr], names: list[str], clause: str) -> exp.Expr:
-    """A GROUP BY / ORDER BY item as the output expression it names (position, alias, or itself)."""
+    """A GROUP BY / ORDER BY item as the output expression it names (position, alias, or itself).
+
+    GROUP BY reads a name as a column first (columns are quoted once canonical); ORDER BY reads it
+    as an output alias first (``_canonical_columns`` leaves such a name as written).
+    """
     if isinstance(item, exp.Literal) and not item.is_string:
         position = int(item.name) if item.name.isdigit() else 0
         if not 1 <= position <= len(bodies):
             raise SqlRefusedError(f"{clause} {item.name} is not a column of the output.")
         return bodies[position - 1]
-    if isinstance(item, exp.Column) and not item.this.quoted:
+    alias_first = clause == "ORDER BY" and isinstance(item, exp.Column) and not item.table
+    if isinstance(item, exp.Column) and (alias_first or not item.this.quoted):
         for body, name in zip(bodies, names, strict=True):
             if name.casefold() == item.name.casefold() and body != item:
                 return body
@@ -431,7 +474,11 @@ def _aggregate(node: exp.Expr, condition: exp.Expr | None, catalog: SqlCatalog) 
             raise SqlRefusedError(f"quantile_cont takes one of these quantiles: {allowed}.")
     elif any(v for k, v in node.args.items() if k != "this"):
         raise SqlRefusedError(f"{node.key}(...) takes one column.")
-    return Aggregate("value", node.copy(), spec.name, condition)
+    function = node.copy()
+    if spec.logical_type == "boolean":
+        # DuckDB has no avg/median/stddev of BOOLEAN: read true as 1 and false as 0 (a proportion).
+        function.set("this", exp.Cast(this=column.copy(), to=exp.DataType.build("INTEGER")))
+    return Aggregate("value", function, spec.name, condition)
 
 
 def _count(node: exp.Count, condition: exp.Expr | None, catalog: SqlCatalog) -> Aggregate:
@@ -445,6 +492,8 @@ def _count(node: exp.Count, condition: exp.Expr | None, catalog: SqlCatalog) -> 
             raise SqlRefusedError("count(DISTINCT ...) is supported for the patient ID only.")
         return Aggregate("count", exp.Count(this=exp.column(spec.name, quoted=True)), spec.name, condition)
     if isinstance(arg, exp.Column):
+        if node.args.get("expressions"):
+            raise SqlRefusedError("count takes one column. Count each column on its own: count(a), count(b).")
         spec = catalog.column(arg.name)
         assert spec is not None  # resolved by _canonical_columns
         return Aggregate("count", exp.Count(this=exp.column(spec.name, quoted=True)), spec.name, condition)

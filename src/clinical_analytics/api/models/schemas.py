@@ -12,6 +12,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from clinical_analytics.sql import config as sql_config
+
 # ============================================================================
 # Session Management Schemas
 # ============================================================================
@@ -95,7 +97,18 @@ class SqlQueryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     dataset_id: str = Field(..., min_length=1, description="Dataset to query")
-    sql: str = Field(..., min_length=1, max_length=10_000, description="One SELECT over the table unified")
+    # Bounded at sql.config.MAX_SQL_REQUEST_CHARS: a query over MAX_SQL_CHARS is refused in plain
+    # language by the validator; only a body far beyond it is rejected here (422).
+    sql: str = Field(
+        ..., min_length=1, max_length=sql_config.MAX_SQL_REQUEST_CHARS, description="One SELECT over the table unified"
+    )
+    confirm_one_row_per_patient: bool = Field(
+        False,
+        description=(
+            "The user confirms each row is one patient (asked when the dataset has no patient ID column, "
+            "or rows without one). Stored for this dataset version."
+        ),
+    )
 
 
 class SqlQueryResult(BaseModel):
@@ -107,6 +120,9 @@ class SqlQueryResult(BaseModel):
     rows: list[dict[str, Any]] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     reason: str | None = Field(None, description="Why the query was refused (plain language)")
+    needs_confirmation: Literal["one_row_per_patient"] | None = Field(
+        None, description="What the user can confirm to have the query answered (send it with the query again)"
+    )
 
 
 class QueryResponse(BaseModel):

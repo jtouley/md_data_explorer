@@ -9,7 +9,9 @@ reader can get by running the query again without its WHERE or without its GROUP
 is hidden, and ``_small_parts`` / ``_fold_rows`` fold small groups into one row, as on the intent
 path.
 
-Cells, per group g (rows are patients: the dataset must be one row per patient):
+Cells, per group g (rows are patients: the dataset must be one row per patient, shown by a
+patient ID on every row that never repeats, or confirmed by the user for this dataset version
+when there is no ID; see ``patient_rows``):
 
 * base: patients in g kept by WHERE (w) and removed by it (o);
 * per aggregate, its partition of g: the rows it reads (``FILTER``, ``count_if``, non-null
@@ -58,13 +60,20 @@ from clinical_analytics.sql.validate import AGG_MARKER, Aggregate, GovernedQuery
 
 logger = structlog.get_logger()
 
-Unit = Literal["patients", "rows"]
 Row = Literal["w", "o"]  # kept by the WHERE clause / removed by it
 CellKey = tuple[int, int, Row, int | str]  # (group, partition (-1: base), row, part)
 
 VISIT_ROWS = (
     "Some patient IDs are on more than one row, so rows are visits, not patients. "
     "SQL over visit rows is not supported yet: ask with the question box instead."
+)
+NO_ID_COLUMN = (
+    "This dataset has no patient ID column, so its rows can't be checked to be patients, and hiding "
+    "small counts needs counts of patients. If each row is one patient, confirm that and ask again."
+)
+MISSING_IDS = (
+    "Some rows have no {key}, so they can't be checked to be different patients. "
+    "If each row is one patient, confirm that and ask again."
 )
 TOO_MANY_GROUPS = (
     f"The grouping has more than {config.MAX_GROUPS} groups, too many to check for small groups. "
@@ -74,13 +83,22 @@ NO_VALUE_LABEL = "(no value)"
 _REST = "rest"
 
 
+class PatientRowsUnconfirmedError(SqlRefusedError):
+    """Rows can be counted as patients only once the user confirms one row per patient (no ID
+    column, or rows without an ID). ``rows`` is what a confirmation is made on; never shown."""
+
+    def __init__(self, reason: str, *, key: str | None, rows: int) -> None:
+        super().__init__(reason)
+        self.key = key
+        self.rows = rows
+
+
 @dataclass(frozen=True)
 class SqlAnswer:
     sql: str  # the checked query, as shown to the user
     columns: list[str]
     rows: list[dict[str, Any]]
     notes: list[str] = field(default_factory=list)
-    unit: Unit = "patients"
 
 
 @dataclass(frozen=True)
@@ -88,13 +106,24 @@ class _Partition:
     parts: tuple[exp.Expr, ...]  # disjoint predicates; the rest of the group is implied
 
 
-def answer_query(query: GovernedQuery, sandbox: SandboxConnection, catalog: SqlCatalog) -> SqlAnswer:
+def answer_query(
+    query: GovernedQuery,
+    sandbox: SandboxConnection,
+    catalog: SqlCatalog,
+    *,
+    confirmed_patient_rows: int | None = None,
+) -> SqlAnswer:
     """The query's answer with small cells suppressed and small groups folded.
 
+    ``confirmed_patient_rows``: the row count on which the user confirmed one row per patient for
+    this dataset version (None: not confirmed). It is needed only when rows can't be shown to be
+    patients by their IDs, and counts only while the table still has that many rows.
+
     Raises:
+        PatientRowsUnconfirmedError: no ID on some or all rows, and no matching confirmation.
         SqlRefusedError: rows are visits, too many groups, or the query could not run.
     """
-    unit = _unit(sandbox, catalog)
+    confirmed = patient_rows(sandbox, catalog, confirmed_patient_rows)
     partitions, part_of = _partitions(query, sandbox)
     frame = sandbox.run_unsuppressed(_core_sql(query, partitions))
     if frame.height > config.MAX_GROUPS:
@@ -103,28 +132,38 @@ def answer_query(query: GovernedQuery, sandbox: SandboxConnection, catalog: SqlC
     cells, lines = _cells_and_lines(records, partitions)
     hidden = _suppress_lines(cells, lines)
     logger.info("governed_sql_answered", groups=frame.height, measures=len(query.measures), hidden=len(hidden))
-    return _present(query, records, cells, hidden, partitions, part_of, unit)
+    return _present(query, records, cells, hidden, partitions, part_of, confirmed)
 
 
-def _unit(sandbox: SandboxConnection, catalog: SqlCatalog) -> Unit:
-    """Patients when every row has a unique patient ID; rows when there is no ID column.
+def patient_rows(sandbox: SandboxConnection, catalog: SqlCatalog, confirmed_rows: int | None) -> bool:
+    """Check that every row is one patient, so every count suppressed is a count of patients.
+
+    Returns False when the patient IDs show it (an ID on every row, none repeated), True when the
+    user's confirmation does (``confirmed_rows`` equals the table's row count).
 
     Raises:
-        SqlRefusedError: an ID repeats (rows are visits: counting rows would not count patients).
+        SqlRefusedError: an ID repeats (rows are visits).
+        PatientRowsUnconfirmedError: no ID column, or rows without an ID, and no matching confirmation.
     """
     key = catalog.id_column
-    if key is None:
-        return "rows"
-    ref = exp.column(key.name, quoted=True)
-    probe = exp.select(
-        exp.alias_(exp.Count(this=exp.Star()), "n_rows"),
-        exp.alias_(exp.Count(this=ref.copy()), "n_keyed"),
-        exp.alias_(exp.Count(this=exp.Distinct(expressions=[ref.copy()])), "n_patients"),
-    ).from_(config.TABLE_NAME)
-    counts = sandbox.run_unsuppressed(render(probe)).row(0, named=True)
-    if counts["n_patients"] < counts["n_keyed"]:
-        raise SqlRefusedError(VISIT_ROWS)
-    return "patients" if counts["n_keyed"] == counts["n_rows"] else "rows"
+    columns = [exp.alias_(exp.Count(this=exp.Star()), "n_rows")]
+    if key is not None:
+        ref = exp.column(key.name, quoted=True)
+        columns += [
+            exp.alias_(exp.Count(this=ref.copy()), "n_keyed"),
+            exp.alias_(exp.Count(this=exp.Distinct(expressions=[ref.copy()])), "n_patients"),
+        ]
+    counts = sandbox.run_unsuppressed(render(exp.select(*columns).from_(config.TABLE_NAME))).row(0, named=True)
+    rows = int(counts["n_rows"])
+    if key is not None:
+        if counts["n_patients"] < counts["n_keyed"]:
+            raise SqlRefusedError(VISIT_ROWS)
+        if counts["n_keyed"] == rows:
+            return False
+    if confirmed_rows is not None and confirmed_rows == rows:
+        return True
+    reason = NO_ID_COLUMN if key is None else MISSING_IDS.format(key=key.name)
+    raise PatientRowsUnconfirmedError(reason, key=None if key is None else key.name, rows=rows)
 
 
 def _levels(column: str, sandbox: SandboxConnection) -> list[Any] | None:
@@ -205,7 +244,11 @@ def _core_sql(query: GovernedQuery, partitions: list[_Partition]) -> str:
 
     def measure(template: exp.Expr) -> exp.Expr:
         if isinstance(template, exp.Column):  # one aggregate as it is: a count stays a whole number
-            return rewritten[int(template.name.removeprefix(AGG_MARKER))].copy()
+            k = int(template.name.removeprefix(AGG_MARKER))
+            if query.aggregates[k].kind == "count":
+                return rewritten[k].copy()
+            # sum() of an integer is HUGEINT, which arrives as a Decimal and would be sent as text.
+            return exp.Cast(this=rewritten[k].copy(), to=exp.DataType.build("DOUBLE"))
 
         def fill(node: exp.Expr) -> exp.Expr:
             if isinstance(node, exp.Column) and node.name.startswith(AGG_MARKER):
@@ -275,7 +318,7 @@ def _present(
     hidden: set[Any],
     partitions: list[_Partition],
     part_of: list[int],
-    unit: Unit,
+    confirmed: bool,
 ) -> SqlAnswer:
     grouped = query.dimension is not None
     min_values = config.SMALL_CELL
@@ -316,7 +359,11 @@ def _present(
         rows.append(row)
 
     rows = _ordered(rows, query, raw)
-    notes = [f"Counts are {'patients (one row per patient)' if unit == 'patients' else 'rows'}."]
+    notes = [
+        "Counts are patients (one row per patient, as you confirmed for this dataset)."
+        if confirmed
+        else "Counts are patients (one row per patient)."
+    ]
     table = _table(rows)
     if grouped and table is not None:
         assert query.dimension_name is not None
@@ -345,14 +392,16 @@ def _present(
         columns=table["columns"] if table is not None else columns,
         rows=table["rows"] if table is not None else [],
         notes=notes,
-        unit=unit,
     )
 
 
 def _ordered(rows: list[dict[str, Any]], query: GovernedQuery, raw: dict[int, Any]) -> list[dict[str, Any]]:
     """ORDER BY over the shown values (hidden ones last, whatever their true value); without it,
-    by the group's value. Never the engine's order, which could follow the hidden counts."""
-    keys = [(k.column, k.descending) for k in query.order] or [(query.dimension_name or "", False)]
+    by the group's value. Never the engine's order, which could follow the hidden counts: the
+    group's value breaks every tie, hidden values included."""
+    keys = [(k.column, k.descending) for k in query.order]
+    if query.dimension_name is not None:
+        keys.append((query.dimension_name, False))
 
     def value(row: dict[str, Any], column: str) -> Any:
         if column == query.dimension_name:

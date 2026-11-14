@@ -11,6 +11,9 @@ from clinical_analytics.core.nl_query_config import SMALL_CELL_THRESHOLD
 # The one table a query may read: the contract's object for the analysed (unified) cohort.
 TABLE_NAME: Final = UNIFIED_OBJECT_NAME
 MAX_SQL_CHARS: Final = 10_000
+# The API's hard cap on the request body's query: above MAX_SQL_CHARS, so a long query gets the
+# validator's plain-language refusal; far beyond it, the request is rejected before parsing.
+MAX_SQL_REQUEST_CHARS: Final = 4 * MAX_SQL_CHARS
 MAX_AST_NODES: Final = 400
 # Groups over the whole table (rows the WHERE removes included): every one is checked.
 MAX_GROUPS: Final = 200

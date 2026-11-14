@@ -192,10 +192,22 @@ if os.environ.get("DUCKDB_MEMORY_LIMIT") is not None or "duckdb_memory_limit" in
 SEMANTIC_LAYER_CACHE_SIZE: int = resolve_semantic_layer_cache_size(_setting("semantic_layer_cache_size"))
 # DuckDB memory for ALL the layers the API's cache keeps open together. Each layer is its own
 # in-memory DuckDB, so each cached layer gets CACHED_LAYER_MEMORY_LIMIT = budget / cache size
+# (budget / (cache size + SQL_SANDBOX_SLOTS) when governed SQL is on, below)
 # (set by the API when its cache builds the layer). Threads are per layer. Validated here, at
 # import, so a bad setting stops the process at startup instead of failing the first question.
 DUCKDB_MEMORY_BUDGET: DuckdbMemoryLimit = parse_duckdb_memory_limit(_setting("duckdb_memory_budget"))
-CACHED_LAYER_MEMORY_LIMIT: DuckdbMemoryLimit = per_layer_memory_limit(DUCKDB_MEMORY_BUDGET, SEMANTIC_LAYER_CACHE_SIZE)
+# Governed SQL path (ADR013 step 4): POST /api/queries/sql answers 404 unless this is on.
+ENABLE_SQL_QUERIES: bool = _config["enable_sql_queries"]
+# Governed SQL runs each question on its own in-memory DuckDB (sql/sandbox.py), at most this many
+# at once. When the path is on, the budget is shared by the cached layers AND these sandboxes, so
+# together they stay within it; each sandbox gets SQL_SANDBOX_MEMORY_LIMIT, one such share.
+SQL_SANDBOX_SLOTS: int = 1
+CACHED_LAYER_MEMORY_LIMIT: DuckdbMemoryLimit = per_layer_memory_limit(
+    DUCKDB_MEMORY_BUDGET, SEMANTIC_LAYER_CACHE_SIZE + (SQL_SANDBOX_SLOTS if ENABLE_SQL_QUERIES else 0)
+)
+SQL_SANDBOX_MEMORY_LIMIT: DuckdbMemoryLimit = per_layer_memory_limit(
+    DUCKDB_MEMORY_BUDGET, SEMANTIC_LAYER_CACHE_SIZE + SQL_SANDBOX_SLOTS
+)
 # Every other layer (an upload's probe, the Streamlit app, the CLI, evals) keeps the standalone
 # per-layer limit it had before the budget existed; applied in SemanticLayer.__init__.
 DUCKDB_MEMORY_LIMIT: DuckdbMemoryLimit = DuckdbMemoryLimit(20.0, "%")
@@ -246,9 +258,6 @@ LLM_TIMEOUT_MAX_S: float = _config["llm_timeout_max_s"]
 # ADR009: Feature Flags
 # Enable/disable LLM-enhanced features independently
 ENABLE_RESULT_INTERPRETATION: bool = _config["enable_result_interpretation"]
-
-# Governed SQL path (ADR013 step 4): POST /api/queries/sql answers 404 unless this is on.
-ENABLE_SQL_QUERIES: bool = _config["enable_sql_queries"]
 
 # ADR004: Feature Flags for Surgical Rollback
 # Enable/disable each phase independently for operational safety

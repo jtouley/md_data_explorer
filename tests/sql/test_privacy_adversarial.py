@@ -7,7 +7,9 @@ independently with Polars, and against what a reader could subtract from other s
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable
+from datetime import date
 from typing import Any
 
 import polars as pl
@@ -19,7 +21,8 @@ from clinical_analytics.contracts.declarations import LevelMapping
 from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED
 from clinical_analytics.sql.catalog import SqlCatalog
 from clinical_analytics.sql.errors import SqlRefusedError
-from clinical_analytics.sql.privacy import NO_VALUE_LABEL, SqlAnswer
+from clinical_analytics.sql.privacy import NO_VALUE_LABEL, PatientRowsUnconfirmedError, SqlAnswer, _ordered
+from clinical_analytics.sql.validate import validate_sql
 from tests.sql.conftest import N_PATIENTS, synthetic_cohort
 
 SMALL = range(1, 11)
@@ -304,6 +307,29 @@ def test_privacy_orderAscendingWithLimit_neverPicksTheHiddenSmallestGroup(ask_sq
     assert all(row["n"] != SECONDARY_SUPPRESSED for row in shown[:1]) or not shown
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT sex, count_if(ward = 'ICU') AS icu FROM unified GROUP BY sex ORDER BY icu DESC",
+        "SELECT ward, count(*) AS n FROM unified GROUP BY ward ORDER BY n DESC LIMIT 1",
+        "SELECT age % 3 AS k, count(*) * 0 AS zero FROM unified GROUP BY k ORDER BY zero",
+    ],
+)
+def test_privacy_tiedOrHiddenOrderValues_brokenByTheGroupNotTheEngine(ask_sql: Ask, sql: str) -> None:
+    # Arrange: ties in the ORDER BY column (hidden values tie with each other)
+
+    # Act: asked repeatedly, the engine's hash order may change; the answer may not
+    answers = [ask_sql(sql).rows for _ in range(5)]
+
+    # Assert
+    assert all(rows == answers[0] for rows in answers)
+    labels = [row[next(iter(row))] for row in answers[0]]
+    values = [row[list(row)[1]] for row in answers[0]]
+    for i in range(len(labels) - 1):
+        if values[i] == values[i + 1] and str(labels[i]) not in FOLD_LABELS and str(labels[i + 1]) not in FOLD_LABELS:
+            assert str(labels[i]) <= str(labels[i + 1])
+
+
 def test_privacy_orderByHiddenValue_hiddenRowsLastWhateverTheirValue(ask_sql: Ask) -> None:
     # Arrange: ward B is hidden as the complement of ICU, whatever its size
     sql = "SELECT ward, count(*) AS n FROM unified GROUP BY ward ORDER BY n DESC"
@@ -459,16 +485,47 @@ def test_privacy_confirmedLevelMerge_appliedInTheView(
     assert _numbers(answer, "n") == {"F": 150, "M": 150}
 
 
-def test_privacy_unitIsRows_whenNoIdentifier(make_sql_catalog: Callable[..., SqlCatalog], ask_sql: Ask) -> None:
+@pytest.mark.parametrize("confirmed_rows", [None, N_PATIENTS - 1, N_PATIENTS + 1, 0])
+def test_privacy_noIdentifier_refusedUntilOneRowPerPatientConfirmedOnTheseRows(
+    make_sql_catalog: Callable[..., SqlCatalog], ask_sql: Ask, confirmed_rows: int | None
+) -> None:
+    # Arrange: no ID column, so rows can't be shown to be patients; a confirmation made on
+    # another row count (an earlier upload) does not count
+    catalog = make_sql_catalog(synthetic_cohort().drop("patient_id"), id_column=None)
+
+    # Act / Assert
+    with pytest.raises(PatientRowsUnconfirmedError, match="no patient ID column") as refused:
+        ask_sql("SELECT count(*) AS n FROM unified", catalog, confirmed_rows)
+    assert refused.value.key is None
+    assert refused.value.rows == N_PATIENTS
+
+
+def test_privacy_noIdentifier_confirmedOneRowPerPatient_answeredAsPatients(
+    make_sql_catalog: Callable[..., SqlCatalog], ask_sql: Ask
+) -> None:
     # Arrange
     catalog = make_sql_catalog(synthetic_cohort().drop("patient_id"), id_column=None)
 
     # Act
-    answer = ask_sql("SELECT count(*) AS n FROM unified", catalog)
+    answer = ask_sql("SELECT ward, count(*) AS n FROM unified GROUP BY ward", catalog, N_PATIENTS)
 
-    # Assert
-    assert answer.unit == "rows"
-    assert answer.rows[0]["n"] == N_PATIENTS
+    # Assert: still suppressed, and the note says whose word the grain rests on
+    assert "ICU" not in _labels(answer)
+    assert any("as you confirmed" in note for note in answer.notes)
+
+
+def test_privacy_rowsWithoutId_refusedUntilConfirmed(make_sql_catalog: Callable[..., SqlCatalog], ask_sql: Ask) -> None:
+    # Arrange: an ID column, but two rows have no ID (they could be the same patient twice)
+    df = synthetic_cohort().with_columns(
+        pl.when(pl.int_range(pl.len()) < 2).then(None).otherwise(pl.col("patient_id")).alias("patient_id")
+    )
+    catalog = make_sql_catalog(df)
+
+    # Act / Assert
+    with pytest.raises(PatientRowsUnconfirmedError, match="no patient_id") as refused:
+        ask_sql("SELECT count(*) AS n FROM unified", catalog)
+    assert refused.value.key == "patient_id"
+    assert ask_sql("SELECT count(*) AS n FROM unified", catalog, N_PATIENTS).rows[0]["n"] == N_PATIENTS
 
 
 # ---------------------------------------------------------------------------------------------
@@ -512,3 +569,177 @@ def test_privacy_castAroundSummary_refusedBecauseItCanFail(ask_sql: Ask) -> None
     # Act / Assert
     with pytest.raises(SqlRefusedError, match="around a summary"):
         ask_sql("SELECT CAST(count_if(ward = 'ICU') * 1e300 AS INT) AS n FROM unified")
+
+
+# ---------------------------------------------------------------------------------------------
+# PHI in GROUP BY: only its year, quarter or month, read straight from the column
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def phi_catalog(make_sql_catalog: Callable[..., SqlCatalog]) -> SqlCatalog:
+    """The cohort plus PHI columns: a birth date, a zip code (number and text) and a birth date
+    stored as text. Each zip is held by fewer than 11 patients, so grouping by it would show them.
+    The contract tags PHI from accepted metadata (none on a synthetic upload): marked here."""
+    df = synthetic_cohort().with_columns(
+        pl.int_range(pl.len()).alias("i"),
+    )
+    df = (
+        df.with_columns(
+            pl.Series("dob", [date(1940 + i % 50, 1 + i % 12, 1 + i % 28) for i in range(df.height)]),
+            (10_000 + pl.col("i") // 5).alias("zip"),
+            (10_000 + pl.col("i") // 5).cast(pl.String).alias("zip_text"),
+        )
+        .with_columns(pl.col("dob").cast(pl.String).alias("dob_text"))
+        .drop("i")
+    )
+    base = make_sql_catalog(df)
+    phi = {"dob", "zip", "zip_text", "dob_text"}
+    return dataclasses.replace(base, columns=tuple(dataclasses.replace(c, phi=c.name in phi) for c in base.columns))
+
+
+@pytest.mark.parametrize(
+    "dimension",
+    [
+        # Reported: a zip turned into a date, and the exact birth date spread over years
+        "year(CAST(CAST(zip AS VARCHAR) || '-01-01' AS DATE))",
+        "year(DATE '0001-01-01' + 366 * datediff('day', DATE '1900-01-01', dob))",
+        # Casts: to text and back, from a number, to a non-calendar type
+        "year(CAST(CAST(dob AS VARCHAR) AS DATE))",
+        "year(CAST(zip AS DATE))",
+        "year(TRY_CAST(zip AS TIMESTAMP))",
+        "month(CAST(CAST(dob AS VARCHAR) AS TIMESTAMP))",
+        "CAST(dob AS VARCHAR)",
+        "CAST(dob AS DATE)",
+        # String building
+        "year(CAST(zip_text || '-01-01' AS DATE))",
+        "year(CAST(substring(dob_text, 1, 10) AS DATE))",
+        "substring(dob_text, 1, 7)",
+        "lower(zip_text)",
+        "year(dob_text)",
+        # Date arithmetic
+        "year(dob + 1)",
+        "year(dob - 365)",
+        "month(dob + 30 * (zip % 12))",
+        "datediff('day', DATE '1900-01-01', dob)",
+        "datediff('year', dob, DATE '2020-01-01')",
+        "date_trunc('month', DATE '2000-01-01' + datediff('day', DATE '1900-01-01', dob))",
+        # Nested coarseners whose inner unit is fine
+        "year(date_trunc('day', dob))",
+        "month(date_trunc('week', dob))",
+        "year(date_trunc('year', DATE '0001-01-01' + datediff('day', DATE '1900-01-01', dob)))",
+        "extract(year FROM date_trunc('day', dob))",
+        "extract(day FROM dob)",
+        "extract(epoch FROM dob)",
+        "date_trunc('day', dob)",
+        "date_trunc('decade', dob + 1)",
+        # CASE and other row-level choices
+        "year(CASE WHEN zip = 10001 THEN DATE '2001-01-01' ELSE DATE '2002-01-01' END)",
+        "CASE WHEN dob = DATE '1980-03-04' THEN 'a' ELSE 'b' END",
+        "year(CASE WHEN true THEN dob END)",
+        "year(coalesce(dob, DATE '2000-01-01'))",
+        "year(greatest(dob, DATE '1900-01-01'))",
+        "year(nullif(dob, DATE '1980-03-04'))",
+        "CASE WHEN year(dob) > 1960 THEN zip ELSE 0 END",
+        # Arithmetic on dates and combined parts
+        "year(dob) * 10000 + datediff('day', date_trunc('year', dob), dob)",
+        "month(dob) + 0 * zip",
+        "year(dob) + zip",
+        "zip",
+        "zip / 10",
+        "dob",
+    ],
+)
+def test_privacy_phiInGroupBy_refusedUnlessCoarsenedStraightFromTheColumn(
+    phi_catalog: SqlCatalog, dimension: str
+) -> None:
+    # Arrange
+    sql = f"SELECT {dimension} AS g, count(*) AS n FROM unified GROUP BY g"
+
+    # Act / Assert
+    with pytest.raises(SqlRefusedError, match="personal information"):
+        validate_sql(sql, phi_catalog)
+
+
+@pytest.mark.parametrize(
+    ("dimension", "groups"),
+    [
+        ("year(dob)", 50),
+        ("quarter(dob)", 4),
+        ("month(dob)", 12),
+        ("extract(year FROM dob)", 50),
+        ("extract('month' FROM dob)", 12),
+        ("date_trunc('year', dob)", 50),
+        ("year(CAST(dob AS TIMESTAMP))", 50),
+        ("year(CAST(dob_text AS DATE))", 50),
+        ("month(date_trunc('month', dob))", 12),
+        ("year(dob) * 100 + month(dob)", 300),
+    ],
+)
+def test_privacy_phiCoarsenedToYearQuarterOrMonth_answered(
+    phi_catalog: SqlCatalog, ask_sql: Ask, dimension: str, groups: int
+) -> None:
+    # Arrange: groups is the number of distinct values (300 year-months exceed the group limit)
+    sql = f"SELECT {dimension} AS g, count(*) AS n FROM unified GROUP BY g"
+
+    # Act / Assert
+    if groups > 200:
+        with pytest.raises(SqlRefusedError, match="more than"):
+            ask_sql(sql, phi_catalog)
+        return
+    answer = ask_sql(sql, phi_catalog)
+    assert answer.rows
+    assert all(
+        str(row["g"]) in FOLD_LABELS or row["n"] == SECONDARY_SUPPRESSED or row["n"] >= 11 for row in answer.rows
+    )
+
+
+def test_privacy_phiInWhereOrFilter_countedAndSuppressed(phi_catalog: SqlCatalog, ask_sql: Ask) -> None:
+    # Arrange: one zip (5 patients) picked out in WHERE and in FILTER
+
+    # Act
+    answer = ask_sql(
+        "SELECT count(*) AS n, count(*) FILTER (WHERE zip = 10001) AS z FROM unified WHERE zip_text = '10001'",
+        phi_catalog,
+    )
+
+    # Assert
+    assert answer.rows[0]["n"] == SECONDARY_SUPPRESSED
+    assert answer.rows[0]["z"] == SECONDARY_SUPPRESSED
+
+
+def test_privacy_valueAggregates_numbersNotText(make_sql_catalog: Callable[..., SqlCatalog], ask_sql: Ask) -> None:
+    # Arrange: sum() of an integer column is HUGEINT in DuckDB; a boolean has no avg there
+    df = synthetic_cohort().with_columns((pl.col("died") == 1).alias("dead"))
+    catalog = make_sql_catalog(df)
+    expected_rate = df.get_column("dead").mean()
+
+    # Act
+    row = ask_sql(
+        "SELECT sum(age) AS s, avg(age) AS a, avg(dead) AS rate, median(age) AS m, count(*) AS n FROM unified", catalog
+    ).rows[0]
+
+    # Assert
+    assert row["s"] == df.get_column("age").sum()
+    assert all(isinstance(row[k], float) for k in ("s", "a", "rate", "m"))
+    assert isinstance(row["n"], int)
+    assert row["rate"] == pytest.approx(expected_rate, abs=1e-4)  # shown values are rounded
+
+
+@pytest.mark.parametrize("engine_order", [["B", "A", "C"], ["C", "B", "A"], ["A", "C", "B"]])
+def test_privacy_orderTies_brokenByGroupWhateverTheEngineOrder(
+    make_sql_catalog: Callable[..., SqlCatalog], engine_order: list[str]
+) -> None:
+    # Arrange: three groups tied on n (two of them hidden), arriving in the engine's order
+    query = validate_sql(
+        "SELECT ward, count(*) AS n FROM unified GROUP BY ward ORDER BY n DESC LIMIT 1", make_sql_catalog()
+    )
+    values = {"A": SECONDARY_SUPPRESSED, "B": 20, "C": SECONDARY_SUPPRESSED}
+    rows = [{"ward": ward, "n": values[ward]} for ward in engine_order]
+    raw = {id(row): row["ward"] for row in rows}
+
+    # Act
+    ordered = _ordered(rows, query, raw)
+
+    # Assert: the shown value first, then the hidden ones by group, never by arrival
+    assert [row["ward"] for row in ordered] == ["B", "A", "C"]

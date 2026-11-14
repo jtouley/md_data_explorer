@@ -22,7 +22,8 @@ small_cell_threshold: 11
 # recently used one is closed once no question is using it. 1 or more.
 semantic_layer_cache_size: 4
 # DuckDB memory for ALL open datasets together, split evenly: each gets budget / cache size
-# (60% / 4 = 15% of RAM). A share of RAM (above 0, at most 100%) or a size above 0 ("8GB");
+# (60% / 4 = 15% of RAM); with enable_sql_queries on, the governed SQL sandbox takes one more
+# share (60% / 5 = 12% each). A share of RAM (above 0, at most 100%) or a size above 0 ("8GB");
 # each dataset's share must be at least 64 MiB or 1%. Threads are per dataset; 0 means half
 # the CPUs. A bad value stops the process at startup (core/nl_query_config.py).
 duckdb_memory_budget: "60%"

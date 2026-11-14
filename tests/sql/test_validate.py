@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Callable
 
+import polars as pl
 import pytest
 
 from clinical_analytics.sql import config
@@ -20,6 +21,7 @@ from clinical_analytics.sql.validate import (
     ONE_TABLE,
     validate_sql,
 )
+from tests.sql.conftest import synthetic_cohort
 
 
 @pytest.fixture
@@ -50,6 +52,8 @@ def catalog(make_sql_catalog: Callable[..., SqlCatalog]) -> SqlCatalog:
         ),
         ("SELECT year(admit_date) AS y, count(*) AS n FROM unified GROUP BY y ORDER BY y DESC LIMIT 5", "y", ["n"]),
         ("SELECT date_trunc('month', admit_date) AS m, count(*) AS n FROM unified GROUP BY 1", "m", ["n"]),
+        ("SELECT month(admit_date) AS m, count(*) AS n FROM unified GROUP BY 1", "m", ["n"]),
+        ("SELECT quarter(admit_date) AS q, count(*) AS n FROM unified GROUP BY q", "q", ["n"]),
         (
             "SELECT count(DISTINCT patient_id) AS p, quantile_cont(ldl, 0.25) AS q1, stddev_samp(age) AS sd "
             "FROM unified WHERE ward IN ('A', 'B') AND age BETWEEN 30 AND 70",
@@ -129,6 +133,8 @@ def test_validate_admittedShape_returnsDimensionAndMeasures(
         ("SELECT sum(CASE WHEN ward = 'ICU' THEN 1 ELSE 0 END) FROM unified", "takes one column"),
         ("SELECT sum(DISTINCT age) FROM unified", "takes one column"),
         ("SELECT count(DISTINCT ward) FROM unified", "patient ID only"),
+        ("SELECT count(age, ldl) AS n FROM unified", "count takes one column"),
+        ("SELECT count(age, ward, sex) AS n FROM unified", "count takes one column"),
         ("SELECT avg(ward) FROM unified", "not a number"),
         ("SELECT avg(count(*)) FROM unified", "summary of a summary"),
         ("SELECT quantile_cont(age, 0.99) FROM unified", "quantile_cont takes"),
@@ -203,3 +209,37 @@ def test_validate_shownSql_isGeneratedFromTheCheckedTree(catalog: SqlCatalog) ->
     assert "note" not in query.shown_sql
     assert "COPY" not in query.shown_sql
     assert 'GROUP BY\n  "sex"' in query.shown_sql
+
+
+@pytest.mark.parametrize(
+    ("sql", "order"),
+    [
+        ("SELECT sex, count(*) AS age FROM unified GROUP BY sex ORDER BY age", [("age", False)]),
+        ('SELECT sex, count(*) AS "age" FROM unified GROUP BY sex ORDER BY "age" DESC', [("age", True)]),
+        ("SELECT ward AS sex, count(*) AS n FROM unified GROUP BY 1 ORDER BY sex, n", [("sex", False), ("n", False)]),
+        ("SELECT sex, count(*) AS n FROM unified GROUP BY sex ORDER BY unified.sex", [("sex", False)]),
+    ],
+)
+def test_validate_orderByNameOfAliasAndColumn_resolvesToTheOutputAlias(
+    catalog: SqlCatalog, sql: str, order: list[tuple[str, bool]]
+) -> None:
+    # Arrange: an output alias with the name of a contract column (SQL reads ORDER BY as the alias)
+
+    # Act
+    query = validate_sql(sql, catalog)
+
+    # Assert
+    assert [(k.column, k.descending) for k in query.order] == order
+
+
+def test_validate_valueAggregateOfBoolean_readsTrueAsOne(make_sql_catalog: Callable[..., SqlCatalog]) -> None:
+    # Arrange
+    df = synthetic_cohort().with_columns((pl.col("died") == 1).alias("died"))
+    catalog = make_sql_catalog(df)
+
+    # Act
+    query = validate_sql("SELECT avg(died) AS rate FROM unified", catalog)
+
+    # Assert: run as avg(CAST(died AS INTEGER)); the shown SQL is the user's
+    assert "CAST" in query.aggregates[0].function.sql("duckdb")
+    assert 'AVG("died")' in query.shown_sql

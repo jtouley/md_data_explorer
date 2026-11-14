@@ -11,6 +11,7 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from open_data_contract_standard.model import OpenDataContractStandard
 
 from clinical_analytics.contracts.declarations import LevelMapping
 from clinical_analytics.sql.catalog import SqlCatalog
@@ -42,7 +43,9 @@ def synthetic_cohort(n: int = N_PATIENTS) -> pl.DataFrame:
 
 
 @pytest.fixture
-def make_sql_catalog(tmp_path: Path, make_contract: Callable[..., object]) -> Callable[..., SqlCatalog]:
+def make_sql_catalog(
+    tmp_path: Path, make_contract: Callable[..., OpenDataContractStandard]
+) -> Callable[..., SqlCatalog]:
     """Factory: the catalog of ``df`` (default: ``synthetic_cohort()``) stored as Parquet."""
 
     def _make(
@@ -52,23 +55,24 @@ def make_sql_catalog(tmp_path: Path, make_contract: Callable[..., object]) -> Ca
         path = tmp_path / f"cohort_{len(list(tmp_path.glob('*.parquet')))}.parquet"
         frame.write_parquet(path)
         contract = make_contract(frame, **contract_overrides)
-        return SqlCatalog.from_contract(contract, path, levels)  # type: ignore[arg-type]
+        return SqlCatalog.from_contract(contract, path, levels)
 
     return _make
 
 
 @pytest.fixture
 def ask_sql(make_sql_catalog: Callable[..., SqlCatalog]) -> Callable[..., SqlAnswer]:
-    """Factory: the governed answer to ``sql`` on a catalog (default: the synthetic cohort)."""
+    """Factory: the governed answer to ``sql`` on a catalog (default: the synthetic cohort).
+    ``confirmed_patient_rows``: the row count the user confirmed as one row per patient."""
     default: list[SqlCatalog] = []
 
-    def _ask(sql: str, catalog: SqlCatalog | None = None) -> SqlAnswer:
+    def _ask(sql: str, catalog: SqlCatalog | None = None, confirmed_patient_rows: int | None = None) -> SqlAnswer:
         if catalog is None:
             if not default:
                 default.append(make_sql_catalog())
             catalog = default[0]
         query = validate_sql(sql, catalog)
         with SandboxConnection(catalog) as sandbox:
-            return answer_query(query, sandbox, catalog)
+            return answer_query(query, sandbox, catalog, confirmed_patient_rows=confirmed_patient_rows)
 
     return _ask

@@ -39,15 +39,29 @@ DECLARATIONS_FILENAME = "declarations.json"
 
 
 class GrainDeclaration(BaseModel):
-    """Rows are visits of patients identified by ``key`` (declared on ``rows``/``patients``)."""
+    """What a row is, as the doctor confirmed it on ``rows``/``patients``.
+
+    * ``visit``: rows are visits of patients identified by ``key`` (the question box's hold).
+    * ``patient``: each row is one patient, confirmed where IDs can't show it (no ID column, so
+      ``key`` is None, or rows without a ``key``); ``rows`` equals ``patients``. Governed SQL
+      needs it to count patients, not rows, before hiding small counts.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    grain: Literal["visit"] = "visit"
-    key: str
+    grain: Literal["visit", "patient"] = "visit"
+    key: str | None = None
     rows: int = Field(..., ge=0)
     patients: int = Field(..., ge=0)
     dataset_version: str | None = None
+
+    @model_validator(mode="after")
+    def _grain_is_consistent(self) -> GrainDeclaration:
+        if self.grain == "visit" and not self.key:
+            raise ValueError("a visit grain names the patient key")
+        if self.grain == "patient" and self.rows != self.patients:
+            raise ValueError("a patient grain has one patient per row (rows == patients)")
+        return self
 
 
 class LevelMapping(BaseModel):
