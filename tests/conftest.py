@@ -5,11 +5,14 @@ Pytest configuration and fixtures for clinical analytics tests.
 import os
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 import pytest
 import yaml
+from open_data_contract_standard.model import OpenDataContractStandard
 
 # Runtime data (uploads, DuckDB store, session DB) goes to a throwaway data home, never the
 # developer's real one or the checkout. Set before any clinical_analytics import.
@@ -1713,6 +1716,30 @@ def get_dataset_by_name(dataset_registry):
 # ============================================================================
 # Test Fixture Enforcement (Phase 8: DRY Test Patterns)
 # ============================================================================
+
+
+@pytest.fixture
+def make_contract() -> Callable[..., OpenDataContractStandard]:
+    """Factory: ODCS contract for ``df`` with test defaults (upload u1, version v1, id patient_id).
+
+    Shared by the data-contract tests and the governed SQL tests (the contract is SQL's schema).
+    """
+    from datetime import UTC, datetime
+
+    from clinical_analytics.contracts.builder import ContractInputs, build_contract
+
+    def _make(df: pl.DataFrame, **overrides: Any) -> OpenDataContractStandard:
+        fields: dict[str, Any] = {
+            "upload_id": "u1",
+            "dataset_version": "v1",
+            "dataset_name": "test cohort",
+            "id_column": "patient_id",
+            "created_at": datetime(2026, 11, 3, tzinfo=UTC),
+        }
+        fields.update(overrides)
+        return build_contract(df, ContractInputs(**fields))
+
+    return _make
 
 
 @pytest.fixture

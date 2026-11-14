@@ -179,6 +179,8 @@ class NLQueryConfigDefaults:
     enable_proactive_questions: bool = False
     llm_timeout_question_generation_s: float = 5.0
     enable_multi_layer_validation: bool = False
+    # Governed SQL (POST /api/queries/sql): user-typed SQL, off until the SQL path is accepted.
+    enable_sql_queries: bool = False
     # Open semantic layers (datasets) the API keeps, and the DuckDB memory they share: a
     # percentage of RAM or a size ("60%", "8GB"), split evenly, so each layer gets
     # budget / cache size. Threads are per layer; 0 = half the CPUs.
@@ -219,6 +221,7 @@ class NLQueryConfigDefaults:
             "enable_proactive_questions": self.enable_proactive_questions,
             "llm_timeout_question_generation_s": self.llm_timeout_question_generation_s,
             "enable_multi_layer_validation": self.enable_multi_layer_validation,
+            "enable_sql_queries": self.enable_sql_queries,
             "semantic_layer_cache_size": self.semantic_layer_cache_size,
             "duckdb_memory_budget": self.duckdb_memory_budget,
             "duckdb_threads": self.duckdb_threads,
@@ -339,6 +342,7 @@ def load_nl_query_config(config_path: Path | None = None) -> dict[str, Any]:
         "SEMANTIC_LAYER_CACHE_SIZE": "semantic_layer_cache_size",
         "DUCKDB_MEMORY_BUDGET": "duckdb_memory_budget",
         "DUCKDB_THREADS": "duckdb_threads",
+        "ENABLE_SQL_QUERIES": "enable_sql_queries",
     }
 
     # Apply environment variable overrides

@@ -22,6 +22,9 @@ dependencies = [
     # Ibis 12.0.0 is the newest release (2026-11-03). Some of its DuckDB calls are broken on 2.0
     # (ibis#12196, fix in ibis#12206); tests/core/test_ibis_duckdb_compat.py keeps the app off them.
     "ibis-framework[duckdb]>=12.0.0,<13",
+    # Governed SQL (src/clinical_analytics/sql/) parses and regenerates user SQL with sqlglot; its
+    # allowlist is written against sqlglot's node classes, which a new major renames or splits.
+    "sqlglot>=30.31.0,<31",
     "statsmodels>=0.14.0",
     "pyyaml>=6.0",
     "lifelines>=0.27.0",
