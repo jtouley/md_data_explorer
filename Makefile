@@ -1,4 +1,4 @@
-.PHONY: help accept smoke-installed fetch-embedding-model check-data check-spdx golden mutation mutation-module mutation-results install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-contracts test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
+.PHONY: help accept accept-load smoke-installed fetch-embedding-model check-data check-spdx golden mutation mutation-module mutation-results install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-contracts test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
 
 # Default target
 .DEFAULT_GOAL := help
@@ -195,6 +195,7 @@ fetch-embedding-model: ensure-venv ## Build step: fetch the pinned ONNX embeddin
 # Acceptance run on a public dataset (see src/clinical_analytics/eval/corpus/run.py). Fetches the
 # checked upload ZIP into $$MDDE_BENCH_CACHE (default ~/.cache/mdde-bench), starts a fresh API
 # with a temp data home, asks tests/eval/corpus/questions/$(DATASET).yaml and prints the grades.
+# CI gates it: ACCEPT_ARGS="--fail-on WRONG,LEAK,ERROR --baseline tests/eval/corpus/baselines/covid_ms.none.json".
 DATASET ?= covid_ms
 MODEL ?= none
 OLLAMA_BASE_URL ?= http://127.0.0.1:11434
@@ -204,6 +205,15 @@ accept: ensure-venv fetch-embedding-model ## Acceptance run: make accept DATASET
 	@echo "$(GREEN)Acceptance run: $(DATASET), MODEL=$(MODEL)...$(NC)"
 	$(PYTHON_RUN) -m clinical_analytics.eval.corpus.run --dataset $(DATASET) --model $(MODEL) \
 		--ollama-base-url $(OLLAMA_BASE_URL) --timeout $(ACCEPT_TIMEOUT) $(ACCEPT_ARGS)
+
+# CI upload check: upload each dataset into a fresh app and check status, rows and columns against
+# corpus.yaml (no questions asked). List only datasets whose formats load on this branch; adding
+# one is this one line.
+ACCEPT_LOAD_DATASETS ?= covid_ms
+accept-load: ensure-venv fetch-embedding-model ## Upload check: upload each corpus dataset to a fresh app; check rows/columns/status [ACCEPT_LOAD_DATASETS="covid_ms ..."]
+	@echo "$(GREEN)Corpus upload check: $(ACCEPT_LOAD_DATASETS)...$(NC)"
+	$(PYTHON_RUN) -m clinical_analytics.eval.corpus.run --load-only \
+		$(foreach dataset,$(ACCEPT_LOAD_DATASETS),--dataset $(dataset)) $(ACCEPT_ARGS)
 
 smoke-installed: ensure-venv fetch-embedding-model ## Default `uv build` (sdist, then wheel), install the wheel outside the repo and drive the API offline (slow)
 	@echo "$(GREEN)Running installed-wheel smoke test...$(NC)"
