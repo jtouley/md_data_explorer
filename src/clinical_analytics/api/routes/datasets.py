@@ -401,6 +401,10 @@ class DatasetUploadResponse(BaseModel):
         default_factory=list,
         description="Multi-table uploads: tables, rows and features left out of the cohort, and why",
     )
+    sheet_note: str = Field(
+        default="",
+        description="Excel uploads: the sheet that was read and the other sheets with data that were not",
+    )
 
 
 def _upload_type_notes(storage: UserDatasetStorage, upload_id: str) -> list[str]:
@@ -413,6 +417,14 @@ def _upload_type_notes(storage: UserDatasetStorage, upload_id: str) -> list[str]
     return describe_column_types(
         metadata.get(COLUMN_TYPES_KEY) or [], metadata.get(COLUMN_UNITS_KEY) or {}, SMALL_CELL_THRESHOLD
     )
+
+
+def _upload_sheet_note(storage: UserDatasetStorage, upload_id: str) -> str:
+    """Which sheet of a workbook was read and which were not, for the user ("" when one sheet)."""
+    from clinical_analytics.storage.staging import describe_sheets
+    from clinical_analytics.ui.storage.user_datasets import EXCEL_SHEETS_KEY
+
+    return describe_sheets((storage.get_upload_metadata(upload_id) or {}).get(EXCEL_SHEETS_KEY))
 
 
 def _upload_cohort_notes(storage: UserDatasetStorage, upload_id: str) -> list[str]:
@@ -433,7 +445,8 @@ class DatasetDeleteResponse(BaseModel):
     deleted_sessions: int = Field(..., description="Sessions (with their messages) deleted")
 
 
-ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".xlsx", ".xls", ".sav"}
+# .zip: tables plus their documentation (ADR004), the multi-table path; .xpt: SAS transport (NHANES).
+ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".xlsx", ".xls", ".sav", ".xpt", ".zip"}
 
 
 @router.post("/datasets/sample", response_model=DatasetUploadResponse)
@@ -476,11 +489,13 @@ def load_sample_dataset() -> DatasetUploadResponse:
 
 @router.post("/datasets/upload", response_model=DatasetUploadResponse)
 async def upload_dataset(
-    file: UploadFile = File(..., description="CSV or Excel file to upload"),
+    file: UploadFile = File(..., description="CSV, Excel, SPSS, SAS transport or ZIP file to upload"),
     dataset_name: str | None = Form(None, description="Optional display name"),
 ) -> DatasetUploadResponse:
-    """Upload a dataset file (CSV, Excel, or SPSS).
+    """Upload a dataset file (CSV, Excel .xlsx/.xls, SPSS .sav, SAS transport .xpt, or ZIP).
 
+    A ZIP holds tables (any of those formats, .tsv/.psv, gzipped text) and their documentation
+    (.pdf, .md, .txt; ADR004); several tables become one cohort (the multi-table path).
     Validates the file extension and size, then delegates to UserDatasetStorage.
 
     Args:
@@ -541,6 +556,7 @@ async def upload_dataset(
         quality=await asyncio.to_thread(_upload_quality, storage, upload_id),
         type_notes=_upload_type_notes(storage, upload_id),
         cohort_notes=_upload_cohort_notes(storage, upload_id),
+        sheet_note=_upload_sheet_note(storage, upload_id),
     )
 
 

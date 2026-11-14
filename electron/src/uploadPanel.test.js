@@ -27,6 +27,7 @@ describe('normalizeUploadResponse', () => {
       status: 'failed',
       message: '',
       quality: null,
+      sheet_note: '',
     });
     expect(normalizeUploadResponse(undefined)).toEqual({
       upload_id: '',
@@ -34,7 +35,38 @@ describe('normalizeUploadResponse', () => {
       status: 'failed',
       message: '',
       quality: null,
+      sheet_note: '',
     });
+  });
+});
+
+describe('upload sheet note', () => {
+  const note =
+    'Read 1 of 2 sheets: “Deaths”. Not read: “Notes”. To use another sheet, save it as its own file and upload it.';
+
+  test.each([
+    [{ sheet_note: note }, note],
+    [{ sheet_note: `  ${note}  ` }, note],
+    [{ sheet_note: '' }, ''],
+    [{ sheet_note: null }, ''],
+    [{ sheet_note: 3 }, ''],
+    [{}, ''],
+  ])('normalizeUploadResponse keeps only a text sheet note (%#)', (raw, expected) => {
+    expect(normalizeUploadResponse(raw).sheet_note).toBe(expected);
+  });
+
+  test('the sheet note is shown in the status line before the data check', () => {
+    const { sheet_note: sheetNote, quality } = normalizeUploadResponse({
+      sheet_note: note,
+      quality: { status: 'not_run', reason: 'x' },
+    });
+    expect(uploadStatusText('A is ready.', sheetNote, dataCheckStatusNote(quality))).toBe(
+      `A is ready. ${note} Data check could not run.`
+    );
+  });
+
+  test('a one-sheet workbook leaves the headline alone', () => {
+    expect(uploadStatusText('A is ready.', '', null)).toBe('A is ready.');
   });
 });
 
@@ -108,6 +140,14 @@ describe('isAllowedExtension', () => {
 
   test('allows .sav', () => {
     expect(isAllowedExtension('spss.sav')).toBe(true);
+  });
+
+  test('allows .xpt (SAS transport)', () => {
+    expect(isAllowedExtension('DEMO_J.xpt')).toBe(true);
+  });
+
+  test('allows .zip (tables plus documentation)', () => {
+    expect(isAllowedExtension('challenge-2019.ZIP')).toBe(true);
   });
 
   test('rejects .exe', () => {

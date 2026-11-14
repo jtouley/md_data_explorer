@@ -24,15 +24,21 @@ A first row that is a units sub-header (``years``, ``mg/dL`` above numeric colum
 is kept as unit metadata and is not a patient; the report says that row was removed. Trailing
 lines with no values (``,,,`` written by exporters) are dropped; any other row with no ID and no
 values fails the upload.
+
+Formats: delimited text (``.csv``, ``.tsv``, ``.psv``; ``DELIMITERS``), Excel (``.xlsx`` with
+openpyxl; legacy ``.xls`` BIFF workbooks, recognised by their bytes, with xlrd) and SAS
+transport (``.xpt``). Excel and delimited text are staged as text; SAS transport files carry
+their own types (numbers or text), and only whole-number columns change, to Int64.
 """
 
 from __future__ import annotations
 
 import io
 import re
-from dataclasses import dataclass, field
+from collections.abc import Iterable
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
-from typing import Final, Literal
+from typing import Any, Final, Literal
 
 import polars as pl
 import structlog
@@ -57,7 +63,14 @@ NoteReason = Literal[
     "int_overflow",
     "missing_tokens",
     "shared_column_type",
+    "from_file_names",
 ]
+
+# Column separator by file extension (``.gz`` stripped first). Text tables in a ZIP use the same.
+DELIMITERS: Final[dict[str, str]] = {".csv": ",", ".tsv": "\t", ".psv": "|"}
+
+# An .xlsx is a ZIP. A workbook that is not one is read as legacy .xls (BIFF, raw or in OLE2).
+_ZIP_MAGIC: Final = b"PK\x03\x04"
 
 # A units-row cell must be one of these (case-insensitive) or a ratio such as "mg/dL" or
 # "x10^9/L" (``_UNIT_RATIO_RE``), unless the file has an ID-named column whose cell is empty.
@@ -174,12 +187,36 @@ class ColumnTypeNote:
 
 
 @dataclass(frozen=True)
+class ExcelSheets:
+    """What was read from a workbook: the first sheet only, and the rows of it that are notes.
+
+    ``skipped`` names the other sheets that hold data; ``empty`` counts the other sheets with no
+    values. ``footnote_rows`` counts the rows below the data, after a blank row, that were read
+    as notes ("Source: ..."), not patients.
+    """
+
+    read: str
+    skipped: tuple[str, ...] = ()
+    empty: int = 0
+    footnote_rows: int = 0
+
+    def as_dict(self) -> dict[str, str | int | list[str]]:
+        return {
+            "read": self.read,
+            "skipped": list(self.skipped),
+            "empty": self.empty,
+            "footnote_rows": self.footnote_rows,
+        }
+
+
+@dataclass(frozen=True)
 class StagedTable:
     """One typed table plus what staging decided about it."""
 
     data: pl.DataFrame
     notes: tuple[ColumnTypeNote, ...] = ()
     units: dict[str, str] = field(default_factory=dict)
+    sheets: ExcelSheets | None = None  # Excel only: the sheet read and the sheets skipped
 
 
 def is_id_column_name(name: str) -> bool:
@@ -432,6 +469,7 @@ def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1) -> StagedT
     not_text = [c for c, t in df.schema.items() if t != pl.String]
     if not_text:
         raise TypeError(f"stage_text_frame needs text columns; got non-text {not_text}")
+    df = _name_blank_headers(df)
 
     units = _units_row(df)
     body = df.slice(1) if units else df
@@ -446,17 +484,76 @@ def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1) -> StagedT
     return StagedTable(data=typed, notes=tuple(notes), units=units or {})
 
 
-def read_csv_typed(file_bytes: bytes) -> StagedTable:
-    """Read CSV bytes as text over the whole file, then stage.
+def _name_blank_headers(df: pl.DataFrame) -> pl.DataFrame:
+    """A blank header (R's ``write.csv`` row-name column, ``""``) becomes ``column_<i>``, as in Excel.
+
+    A column with no name cannot be queried (the query view needs a name for every column).
+    """
+    renames = {c: f"column_{i}" for i, c in enumerate(df.columns) if not c.strip()}
+    taken = set(df.columns) - set(renames)
+    if any(name in taken for name in renames.values()):
+        renames = {c: f"column_{i}_unnamed" for i, c in enumerate(df.columns) if not c.strip()}
+    return df.rename(renames) if renames else df
+
+
+def read_csv_typed(file_bytes: bytes, separator: str = ",") -> StagedTable:
+    """Read delimited text (CSV; ``separator`` for TSV/PSV) as text over the whole file, then stage.
 
     Raises:
-        StagingError: the CSV cannot be parsed, or a row has no ID and no values.
+        StagingError: the file cannot be parsed, or a row has no ID and no values.
     """
     try:
-        text = pl.read_csv(io.BytesIO(file_bytes), infer_schema=False)
+        text = pl.read_csv(io.BytesIO(file_bytes), separator=separator, infer_schema=False)
     except (pl.exceptions.ComputeError, pl.exceptions.NoDataError) as e:
-        raise StagingError(f"The CSV file could not be read: {type(e).__name__}") from e
+        raise StagingError(f"The {_delimited_kind(separator)} file could not be read: {type(e).__name__}") from e
     return stage_text_frame(_drop_trailing_blank_rows(text))
+
+
+def _delimited_kind(separator: str) -> str:
+    return {",": "CSV", "\t": "tab-separated", "|": "pipe-separated"}.get(separator, "text")
+
+
+def read_xport_typed(file_bytes: bytes) -> StagedTable:
+    """Read a SAS transport file (``.xpt``, as NHANES publishes), keeping its own column types.
+
+    SAS stores every number as a float, so a column of whole numbers (codes such as 1/2, IDs,
+    counts) becomes Int64 when every value fits; other numbers stay Float64. Empty text cells
+    become null. Dates SAS formats as dates arrive as dates.
+
+    Raises:
+        StagingError: the file is not a readable SAS transport file.
+    """
+    import pyreadstat
+
+    try:
+        df, _meta = pyreadstat.read_xport(io.BytesIO(file_bytes), output_format="polars")
+    except (pyreadstat.ReadstatError, pyreadstat.PyreadstatError) as e:
+        raise StagingError(f"The SAS transport (.xpt) file could not be read: {type(e).__name__}") from e
+    if not isinstance(df, pl.DataFrame):  # output_format="polars" always gives one
+        raise StagingError("The SAS transport (.xpt) file could not be read as a table")
+    return StagedTable(data=_whole_floats_as_int(df))
+
+
+def _whole_floats_as_int(df: pl.DataFrame) -> pl.DataFrame:
+    """Float columns whose values are all whole and fit Int64 become Int64; blank text is null.
+
+    NaN counts as missing (it is how a reader may store a SAS missing value). A column with any
+    fraction, or a value too large for Int64, stays Float64 so no digit is lost. A column with no
+    value at all (read as type Null) becomes text, as an empty CSV column does.
+    """
+    limit = float(2**53)  # every whole float below this converts to Int64 exactly
+    casts: list[pl.Expr] = []
+    for col, dtype in df.schema.items():
+        if dtype == pl.String:
+            casts.append(_clean(col).alias(col))
+        elif dtype == pl.Null:  # a column with no value at all: text, as a CSV's would be
+            casts.append(pl.col(col).cast(pl.String))
+        elif dtype.is_float():
+            values = df.get_column(col).fill_nan(None).drop_nulls()
+            whole = values.len() > 0 and bool(((values == values.floor()) & (values.abs() < limit)).all())
+            filled = pl.col(col).fill_nan(None)
+            casts.append((filled.cast(pl.Int64) if whole else filled).alias(col))
+    return df.with_columns(casts) if casts else df
 
 
 def _cell_text(value: object) -> str | None:
@@ -523,7 +620,11 @@ def detect_header_row(rows: list[list[object]], max_rows: int = HEADER_SCAN_ROWS
 
     Skips title rows above the real header (a merged "Study cohort" banner).
     """
-    scores = [_header_score(r) for r in rows[:max_rows]]
+    scanned = rows[:max_rows]
+    # Score each row against the widest one: a sheet can store a one-cell title banner as a
+    # one-cell row, which is "fully filled" only relative to its own length.
+    width = max((len(r) for r in scanned), default=0)
+    scores = [_header_score(list(r) + [None] * (width - len(r))) for r in scanned]
     if not scores or max(scores) <= _HEADER_MIN_SCORE:
         return 0
     return scores.index(max(scores))
@@ -535,6 +636,22 @@ def read_excel_rows(file_bytes: bytes) -> list[list[object]]:
     Raises:
         StagingError: the workbook cannot be read.
     """
+    return _read_first_sheet(file_bytes)[0]
+
+
+def _read_first_sheet(file_bytes: bytes) -> tuple[list[list[object]], ExcelSheets]:
+    """The first sheet's rows, plus its name and the names of the other sheets that hold data.
+
+    Only the first sheet is loaded. The others are named so the upload can say they were not
+    read: a workbook whose data spans sheets must never look fully loaded. Empty sheets (an
+    unused "Sheet2") are not named.
+
+    Raises:
+        StagingError: the workbook cannot be read or has no sheet.
+    """
+    if not file_bytes.startswith(_ZIP_MAGIC):
+        return _read_first_xls_sheet(file_bytes)  # .xlsx is a ZIP; anything else may be BIFF
+
     import zipfile
 
     import openpyxl
@@ -545,13 +662,96 @@ def read_excel_rows(file_bytes: bytes) -> list[list[object]]:
     except (InvalidFileException, zipfile.BadZipFile, KeyError, OSError) as e:
         raise StagingError(f"The Excel file could not be read: {type(e).__name__}") from e
     try:
-        return [list(r) for r in wb.worksheets[0].iter_rows(values_only=True)]
+        if not wb.worksheets:
+            raise StagingError("The Excel file has no sheets")
+        first, *others = wb.worksheets
+        # Read-only mode trusts each sheet's declared size, and some exporters declare A1:A1
+        # (IHME's workbooks do): every row would come back one cell wide, title only.
+        for sheet in wb.worksheets:
+            sheet.reset_dimensions()
+        rows = [list(r) for r in first.iter_rows(values_only=True)]
+        skipped = tuple(sheet.title for sheet in others if _sheet_has_values(sheet))
+        return rows, ExcelSheets(read=first.title, skipped=skipped, empty=len(others) - len(skipped))
     finally:
         wb.close()
 
 
+def _read_first_xls_sheet(file_bytes: bytes) -> tuple[list[list[object]], ExcelSheets]:
+    """``_read_first_sheet`` for a legacy .xls workbook (BIFF2-8, raw or in an OLE2 file), via xlrd.
+
+    Cells come back as the values openpyxl gives: numbers, text, booleans, datetimes for cells
+    formatted as dates (``_cell_text`` writes them as ISO text), None for empty cells. An error
+    cell holds its Excel text (``#N/A``, a missing-value marker; ``#DIV/0!``).
+
+    Raises:
+        StagingError: the workbook cannot be read (encrypted, damaged, or not a workbook).
+    """
+    import struct
+
+    import xlrd
+    from xlrd.compdoc import CompDocError
+
+    if not file_bytes:
+        raise StagingError("The Excel (.xls) file could not be read: it is empty")
+    try:
+        # xlrd writes format warnings to a log file (stdout by default): keep them out of output.
+        wb = xlrd.open_workbook(file_contents=file_bytes, on_demand=True, logfile=io.StringIO())
+    except (xlrd.XLRDError, CompDocError, struct.error, IndexError, UnicodeDecodeError, ValueError) as e:
+        raise StagingError(f"The Excel (.xls) file could not be read: {type(e).__name__}") from e
+    try:
+        names = wb.sheet_names()
+        if not names:
+            raise StagingError("The Excel file has no sheets")
+        first = wb.sheet_by_index(0)
+        rows = [[_xls_value(first.cell(r, c), wb.datemode) for c in range(first.ncols)] for r in range(first.nrows)]
+        skipped = tuple(
+            name for i, name in enumerate(names[1:], start=1) if _xls_sheet_has_values(wb.sheet_by_index(i))
+        )
+    except (xlrd.XLRDError, struct.error, IndexError, UnicodeDecodeError, ValueError) as e:
+        raise StagingError(f"The Excel (.xls) file could not be read: {type(e).__name__}") from e
+    finally:
+        wb.release_resources()
+    return rows, ExcelSheets(read=names[0], skipped=skipped, empty=len(names) - 1 - len(skipped))
+
+
+def _xls_sheet_has_values(sheet: Any) -> bool:
+    return _rows_have_values((_xls_value(cell, 0) for cell in row) for row in sheet.get_rows())
+
+
+def _xls_value(cell: Any, datemode: int) -> object:
+    """One xlrd cell as openpyxl would give it (see ``_read_first_xls_sheet``)."""
+    import xlrd
+
+    if cell.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
+        return None
+    if cell.ctype == xlrd.XL_CELL_TEXT:
+        return cell.value if str(cell.value).strip() else None
+    if cell.ctype == xlrd.XL_CELL_DATE:
+        try:
+            return xlrd.xldate.xldate_as_datetime(cell.value, datemode)
+        except (xlrd.xldate.XLDateError, OverflowError, ValueError):
+            return cell.value  # a serial no date can hold: keep the number, never drop it
+    if cell.ctype == xlrd.XL_CELL_BOOLEAN:
+        return bool(cell.value)
+    if cell.ctype == xlrd.XL_CELL_ERROR:
+        return xlrd.error_text_from_code.get(cell.value, "#N/A")
+    if isinstance(cell.value, float) and cell.value.is_integer():
+        return int(cell.value)  # BIFF stores every number as a float; openpyxl gives whole ones as int
+    return cell.value
+
+
+def _rows_have_values(rows: Iterable[Iterable[object]]) -> bool:
+    """True when any cell holds a value (stops at the first one)."""
+    return any(cell is not None and str(cell).strip() for row in rows for cell in row)
+
+
+def _sheet_has_values(sheet: Any) -> bool:
+    """True when any cell of the sheet holds a value (stops at the first one)."""
+    return _rows_have_values(sheet.iter_rows(values_only=True))
+
+
 def read_excel_typed(file_bytes: bytes, header_row: int | None = None) -> StagedTable:
-    """Read the first sheet of an .xlsx as text, then stage.
+    """Read the first sheet of an .xlsx or .xls workbook as text, then stage.
 
     Args:
         file_bytes: Workbook bytes.
@@ -560,7 +760,7 @@ def read_excel_typed(file_bytes: bytes, header_row: int | None = None) -> Staged
     Raises:
         StagingError: the workbook cannot be read or has no header row.
     """
-    rows = read_excel_rows(file_bytes)
+    rows, sheets = _read_first_sheet(file_bytes)
     if header_row is None:
         header_row = detect_header_row(rows)
     if len(rows) <= header_row:
@@ -568,9 +768,51 @@ def read_excel_typed(file_bytes: bytes, header_row: int | None = None) -> Staged
     headers = _unique_headers(rows[header_row])
     width = len(headers)
     body = [[_cell_text(v) for v in (r + [None] * width)[:width]] for r in rows[header_row + 1 :]]
+    body, footnote_rows = _split_footnotes(body)
+    if footnote_rows:
+        logger.info("staging_excel_footnote_rows_dropped", rows=footnote_rows)
     # Trailing all-empty rows are sheet formatting, not data lines (unlike in a CSV).
     text = _drop_trailing_blank_rows(pl.DataFrame(body, schema=dict.fromkeys(headers, pl.String), orient="row"))
-    return stage_text_frame(text, header_row_number=header_row + 1)
+    staged = stage_text_frame(text, header_row_number=header_row + 1)
+    return replace(staged, sheets=replace(sheets, footnote_rows=footnote_rows))
+
+
+def _filled(row: list[str | None]) -> list[str]:
+    return [value for value in row if value is not None and value.strip()]
+
+
+def _is_footnote(row: list[str | None]) -> bool:
+    """One filled cell holding several words ("Source: ...", "Note: rates per 100,000").
+
+    An ID or a number has no space, so a row that names a patient is never read as a footnote.
+    A footnote row leaves the data, so the upload always reports how many rows it read as notes.
+    """
+    filled = _filled(row)
+    return len(filled) == 1 and len(filled[0].split()) > 1
+
+
+def _split_footnotes(body: list[list[str | None]]) -> tuple[list[list[str | None]], int]:
+    """The rows above any footnotes at the end of a sheet, and how many footnote rows there were.
+
+    A footnote block is one or more footnote rows (``_is_footnote``) at the end of the sheet with
+    a blank row above it. Without that blank row the rows are data-adjacent and stay data (and a
+    row with no ID and no values still fails). Blank rows around footnotes go with them.
+    """
+    end = len(body)
+    footnotes = 0
+    while True:
+        last = end
+        while last > 0 and not _filled(body[last - 1]):
+            last -= 1
+        first = last
+        while first > 0 and _is_footnote(body[first - 1]):
+            first -= 1
+        # The block must stand below a blank row, with data above that.
+        if first == last or first == 0 or _filled(body[first - 1]):
+            break
+        footnotes += last - first
+        end = first
+    return body[:end], footnotes
 
 
 # --- the report shown to the user -------------------------------------------------------------
@@ -594,7 +836,47 @@ _NOTE_TEXT: Final[dict[str, str]] = {
     "shared_column_type": "type changed to match the same column in another table, so the tables join",
     "ambiguous_dates": "kept as text: dates could be day/month or month/day and nothing in the file settles which",
     "not_dates": "kept as text: {n} values are not dates",
+    "from_file_names": "added from the file names: {n} files with the same columns were read as one table",
 }
+
+
+def describe_sheets(sheets: dict[str, object] | None) -> str:
+    """The upload note for a workbook, or "" when nothing in it was left out.
+
+    Only the first sheet is read. When another sheet holds data, the note says which sheet was
+    read out of how many and names every sheet that was not, so the user never takes one sheet's
+    answers for the whole workbook's. Footnote rows below the data are counted too.
+    """
+    if not sheets:
+        return ""
+    raw_skipped = sheets.get("skipped")
+    skipped = [str(name) for name in raw_skipped] if isinstance(raw_skipped, list) else []
+    empty = _count(sheets.get("empty"))
+    footnotes = _count(sheets.get("footnote_rows"))
+    lines: list[str] = []
+    if skipped:
+        unread = [f"“{name}”" for name in skipped]
+        if empty:
+            unread.append("1 empty sheet" if empty == 1 else f"{empty} empty sheets")
+        names = unread[0] if len(unread) == 1 else ", ".join(unread[:-1]) + f" and {unread[-1]}"
+        lines.append(
+            f"Read 1 of {1 + len(skipped) + empty} sheets: “{sheets.get('read', '')}”. Not read: {names}. "
+            "To use another sheet, save it as its own file and upload it."
+        )
+    if footnotes == 1:
+        lines.append(
+            "1 row below the data, after a blank row, was read as a note, not a patient, and is not in the data."
+        )
+    elif footnotes > 1:
+        lines.append(
+            f"{footnotes} rows below the data, after a blank row, were read as notes, not patients, "
+            "and are not in the data."
+        )
+    return " ".join(lines)
+
+
+def _count(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
 
 def describe_column_types(notes: list[dict[str, str | int]], units: dict[str, str], small_cell_limit: int) -> list[str]:

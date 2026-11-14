@@ -165,6 +165,25 @@ def test_attachCohort_parsedIntent_keepsItsConfidence(confidence: float) -> None
         pytest.param(
             ["Type 1", "Type 2", "None"], "how many patients with type diabetes?", None, id="tie_binds_nothing"
         ),
+        # "count" prefix-matches "county" in every value: a longer value must not win the tie.
+        pytest.param(
+            ["Colorado", "Adams County", "Las Animas County", "El Paso County"],
+            "count by sex",
+            None,
+            id="count_is_not_the_longest_county",
+        ),
+        pytest.param(
+            ["Colorado", "Adams County", "Las Animas County", "El Paso County"],
+            "average rate by county",
+            None,
+            id="county_names_no_one_county",
+        ),
+        pytest.param(
+            ["Colorado", "Adams County", "Las Animas County", "El Paso County"],
+            "count in las animas county",
+            "Las Animas County",
+            id="named_county_still_binds",
+        ),
     ],
 )
 def test_peelCohort_storedValues_bindMostSpecificAndNeverATie(
@@ -506,3 +525,106 @@ def test_executeQueryPlan_unappliedWords_listedOnceEach(
     # Assert
     assert result["success"] is False
     assert expected in result["failure_reason"]
+
+
+# --- value words: whole words only, grammar never, ambiguity holds (aggregate triage #4) ------
+
+_GEO_COLUMNS = ["location_name", "state", "sex", "mx"]
+_GEO_VALUES: dict[str, list[Any]] = {
+    "location_name": ["Colorado", "Las Animas County", "Adams County", "El Paso County", "Count Lake"],
+    "state": ["New Mexico", "North Dakota", "South Dakota"],
+    "sex": ["Male", "Female", "Total"],
+    "mx": [101.5, 220.25, 349.75],
+}
+
+
+def _geo_hits(query: str) -> list[tuple[str, Any]]:
+    from clinical_analytics.core.cohort_constraints import _value_hits
+
+    hits = _value_hits(query.lower(), _GEO_COLUMNS, lambda column: _GEO_VALUES[column])
+    return [(column, value) for column, value, _at in hits]
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param("count by sex", id="count_isNotCounty"),
+        pytest.param("count", id="count_alone"),
+        pytest.param("number of patients per state", id="number_per"),
+        pytest.param("how many patients by state?", id="how_many_by"),
+        pytest.param("total count", id="total_isNotSexTotal"),
+        pytest.param("average mx by county", id="county_sharedByCounties"),
+        pytest.param("how many patients in a county?", id="county_noLongestWins"),
+        pytest.param("how many in the counties?", id="counties_plural_shared"),
+        pytest.param("how many patients in dakota?", id="dakota_sharedByStates"),
+        pytest.param("mean mx per year", id="mean_per"),
+        pytest.param("", id="empty"),
+    ],
+)
+def test_valueHits_grammarOrSharedWord_bindsNoValue(query: str) -> None:
+    # Arrange: query above
+
+    # Act
+    hits = _geo_hits(query)
+
+    # Assert
+    assert hits == []
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        pytest.param("how many patients in las animas county?", [("location_name", "Las Animas County")], id="full"),
+        pytest.param("how many patients in adams county?", [("location_name", "Adams County")], id="two_words"),
+        pytest.param("how many patients in las animas?", [("location_name", "Las Animas County")], id="partial"),
+        pytest.param("how many patients in count lake?", [("location_name", "Count Lake")], id="count_lake"),
+        pytest.param("how many in north dakota?", [("state", "North Dakota")], id="more_words_named"),
+        pytest.param("average mx in new mexico", [("state", "New Mexico")], id="state"),
+        pytest.param("count of women in colorado", [("location_name", "Colorado"), ("sex", "Female")], id="two"),
+    ],
+)
+def test_valueHits_wholeWordsNamed_bindsThatValue(query: str, expected: list[tuple[str, Any]]) -> None:
+    # Arrange: query above
+
+    # Act
+    hits = _geo_hits(query)
+
+    # Assert
+    assert sorted(hits) == sorted(expected)
+
+
+@pytest.mark.parametrize(
+    ("word", "part", "expected"),
+    [
+        pytest.param("county", "county", True, id="same"),
+        pytest.param("statins", "statin", True, id="plural"),
+        pytest.param("counties", "county", True, id="plural_ies_sharedStem"),
+        pytest.param("diabetic", "diabetes", True, id="sharedStem_bothGoOn"),
+        pytest.param("count", "county", False, id="prefix_ofValueWord"),
+        pytest.param("county", "count", False, id="valueWord_isPrefix"),
+        pytest.param("northern", "north", False, id="northern_isNotNorth"),
+        pytest.param("diabet", "diabetes", False, id="truncated"),
+        pytest.param("lake", "lakewood", False, id="lake_isNotLakewood"),
+    ],
+)
+def test_namesWord_pair_matchesWholeWordsOnly(word: str, part: str, expected: bool) -> None:
+    # Arrange
+    from clinical_analytics.core.cohort_constraints import _names_word
+
+    # Act
+    named = _names_word(word, part)
+
+    # Assert
+    assert named is expected
+
+
+@pytest.mark.parametrize("word", ["count", "number", "how", "many", "total", "by", "per", "each", "average", "mean"])
+def test_questionFormWords_grammarWord_isInSharedVocabulary(word: str) -> None:
+    # Arrange
+    from clinical_analytics.core.question_vocabulary import QUESTION_FORM_WORDS
+
+    # Act
+    present = word in QUESTION_FORM_WORDS
+
+    # Assert
+    assert present

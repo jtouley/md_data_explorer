@@ -121,7 +121,7 @@ class TestZipExtraction:
         # Should only process patients.csv, not __MACOSX files
 
     def test_extract_zip_no_csv_files(self, upload_storage):
-        """Test ZIP file with no CSV files raises error."""
+        """Test ZIP file with no table files raises error."""
         zip_buffer = io.BytesIO()
 
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
@@ -140,7 +140,7 @@ class TestZipExtraction:
         )
 
         assert success is False
-        assert "no csv files" in message.lower()
+        assert "no table files in zip" in message.lower()
 
     def test_extract_zip_invalid_file(self, upload_storage):
         """Test handling invalid ZIP file."""

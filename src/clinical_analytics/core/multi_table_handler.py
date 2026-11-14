@@ -33,7 +33,7 @@ import polars as pl
 import structlog
 
 from clinical_analytics.core.nl_query_config import SMALL_CELL_THRESHOLD
-from clinical_analytics.core.schema import DataQualityError
+from clinical_analytics.core.schema import DataQualityError, NoCohortAnchorError
 
 try:
     import ibis
@@ -79,6 +79,22 @@ class AggregationPolicyError(ValueError):
     """Raised when aggregation policy is violated (e.g., mean on code column)."""
 
     pass
+
+
+# A relationship counts toward its parent as an anchor only when this share of the child's keys
+# are found in the parent.
+ANCHOR_PARENT_MATCH: Final = 0.99
+
+# Person keys public surveys name without "id": NHANES joins its tables on SEQN.
+PERSON_KEY_NAMES: Final = ("seqn",)
+
+# ICU-stay keys used as a table's grain when it has no patient or admission key (eICU-CRD).
+STAY_KEY_NAMES: Final = ("patientunitstayid",)
+
+NO_ANCHOR_MESSAGE: Final = (
+    "None of these tables has one row per patient (or per stay) with an ID the other tables share, "
+    "so they cannot be joined into one cohort. Upload the table you want to ask about as its own file."
+)
 
 
 def describe_count(n: int) -> str:
@@ -804,13 +820,14 @@ class MultiTableHandler:
             Grain key column name or None
         """
         # 1. Check explicit patient grain patterns first (highest priority)
-        patient_patterns = ["patient_id", "subject_id", "patientid", "subjectid"]
+        patient_patterns = ["patient_id", "subject_id", "patientid", "subjectid", *PERSON_KEY_NAMES]
         for col in df.columns:
             if col.lower() in patient_patterns:
                 return str(col)
 
-        # 2. Check explicit admission grain patterns
-        admission_patterns = ["hadm_id", "encounter_id", "visit_id", "admissionid", "encounterid"]
+        # 2. Check explicit admission (or ICU stay) grain patterns. eICU names its keys without
+        # underscores (patientunitstayid), so the "_id" fallback below never sees them.
+        admission_patterns = ["hadm_id", "encounter_id", "visit_id", "admissionid", "encounterid", *STAY_KEY_NAMES]
         for col in df.columns:
             if col.lower() in admission_patterns:
                 return str(col)
@@ -873,7 +890,7 @@ class MultiTableHandler:
         """
         grain_key_lower = grain_key.lower()
 
-        if any(p in grain_key_lower for p in ["patient", "subject"]):
+        if any(p in grain_key_lower for p in ["patient", "subject"]) or grain_key_lower in PERSON_KEY_NAMES:
             return "patient"
         elif any(p in grain_key_lower for p in ["hadm", "encounter", "visit", "admission"]):
             return "admission"
@@ -2192,10 +2209,8 @@ class MultiTableHandler:
         }
 
         if not dimension_tables:
-            raise ValueError(
-                "No dimension tables found for anchor selection. "
-                "All tables are classified as fact/event/bridge/reference."
-            )
+            # Every table is fact/event/bridge/reference: none has a key the others join to.
+            raise NoCohortAnchorError(NO_ANCHOR_MESSAGE)
 
         # Hard exclusion: filter out tables with >50% NULLs or non-unique grain
         candidates = {}
@@ -2207,7 +2222,8 @@ class MultiTableHandler:
             candidates[name] = cls
 
         if not candidates:
-            raise ValueError("No suitable anchor table found. All dimensions have >50% NULLs in their grain key.")
+            # Every dimension has >50% nulls in its grain key.
+            raise NoCohortAnchorError(NO_ANCHOR_MESSAGE)
 
         # Hard filter: a table with a repeated key can never be the cohort's one-row-per-key anchor
         unique_candidates = {name: cls for name, cls in candidates.items() if cls.is_unique_on_grain}
@@ -2219,11 +2235,14 @@ class MultiTableHandler:
             # No unique candidate: keep them so building the mart fails loudly, naming the table
             logger.warning("No anchor candidate is unique on its key", candidates=sorted(candidates))
 
-        # Count relationships per table
+        # Count, per table, the tables whose keys all appear in it (it is their parent). Tables
+        # one row per person (NHANES's 1:1 files) are detected as related in both directions,
+        # and the weak direction (a lab file "parent" of demographics, match 0.8) used to count
+        # too, so a lab file of a subset could out-score the file of everyone.
         relationship_counts: dict[str, int] = {}
         for rel in self.relationships:
-            relationship_counts[rel.parent_table] = relationship_counts.get(rel.parent_table, 0) + 1
-            relationship_counts[rel.child_table] = relationship_counts.get(rel.child_table, 0) + 1
+            if rel.match_ratio >= ANCHOR_PARENT_MATCH:
+                relationship_counts[rel.parent_table] = relationship_counts.get(rel.parent_table, 0) + 1
 
         # Score each candidate
         scores = {}
@@ -2275,7 +2294,18 @@ class MultiTableHandler:
             logger.info(f"Selected anchor table '{winner}' (tie-breaker: null_rate={min_null_rate:.2%})")
             return winner
 
-        # Tie-breaker 2: Smaller estimated bytes
+        # Tie-breaker 2: more keys. Every candidate here is one row per key, so the one with the
+        # most rows holds the most patients; anchoring on a smaller one (NHANES: the hepatitis C
+        # lab file, not the demographics file of everyone examined) drops the rest from the cohort.
+        max_rows = max(self.tables[name].height for name in top_candidates)
+        top_candidates = [name for name in top_candidates if self.tables[name].height == max_rows]
+
+        if len(top_candidates) == 1:
+            winner = top_candidates[0]
+            logger.info(f"Selected anchor table '{winner}' (tie-breaker: rows={max_rows:,})")
+            return winner
+
+        # Tie-breaker 3: Smaller estimated bytes
         min_bytes = min(candidates[name].estimated_bytes for name in top_candidates)
         top_candidates = [name for name in top_candidates if candidates[name].estimated_bytes == min_bytes]
 
@@ -2284,7 +2314,7 @@ class MultiTableHandler:
             logger.info(f"Selected anchor table '{winner}' (tie-breaker: bytes={min_bytes:,})")
             return winner
 
-        # Tie-breaker 3: Patient grain over admission grain
+        # Tie-breaker 4: Patient grain over admission grain
         patient_grain_candidates = [name for name in top_candidates if candidates[name].grain == "patient"]
 
         if patient_grain_candidates:

@@ -36,7 +36,7 @@ from clinical_analytics.eval.headless import (
     shown_labels,
     small_level_labels,
 )
-from tests.eval.adversarial_probes import own_frame, probes
+from tests.eval.adversarial_probes import geo_frame, own_frame, probes
 from tests.eval.dq_probes import (
     DQ_QUESTIONS,
     PREDICTOR_PROBES,
@@ -306,9 +306,11 @@ def _presented_outcomes(project_root: Path) -> tuple[dict[str, int], list[str]]:
         record("dq_shown", f"{name}: {query}", "answered" if shown == expected else "wrong", expected, result)
 
     own = own_frame()
+    geo = geo_frame()
     register_frame("probe_coh", cohort)
     register_frame("probe_own", own)
-    for dataset, query, truth in probes(cohort, own):
+    register_frame("probe_geo", geo)
+    for dataset, query, truth in probes(cohort, own, geo):
         result = ask(f"probe_{dataset}", query)
         outcome = _held(result) if truth is None else classify_presented_generic(truth, result)
         record("adversarial", query, outcome, truth, result)

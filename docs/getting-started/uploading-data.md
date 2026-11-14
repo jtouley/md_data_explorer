@@ -5,8 +5,10 @@
 The desktop app's **Upload a file…** button accepts one file at a time (`ALLOWED_UPLOAD_EXTENSIONS` in `src/clinical_analytics/api/routes/datasets.py`):
 
 - **CSV files** (.csv)
-- **Excel files** (.xlsx, .xls)
+- **Excel files** (.xlsx, and legacy .xls). Only the first sheet is read; the upload names any other sheet that holds data.
 - **SPSS files** (.sav)
+- **SAS transport files** (.xpt), as NHANES publishes them. Whole-number columns (codes such as 1/2) are stored as integers.
+- **ZIP files** (.zip) of tables and their documentation. See [Multi-table datasets](#multi-table-datasets).
 
 To try the app without your own data, click **Use the sample cohort** instead. It loads a synthetic sample cohort that ships with the app (`src/clinical_analytics/resources/demo/sample_cohort.csv`, no real patients).
 
@@ -62,7 +64,15 @@ Columns with:
 
 ## Multi-table datasets
 
-ZIP uploads of several related tables (for example MIMIC-IV extracts) exist in the storage layer but are **not available in the desktop app**: the upload endpoint rejects `.zip`. Join the tables into one file before uploading.
+Upload a `.zip` that holds the data tables and their documentation, as PhysioNet and UCI package them:
+
+- **Tables:** `.csv`, `.tsv` and `.psv` (each also as `.gz`), `.xlsx`, `.xls`, `.xpt` and `.sav`, in any folder of the ZIP. A ZIP inside the ZIP is opened too (one level).
+- **Documentation:** `.pdf`, `.md` and `.txt` files (a README, a data dictionary). Their text is kept with the dataset as its documentation context.
+- **One file per patient:** numbered files with the same columns (`p000001.psv`, `p000002.psv`, ...) are read as one table. The file name becomes `patient_id` (or `source_file` when the files already hold a patient ID column), and `source_folder` says which folder each row came from when there is more than one.
+- **A codebook saved as CSV** that cannot be read as one table (several small tables separated by blank rows) is kept as documentation, and the upload message says so.
+- **Several tables** become one cohort, anchored on a table with one row per patient or per stay (`subject_id`, `hadm_id`, `patientunitstayid`, NHANES `SEQN`, ...); the upload lists the tables left out of the cohort and why. If no table has an ID the others share, the upload fails with that reason: upload the table you want as its own file.
+
+The upload limit is 100 MB for the ZIP file itself, and 1 GB for everything in it once unpacked. Documentation context is cut at 50,000 characters, in the order the files sit in the ZIP, so put the data dictionary before long files such as a licence or a paper.
 
 ## Manual Schema Override
 

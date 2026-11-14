@@ -1803,6 +1803,7 @@ async function handleFileUpload(file) {
       setDatasetStatus(
         uploadStatusText(
           readyHeadline(result.dataset_name || file.name),
+          result.sheet_note,
           dataCheckStatusNote(result.quality)
         ),
         'ok',

@@ -72,7 +72,7 @@ _REGION_QUERIES = (
 
 def suite_questions() -> list[tuple[str, str, str]]:
     """(suite, dataset id, question) for every question, in a fixed order. Registers the frames."""
-    from tests.eval.adversarial_probes import own_frame, probes
+    from tests.eval.adversarial_probes import geo_frame, own_frame, probes
     from tests.eval.negation_probes import PROBES as NEGATION_PROBES
     from tests.eval.negation_probes import codes_frame, review_frame
     from tests.eval.over_holding_probes import ANSWERABLE, HELD, creatinine_frame
@@ -91,6 +91,7 @@ def suite_questions() -> list[tuple[str, str, str]]:
         "snap_rev": review_frame(),
         "snap_creat": creatinine_frame(),
         "snap_reverse": reverse_frame(),
+        "snap_geo": geo_frame(),
     }
     for name, frame in frames.items():
         register_frame(name, frame)
@@ -102,7 +103,9 @@ def suite_questions() -> list[tuple[str, str, str]]:
     found += [("hard", item["dataset_id"], item["query"]) for item in all_hard_questions()]
     found += [("reviewer", "cohort", probe.query) for probe in REVIEWER_PROBES]
     found += [("reviewer", "snap_regions", query) for query in _REGION_QUERIES]
-    found += [("adversarial", f"snap_{dataset}", query) for dataset, query, _truth in probes(cohort, own)]
+    found += [
+        ("adversarial", f"snap_{dataset}", query) for dataset, query, _truth in probes(cohort, own, frames["snap_geo"])
+    ]
     found += [("negation", f"snap_{probe.dataset}", probe.query) for probe in NEGATION_PROBES]
     found += [("over_holding", f"snap_{probe.dataset}", probe.query) for probe in (*ANSWERABLE, *HELD)]
     found += [("reverse", "snap_reverse", query) for query, _truth in reverse_probes(frames["snap_reverse"])]

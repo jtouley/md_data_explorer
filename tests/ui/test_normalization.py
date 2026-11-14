@@ -4,6 +4,7 @@ Tests for upload normalization (Phase 1 - ADR007).
 Tests normalize_upload_to_table_list() and helper functions.
 """
 
+import gzip
 import io
 import zipfile
 
@@ -13,6 +14,8 @@ import pytest
 from clinical_analytics.ui.storage.user_datasets import (
     SecurityError,
     UploadError,
+    ZipExpansionBudget,
+    extract_documentation_files,
     extract_zip_tables,
     load_single_file,
     normalize_upload_to_table_list,
@@ -163,11 +166,11 @@ class TestExtractZipTables:
         file_bytes = zip_buffer.getvalue()
 
         # Act & Assert
-        with pytest.raises(SecurityError, match="Invalid path"):
+        with pytest.raises(SecurityError, match="points outside it"):
             extract_zip_tables(file_bytes)
 
-    def test_extract_zip_rejects_no_csv_files(self):
-        """Test that ZIP with no CSV files raises UploadError."""
+    def test_extract_zip_rejects_no_table_files(self):
+        """Test that ZIP with no table files raises UploadError."""
         # Arrange
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zf:
@@ -176,7 +179,7 @@ class TestExtractZipTables:
         file_bytes = zip_buffer.getvalue()
 
         # Act & Assert
-        with pytest.raises(UploadError, match="No CSV files in ZIP"):
+        with pytest.raises(UploadError, match="No table files in ZIP"):
             extract_zip_tables(file_bytes)
 
     def test_extract_zip_handles_duplicate_table_names(self):
@@ -223,6 +226,99 @@ class TestExtractZipTables:
         # Act & Assert
         with pytest.raises(UploadError, match="Corrupted ZIP file"):
             extract_zip_tables(file_bytes)
+
+
+def _zip_of(files: dict[str, bytes]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, content in files.items():
+            zf.writestr(name, content)
+    return buf.getvalue()
+
+
+_TABLE = b"patient_id,age\n" + b"".join(f"P{i:03d},{20 + i}\n".encode() for i in range(50))
+
+
+class TestZipExpansionBudget:
+    """A ZIP upload cannot expand past its budget (zip-bomb guard), whatever carries the bytes."""
+
+    @pytest.mark.parametrize(
+        "files",
+        [
+            pytest.param({"big.csv": _TABLE}, id="plain_entry"),
+            pytest.param({"big.csv.gz": gzip.compress(_TABLE)}, id="gzip_member"),
+            pytest.param({"inner.zip": _zip_of({"big.csv": _TABLE})}, id="nested_zip"),
+        ],
+    )
+    def test_readZipTables_expandsPastBudget_raisesUploadError(self, files: dict[str, bytes]):
+        # Arrange
+        from clinical_analytics.ui.storage.user_datasets import read_zip_tables
+
+        data = _zip_of(files)
+        budget = ZipExpansionBudget(left=len(_TABLE) - 1)
+
+        # Act / Assert
+        with pytest.raises(UploadError, match="expands to more than .* once unpacked"):
+            read_zip_tables(data, budget=budget)
+
+    def test_readZipTables_withinBudget_readsTableAndChargesBudget(self):
+        # Arrange
+        from clinical_analytics.ui.storage.user_datasets import read_zip_tables
+
+        data = _zip_of({"cohort.csv.gz": gzip.compress(_TABLE)})
+        budget = ZipExpansionBudget(left=10 * len(_TABLE))
+
+        # Act
+        read = read_zip_tables(data, budget=budget)
+
+        # Assert
+        assert read.table_list[0]["data"].height == 50
+        assert budget.left < 10 * len(_TABLE) - len(_TABLE)  # charged the .gz and its output
+
+    def test_extractDocumentationFiles_expandsPastBudget_raisesUploadError(self):
+        # Arrange
+        data = _zip_of({"README.txt": b"x" * 500})
+
+        # Act / Assert
+        with pytest.raises(UploadError, match="once unpacked"):
+            extract_documentation_files(io.BytesIO(data), budget=ZipExpansionBudget(left=499))
+
+    def test_gunzip_multiMemberStream_joinsMembers(self):
+        # Arrange
+        stream = gzip.compress(b"a,b\n") + gzip.compress(b"1,2\n")
+
+        # Act
+        out = ZipExpansionBudget().gunzip(stream, "t.csv.gz")
+
+        # Assert
+        assert out == b"a,b\n1,2\n"
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            pytest.param(b"not gzip at all", id="not_gzip"),
+            pytest.param(gzip.compress(_TABLE)[:40], id="truncated"),
+        ],
+    )
+    def test_readZipTables_unreadableGzMember_namesFileAndFix(self, content: bytes):
+        # Arrange
+        data = _zip_of({"labs.csv.gz": content, "cohort.csv": _TABLE})
+
+        # Act / Assert
+        with pytest.raises(UploadError, match=r"labs\.csv\.gz in the ZIP is not a readable \.gz file"):
+            extract_zip_tables(data)
+
+
+class TestExtractDocumentationFiles:
+    def test_extractDocumentationFiles_macosMetadata_skipped(self):
+        # Arrange: Finder's "Compress" adds __MACOSX/._<name> resource forks beside each file
+        data = _zip_of({"README.txt": b"Codebook\n", "__MACOSX/._README.txt": b"\x00\x05\x16\x07binary"})
+
+        # Act
+        docs = extract_documentation_files(io.BytesIO(data))
+
+        # Assert
+        assert [d.path for d in docs] == ["README.txt"]
 
 
 class TestLoadSingleFile:
