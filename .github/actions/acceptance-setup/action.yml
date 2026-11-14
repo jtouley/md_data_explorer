@@ -1,29 +1,13 @@
-# Shared setup for the jobs that run the app on public corpus data (ci.yml: acceptance,
-# corpus-load, acceptance-model). The job checks out the code first; this action does the rest.
+# Setup for the jobs that run the app on public corpus data (ci.yml: acceptance;
+# acceptance-nightly.yml: acceptance-model). The job checks out the code first; this action
+# does the rest.
 name: Acceptance setup
-description: Install the app, fetch the pinned embedding model, and restore the corpus download cache.
+description: The app setup (setup-app), plus the corpus download cache.
 runs:
   using: composite
   steps:
-    - name: Install uv
-      uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
-      with:
-        version: ">=0.5.0"
-
-    - name: Install dependencies
-      shell: bash
-      run: uv sync --extra dev --group dev
-
-    - name: Cache bundled embedding model
-      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-      with:
-        path: src/clinical_analytics/resources/models/all-MiniLM-L6-v2
-        # core/embeddings.py holds MODEL_REVISION and the file hashes: bumping it changes the key.
-        key: embedding-model-${{ hashFiles('src/clinical_analytics/core/embeddings.py') }}
-
-    - name: Fetch bundled embedding model (pinned, SHA-256 checked; skips verified files)
-      shell: bash
-      run: make fetch-embedding-model
+    - name: Set up the app
+      uses: ./.github/actions/setup-app
 
     - name: Cache public corpus downloads
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0

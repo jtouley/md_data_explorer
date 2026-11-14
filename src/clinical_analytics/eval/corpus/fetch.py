@@ -15,12 +15,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import html
+import http.client
 import io
 import os
 import re
 import shutil
 import sys
-import urllib.error
 import urllib.request
 import zipfile
 from collections.abc import Callable
@@ -29,7 +29,7 @@ from typing import Literal
 
 import structlog
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 logger = structlog.get_logger()
 
@@ -51,6 +51,10 @@ class CorpusFetchError(RuntimeError):
 
 class ChecksumMismatchError(CorpusFetchError):
     """A file's sha256 differs from the one pinned in corpus.yaml."""
+
+
+class CorpusConfigError(CorpusFetchError):
+    """corpus.yaml is missing, not YAML, or does not match the schema."""
 
 
 class CorpusFile(BaseModel):
@@ -91,10 +95,36 @@ class CorpusDataset(BaseModel):
 
 
 def load_corpus(path: Path = CORPUS_YAML) -> dict[str, CorpusDataset]:
-    """Datasets in corpus.yaml by name, validated."""
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    datasets = [CorpusDataset.model_validate(item) for item in raw["datasets"]]
+    """Datasets in corpus.yaml by name, validated.
+
+    Raises:
+        CorpusConfigError: the file cannot be read, is not YAML, or does not match the schema.
+    """
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict) or not isinstance(raw.get("datasets"), list):
+            raise CorpusConfigError(f"{path} has no 'datasets' list at the top level")
+        datasets = [CorpusDataset.model_validate(item) for item in raw["datasets"]]
+    except (OSError, yaml.YAMLError, ValidationError) as error:
+        raise CorpusConfigError(f"{path} could not be loaded: {error}") from error
     return {dataset.name: dataset for dataset in datasets}
+
+
+def dataset_root(name: str, cache_dir: Path | None = None) -> Path:
+    """The cache directory of one dataset: ``files/`` holds its checked files, plus its ZIP."""
+    return (cache_dir or default_cache_dir()) / name
+
+
+def table_path(dataset: CorpusDataset, cache_dir: Path | None = None) -> Path:
+    """Where ``fetch_dataset`` puts the dataset's table file (kind ``table``).
+
+    Raises:
+        CorpusConfigError: corpus.yaml lists no file of kind ``table`` for the dataset.
+    """
+    table = next((item.path for item in dataset.files if item.kind == "table"), None)
+    if table is None:
+        raise CorpusConfigError(f"{dataset.name} has no file of kind table in corpus.yaml")
+    return dataset_root(dataset.name, cache_dir) / "files" / table
 
 
 def default_cache_dir() -> Path:
@@ -118,8 +148,10 @@ def _download(url: str) -> bytes:
     try:
         with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_S) as response:  # noqa: S310 - https only
             return bytes(response.read())
-    except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+    except (OSError, http.client.HTTPException) as error:
         # Named here, so a host that is down or blocked reads as that, not as an app regression.
+        # OSError covers URLError, timeouts, resets and SSL errors; HTTPException covers a body
+        # cut off mid-read (IncompleteRead) and a dropped connection (RemoteDisconnected).
         raise CorpusFetchError(
             f"could not download {url}: {error}. Check that the host is reachable from this machine, then retry."
         ) from error
@@ -230,7 +262,7 @@ def fetch_dataset(
     if name not in datasets:
         raise CorpusFetchError(f"unknown corpus dataset '{name}'; known: {', '.join(sorted(datasets))}")
     dataset = datasets[name]
-    root = (cache_dir or default_cache_dir()) / name
+    root = dataset_root(name, cache_dir)
     files_dir = root / "files"
     for item in dataset.files:
         fetch_file(item, files_dir, seed_dirs, download)
