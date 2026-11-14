@@ -4,8 +4,8 @@ Thanks for helping. Clinical Analytics runs on clinicians' own machines with the
 data, so two rules come before everything else:
 
 1. **Synthetic data only.** Never commit, attach, paste or screenshot real patient data, in code,
-   tests, issues, pull requests or logs. Use the synthetic kit (below) or the app's **Load sample**
-   cohort.
+   tests, issues, pull requests or logs. Use the synthetic kit (below) or the app's **Use the sample
+   cohort** button.
 2. **No small counts, no data leaving the machine.** Patient counts from 1 to 10 must never be
    shown or be recoverable, and nothing may send data to a non-loopback host. A change that weakens
    either is a security issue: report it as [SECURITY.md](SECURITY.md) describes, not in a public
@@ -27,7 +27,7 @@ accepted under the project's [MIT licence](LICENSE).
 ## Set up
 
 Prerequisites are in the [README](README.md#prerequisites): [uv](https://docs.astral.sh/uv/),
-Node.js 20 with npm, and `make`.
+Node.js 22.12 or later with npm, and `make`.
 
 ```bash
 git clone https://github.com/jtouley/md_data_explorer.git
@@ -43,15 +43,18 @@ make fetch-embedding-model       # already done by install-dev; re-run after a m
 ./scripts/run_app.sh             # macOS/Linux: Ollama (optional), the API and the desktop window
 ```
 
-Or in two terminals:
+`cd electron && npm start` on its own also works on any OS: the desktop app starts its own
+backend with a fresh API token.
+
+Or in two terminals, against a backend that reloads on code changes:
 
 ```bash
 make run                         # API on http://127.0.0.1:8000 with --reload, dev mode (no API token)
-cd electron && npm start         # desktop window
+cd electron && CLINICAL_ANALYTICS_EXTERNAL_BACKEND=1 CLINICAL_ANALYTICS_DEV_NO_AUTH=1 npm start
 ```
 
 `make run` turns off API authentication for development. Never use it with real patient data.
-In the window, click **Load sample** and ask `compare outcome by diabetes`.
+In the window, click **Use the sample cohort** and ask `compare outcome by diabetes`.
 
 ## Before you push
 
