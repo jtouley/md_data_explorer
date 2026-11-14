@@ -22,7 +22,7 @@ cd electron && npm ci && cd ..
 ./scripts/run_app.sh                  # macOS/Linux: API on http://127.0.0.1:8000 + desktop app
 ```
 
-Then click **Load sample** and ask `compare outcome by diabetes`. Windows and two-terminal setup: [Installation](getting-started/installation.md).
+Then click **Use the sample cohort** and ask `compare outcome by diabetes`. On Windows, or any OS, `cd electron && npm start` also works: [Installation](getting-started/installation.md).
 
 **Privacy:** the app runs locally after setup and stores data in a per-user data home outside the repo; it is not a compliance certification. See [Where your data lives](getting-started/installation.md#where-your-data-lives).
 

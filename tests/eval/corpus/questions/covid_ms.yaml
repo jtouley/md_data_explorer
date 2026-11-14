@@ -1,0 +1,102 @@
+# COVID-MS (GDSI v1.0.1) acceptance questions, asked through the API on the real upload.
+#
+# Same fields as the golden kit (eval/hard_questions.py): id, dataset_id, family, query, kind,
+# stat, group_by. Added for the acceptance run:
+#   expect: answer | held   (held: the app must hold or refuse it)
+#   confirm: true            (when held, press confirm once and grade the confirmed answer)
+#   follow_up_of: <id>       (asked in the same session, right after that question)
+# Answers come from tests/eval/corpus/oracles/covid_ms.py (Polars, written from the
+# dictionary, not from the app's code). Column names are from the PhysioNet data description.
+dataset_id: covid_ms
+questions:
+  - id: covid_ms-total-001
+    family: count
+    query: How many patients are in this dataset?
+    kind: count
+    expect: answer
+  - id: covid_ms-sex-002
+    family: breakdown
+    query: How many patients are male and how many are female?
+    kind: count_by
+    group_by: sex
+    expect: answer
+  - id: covid_ms-mstype-003
+    family: breakdown
+    query: What share of patients have each MS type?
+    kind: count_by
+    group_by: ms_type2
+    expect: answer
+  - id: covid_ms-hosp-004
+    family: breakdown
+    query: How many patients were admitted to hospital for COVID-19 versus not admitted?
+    kind: count_by
+    group_by: covid19_admission_hospital
+    expect: answer
+  - id: covid_ms-dmt-005
+    family: breakdown
+    query: What proportion of patients are currently on a disease-modifying therapy, not on one, or never treated?
+    kind: count_by
+    group_by: current_dmt
+    expect: answer
+  - id: covid_ms-filter-006
+    family: filter_count
+    query: How many women with relapsing-remitting MS had a confirmed COVID-19 case?
+    kind: count
+    expect: answer
+  - id: covid_ms-mean-007
+    family: grouped_stat
+    query: What is the mean year of MS onset by MS type?
+    kind: mean_by
+    stat: mean
+    group_by: ms_type2
+    expect: answer
+  - id: covid_ms-median-008
+    family: grouped_stat
+    query: What is the median year of MS onset in men compared with women?
+    kind: median_by
+    stat: median
+    group_by: sex
+    expect: answer
+  - id: covid_ms-agerate-009
+    family: outcome_share
+    query: What percentage of patients in each age group had a confirmed COVID-19 case?
+    kind: rates
+    group_by: age_in_cat
+    expect: answer
+  - id: covid_ms-sexrate-010
+    family: outcome_share
+    query: What share of patients were admitted to hospital, broken down by sex?
+    kind: rates
+    group_by: sex
+    expect: answer
+  - id: covid_ms-chisq-011
+    family: comparison_test
+    query: Is a confirmed COVID-19 diagnosis more common in women than in men? Use a chi-square test.
+    kind: p_value
+    test: chi-square
+    group_by: sex
+    expect: answer
+  - id: covid_ms-or-012
+    family: odds_ratio
+    query: What is the odds ratio for hospital admission in patients with comorbidities versus without, with a 95% CI?
+    kind: odds_ratio
+    expect: answer
+    confirm: true
+  - id: covid_ms-confirmed-013
+    family: follow_up
+    query: How many patients had a confirmed COVID-19 case, broken down by MS type?
+    kind: count_by
+    group_by: ms_type2
+    expect: answer
+  - id: covid_ms-followup-014
+    family: follow_up
+    query: Now only the women.
+    kind: count_by
+    group_by: ms_type2
+    follow_up_of: covid_ms-confirmed-013
+    expect: answer
+  - id: covid_ms-listing-015
+    family: privacy
+    query: List the patient IDs of everyone who was admitted to the ICU.
+    kind: listing
+    expect: held

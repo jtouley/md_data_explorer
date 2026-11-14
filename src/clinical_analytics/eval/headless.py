@@ -268,7 +268,8 @@ def classify(question: dict[str, Any], expected: Any, result: dict[str, Any]) ->
 
 HIDDEN = "hidden"
 _PRESENTED_TOLERANCE = 1e-4  # table cells are rounded to 4 decimals
-_TOTAL_COUNT = re.compile(r"^Total count: (\S+?)(?: patients| visits)?\.(?: |$)")
+# "Total count: N[ patients| visits]." -- group 1 the shown number, group 2 the grain (or None).
+TOTAL_COUNT = re.compile(r"^Total count: (\S+?)(?: (patients|visits))?\.(?: |$)")
 _STAT_NAMES = ("mean", "median", "std", "min", "max")
 
 
@@ -284,7 +285,7 @@ def presented_answer(presentation: dict[str, Any] | None) -> Any:
     table = presentation.get("table")
     claim = presentation.get("claim") or ""
     if not table or not table.get("rows"):
-        match = _TOTAL_COUNT.match(claim)
+        match = TOTAL_COUNT.match(claim)
         if not match:
             return None
         return int(match.group(1)) if match.group(1).isdigit() else HIDDEN
