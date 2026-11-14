@@ -1762,3 +1762,46 @@ def test_findAnchor_oneRowPerPersonTables_anchorsOnTableOfEveryone():
 
     # Assert
     assert anchor == "DEMO_J"
+
+
+@pytest.mark.parametrize(
+    ("grain_key", "level"),
+    [
+        ("patientunitstayid", "admission"),
+        ("PatientUnitStayID", "admission"),
+        ("patient_id", "patient"),
+        ("SEQN", "patient"),
+        ("hadm_id", "admission"),
+        ("lab_event_id", "event"),
+    ],
+)
+def test_detectGrainLevel_stayKeyNamedForPatient_isStayNotPatient(grain_key: str, level: str):
+    # Arrange
+    with MultiTableHandler({"t": pl.DataFrame({grain_key: [1, 2]})}) as handler:
+        # Act
+        detected = handler._detect_grain_level(grain_key)
+
+    # Assert
+    assert detected == level
+
+
+def test_findAnchor_hubWithFewOrphanChildKeys_stillAnchors():
+    # Arrange: an extract where 1 in 25 admissions points at a patient outside it (match 0.96)
+    patients = pl.DataFrame({"patient_id": [f"P{i:03d}" for i in range(60)], "age": list(range(60))})
+    admissions = pl.DataFrame(
+        {
+            "hadm_id": list(range(100)),
+            "patient_id": [f"P{i % 60:03d}" if i % 25 else f"X{i:03d}" for i in range(100)],
+        }
+    )
+    # A larger one-row-per-person table that nothing joins to: it wins a tie on rows
+    registry = pl.DataFrame({"subject_id": [f"S{i:03d}" for i in range(80)], "consented": [i % 2 for i in range(80)]})
+
+    # Act
+    with MultiTableHandler({"registry": registry, "patients": patients, "admissions": admissions}) as handler:
+        handler.detect_relationships()
+        handler.classify_tables()
+        anchor = handler._find_anchor_by_centrality()
+
+    # Assert
+    assert anchor == "patients"

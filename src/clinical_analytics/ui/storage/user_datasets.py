@@ -470,10 +470,11 @@ def read_zip_tables(file_bytes: bytes, budget: ZipExpansionBudget | None = None)
             if ext not in DELIMITERS or len(singles) + len(file_sets) < 2:
                 raise UploadError(f"Table '{name}': {e}") from e
             as_docs.append(DocFile(name=f"{name}.txt", path=entry, content=content))
+            # Says why, so a data table that fails is never mistaken for a codebook in silence.
             notes.append(
-                f"{Path(entry).name} was kept as documentation, not read as a table: it is not one table "
-                "(blank rows split it into parts, as in a codebook). To ask questions about it, "
-                "save each part as its own CSV and upload it."
+                f"{Path(entry).name} was kept as documentation, not read as a table, so it is not in the "
+                f"cohort. {str(e).rstrip('.')}. If it is a codebook (several tables split by blank rows), "
+                "you can ignore this."
             )
             logger.info("zip_table_read_as_documentation", error_type=type(e).__name__)
     if not staged_tables:
@@ -555,7 +556,10 @@ def load_single_file_staged(file_bytes: bytes, filename: str) -> StagedTable:
     if file_ext == ".sav":
         import pyreadstat
 
-        df, _meta = pyreadstat.read_sav(io.BytesIO(file_bytes), output_format="polars")
+        try:
+            df, _meta = pyreadstat.read_sav(io.BytesIO(file_bytes), output_format="polars")
+        except (pyreadstat.ReadstatError, pyreadstat.PyreadstatError) as e:
+            raise StagingError(f"The SPSS (.sav) file could not be read: {type(e).__name__}") from e
         return StagedTable(data=df)
     raise ValueError(f"Unsupported file type: {file_ext}")
 

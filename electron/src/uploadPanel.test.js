@@ -28,6 +28,7 @@ describe('normalizeUploadResponse', () => {
       message: '',
       quality: null,
       sheet_note: '',
+      cohort_notes: [],
     });
     expect(normalizeUploadResponse(undefined)).toEqual({
       upload_id: '',
@@ -36,6 +37,7 @@ describe('normalizeUploadResponse', () => {
       message: '',
       quality: null,
       sheet_note: '',
+      cohort_notes: [],
     });
   });
 });
@@ -62,6 +64,27 @@ describe('upload sheet note', () => {
     });
     expect(uploadStatusText('A is ready.', sheetNote, dataCheckStatusNote(quality))).toBe(
       `A is ready. ${note} Data check could not run.`
+    );
+  });
+
+  test.each([
+    [
+      { cohort_notes: ['codebook.csv was kept as documentation.', '  labs: not in the cohort.  '] },
+      ['codebook.csv was kept as documentation.', 'labs: not in the cohort.'],
+    ],
+    [{ cohort_notes: ['', '  ', null, 3, 'A note.'] }, ['A note.']],
+    [{ cohort_notes: 'not a list' }, []],
+    [{}, []],
+  ])('normalizeUploadResponse keeps only text cohort notes (%#)', (raw, expected) => {
+    expect(normalizeUploadResponse(raw).cohort_notes).toEqual(expected);
+  });
+
+  test('cohort notes are shown in the status line after the sheet note', () => {
+    const { cohort_notes: cohortNotes } = normalizeUploadResponse({
+      cohort_notes: ['codebook.csv was kept as documentation.'],
+    });
+    expect(uploadStatusText('A is ready.', '', ...cohortNotes, null)).toBe(
+      'A is ready. codebook.csv was kept as documentation.'
     );
   });
 

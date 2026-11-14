@@ -1804,6 +1804,7 @@ async function handleFileUpload(file) {
         uploadStatusText(
           readyHeadline(result.dataset_name || file.name),
           result.sheet_note,
+          ...result.cohort_notes,
           dataCheckStatusNote(result.quality)
         ),
         'ok',

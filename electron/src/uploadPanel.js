@@ -10,7 +10,7 @@ const ALLOWED_EXTENSIONS = new Set(['.csv', '.xlsx', '.xls', '.sav', '.xpt', '.z
 
 /**
  * @param {Record<string, unknown>|null|undefined} raw
- * @returns {{ upload_id: string, dataset_name: string, status: string, message: string, quality: import('./dataCheckPanel.js').DataCheck | null, sheet_note: string }}
+ * @returns {{ upload_id: string, dataset_name: string, status: string, message: string, quality: import('./dataCheckPanel.js').DataCheck | null, sheet_note: string, cohort_notes: string[] }}
  */
 export function normalizeUploadResponse(raw) {
   if (!raw || typeof raw !== 'object') {
@@ -21,6 +21,7 @@ export function normalizeUploadResponse(raw) {
       message: '',
       quality: null,
       sheet_note: '',
+      cohort_notes: [],
     };
   }
   return {
@@ -31,6 +32,12 @@ export function normalizeUploadResponse(raw) {
     quality: normalizeQuality(raw.quality),
     // Excel: which sheet was read and which were not. Shown at upload, never dropped.
     sheet_note: typeof raw.sheet_note === 'string' ? raw.sheet_note.trim() : '',
+    // ZIP: files kept as documentation, tables left out of the cohort. Shown at upload, never dropped.
+    cohort_notes: Array.isArray(raw.cohort_notes)
+      ? raw.cohort_notes
+          .filter((note) => typeof note === 'string' && note.trim())
+          .map((note) => note.trim())
+      : [],
   };
 }
 

@@ -428,10 +428,12 @@ def _upload_sheet_note(storage: UserDatasetStorage, upload_id: str) -> str:
 
 
 def _upload_cohort_notes(storage: UserDatasetStorage, upload_id: str) -> list[str]:
-    """What a multi-table cohort left out (tables, keyless rows, features), for the user."""
-    from clinical_analytics.ui.storage.user_datasets import COHORT_BUILD_KEY, describe_cohort_build
+    """What the cohort left out, for the user: ZIP files kept as documentation instead of tables,
+    then what a multi-table cohort dropped (tables, keyless rows, features)."""
+    from clinical_analytics.ui.storage.user_datasets import COHORT_BUILD_KEY, ZIP_NOTES_KEY, describe_cohort_build
 
-    return describe_cohort_build((storage.get_upload_metadata(upload_id) or {}).get(COHORT_BUILD_KEY))
+    metadata = storage.get_upload_metadata(upload_id) or {}
+    return [*metadata.get(ZIP_NOTES_KEY, []), *describe_cohort_build(metadata.get(COHORT_BUILD_KEY))]
 
 
 class DatasetDeleteResponse(BaseModel):

@@ -82,8 +82,10 @@ class AggregationPolicyError(ValueError):
 
 
 # A relationship counts toward its parent as an anchor only when this share of the child's keys
-# are found in the parent.
-ANCHOR_PARENT_MATCH: Final = 0.99
+# are found in the parent: high enough to drop the weak reverse direction between 1:1 tables
+# (NHANES: a lab subset is "parent" of demographics at 0.80), low enough to keep a hub with a few
+# orphan child keys in an extract.
+ANCHOR_PARENT_MATCH: Final = 0.9
 
 # Person keys public surveys name without "id": NHANES joins its tables on SEQN.
 PERSON_KEY_NAMES: Final = ("seqn",)
@@ -890,6 +892,8 @@ class MultiTableHandler:
         """
         grain_key_lower = grain_key.lower()
 
+        if grain_key_lower in STAY_KEY_NAMES:  # "patientunitstayid" is one ICU stay, not one patient
+            return "admission"
         if any(p in grain_key_lower for p in ["patient", "subject"]) or grain_key_lower in PERSON_KEY_NAMES:
             return "patient"
         elif any(p in grain_key_lower for p in ["hadm", "encounter", "visit", "admission"]):

@@ -122,7 +122,34 @@ def test_uploadDataset_zipWithStackedCodebookCsv_codebookReadAsDocs(test_client:
     assert body["_status_code"] == 200, body
     assert frame.height == 120
     assert "mapping.csv was kept as documentation, not read as a table" in body["message"]
+    assert any(note.startswith("mapping.csv was kept as documentation") for note in body["cohort_notes"])
     assert "discharge_id" in meta["doc_context"]
+
+
+def test_uploadDataset_zipWithBrokenDataTable_noteSaysWhyItIsNotInCohort(test_client: TestClient, isolated_data_home):
+    # Arrange: a lab table with a row that has no ID and no values (staging refuses it)
+    labs = b"patient_id,alt\nP000,31\nP001,40\n,\nP002,22\n"
+
+    # Act
+    body = _upload(test_client, "labs.zip", _zip({"cohort.csv": _cohort_csv(), "labs.csv": labs}), "labs")
+
+    # Assert: never dropped in silence; the note names the file and the reason, shown with the cohort
+    assert body["_status_code"] == 200, body
+    note = next(n for n in body["cohort_notes"] if n.startswith("labs.csv"))
+    assert "is not in the cohort" in note
+    assert "no patient ID and no values" in note
+
+
+def test_uploadDataset_zipWithCorruptSav_failsWithReadableReason(test_client: TestClient, isolated_data_home):
+    # Arrange: the bytes of a .sav that is not one
+    data = _zip({"cohort.csv": _cohort_csv(), "extra.sav": b"$FL2" + b"\x00" * 2000})
+
+    # Act
+    body = _upload(test_client, "sav.zip", data, "sav")
+
+    # Assert: a user message, not an unhandled error
+    assert body["_status_code"] == 500
+    assert "SPSS (.sav) file could not be read" in body["detail"]
 
 
 def test_uploadDataset_zipOfTablesWithNoSharedKey_saysWhyInPlainWords(test_client: TestClient, isolated_data_home):
