@@ -47,6 +47,9 @@ DATA_EXTENSIONS = (
     ".xls",
     ".csv",
     ".tsv",
+    ".psv",
+    ".zip",  # an upload package (tables + dictionary), e.g. the acceptance corpus ZIP
+    ".gz",
 )
 # Synthetic fixtures only. Data dictionaries come with the user's upload and stay local.
 ALLOWLIST = (

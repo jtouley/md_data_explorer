@@ -59,6 +59,7 @@ from clinical_analytics.storage.staging import (
     read_excel_typed,
     settle_shared_column_types,
 )
+from clinical_analytics.storage.upload_metadata import normalize_upload_metadata
 from clinical_analytics.ui.config import MULTI_TABLE_ENABLED
 
 logger = structlog.get_logger()
@@ -1464,7 +1465,11 @@ def _convert_legacy_upload(storage: "UserDatasetStorage", upload_id: str, metada
     if untyped:
         log.warning("legacy_tables_untyped", tables=len(untyped))
     log.info("legacy_upload_converted", tables=len(table_paths))
-    return StoredDataset(metadata=updated, cohort_path=cohort_path, table_paths=table_paths)
+    return StoredDataset(
+        metadata=normalize_upload_metadata(updated, upload_id=upload_id),
+        cohort_path=cohort_path,
+        table_paths=table_paths,
+    )
 
 
 class UserDatasetStorage:
@@ -2099,7 +2104,7 @@ class UserDatasetStorage:
 
         with open(metadata_path) as f:
             result = json.load(f)
-            return dict(result) if isinstance(result, dict) else None
+        return normalize_upload_metadata(result, upload_id=upload_id) if isinstance(result, dict) else None
 
     def get_upload_data(self, upload_id: str, lazy: bool = True) -> pl.LazyFrame | None:
         """
@@ -2222,7 +2227,7 @@ class UserDatasetStorage:
         try:
             # Load existing metadata
             with open(metadata_path) as f:
-                metadata = json.load(f)
+                metadata = normalize_upload_metadata(json.load(f), upload_id=upload_id)
 
             # Extract doc_context from PDF
             import tempfile
@@ -2269,23 +2274,21 @@ class UserDatasetStorage:
                     if inferred_schema.dictionary_metadata:
                         # Convert DictionaryMetadata to variable_types format
                         # This is a simplified version - full integration would use to_dataset_config()
-                        if "variable_types" not in metadata:
-                            metadata["variable_types"] = {}
+                        # (normalize_upload_metadata made variable_types a dict of dicts)
+                        variable_types = metadata["variable_types"]
 
                         # Update variable_types with codebooks and descriptions
                         for col_name, codebook in inferred_schema.dictionary_metadata.codebooks.items():
-                            if col_name in metadata["variable_types"]:
-                                if "codebook" not in metadata["variable_types"][col_name]:
-                                    metadata["variable_types"][col_name]["codebook"] = codebook
+                            if col_name in variable_types:
+                                variable_types[col_name].setdefault("codebook", codebook)
 
                         for col_name, description in inferred_schema.dictionary_metadata.column_descriptions.items():
-                            if col_name in metadata["variable_types"]:
-                                if "description" not in metadata["variable_types"][col_name]:
-                                    metadata["variable_types"][col_name]["description"] = description
+                            if col_name in variable_types:
+                                variable_types[col_name].setdefault("description", description)
 
                     logger.info("Re-ran schema inference with doc_context")
 
-            doc_updates = {k: metadata[k] for k in ("doc_context", "variable_types") if k in metadata}
+            doc_updates: dict[str, Any] = {k: metadata[k] for k in ("doc_context", "variable_types") if k in metadata}
 
             def mutate(current: dict[str, Any]) -> bool:
                 current.update(doc_updates)

@@ -1,5 +1,16 @@
 # Claude Code Rules
 
+## Purpose and steel thread (read first, every session)
+
+The purpose, what "works" means, the ordered steel thread, the merge gate and the real-data rule live in [docs/vision/PURPOSE.md](../docs/vision/PURPOSE.md). Read it first. Do the first unfinished step; work that does not move it waits.
+
+**Rules that stop wasted work:**
+- **Check before building.** Before writing code or briefing an agent, search the repo for what already does the job (`eval/`, `contracts/`, `analysis/`, `core/`, `tests/eval/`) and the open PRs. Extend what exists. A brief must name what exists and say to reuse it.
+- **One change on the thread at a time:** one PR, one independent review, one fix round. A second review only when the fix changes privacy, security or concurrency logic.
+- **A change merges only if it moves the acceptance table,** or fixes a WRONG, LEAK or ERROR the table shows. Hardening for cases the corpus doesn't hit waits. **Exception:** fixes for privacy, security or data loss merge on their own merits, whether or not the corpus triggers the issue.
+- **Report status as the latest acceptance table,** not as a list of PRs.
+- **Real data:** synthetic data is the rule. The only exception is acceptance testing on public, openly licensed, de-identified datasets: fetched at test time from their public source, checked against a pinned checksum, used under their licence, never committed, and never shown row by row. Aggregate results (counts, statistics, grades) may appear in logs, issues and pull requests. Everything else, unit tests included, uses synthetic data.
+
 ## Behavior
 
 You are a thought partner, not a yes-machine. Accuracy over politeness.
