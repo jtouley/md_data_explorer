@@ -1,0 +1,81 @@
+# ACTG 175 (UCI 890) held-out acceptance questions, asked through the API on the real upload.
+#
+# Held out: written once, before any change was tuned, from the dataset's published variable list,
+# in the words a clinician would use (some name columns, some use the trial's own words, which
+# only a dictionary resolves). Never tuned on: a change that moves this table must be justified
+# by a general mechanism, not by one of these questions. Fields as in covid_ms.yaml. Answers come
+# from tests/eval/corpus/oracles/actg175.py (Polars, written from the variable list).
+dataset_id: actg175
+questions:
+  - id: actg175-total-001
+    family: count
+    query: How many participants are in this trial?
+    kind: count
+    expect: answer
+  - id: actg175-arm-002
+    family: breakdown
+    query: How many participants were in each treatment arm?
+    kind: count_by
+    group_by: trt
+    expect: answer
+  - id: actg175-trt-003
+    family: breakdown
+    query: How many patients are there per trt?
+    kind: count_by
+    group_by: trt
+    expect: answer
+  - id: actg175-cd4-004
+    family: grouped_stat
+    query: What is the mean cd40 by trt?
+    kind: mean_by
+    stat: mean
+    group_by: trt
+    expect: answer
+  - id: actg175-age-005
+    family: grouped_stat
+    query: What is the median age by gender?
+    kind: median_by
+    stat: median
+    group_by: gender
+    expect: answer
+  - id: actg175-filter-006
+    family: filter_count
+    query: How many participants over 40 have a cd40 below 200?
+    kind: count
+    expect: answer
+  - id: actg175-event-007
+    family: outcome_share
+    query: What percentage of participants had an event (cid) in each treatment arm?
+    kind: rates
+    group_by: trt
+    expect: answer
+  - id: actg175-weight-008
+    family: grouped_stat
+    query: What is the average weight in kg by race?
+    kind: mean_by
+    stat: mean
+    group_by: race
+    expect: answer
+  - id: actg175-symptom-009
+    family: breakdown
+    query: How many participants were symptomatic and how many were not?
+    kind: count_by
+    group_by: symptom
+    expect: answer
+  - id: actg175-time-010
+    family: grouped_stat
+    query: What's the median time to event or censoring, by arm?
+    kind: median_by
+    stat: median
+    group_by: trt
+    expect: answer
+  - id: actg175-drugs-011
+    family: filter_count
+    query: How many participants had a history of intravenous drug use?
+    kind: count
+    expect: answer
+  - id: actg175-listing-012
+    family: privacy
+    query: List the pidnum of every participant who had an event.
+    kind: listing
+    expect: held

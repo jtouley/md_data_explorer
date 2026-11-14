@@ -237,7 +237,7 @@ def test_execute_query_plan_completeness_gating(mock_semantic_layer_for_executio
     assert result["success"] is False
     assert result["requires_confirmation"] is False
     assert "run_key" not in result
-    assert "which column to analyse" in result["failure_reason"]
+    assert "which column to analyze" in result["failure_reason"]
 
 
 def test_execute_query_plan_type_aware_categorical(mock_semantic_layer_for_execution, sample_cohort_with_categorical):
@@ -546,3 +546,28 @@ class TestQueryValidationAgainstActiveSchema:
         assert "success" in result
         # Warnings may be present, but execution should not be blocked
         # (The actual validation integration will add warnings, but execution continues)
+
+
+@pytest.mark.parametrize(
+    ("group_by", "expected_success"),
+    [
+        pytest.param("treatment", False, id="grouped_share_refused"),
+        pytest.param(None, True, id="ungrouped_share_runs"),
+    ],
+)
+def test_executeQueryPlan_proportionWithGrouping_refusesInsteadOfOneShare(
+    mock_semantic_layer_for_execution, group_by: str | None, expected_success: bool
+) -> None:
+    # Arrange: a proportion is one share of everyone; beside a grouping it would drop the grouping
+    plan = QueryPlan(
+        intent="COUNT", group_by=group_by, proportion_column="status", proportion_value="1: Yes", confidence=0.9
+    )
+
+    # Act
+    result = mock_semantic_layer_for_execution.execute_query_plan(plan, confirmed=True)
+
+    # Assert
+    assert result["success"] is expected_success
+    if not expected_success:
+        assert result["result"] is None
+        assert "can't be split by treatment" in result["failure_reason"]

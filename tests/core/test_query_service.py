@@ -276,6 +276,25 @@ class TestQueryServiceAnalysis:
         assert result.analysis is None
         assert {"message": "boom", "severity": "error"} in result.issues
 
+    @pytest.mark.parametrize(
+        "error",
+        [pytest.param(RuntimeError("value 'Smith, J' broke"), id="runtime"), pytest.param(KeyError("x"), id="key")],
+    )
+    def test_ask_executionRaises_plainMessageWithoutExceptionText(self, mock_semantic_layer, error):
+        """Exception text can quote cell values: the user sees the plain sentence, never the text."""
+        # Arrange
+        from clinical_analytics.core.query_service import UNEXPECTED_FAILURE_MESSAGE
+
+        service, layer = self._service(mock_semantic_layer, {"success": True})
+        layer.execute_query_plan.side_effect = error
+
+        # Act
+        result = service.ask("compare ldl by treatment", dataset_id="ds")
+
+        # Assert
+        assert [i["message"] for i in result.issues if i["severity"] == "error"] == [UNEXPECTED_FAILURE_MESSAGE]
+        assert result.failure_reason == UNEXPECTED_FAILURE_MESSAGE
+
     @pytest.mark.parametrize("threshold", [0.5, 0.95], ids=["lenient", "strict"])
     def test_ask_execution_usesConfiguredConfidenceThreshold(self, mock_semantic_layer, monkeypatch, threshold):
         """The hold threshold comes from config/nl_query.yaml, not execute_query_plan's default."""
@@ -406,3 +425,113 @@ class TestQueryServiceAnalysis:
         assert (result.failure_reason == "I couldn't find 'drug' in treatment.") is held
         assert (result.plan_line is not None) is held
         assert layer.execute_query_plan.called is not held
+
+
+class TestQueryServiceModelEscalation:
+    """A plan held for review from a tier before the model is first read again by the model; the
+    model's plan is used only if it passes every check with nothing held."""
+
+    _UNASKED = FilterSpec("age", ">", 65)
+
+    def _service(self, mock_semantic_layer, *, tier="pattern_match", model_up=True, model_plan_clean=True):
+        layer = mock_semantic_layer()
+        layer._generate_run_key.return_value = "run_key"
+        layer._validate_query_plan.return_value = {"valid": True, "issues": []}
+        layer.execute_query_plan.return_value = {"success": True, "run_key": "rk", "result": "rows"}
+        layer.format_execution_result.return_value = {"type": "comparison"}
+        service = QueryService(layer)
+
+        def intent(parsing_tier: str) -> MagicMock:
+            return MagicMock(
+                intent_type="COMPARE_GROUPS",
+                primary_variable="ldl",
+                confidence=0.95,
+                filters=[],
+                predictor_variables=[],
+                time_variable=None,
+                event_variable=None,
+                parsing_tier=parsing_tier,
+            )
+
+        first, model = intent(tier), intent("llm_fallback")
+        held_plan = QueryPlan(
+            intent="COMPARE_GROUPS", metric="ldl", group_by="treatment", filters=[self._UNASKED], confidence=0.95
+        )
+        model_plan = QueryPlan(
+            intent="COMPARE_GROUPS",
+            metric="ldl",
+            group_by="treatment",
+            filters=[] if model_plan_clean else [self._UNASKED],
+            confidence=0.95,
+        )
+        service.nl_engine.parse_query = MagicMock(
+            side_effect=lambda *args, **kwargs: model if kwargs.get("tiers") == ("llm",) else first
+        )
+        service.nl_engine._intent_to_plan = MagicMock(
+            side_effect=lambda parsed, *_args: model_plan if parsed is model else held_plan
+        )
+        service.nl_engine.model_available = MagicMock(return_value=model_up)
+        return service, layer
+
+    def test_ask_heldPatternPlanModelPlanClean_answersWithModelPlan(self, mock_semantic_layer):
+        # Arrange
+        service, layer = self._service(mock_semantic_layer)
+
+        # Act
+        result = service.ask("compare ldl by treatment", dataset_id="ds")
+
+        # Assert
+        assert result.requires_confirmation is False
+        assert result.plan is not None and result.plan.filters == []
+        assert layer.execute_query_plan.call_count == 1
+        assert service.nl_engine.parse_query.call_args_list[-1].kwargs["tiers"] == ("llm",)
+
+    def test_ask_heldPatternPlanModelPlanAlsoHeld_keepsTheFirstHold(self, mock_semantic_layer):
+        # Arrange
+        service, layer = self._service(mock_semantic_layer, model_plan_clean=False)
+
+        # Act
+        result = service.ask("compare ldl by treatment", dataset_id="ds")
+
+        # Assert: the hold shown is the one a confirmation re-parses to (the first tier's plan).
+        assert result.requires_confirmation is True
+        assert result.plan is not None and result.plan.filters == [self._UNASKED]
+        assert "age > 65" in (result.failure_reason or "")
+        layer.execute_query_plan.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("tier", "model_up"),
+        [
+            pytest.param("llm_fallback", True, id="plan_already_from_model"),
+            pytest.param("llm_fallback_below_threshold", True, id="model_plan_below_threshold"),
+            pytest.param("pattern_match", False, id="no_model_running"),
+        ],
+    )
+    def test_ask_heldPlanModelNotAskable_holdsWithoutSecondParse(self, mock_semantic_layer, tier, model_up):
+        # Arrange
+        service, layer = self._service(mock_semantic_layer, tier=tier, model_up=model_up)
+
+        # Act
+        result = service.ask("compare ldl by treatment", dataset_id="ds")
+
+        # Assert
+        assert result.requires_confirmation is True
+        assert service.nl_engine.parse_query.call_count == 1
+        layer.execute_query_plan.assert_not_called()
+
+    def test_ask_confirmedHeldPlan_runsItWithoutAskingTheModel(self, mock_semantic_layer):
+        # Arrange
+        service, layer = self._service(mock_semantic_layer, model_up=False)
+        held = service.ask("compare ldl by treatment", dataset_id="ds")
+        service.nl_engine.parse_query.reset_mock()
+        service.nl_engine.model_available.return_value = True
+
+        # Act
+        result = service.ask(
+            "compare ldl by treatment", dataset_id="ds", confirmed=True, confirm_plan_hash=held.plan_hash
+        )
+
+        # Assert
+        assert result.requires_confirmation is False
+        assert service.nl_engine.parse_query.call_count == 1
+        assert layer.execute_query_plan.call_args.kwargs["confirmed"] is True

@@ -118,7 +118,7 @@ class TestSemanticLayerObservability:
         assert result["success"] is False
         assert result["requires_confirmation"] is False
         assert "run_key" not in result
-        assert "which column to analyse" in result["failure_reason"]
+        assert "which column to analyze" in result["failure_reason"]
 
     def test_count_without_entity_key_runs_as_row_count(self, semantic_layer):
         """'How many patients?' has no entity_key or group_by; it is a row count, not incomplete."""

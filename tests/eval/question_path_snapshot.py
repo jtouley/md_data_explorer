@@ -75,7 +75,7 @@ def suite_questions() -> list[tuple[str, str, str]]:
     from tests.eval.adversarial_probes import own_frame, probes
     from tests.eval.negation_probes import PROBES as NEGATION_PROBES
     from tests.eval.negation_probes import codes_frame, review_frame
-    from tests.eval.over_holding_probes import ANSWERABLE, HELD, covid_frame, creatinine_frame
+    from tests.eval.over_holding_probes import ANSWERABLE, HELD, covid_frame, creatinine_frame, lab_tests_frame
     from tests.eval.reverse_probes import reverse_frame, reverse_probes
     from tests.eval.reviewer_probes import PROBES as REVIEWER_PROBES
 
@@ -91,6 +91,7 @@ def suite_questions() -> list[tuple[str, str, str]]:
         "snap_rev": review_frame(),
         "snap_creat": creatinine_frame(),
         "snap_cov": covid_frame(),
+        "snap_tests": lab_tests_frame(),
         "snap_reverse": reverse_frame(),
     }
     for name, frame in frames.items():

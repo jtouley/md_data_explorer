@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from clinical_analytics.core.column_parser import parse_column_name
-from clinical_analytics.core.query_plan import STATISTIC_WORDS, CohortStep, Statistic
+from clinical_analytics.core.query_plan import STATISTIC_WORDS, CohortStep, Statistic, as_executed
 from clinical_analytics.core.question_vocabulary import (
     NEGATION_CUES,
     NO_LIMIT_WORDS,
@@ -532,6 +532,7 @@ def unapplied_constraints(
 
     text = plain_grouping(" ".join(query.lower().split()))
     gaps: list[str] = []
+    plan = as_executed(plan)  # a grouping execution drops is a gap, not an applied column
     steps = list(getattr(plan, "cohort_steps", []) or []) if plan is not None else []
     used = _plan_columns(plan, steps, context)
     comparing = re.search(r"\bcompared?\b|\bby sex\b|\bby gender\b", text) is not None

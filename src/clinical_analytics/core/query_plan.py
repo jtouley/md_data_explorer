@@ -9,6 +9,7 @@ All query parsing must produce a QueryPlan, and all execution must consume a Que
 This prevents ad-hoc dict structures and ensures type safety.
 """
 
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias
 
@@ -51,6 +52,25 @@ def grouped_statistic(plan: Any) -> Statistic | None:
     if intent == "COMPARE_GROUPS" and statistic not in (None, "mean"):
         return statistic  # type: ignore[no-any-return]
     return None
+
+
+def ignores_grouping(plan: Any) -> bool:
+    """A proportion is one share of everyone, so execution never applies the plan's group_by
+    ("share of tests positive, by gender" planned as a proportion would drop gender)."""
+    return bool(getattr(plan, "proportion_column", None) and getattr(plan, "group_by", None))
+
+
+def as_executed(plan: Any) -> Any:
+    """The plan with only the parts execution applies: no group_by beside a proportion, and no
+    metric on a COUNT (a count never reads it). Word accounting and the gap check read this, so
+    a word naming a column the answer ignores ("tests" for test_number) is never "used"."""
+    if not dataclasses.is_dataclass(plan) or isinstance(plan, type):
+        return plan
+    if ignores_grouping(plan):
+        plan = dataclasses.replace(plan, group_by=None)
+    if getattr(plan, "intent", None) == "COUNT" and getattr(plan, "metric", None):
+        plan = dataclasses.replace(plan, metric=None)
+    return plan
 
 
 class CohortStepError(ValueError):

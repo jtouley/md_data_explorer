@@ -43,6 +43,7 @@ from clinical_analytics.core.query_plan import (
     CohortStepError,
     generate_chart_spec,
     grouped_statistic,
+    ignores_grouping,
 )
 
 logger = logging.getLogger(__name__)
@@ -142,6 +143,13 @@ def _text_order_message(column: str) -> str:
     return (
         f"Cannot compare '{column}' with a number: that column holds text, not numbers. "
         "Ask again using one of its values."
+    )
+
+
+def _ungrouped_share_message(group: str | None) -> str:
+    return (
+        f"This plan gives one share for everyone, so it can't be split by {group}. "
+        f"Ask for the share in each {group} group instead."
     )
 
 
@@ -2027,9 +2035,8 @@ class SemanticLayer:
                     # Numeric column should have numeric value (int/float)
                     if isinstance(value, str) and not self._is_numeric_string(value):
                         errors.append(
-                            f"Type mismatch for column '{column}': "
-                            f"expected numeric value, got string '{value}'. "
-                            "LLM validation should have caught this."
+                            f"{column} holds numbers, so it can't be limited to '{value}'. "
+                            "Limit it with a number instead."
                         )
 
                 logger.debug(
@@ -2124,7 +2131,7 @@ class SemanticLayer:
             if type_errors:
                 # Add as warnings (non-blocking per plan)
                 for error in type_errors:
-                    warnings.append(f"Type validation: {error}")
+                    warnings.append(error)  # already a sentence the user can act on
                 logger.info(
                     "execute_query_plan_type_warnings",
                     extra={"warning_count": len(type_errors), "intent": plan.intent},
@@ -2544,7 +2551,7 @@ class SemanticLayer:
         elif plan.intent == "DESCRIBE":
             # DESCRIBE requires metric (primary_variable)
             if not plan.metric:
-                return False, "I couldn't tell which column to analyse; name it as it appears in your data."
+                return False, "I couldn't tell which column to analyze; name it as it appears in your data."
         elif plan.intent == "COMPARE_GROUPS":
             # COMPARE_GROUPS requires both metric and group_by
             if not plan.metric or not plan.group_by:
@@ -3021,6 +3028,9 @@ class SemanticLayer:
         view = self._filtered_view(plan)
 
         if plan.proportion_column:
+            if ignores_grouping(plan):
+                # One share of everyone would drop the grouping the question asked for.
+                raise CohortStepError(_ungrouped_share_message(plan.group_by))
             return self._duck_aggregate(
                 view, self._share_sql(view, plan.proportion_column, plan.proportion_value, None)
             )

@@ -4,6 +4,7 @@
 import dataclasses
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, TypeAlias
@@ -25,6 +26,12 @@ _TEST_LABELS = {
     "DESCRIBE": "descriptive statistics",
     "SURVIVAL": "Kaplan–Meier",
 }
+
+
+def label_words_of(intent: str) -> frozenset[str]:
+    """The words of the test the plan line names for ``intent`` ("logistic", "regression"): a
+    question that names the test the plan runs has used those words."""
+    return frozenset(re.findall(r"[a-z]+", _TEST_LABELS.get(intent, "").lower()))
 
 
 @dataclass(frozen=True)

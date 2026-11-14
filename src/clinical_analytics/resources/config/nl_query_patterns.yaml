@@ -45,7 +45,8 @@ patterns:
 
   # FIND_PREDICTORS patterns
   FIND_PREDICTORS:
-    - pattern: "(?:what predicts|predictors of|predict|risk factors for)\\s+(\\w+)"
+    # "logistic regression of/for <outcome>" names the test this intent runs (the plan line's label).
+    - pattern: "(?:what predicts|predictors of|predict|risk factors for|logistic regression (?:of|for))\\s+(\\w+)"
       groups:
         "1": "primary_variable"
       confidence: 0.95

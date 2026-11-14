@@ -117,20 +117,42 @@ _HYPHENATED = re.compile(r"\b([a-z]+)-(\d+)\b", re.IGNORECASE)
 _NAME_WORD = re.compile(r"[a-z][a-z0-9]*")
 
 
+def hyphenated_spellings(question: str, columns: Sequence[str]) -> dict[str, str]:
+    """Each "<word>-<number>" a column name holds as one word, joined, mapped to how the
+    question spelled it ({"covid19": "COVID-19"}). Only words a column name spells that way:
+    "IL-6" is left out when no column holds "il6", and a range such as "18-65" never matches."""
+    if "-" not in question:
+        return {}
+    name_words = {word for column in columns for word in _NAME_WORD.findall(str(column).lower())}
+    spellings: dict[str, str] = {}
+    for match in _HYPHENATED.finditer(question):
+        word = f"{match.group(1)}{match.group(2)}".lower()
+        if word in name_words:
+            spellings.setdefault(word, match.group(0))
+    return spellings
+
+
 def join_hyphenated_names(question: str, columns: Sequence[str]) -> str:
     """Write "<word>-<number>" as one word when a column name holds it as one ("COVID-19" ->
     "covid19" for covid19_confirmed_case), so no check reads the number as a cutoff or leaves it
-    unused. Only words a column name spells that way are joined; "IL-6" stays as written when
-    no column holds "il6", and a range such as "18-65" is never touched."""
-    if "-" not in question:
+    unused. Which words: ``hyphenated_spellings``."""
+    spellings = hyphenated_spellings(question, columns)
+    if not spellings:
         return question
-    name_words = {word for column in columns for word in _NAME_WORD.findall(str(column).lower())}
 
     def joined(match: re.Match[str]) -> str:
         word = f"{match.group(1)}{match.group(2)}".lower()
-        return word if word in name_words else match.group(0)
+        return word if word in spellings else match.group(0)
 
     return _HYPHENATED.sub(joined, question)
+
+
+def as_spelled(message: str, spellings: dict[str, str]) -> str:
+    """A hold or refusal message with each joined word quoted as the question spelled it
+    ("'covid19'" -> "'COVID-19'"), so the reader recognizes their own words."""
+    for joined, spelled in spellings.items():
+        message = message.replace(f"'{joined}'", f"'{spelled}'")
+    return message
 
 
 # ---------------------------------------------------------------------------

@@ -26,9 +26,9 @@ from functools import partial
 from typing import Any, Literal, TypeAlias
 
 from clinical_analytics.core.column_parser import parse_column_name
-from clinical_analytics.core.execution_gate import limit_text
+from clinical_analytics.core.execution_gate import label_words_of, limit_text
 from clinical_analytics.core.nl_query_config import STEM_MATCH_MIN_PREFIX
-from clinical_analytics.core.query_plan import STATISTIC_WORDS, CohortStep, grouped_statistic
+from clinical_analytics.core.query_plan import STATISTIC_WORDS, CohortStep, as_executed, grouped_statistic
 
 # Words that carry no limit come from one reviewed vocabulary, shared with the cohort peel
 # and the pre-execution gap check.
@@ -205,6 +205,26 @@ def stem_match(word: str, target: str) -> bool:
             break
         common += 1
     return common >= STEM_MATCH_MIN_PREFIX and common >= 0.75 * shorter
+
+
+# Endings an inflection adds to an intent word ("counted", "predicting", "correlates").
+_INFLECTION_ENDINGS: tuple[str, ...] = ("ions", "ion", "ing", "ed", "es", "e", "s", "d")
+
+
+def _inflection_stem(word: str) -> str:
+    for ending in _INFLECTION_ENDINGS:
+        if word.endswith(ending) and len(word) - len(ending) >= STEM_MATCH_MIN_PREFIX:
+            return word[: -len(ending)]
+    return word
+
+
+def inflection_of(word: str, target: str) -> bool:
+    """``word`` is ``target`` with a different inflectional ending ("counted" of "count",
+    "associated" of "association"), on a stem of at least STEM_MATCH_MIN_PREFIX letters. Unlike
+    ``stem_match`` a longer word sharing the letters is not one: "country" is not "count", and
+    "meaning" is not "mean" (a four-letter stem)."""
+    stem = _inflection_stem(word)
+    return len(stem) >= STEM_MATCH_MIN_PREFIX and stem == _inflection_stem(target)
 
 
 _AGE_UNITS = {"years", "year", "yrs", "yr", "y", "at", "baseline", "in", "current"}
@@ -705,6 +725,7 @@ def _unused_at(
     context: Any,
 ) -> list[int]:
     """Positions of the tokens the plan does not bind."""
+    plan = as_executed(plan)  # a grouping execution drops is not applied, so its words are unused
     used = [False] * len(tokens)
     intent = str(getattr(plan, "intent", "") or "")
     filters = list(getattr(plan, "filters", []) or [])
@@ -813,8 +834,10 @@ def _unused_at(
             if lead >= 0 and tokens[lead] in {"aged", "age"} and owner == age_column(columns):
                 used[lead] = True
 
-    # Fixed vocabulary and intent words.
+    # Fixed vocabulary and intent words. A word of the test the plan line names ("logistic
+    # regression" for a predictor plan) is used by that plan.
     counting = intent == "COUNT" or share_planned(plan)
+    label_words = label_words_of(str(intent))
     for at, word in enumerate(tokens):
         if used[at]:
             continue
@@ -831,6 +854,12 @@ def _unused_at(
             used[at] = intent == "COMPARE_GROUPS" or grouped_statistic(plan) is not None
         elif any(word in INTENT_WORDS[name] for name in ("CORRELATIONS", "FIND_PREDICTORS", "SURVIVAL")):
             used[at] = any(word in INTENT_WORDS[name] and intent == name for name in INTENT_WORDS)
+        elif (
+            word in label_words or any(inflection_of(word, own) for own in INTENT_WORDS.get(str(intent), ()))
+        ) and not namer.columns_named(word):
+            # The test's own name, or an inflection of the plan's intent word ("counted"). Not a
+            # word that names a column ("group" of a trial's group column): the plan must read it.
+            used[at] = True
         else:
             used[at] = _logic_used(tokens, at, plan, filters, steps, values_for, namer, context)
 

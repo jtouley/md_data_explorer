@@ -12,7 +12,7 @@ import pytest
 
 from clinical_analytics.core.query_plan import CohortStep, FilterSpec, QueryPlan
 from clinical_analytics.core.query_service import all_null_statistics_reason
-from clinical_analytics.core.word_accounting import hold_reason, number_owner, tokenize, unused_words
+from clinical_analytics.core.word_accounting import hold_reason, inflection_of, number_owner, tokenize, unused_words
 
 _COLUMNS = ["patient_id", "age", "sex", "treatment", "site", "ldl", "bmi", "Statin use 1: Yes 2: No", "outcome"]
 _VALUES: dict[str, list[Any]] = {
@@ -390,3 +390,104 @@ def test_unusedWords_logicWordOnItsColumn_isUsed(question: str, plan: QueryPlan)
 def test_tokenize_alphanumericMeasure_staysOneToken() -> None:
     # Arrange / Act / Assert
     assert tokenize("average hba1c above 7") == ["average", "hba1c", "above", "7"]
+
+
+@pytest.mark.parametrize(
+    ("word", "target", "expected"),
+    [
+        pytest.param("counted", "count", True, id="past_tense"),
+        pytest.param("associated", "association", True, id="noun_to_participle"),
+        pytest.param("predicting", "predict", True, id="gerund"),
+        pytest.param("count", "count", True, id="same_word"),
+        pytest.param("country", "count", False, id="longer_word_sharing_letters"),
+        pytest.param("meaning", "mean", False, id="stem_below_minimum"),
+        pytest.param("", "count", False, id="empty"),
+    ],
+)
+def test_inflectionOf_wordAndIntentWord_matchesOnlyInflections(word: str, target: str, expected: bool) -> None:
+    # Arrange / Act
+    matched = inflection_of(word, target)
+
+    # Assert
+    assert matched is expected
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        pytest.param("how many patients were counted?", [], id="inflection_of_count_is_used"),
+        pytest.param("how many patients per country?", ["country", "per"], id="country_is_not_count"),
+    ],
+)
+def test_unusedWords_inflectedIntentWord_usedOnlyWhenItInflects(question: str, expected: list[str]) -> None:
+    # Arrange
+    plan = _count()
+
+    # Act
+    unused = _unused(question, plan)
+
+    # Assert
+    assert sorted(unused) == expected
+
+
+@pytest.mark.parametrize(
+    ("extra_columns", "expected"),
+    [
+        pytest.param({}, [], id="label_word_names_no_column"),
+        pytest.param({"statistics": [1, 2]}, ["statistics"], id="label_word_names_a_column"),
+    ],
+)
+def test_unusedWords_testLabelWord_usedOnlyWhenItNamesNoColumn(
+    extra_columns: dict[str, list[Any]], expected: list[str]
+) -> None:
+    # Arrange: "descriptive statistics" is the plan line's label for a DESCRIBE plan. No statin
+    # column: "statistics" shares a five-letter stem with "statin" and would name it.
+    columns = ["age", "sex", "ldl", *extra_columns]
+    values = {**_VALUES, **extra_columns}
+
+    # Act
+    unused = unused_words("ldl descriptive statistics", _mean("ldl"), columns, lambda column: values[column])
+
+    # Assert
+    assert unused == expected
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        pytest.param("what proportion of patients had the outcome by sex?", ["by", "sex"], id="by"),
+        pytest.param("what proportion of patients had the outcome in each sex?", ["each", "sex"], id="in_each"),
+        pytest.param("what proportion of patients had the outcome per sex?", ["per", "sex"], id="per"),
+    ],
+)
+def test_unusedWords_proportionBesideGrouping_groupingWordsUnused(question: str, expected: list[str]) -> None:
+    # Arrange: execution gives one share of everyone, so the grouping is never applied
+    plan = QueryPlan(intent="COUNT", group_by="sex", proportion_column="outcome", proportion_value=1, confidence=0.9)
+
+    # Act
+    unused = _unused(question, plan)
+
+    # Assert
+    assert unused == expected
+
+
+def test_unusedWords_rateWithGrouping_groupingWordsUsed() -> None:
+    # Arrange: a rate is computed within each group, so "by sex" is applied
+    plan = QueryPlan(intent="COUNT", group_by="sex", rate_column="outcome", rate_value=1, confidence=0.9)
+
+    # Act
+    unused = _unused("what proportion of patients had the outcome by sex?", plan)
+
+    # Assert
+    assert unused == []
+
+
+def test_unusedWords_countWithMetric_metricWordUnused() -> None:
+    # Arrange: a COUNT never reads its metric, so "ldl" would be dropped from the answer
+    plan = QueryPlan(intent="COUNT", metric="ldl", confidence=0.9)
+
+    # Act
+    unused = _unused("how many patients have an ldl?", plan)
+
+    # Assert
+    assert unused == ["ldl"]

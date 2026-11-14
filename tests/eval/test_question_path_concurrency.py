@@ -47,6 +47,7 @@ _DATASETS = (
     "snap_regions",
     "snap_creat",
     "snap_cov",
+    "snap_tests",
 )
 
 

@@ -50,3 +50,30 @@ datasets:
         - {name: LICENSE.txt, from: LICENSE.txt, make: copy}
         - {name: data_dictionary.txt, from: data_description.txt, make: copy}
       sha256: a3639ebca2068df992230516e3608924daed23ca2be7532cd978a14e6ecae7ae  # deterministic: sorted, stored, fixed metadata
+  # Held-out set: its questions were written once, before any tuning, and are never tuned on.
+  - name: actg175
+    title: AIDS Clinical Trials Group Study 175 (UCI Machine Learning Repository, dataset 890)
+    landing_page: https://archive.ics.uci.edu/dataset/890/aids+clinical+trials+group+study+175
+    license:
+      id: UNCLEAR
+      url: https://archive.ics.uci.edu/dataset/890/aids+clinical+trials+group+study+175
+      terms: >-
+        UCI defers to the source; the same data ship in the CRAN package speff2trial under GPL-2.
+        Fetched at test time for local acceptance runs only, never redistributed. Cite Hammer et
+        al., NEJM 1996. Flagged for owner review.
+    grain: patient (trial participant)
+    rows: 2139
+    id_column: pidnum
+    files:
+      # UCI publishes no ZIP and no dictionary file for this dataset, only the API's data.csv.
+      - path: actg175_data.csv
+        url: https://archive.ics.uci.edu/static/public/890/data.csv
+        kind: table
+        sha256: cf58638c7687764ccb32d037938142518293d505eec349ccec406d4d42ba9532
+        bytes: 159675
+    dictionary_url: https://archive.ics.uci.edu/dataset/890/aids+clinical+trials+group+study+175
+    upload_package:
+      zip: actg175.zip
+      contents:
+        - {name: actg175_data.csv, from: actg175_data.csv, make: copy}
+      sha256: 0bd14b41f6290c2ad19634e2d8fb717869d86dd073a14fe96718ae93995b5ca1  # deterministic: sorted, stored, fixed metadata

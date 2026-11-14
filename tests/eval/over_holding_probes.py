@@ -32,7 +32,7 @@ Truth = Callable[[pl.DataFrame], Any]
 
 @dataclass(frozen=True)
 class Probe:
-    dataset: str  # "coh", "own", "creat" or "cov"
+    dataset: str  # "coh", "own", "creat", "cov" or "tests"
     query: str
     truth: Truth | None  # None: must hold or refuse
     group_by: str | None = None
@@ -117,7 +117,29 @@ def covid_frame(size_: int = 400) -> pl.DataFrame:
     )
 
 
+def lab_tests_frame(size_: int = 400) -> pl.DataFrame:
+    """Seeded lab-test-shaped frame: one row per test with a unique row number and no patient
+    column, a text result, and a positive share that differs by gender, so one share for
+    everyone can never pass for the share in each gender (medicaldata covid_testing)."""
+    rng = random.Random(23)
+    genders = [rng.choice(["female", "male"]) for _ in range(size_)]
+    return pl.DataFrame(
+        {
+            "rownames": list(range(1, size_ + 1)),
+            "gender": genders,
+            "result": [
+                "positive"
+                if rng.random() < (0.12 if gender == "male" else 0.04)
+                else rng.choice(["negative", "invalid"])
+                for gender in genders
+            ],
+            "age": [float(rng.randint(0, 90)) for _ in range(size_)],
+        }
+    )
+
+
 S = c(STATIN)
+POSITIVE = c("result") == "positive"
 CONFIRMED = c("covid19_confirmed_case") == "yes"
 ADMITTED = c("covid19_admission_hospital") == "yes"
 OWN_STATIN = c("statin")
@@ -302,8 +324,34 @@ COVID_ANSWERABLE: tuple[Probe, ...] = (
     ),
 )
 
+# A share asked "by" or "in each" group is the share within each group: answering with one share
+# for everyone drops the grouping (#126: covid_testing "share of tests positive, by gender" showed one share).
+TESTS_ANSWERABLE: tuple[Probe, ...] = (
+    Probe("tests", "What share of tests were positive, by gender?", by("gender", rate(POSITIVE)), group_by="gender"),
+    Probe(
+        "tests", "what proportion of tests were positive by gender?", by("gender", rate(POSITIVE)), group_by="gender"
+    ),
+    Probe(
+        "tests",
+        "What percentage of tests were positive in each gender?",
+        by("gender", rate(POSITIVE)),
+        group_by="gender",
+    ),
+    Probe("tests", "What share of patients were positive, by gender?", by("gender", rate(POSITIVE)), group_by="gender"),
+    Probe(
+        "tests",
+        "what percentage of patients had a positive result in each gender?",
+        by("gender", rate(POSITIVE)),
+        group_by="gender",
+    ),
+)
+
 NARROWED: frozenset[tuple[str, str]] = frozenset(
     {
+        # "tests" names no column: that a row is one test is the data dictionary's to say (step 3).
+        ("tests", "What share of tests were positive, by gender?"),
+        ("tests", "what proportion of tests were positive by gender?"),
+        ("tests", "What percentage of tests were positive in each gender?"),
         ("coh", "compare median ldl between the north and the west"),
         ("coh", "compare ldl between women and men"),
         ("coh", "compare ldl between the north and the south"),
@@ -342,7 +390,7 @@ NARROWED: frozenset[tuple[str, str]] = frozenset(
     }
 )
 
-ANSWERABLE += COVID_ANSWERABLE
+ANSWERABLE += COVID_ANSWERABLE + TESTS_ANSWERABLE
 
 ANSWERED: tuple[Probe, ...] = tuple(probe for probe in ANSWERABLE if (probe.dataset, probe.query) not in NARROWED)
 HELD_SINCE_NARROWING: tuple[Probe, ...] = tuple(

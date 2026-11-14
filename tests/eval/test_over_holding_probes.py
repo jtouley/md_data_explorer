@@ -21,6 +21,7 @@ from tests.eval.over_holding_probes import (
     Probe,
     covid_frame,
     creatinine_frame,
+    lab_tests_frame,
 )
 
 
@@ -31,6 +32,7 @@ def _frames() -> dict[str, pl.DataFrame]:
         "own": own_frame(),
         "creat": creatinine_frame(),
         "cov": covid_frame(),
+        "tests": lab_tests_frame(),
     }
     for name, frame in frames.items():
         register_frame(f"overhold_{name}", frame)
@@ -63,7 +65,7 @@ def test_overHoldingProbes_set_hasEveryQuestionOnce() -> None:
     # Assert
     assert duplicates == set()
     assert unknown == set()
-    assert len(ANSWERED) + len(HELD_SINCE_NARROWING) + len(HELD) == 91
+    assert len(ANSWERED) + len(HELD_SINCE_NARROWING) + len(HELD) == 96
 
 
 @pytest.mark.slow

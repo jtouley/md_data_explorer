@@ -90,8 +90,12 @@ class TestScoreCounts:
             pytest.param([("female", 900), ("male", 240), ("unknown", 3)], "WRONG", True, id="extra_small_row"),
             pytest.param([("female", "suppressed"), ("male", 240)], "RIGHT", False, id="secondary_hidden_allowed"),
             pytest.param([("female", "suppressed"), ("male", "suppressed")], "HELD", False, id="all_hidden"),
-            pytest.param([("Other groups (hidden)", "suppressed")], "HELD", False, id="all_folded_no_size"),
-            pytest.param([("female", 900), ("Other groups (hidden)", "suppressed")], "RIGHT", False, id="large_folded"),
+            pytest.param(
+                [("female", 900), ("Other groups (hidden)", "suppressed")],
+                "WRONG",
+                False,
+                id="folded_with_no_small_group",
+            ),
             pytest.param(
                 [("female", 900), ("Other (groups under 11)", "suppressed")], "WRONG", False, id="large_as_small"
             ),
@@ -114,6 +118,8 @@ class TestScoreCounts:
             pytest.param([("a", 500), ("Other (groups under 11)", "suppressed")], "RIGHT", False, id="small_folded"),
             pytest.param([("a", 500), ("b", "<11")], "WRONG", True, id="small_label_shown"),
             pytest.param([("a", 500), ("b", 7)], "WRONG", True, id="small_count_shown"),
+            # The large group folded with the small one its count would give away (total shown).
+            pytest.param([("Other groups (hidden)", "suppressed")], "HELD", False, id="all_folded_no_size"),
         ],
     )
     def test_score_smallGroup_mustBeFoldedNotLabelled(self, make_count_table, rows, expected_grade, expected_leak):

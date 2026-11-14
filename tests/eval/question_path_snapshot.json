@@ -7197,22 +7197,12 @@
  },
  "golden|snap_golden|compare the average change in cd4 count from baseline to 6 months between patients on different hiv regimens, but only for those who were also on statins and had baseline bmi greater than 25, excluding those who switched regimens during follow-up": {
   "confidence": 0.95,
-  "failure_reason": "I couldn't use the words 'change', 'cd4', 'count', 'baseline', '6', 'months', 'between', 'different', 'hiv', 'regimens', 'but', 'only', 'baseline', 'excluding', 'switched', 'regimens', 'during' and 'follow' in the plan; rephrase them with columns or values from your data.",
+  "failure_reason": "I couldn't use the words 'change', 'cd4', 'count', 'baseline', '6', 'months', 'between', 'different', 'hiv', 'regimens', 'but', 'only', 'also', 'statins', 'baseline', 'excluding', 'switched', 'regimens', 'during' and 'follow' in the plan; rephrase them with columns or values from your data.",
   "group_by": "BMI",
   "held": true,
   "intent": "COMPARE_GROUPS",
   "issues": [],
   "limits": [
-   [
-    "eq",
-    "statin",
-    "also on statins"
-   ],
-   [
-    "eq",
-    "statin",
-    "statins"
-   ],
    [
     "gt",
     "BMI",
@@ -7220,7 +7210,7 @@
    ]
   ],
   "metric": "age",
-  "plan_line": "COMPARE_GROUPS \u00b7 outcome age \u00b7 grouping BMI \u00b7 statistic mean \u00b7 filters statin == also on statins; statin == statins \u00b7 limits in order 1) BMI > 25 \u00b7 test group comparison",
+  "plan_line": "COMPARE_GROUPS \u00b7 outcome age \u00b7 grouping BMI \u00b7 statistic mean \u00b7 filters none \u00b7 limits in order 1) BMI > 25 \u00b7 test group comparison",
   "presentation": {
    "claim": null,
    "table": null
@@ -7496,22 +7486,14 @@
  },
  "golden|snap_golden|how many patients were on statins": {
   "confidence": 0.9,
-  "failure_reason": "Cannot use scope='all' with filters. Use scope='filtered' or remove filters.",
+  "failure_reason": "I couldn't use the word 'statins' in the plan; rephrase it with a column or value from your data.",
   "group_by": null,
-  "held": false,
+  "held": true,
   "intent": "COUNT",
-  "issues": [
-   "Cannot use scope='all' with filters. Use scope='filtered' or remove filters."
-  ],
-  "limits": [
-   [
-    "eq",
-    "statin",
-    "statins"
-   ]
-  ],
+  "issues": [],
+  "limits": [],
   "metric": null,
-  "plan_line": null,
+  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping none \u00b7 filters none \u00b7 test count",
   "presentation": {
    "claim": null,
    "table": null
@@ -10298,22 +10280,14 @@
  },
  "negation|snap_coh|how many patients with bmi between 30 and 25?": {
   "confidence": 0.9,
-  "failure_reason": "I couldn't use the words 'between' and '25' in the plan; rephrase them with columns or values from your data.",
+  "failure_reason": "I couldn't use the words 'bmi', 'between', '30' and '25' in the plan; rephrase them with columns or values from your data.",
   "group_by": null,
-  "held": false,
+  "held": true,
   "intent": "COUNT",
-  "issues": [
-   "Cannot use scope='all' with filters. Use scope='filtered' or remove filters."
-  ],
-  "limits": [
-   [
-    "eq",
-    "bmi",
-    "bmi between 30"
-   ]
-  ],
+  "issues": [],
+  "limits": [],
   "metric": null,
-  "plan_line": null,
+  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping none \u00b7 filters none \u00b7 test count",
   "presentation": {
    "claim": null,
    "table": null
@@ -12673,7 +12647,7 @@
  },
  "over_holding|snap_cov|how many patients had COVID-19?": {
   "confidence": 0.9,
-  "failure_reason": "I couldn't use the word 'covid19' in the plan; rephrase it with a column or value from your data.",
+  "failure_reason": "I couldn't use the word 'COVID-19' in the plan; rephrase it with a column or value from your data.",
   "group_by": null,
   "held": true,
   "intent": "COUNT",
@@ -13258,6 +13232,147 @@
   },
   "proportion": null,
   "rate": null,
+  "success": false
+ },
+ "over_holding|snap_tests|What percentage of tests were positive in each gender?": {
+  "confidence": 0.9,
+  "failure_reason": "I couldn't match 'tests' to a column or value in this dataset; rephrase with a column name from your data, or leave it out.",
+  "group_by": "gender",
+  "held": true,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping gender \u00b7 filters none \u00b7 result rate of result = positive within each gender group \u00b7 test count",
+  "presentation": {
+   "claim": null,
+   "table": null
+  },
+  "proportion": null,
+  "rate": [
+   "result",
+   "positive"
+  ],
+  "success": false
+ },
+ "over_holding|snap_tests|What share of patients were positive, by gender?": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "gender",
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "result = positive by gender: female 7.2%, male 12.4% (n=400). Unadjusted.",
+   "table": {
+    "columns": [
+     "gender",
+     "rate",
+     "n"
+    ],
+    "rows": [
+     {
+      "gender": "female",
+      "n": 207,
+      "rate": 0.0725
+     },
+     {
+      "gender": "male",
+      "n": 193,
+      "rate": 0.1244
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": [
+   "result",
+   "positive"
+  ],
+  "success": true
+ },
+ "over_holding|snap_tests|What share of tests were positive, by gender?": {
+  "confidence": 0.9,
+  "failure_reason": "I couldn't match 'tests' to a column or value in this dataset; rephrase with a column name from your data, or leave it out.",
+  "group_by": "gender",
+  "held": true,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping gender \u00b7 filters none \u00b7 result rate of result = positive within each gender group \u00b7 test count",
+  "presentation": {
+   "claim": null,
+   "table": null
+  },
+  "proportion": null,
+  "rate": [
+   "result",
+   "positive"
+  ],
+  "success": false
+ },
+ "over_holding|snap_tests|what percentage of patients had a positive result in each gender?": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "gender",
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "result = positive by gender: female 7.2%, male 12.4% (n=400). Unadjusted.",
+   "table": {
+    "columns": [
+     "gender",
+     "rate",
+     "n"
+    ],
+    "rows": [
+     {
+      "gender": "female",
+      "n": 207,
+      "rate": 0.0725
+     },
+     {
+      "gender": "male",
+      "n": 193,
+      "rate": 0.1244
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": [
+   "result",
+   "positive"
+  ],
+  "success": true
+ },
+ "over_holding|snap_tests|what proportion of tests were positive by gender?": {
+  "confidence": 0.9,
+  "failure_reason": "I couldn't match 'tests' to a column or value in this dataset; rephrase with a column name from your data, or leave it out.",
+  "group_by": "gender",
+  "held": true,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping gender \u00b7 filters none \u00b7 result rate of result = positive within each gender group \u00b7 test count",
+  "presentation": {
+   "claim": null,
+   "table": null
+  },
+  "proportion": null,
+  "rate": [
+   "result",
+   "positive"
+  ],
   "success": false
  },
  "reverse|snap_reverse|average age of patients with stage 3 kidney disease": {

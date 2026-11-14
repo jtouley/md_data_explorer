@@ -145,8 +145,12 @@ def _grade_grouped(question: dict[str, Any], oracle: OracleAnswer, shown: Any) -
         if label not in shown:
             if value is None or _small_group(oracle, key, kind):
                 continue  # no value to show, or folded into "Other"
-            if shown.get(HIDDEN_GROUPS_LABEL) == HIDDEN:
-                continue  # folded with the small groups it would give away, under a label claiming no size
+            if shown.get(HIDDEN_GROUPS_LABEL) == HIDDEN and any(
+                _small_group(oracle, other, kind) for other, _value in expected.values()
+            ):
+                # Folded with the small groups its count would give away, under a label claiming
+                # no size. Only when the oracle has a small group to protect.
+                continue
             return "WRONG", f"row '{label}' missing"
         if shown[label] == HIDDEN:
             continue  # hidden: required for a small cell, allowed as a secondary suppression

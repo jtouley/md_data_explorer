@@ -22,6 +22,7 @@ from clinical_analytics.core.data_home import uploads_dir
 from clinical_analytics.core.execution_gate import format_plan_line
 from clinical_analytics.core.log_redaction import error_fields
 from clinical_analytics.core.query_plan import QueryPlan
+from clinical_analytics.core.query_service import UNEXPECTED_FAILURE_MESSAGE
 from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
 from clinical_analytics.core.query_service import QueryService as CoreQueryService
 from clinical_analytics.core.result_presentation import present_analysis, to_json_safe
@@ -29,12 +30,6 @@ from clinical_analytics.core.semantic import SemanticLayer
 
 logger = structlog.get_logger()
 
-# Shown when analysis raises: exception text can quote cell values, so it never reaches the UI,
-# the stored result or the log; the log keeps the error type and a keyed hash instead.
-UNEXPECTED_FAILURE_MESSAGE = (
-    "Something went wrong while answering this question. Try asking it a different way; "
-    "if it keeps happening, reload the dataset or restart the app."
-)
 
 # Turns kept per session for refinement parsing ("now by site", "remove the n/a").
 MAX_CONVERSATION_TURNS = 20

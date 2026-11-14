@@ -10,7 +10,7 @@ import dataclasses
 import hashlib
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -32,12 +32,12 @@ from clinical_analytics.core import answer_checks
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.core.conversation_manager import ConversationManager
 from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line, plan_fingerprint
-from clinical_analytics.core.log_redaction import error_fields
+from clinical_analytics.core.log_redaction import error_fields, stable_hash
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 from clinical_analytics.core.plan_values import absent_value_reason, plan_values
 from clinical_analytics.core.query_plan import CohortStepError, QueryPlan
-from clinical_analytics.core.question_vocabulary import join_hyphenated_names
+from clinical_analytics.core.question_vocabulary import as_spelled, hyphenated_spellings, join_hyphenated_names
 from clinical_analytics.core.result_presentation import present_analysis
 from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.core.word_accounting import (
@@ -194,6 +194,14 @@ def _to_polars(result: Any) -> pl.DataFrame | None:
         return None
 
 
+# Shown when answering raises: exception text can quote cell values, so it never reaches the UI,
+# the stored result or the log; the log keeps the error type and a keyed hash instead.
+UNEXPECTED_FAILURE_MESSAGE = (
+    "Something went wrong while answering this question. Try asking it a different way; "
+    "if it keeps happening, reload the dataset or restart the app."
+)
+
+
 @dataclass
 class QueryResult:
     """Result of query execution."""
@@ -223,6 +231,8 @@ class _Prepared:
     declarations: Declarations
     mappings: tuple[LevelMapping, ...]
     generation: int  # the layer's state_generation when the declarations were applied
+    # Joined words and how the question spelled them ({"covid19": "COVID-19"}), for messages.
+    spellings: dict[str, str] = field(default_factory=dict)
 
 
 class QueryService:
@@ -287,14 +297,20 @@ class QueryService:
                 return prepared
             query_intent = self._parse(prepared, dataset_id, upload_id, conversation_history)
             with lock:
-                if self._still_current(prepared):
-                    return self._finish(
+                if not self._still_current(prepared):
+                    finished = None
+                else:
+                    finished = self._finish(
                         prepared,
                         query_intent,
                         confirmed=confirmed,
                         confirm_plan_line=confirm_plan_line,
                         confirm_plan_hash=confirm_plan_hash,
                     )
+            if finished is not None:
+                if not confirmed and self._escalates(finished, query_intent):
+                    finished = self._ask_model(prepared, dataset_id, upload_id, conversation_history) or finished
+                return self._in_users_spelling(finished, prepared.spellings)
             logger.info("question_reparsed_after_state_change", dataset_id=dataset_id, attempt=attempt)
         logger.warning("question_state_kept_changing", dataset_id=dataset_id, attempts=MAX_PARSE_ATTEMPTS)
         return QueryResult(
@@ -306,6 +322,60 @@ class QueryService:
             context=None,
             failure_reason=STATE_KEPT_CHANGING_REASON,
         )
+
+    @staticmethod
+    def _in_users_spelling(result: QueryResult, spellings: dict[str, str]) -> QueryResult:
+        """Quote joined words in the hold or refusal as the question spelled them."""
+        if not spellings or not result.failure_reason:
+            return result
+        reason = as_spelled(result.failure_reason, spellings)
+        issues = [{**item, "message": as_spelled(str(item.get("message", "")), spellings)} for item in result.issues]
+        return dataclasses.replace(result, failure_reason=reason, issues=issues)
+
+    def _escalates(self, result: QueryResult, query_intent: Any) -> bool:
+        """True when a plan from a tier before the model was held for review and the model can be
+        asked: the model reads the question before the user is asked to review an earlier
+        tier's plan. A refusal is final, and so is a plan the model already wrote."""
+        tier = str(getattr(query_intent, "parsing_tier", None) or "")
+        if not result.requires_confirmation or result.failure_reason == PLAN_CHANGED_REASON or "llm" in tier:
+            return False
+        return self.nl_engine.model_available()
+
+    def _ask_model(
+        self,
+        prepared: _Prepared,
+        dataset_id: str | None,
+        upload_id: str | None,
+        conversation_history: list[dict[str, Any]] | None,
+    ) -> QueryResult | None:
+        """The model's answer to a question an earlier tier's plan left held, or None.
+
+        The model's plan goes through every check the held plan did (word accounting, data
+        checks, the confidence gate) and is used only if it runs with nothing held or refused.
+        Otherwise the earlier hold stands, so the plan the user reviews is the one confirmation
+        re-parses to.
+        """
+        log = logger.bind(dataset_id=dataset_id, query_hash=stable_hash(prepared.normalized_query))
+        model_intent = self.nl_engine.parse_query(
+            prepared.normalized_query,
+            dataset_id=dataset_id,
+            upload_id=upload_id,
+            conversation_history=conversation_history,
+            tiers=("llm",),
+        )
+        with self._connection_lock():
+            if not self._still_current(prepared):
+                log.info("question_model_escalation_skipped", reason="state_changed")
+                return None
+            answered = self._finish(prepared, model_intent)
+        errors = [item for item in answered.issues if item.get("severity") == "error"]
+        used = not answered.requires_confirmation and not errors and answered.result is not None
+        log.info(
+            "question_model_escalation",
+            outcome="answered" if used else "held_or_refused",
+            model_confidence=getattr(model_intent, "confidence", None),
+        )
+        return answered if used else None
 
     def _still_current(self, prepared: _Prepared) -> bool:
         """Under the lock: nothing the question's parse and checks read changed since _prepare.
@@ -357,7 +427,10 @@ class QueryService:
         # Normalize query (extracted from Ask_Questions.py normalize_query)
         normalized_query = self.conversation_manager.normalize_query(question)
         # One reading of "COVID-19" for the parse and the gate: the word the column names hold.
-        normalized_query = join_hyphenated_names(normalized_query, list(self.semantic_layer.get_base_view().columns))
+        columns = list(self.semantic_layer.get_base_view().columns)
+        # From the question as typed, so a message quotes "COVID-19", not "covid-19".
+        spellings = hyphenated_spellings(" ".join(str(question or "").split()), columns)
+        normalized_query = join_hyphenated_names(normalized_query, columns)
 
         # Reject empty queries
         if not normalized_query:
@@ -394,6 +467,7 @@ class QueryService:
             declarations=declarations,
             mappings=mappings,
             generation=self._state_generation(),
+            spellings=spellings,
         )
 
     def _parse(
@@ -628,7 +702,7 @@ class QueryService:
                 if requires_confirmation:
                     plan_line = shown_plan_line
                 elif execution_result.get("success") is False:
-                    reason = failure_reason or ((execution_result.get("warnings") or ["Execution failed"])[0])
+                    reason = failure_reason or ((execution_result.get("warnings") or [UNEXPECTED_FAILURE_MESSAGE])[0])
                     issues.append({"message": str(reason), "severity": "error"})
                 elif execution_result.get("success") is True:
                     empty_reason = all_null_statistics_reason(execution_result.get("result"), query_plan)
@@ -647,8 +721,12 @@ class QueryService:
             # Already plain language: say why the limit could not be applied.
             failure_reason = str(e)
             issues.append({"message": failure_reason, "severity": "error"})
-        except Exception as e:
-            issues.append({"message": f"Execution failed: {str(e)}", "severity": "error"})
+        except Exception as e:  # last resort: any failure becomes a plain refusal, logged by type
+            # Exception text can quote cell values, so the user sees the plain sentence and the
+            # log keeps the error type and a keyed hash.
+            logger.error("question_execution_failed", **error_fields(e))
+            failure_reason = UNEXPECTED_FAILURE_MESSAGE
+            issues.append({"message": UNEXPECTED_FAILURE_MESSAGE, "severity": "error"})
 
         return QueryResult(
             plan=query_plan,

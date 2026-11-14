@@ -19,11 +19,12 @@ import json
 import os
 import re
 import threading
+from collections.abc import Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from difflib import get_close_matches
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 import structlog
 
@@ -72,6 +73,9 @@ def default_learning_dir() -> Path:
     """Where prompt-learning files live: the per-user data home, never a shared temp dir."""
     return nl_learning_dir()
 
+
+# The parsing tiers, in the names nl_query.yaml's tier_precedence uses.
+ParseTier: TypeAlias = Literal["pattern", "semantic", "llm"]
 
 # A single word names a column on its own only by an exact alias (_fuzzy_match_variable's 0.9).
 SINGLE_WORD_COLUMN_CONFIDENCE: float = 0.9
@@ -454,6 +458,7 @@ class NLQueryEngine:
         dataset_id: str | None = None,
         upload_id: str | None = None,
         conversation_history: list[dict] | None = None,
+        tiers: Sequence[ParseTier] | None = None,
     ) -> QueryIntent:
         """
         Parse natural language query into structured intent with conversation context.
@@ -471,6 +476,7 @@ class NLQueryEngine:
             upload_id: Optional upload identifier for logging
             conversation_history: Optional list of previous queries for context
                 Each entry should contain: query, intent, group_by, filters_applied
+            tiers: The tiers to try, in order, instead of the configured precedence
 
         Returns:
             QueryIntent with extracted intent type and variables
@@ -530,8 +536,9 @@ class NLQueryEngine:
         }
         logger.info("query_parse_start", **log_context)
 
-        # Get tier precedence order from config (Phase 4)
-        tier_order = self._get_tier_order()
+        # Get tier precedence order from config (Phase 4), unless the caller names the tiers
+        # (QueryService asks the model alone when an earlier tier's plan was held).
+        tier_order = list(tiers) if tiers is not None else self._get_tier_order()
         logger.debug("tier_precedence_configured", tier_order=tier_order)
 
         # Track parsing attempts for diagnostics
@@ -1494,6 +1501,11 @@ class NLQueryEngine:
             pass
 
         return None
+
+    def model_available(self) -> bool:
+        """True when the language-model tier can be asked (a local Ollama answers)."""
+        client = self._get_ollama_client()
+        return client is not None and bool(client.is_available())
 
     def _get_ollama_client(self):
         """Get or create Ollama client via OllamaManager (lazy initialization)."""
@@ -3256,6 +3268,10 @@ Fix the errors and return a corrected query intent as JSON.
                             # If not found, try using column_name as alias (fallback)
                             if not matched_alias_from_strategy1:
                                 matched_alias_from_strategy1 = column_name
+                    elif (self._infer_column_type_from_view(column_name) or {}).get("numeric"):
+                        # "regression of outcome on age": the phrase names a measurement, and a
+                        # number never equals its column's name, so it is no filter.
+                        continue
                     else:
                         # Not a coded column - use Strategy 1 for direct column matching
                         filters.append(
