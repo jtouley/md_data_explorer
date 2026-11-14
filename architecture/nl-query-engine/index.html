@@ -1,0 +1,1563 @@
+
+<!DOCTYPE html>
+
+<html class="no-js" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<meta content="Spec-driven clinical analytics with question-driven semantic analysis" name="description"/>
+<meta content="Development Team" name="author"/>
+<link href="../dataset-registry/" rel="prev"/>
+<link href="../../security/THREAT_MODEL/" rel="next"/>
+<link href="../../assets/images/favicon.png" rel="icon"/>
+<meta content="mkdocs-1.6.1, mkdocs-material-9.8.1" name="generator"/>
+<title>NL Query Engine - Clinical Analytics Platform</title>
+<link href="../../assets/stylesheets/main.57a0d79d.min.css" rel="stylesheet"/>
+<link href="../../assets/stylesheets/palette.fb2fffe2.min.css" rel="stylesheet"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
+<style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+<link href="../../assets/_mkdocstrings.css" rel="stylesheet"/>
+<script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+</head>
+<body data-md-color-accent="indigo" data-md-color-primary="indigo" data-md-color-scheme="default" dir="ltr">
+<input autocomplete="off" class="md-toggle" data-md-toggle="drawer" id="__drawer" type="checkbox"/>
+<input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
+<label class="md-overlay" for="__drawer"></label>
+<div data-md-component="skip">
+<a class="md-skip" href="#natural-language-query-engine">
+          Skip to content
+        </a>
+</div>
+<div data-md-component="announce">
+</div>
+<header class="md-header" data-md-component="header">
+<nav aria-label="Header" class="md-header__inner md-grid">
+<a aria-label="Clinical Analytics Platform" class="md-header__button md-logo" data-md-component="logo" href="../.." title="Clinical Analytics Platform">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"></path></svg>
+</a>
+<label class="md-header__button md-icon" for="__drawer">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
+</label>
+<div class="md-header__title" data-md-component="header-title">
+<div class="md-header__ellipsis">
+<div class="md-header__topic">
+<span class="md-ellipsis">
+            Clinical Analytics Platform
+          </span>
+</div>
+<div class="md-header__topic" data-md-component="header-topic">
+<span class="md-ellipsis">
+            
+              NL Query Engine
+            
+          </span>
+</div>
+</div>
+</div>
+<form class="md-header__option" data-md-component="palette">
+<input aria-label="Switch to dark mode" class="md-option" data-md-color-accent="indigo" data-md-color-media="" data-md-color-primary="indigo" data-md-color-scheme="default" id="__palette_0" name="__palette" type="radio"/>
+<label class="md-header__button md-icon" for="__palette_1" hidden="" title="Switch to dark mode">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"></path></svg>
+</label>
+<input aria-label="Switch to light mode" class="md-option" data-md-color-accent="indigo" data-md-color-media="" data-md-color-primary="indigo" data-md-color-scheme="slate" id="__palette_1" name="__palette" type="radio"/>
+<label class="md-header__button md-icon" for="__palette_0" hidden="" title="Switch to light mode">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"></path></svg>
+</label>
+</form>
+<script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+<label class="md-header__button md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+</label>
+<div class="md-search" data-md-component="search" role="dialog">
+<label class="md-search__overlay" for="__search"></label>
+<div class="md-search__inner" role="search">
+<form class="md-search__form" name="search">
+<input aria-label="Search" autocapitalize="off" autocomplete="off" autocorrect="off" class="md-search__input" data-md-component="search-query" name="query" placeholder="Search" required="" spellcheck="false" type="text"/>
+<label class="md-search__icon md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+</label>
+<nav aria-label="Search" class="md-search__options">
+<button aria-label="Clear" class="md-search__icon md-icon" tabindex="-1" title="Clear" type="reset">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
+</button>
+</nav>
+<div class="md-search__suggest" data-md-component="search-suggest"></div>
+</form>
+<div class="md-search__output">
+<div class="md-search__scrollwrap" data-md-scrollfix="" tabindex="0">
+<div class="md-search-result" data-md-component="search-result">
+<div class="md-search-result__meta">
+            Initializing search
+          </div>
+<ol class="md-search-result__list" role="presentation"></ol>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="md-header__source">
+<a class="md-source" data-md-component="source" href="https://github.com/yourusername/md_data_explorer" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+</div>
+</nav>
+</header>
+<div class="md-container" data-md-component="container">
+<nav aria-label="Tabs" class="md-tabs" data-md-component="tabs">
+<div class="md-grid">
+<ul class="md-tabs__list">
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../..">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../getting-started/installation/">
+          
+  
+  
+  Getting Started
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../user-guide/question-driven-analysis/">
+          
+  
+  
+  User Guide
+
+        </a>
+</li>
+<li class="md-tabs__item md-tabs__item--active">
+<a class="md-tabs__link" href="../overview/">
+          
+  
+  
+  Architecture
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../security/THREAT_MODEL/">
+          
+  
+  
+  Security
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../api-reference/core/">
+          
+  
+  
+  API Reference
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../development/contributing/">
+          
+  
+  
+  Development
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../vision/PURPOSE/">
+          
+  
+  
+  Specifications
+
+        </a>
+</li>
+</ul>
+</div>
+</nav>
+<main class="md-main" data-md-component="main">
+<div class="md-main__inner md-grid">
+<div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Navigation" class="md-nav md-nav--primary md-nav--lifted" data-md-level="0">
+<label class="md-nav__title" for="__drawer">
+<a aria-label="Clinical Analytics Platform" class="md-nav__button md-logo" data-md-component="logo" href="../.." title="Clinical Analytics Platform">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"></path></svg>
+</a>
+    Clinical Analytics Platform
+  </label>
+<div class="md-nav__source">
+<a class="md-source" data-md-component="source" href="https://github.com/yourusername/md_data_explorer" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+</div>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../..">
+<span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_2" type="checkbox"/>
+<label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_2_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_2">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/installation/">
+<span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/quick-start/">
+<span class="md-ellipsis">
+    
+  
+    Quick start
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/uploading-data/">
+<span class="md-ellipsis">
+    
+  
+    Uploading Data
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_3" type="checkbox"/>
+<label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_3_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_3">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/question-driven-analysis/">
+<span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/statistical-tests/">
+<span class="md-ellipsis">
+    
+  
+    Statistical Tests
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-guide/interpreting-results/">
+<span class="md-ellipsis">
+    
+  
+    Interpreting Results
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+<input checked="" class="md-nav__toggle md-toggle" id="__nav_4" type="checkbox"/>
+<label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="true" aria-labelledby="__nav_4_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_4">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../overview/">
+<span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../AS_BUILT_ARCHITECTURE/">
+<span class="md-ellipsis">
+    
+  
+    As-built (2025-03)
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../ARCHITECTURE_BOUNDARIES/">
+<span class="md-ellipsis">
+    
+  
+    Module boundaries
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../semantic-layer/">
+<span class="md-ellipsis">
+    
+  
+    Semantic Layer
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../dataset-registry/">
+<span class="md-ellipsis">
+    
+  
+    Dataset Registry
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--active">
+<input class="md-nav__toggle md-toggle" id="__toc" type="checkbox"/>
+<label class="md-nav__link md-nav__link--active" for="__toc">
+<span class="md-ellipsis">
+    
+  
+    NL Query Engine
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<a class="md-nav__link md-nav__link--active" href="./">
+<span class="md-ellipsis">
+    
+  
+    NL Query Engine
+  
+
+    
+  </span>
+</a>
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#overview">
+<span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#architecture">
+<span class="md-ellipsis">
+      
+        Architecture
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#three-tier-parsing">
+<span class="md-ellipsis">
+      
+        Three-Tier Parsing
+      
+    </span>
+</a>
+<nav aria-label="Three-Tier Parsing" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#tier-1-pattern-matching">
+<span class="md-ellipsis">
+      
+        Tier 1: Pattern Matching
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#tier-2-semantic-embeddings">
+<span class="md-ellipsis">
+      
+        Tier 2: Semantic Embeddings
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#tier-3-llm-fallback">
+<span class="md-ellipsis">
+      
+        Tier 3: LLM Fallback
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#queryintent-structure">
+<span class="md-ellipsis">
+      
+        QueryIntent Structure
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#intent-types">
+<span class="md-ellipsis">
+      
+        Intent Types
+      
+    </span>
+</a>
+<nav aria-label="Intent Types" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#describe">
+<span class="md-ellipsis">
+      
+        DESCRIBE
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#compare_groups">
+<span class="md-ellipsis">
+      
+        COMPARE_GROUPS
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#find_predictors">
+<span class="md-ellipsis">
+      
+        FIND_PREDICTORS
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#survival">
+<span class="md-ellipsis">
+      
+        SURVIVAL
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#correlations">
+<span class="md-ellipsis">
+      
+        CORRELATIONS
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#variable-extraction">
+<span class="md-ellipsis">
+      
+        Variable Extraction
+      
+    </span>
+</a>
+<nav aria-label="Variable Extraction" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#fuzzy-matching">
+<span class="md-ellipsis">
+      
+        Fuzzy Matching
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#synonym-handling">
+<span class="md-ellipsis">
+      
+        Synonym Handling
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#query-templates">
+<span class="md-ellipsis">
+      
+        Query Templates
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#confidence-thresholds">
+<span class="md-ellipsis">
+      
+        Confidence Thresholds
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#error-handling">
+<span class="md-ellipsis">
+      
+        Error Handling
+      
+    </span>
+</a>
+<nav aria-label="Error Handling" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#unknown-variables">
+<span class="md-ellipsis">
+      
+        Unknown Variables
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ambiguous-intent">
+<span class="md-ellipsis">
+      
+        Ambiguous Intent
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#invalid-combinations">
+<span class="md-ellipsis">
+      
+        Invalid Combinations
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#performance">
+<span class="md-ellipsis">
+      
+        Performance
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#future-enhancements">
+<span class="md-ellipsis">
+      
+        Future Enhancements
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#api-reference">
+<span class="md-ellipsis">
+      
+        API Reference
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#next-steps">
+<span class="md-ellipsis">
+      
+        Next Steps
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_5">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Security
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../security/THREAT_MODEL/">
+<span class="md-ellipsis">
+    
+  
+    Threat model &amp; backlog
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../security/LOCAL_DATA_SECURITY/">
+<span class="md-ellipsis">
+    
+  
+    Patient data on this computer
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_6" type="checkbox"/>
+<label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_6_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_6">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/core/">
+<span class="md-ellipsis">
+    
+  
+    Core
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/datasets/">
+<span class="md-ellipsis">
+    
+  
+    Datasets
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/ui/">
+<span class="md-ellipsis">
+    
+  
+    UI Components
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_7" type="checkbox"/>
+<label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_7_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_7">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../development/contributing/">
+<span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../development/setup/">
+<span class="md-ellipsis">
+    
+  
+    Development Setup
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../development/testing/">
+<span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../development/packaging/">
+<span class="md-ellipsis">
+    
+  
+    Packaging
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_8" type="checkbox"/>
+<label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Specifications
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_8_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_8">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Specifications
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../vision/PURPOSE/">
+<span class="md-ellipsis">
+    
+  
+    Purpose and steel thread
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../implementation/MASTER_PLAN/">
+<span class="md-ellipsis">
+    
+  
+    Master plan (roadmap)
+  
+
+    
+  </span>
+<span class="md-status md-status--active"></span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../specs/omnibus_electron_streamlit_cutover/">
+<span class="md-ellipsis">
+    
+  
+    Electron cutover (omnibus)
+  
+
+    
+  </span>
+<span class="md-status md-status--active"></span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../specs/question-driven-analysis/">
+<span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../specs/multi-table-support/">
+<span class="md-ellipsis">
+    
+  
+    Multi-Table Support
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#overview">
+<span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#architecture">
+<span class="md-ellipsis">
+      
+        Architecture
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#three-tier-parsing">
+<span class="md-ellipsis">
+      
+        Three-Tier Parsing
+      
+    </span>
+</a>
+<nav aria-label="Three-Tier Parsing" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#tier-1-pattern-matching">
+<span class="md-ellipsis">
+      
+        Tier 1: Pattern Matching
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#tier-2-semantic-embeddings">
+<span class="md-ellipsis">
+      
+        Tier 2: Semantic Embeddings
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#tier-3-llm-fallback">
+<span class="md-ellipsis">
+      
+        Tier 3: LLM Fallback
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#queryintent-structure">
+<span class="md-ellipsis">
+      
+        QueryIntent Structure
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#intent-types">
+<span class="md-ellipsis">
+      
+        Intent Types
+      
+    </span>
+</a>
+<nav aria-label="Intent Types" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#describe">
+<span class="md-ellipsis">
+      
+        DESCRIBE
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#compare_groups">
+<span class="md-ellipsis">
+      
+        COMPARE_GROUPS
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#find_predictors">
+<span class="md-ellipsis">
+      
+        FIND_PREDICTORS
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#survival">
+<span class="md-ellipsis">
+      
+        SURVIVAL
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#correlations">
+<span class="md-ellipsis">
+      
+        CORRELATIONS
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#variable-extraction">
+<span class="md-ellipsis">
+      
+        Variable Extraction
+      
+    </span>
+</a>
+<nav aria-label="Variable Extraction" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#fuzzy-matching">
+<span class="md-ellipsis">
+      
+        Fuzzy Matching
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#synonym-handling">
+<span class="md-ellipsis">
+      
+        Synonym Handling
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#query-templates">
+<span class="md-ellipsis">
+      
+        Query Templates
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#confidence-thresholds">
+<span class="md-ellipsis">
+      
+        Confidence Thresholds
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#error-handling">
+<span class="md-ellipsis">
+      
+        Error Handling
+      
+    </span>
+</a>
+<nav aria-label="Error Handling" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#unknown-variables">
+<span class="md-ellipsis">
+      
+        Unknown Variables
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ambiguous-intent">
+<span class="md-ellipsis">
+      
+        Ambiguous Intent
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#invalid-combinations">
+<span class="md-ellipsis">
+      
+        Invalid Combinations
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#performance">
+<span class="md-ellipsis">
+      
+        Performance
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#future-enhancements">
+<span class="md-ellipsis">
+      
+        Future Enhancements
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#api-reference">
+<span class="md-ellipsis">
+      
+        API Reference
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#next-steps">
+<span class="md-ellipsis">
+      
+        Next Steps
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-content" data-md-component="content">
+<article class="md-content__inner md-typeset">
+<h1 id="natural-language-query-engine">Natural Language Query Engine</h1>
+<h2 id="overview">Overview</h2>
+<p>The NL Query Engine transforms free-form text questions into structured query intents that the semantic layer can execute. It uses a three-tier architecture for robust parsing.</p>
+<h2 id="architecture">Architecture</h2>
+<pre class="mermaid"><code>graph TD
+    A[User Query Text] --&gt; B[Tier 1: Pattern Matching]
+    B --&gt;|Match| C[QueryIntent]
+    B --&gt;|No Match| D[Tier 2: Semantic Embeddings]
+    D --&gt;|Confidence &gt; 75%| C
+    D --&gt;|Low Confidence| E[Tier 3: LLM Fallback]
+    E --&gt; C
+    C --&gt; F[Variable Extraction]
+    F --&gt; G[Semantic Layer]</code></pre>
+<h2 id="three-tier-parsing">Three-Tier Parsing</h2>
+<h3 id="tier-1-pattern-matching">Tier 1: Pattern Matching</h3>
+<p>Fast regex-based matching for common query patterns.</p>
+<p><strong>Patterns:</strong></p>
+<div class="highlight"><pre><span></span><code><a href="#__codelineno-0-1" id="__codelineno-0-1" name="__codelineno-0-1"></a><span class="c1"># Group comparison</span>
+<a href="#__codelineno-0-2" id="__codelineno-0-2" name="__codelineno-0-2"></a><span class="sa">r</span><span class="s2">"compare\s+(\w+)\s+(?:by|between|across)\s+(\w+)"</span>
+<a href="#__codelineno-0-3" id="__codelineno-0-3" name="__codelineno-0-3"></a>
+<a href="#__codelineno-0-4" id="__codelineno-0-4" name="__codelineno-0-4"></a><span class="c1"># Risk prediction</span>
+<a href="#__codelineno-0-5" id="__codelineno-0-5" name="__codelineno-0-5"></a><span class="sa">r</span><span class="s2">"(?:what predicts|predictors of|predict)\s+(\w+)"</span>
+<a href="#__codelineno-0-6" id="__codelineno-0-6" name="__codelineno-0-6"></a>
+<a href="#__codelineno-0-7" id="__codelineno-0-7" name="__codelineno-0-7"></a><span class="c1"># Survival analysis</span>
+<a href="#__codelineno-0-8" id="__codelineno-0-8" name="__codelineno-0-8"></a><span class="sa">r</span><span class="s2">"\b(survival|time to event|kaplan|cox)\b"</span>
+<a href="#__codelineno-0-9" id="__codelineno-0-9" name="__codelineno-0-9"></a>
+<a href="#__codelineno-0-10" id="__codelineno-0-10" name="__codelineno-0-10"></a><span class="c1"># Correlation</span>
+<a href="#__codelineno-0-11" id="__codelineno-0-11" name="__codelineno-0-11"></a><span class="sa">r</span><span class="s2">"\b(correlat|relationship|associat)\b"</span>
+<a href="#__codelineno-0-12" id="__codelineno-0-12" name="__codelineno-0-12"></a>
+<a href="#__codelineno-0-13" id="__codelineno-0-13" name="__codelineno-0-13"></a><span class="c1"># Descriptive</span>
+<a href="#__codelineno-0-14" id="__codelineno-0-14" name="__codelineno-0-14"></a><span class="sa">r</span><span class="s2">"\b(describe|summary|overview|statistics)\b"</span>
+</code></pre></div>
+<p><strong>Confidence</strong>: 90-95% (high certainty for exact matches)</p>
+<p><strong>Latency</strong>: &lt;1ms</p>
+<h3 id="tier-2-semantic-embeddings">Tier 2: Semantic Embeddings</h3>
+<p>Uses sentence-transformers to match query with template library.</p>
+<p><strong>Model</strong>: <code>all-MiniLM-L6-v2</code> (local, no API calls)</p>
+<p><strong>Process:</strong></p>
+<ol>
+<li>Encode user query to embedding vector</li>
+<li>Compute cosine similarity with all template embeddings</li>
+<li>Return best match if similarity &gt; 0.70</li>
+<li>Extract variables from query using fuzzy matching</li>
+</ol>
+<p><strong>Confidence</strong>: Similarity score (0.70-1.0)</p>
+<p><strong>Latency</strong>: ~50ms</p>
+<p><strong>Privacy</strong>: Fully local, no data leaves your machine</p>
+<h3 id="tier-3-llm-fallback">Tier 3: LLM Fallback</h3>
+<p>For complex or ambiguous queries, uses structured prompts with RAG.</p>
+<p><strong>Context Provided:</strong></p>
+<ul>
+<li>Available columns from semantic layer</li>
+<li>Outcome definitions</li>
+<li>Example queries</li>
+<li>Variable synonyms</li>
+</ul>
+<p><strong>Request Format:</strong></p>
+<div class="highlight"><pre><span></span><code><a href="#__codelineno-1-1" id="__codelineno-1-1" name="__codelineno-1-1"></a><span class="p">{</span>
+<a href="#__codelineno-1-2" id="__codelineno-1-2" name="__codelineno-1-2"></a>    <span class="s2">"intent_type"</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>  <span class="c1"># DESCRIBE, COMPARE_GROUPS, etc.</span>
+<a href="#__codelineno-1-3" id="__codelineno-1-3" name="__codelineno-1-3"></a>    <span class="s2">"primary_variable"</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a href="#__codelineno-1-4" id="__codelineno-1-4" name="__codelineno-1-4"></a>    <span class="s2">"grouping_variable"</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a href="#__codelineno-1-5" id="__codelineno-1-5" name="__codelineno-1-5"></a>    <span class="s2">"confidence"</span><span class="p">:</span> <span class="nb">float</span>
+<a href="#__codelineno-1-6" id="__codelineno-1-6" name="__codelineno-1-6"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Confidence</strong>: Model-generated (0.3-0.9)</p>
+<p><strong>Latency</strong>: ~2-5s (API call)</p>
+<p><strong>Privacy</strong>: Only anonymized metadata sent (column names, types)</p>
+<h2 id="queryintent-structure">QueryIntent Structure</h2>
+<div class="highlight"><pre><span></span><code><a href="#__codelineno-2-1" id="__codelineno-2-1" name="__codelineno-2-1"></a><span class="nd">@dataclass</span>
+<a href="#__codelineno-2-2" id="__codelineno-2-2" name="__codelineno-2-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">QueryIntent</span><span class="p">:</span>
+<a href="#__codelineno-2-3" id="__codelineno-2-3" name="__codelineno-2-3"></a>    <span class="n">intent_type</span><span class="p">:</span> <span class="nb">str</span>  <span class="c1"># Analysis type</span>
+<a href="#__codelineno-2-4" id="__codelineno-2-4" name="__codelineno-2-4"></a>    <span class="n">primary_variable</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+<a href="#__codelineno-2-5" id="__codelineno-2-5" name="__codelineno-2-5"></a>    <span class="n">grouping_variable</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+<a href="#__codelineno-2-6" id="__codelineno-2-6" name="__codelineno-2-6"></a>    <span class="n">predictor_variables</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+<a href="#__codelineno-2-7" id="__codelineno-2-7" name="__codelineno-2-7"></a>    <span class="n">time_variable</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+<a href="#__codelineno-2-8" id="__codelineno-2-8" name="__codelineno-2-8"></a>    <span class="n">event_variable</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+<a href="#__codelineno-2-9" id="__codelineno-2-9" name="__codelineno-2-9"></a>    <span class="n">filters</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+<a href="#__codelineno-2-10" id="__codelineno-2-10" name="__codelineno-2-10"></a>    <span class="n">confidence</span><span class="p">:</span> <span class="nb">float</span>  <span class="c1"># 0.0-1.0</span>
+</code></pre></div>
+<h2 id="intent-types">Intent Types</h2>
+<h3 id="describe">DESCRIBE</h3>
+<p>Descriptive statistics for all variables.</p>
+<p><strong>Triggers:</strong></p>
+<ul>
+<li>"describe", "summary", "overview", "statistics"</li>
+</ul>
+<p><strong>Variables Extracted</strong>: None (uses all columns)</p>
+<h3 id="compare_groups">COMPARE_GROUPS</h3>
+<p>Compare outcome between groups.</p>
+<p><strong>Triggers:</strong></p>
+<ul>
+<li>"compare X by Y"</li>
+<li>"difference in X between Y"</li>
+</ul>
+<p><strong>Variables Extracted:</strong></p>
+<ul>
+<li><code>primary_variable</code>: Outcome to compare</li>
+<li><code>grouping_variable</code>: Grouping variable</li>
+</ul>
+<h3 id="find_predictors">FIND_PREDICTORS</h3>
+<p>Identify risk factors for an outcome.</p>
+<p><strong>Triggers:</strong></p>
+<ul>
+<li>"what predicts X"</li>
+<li>"risk factors for X"</li>
+<li>"predictors of X"</li>
+</ul>
+<p><strong>Variables Extracted:</strong></p>
+<ul>
+<li><code>primary_variable</code>: Outcome to predict</li>
+<li><code>predictor_variables</code>: Covariates (default: all available)</li>
+</ul>
+<h3 id="survival">SURVIVAL</h3>
+<p>Survival analysis (Kaplan-Meier, Cox).</p>
+<p><strong>Triggers:</strong></p>
+<ul>
+<li>"survival", "time to event", "kaplan-meier"</li>
+</ul>
+<p><strong>Variables Extracted:</strong></p>
+<ul>
+<li><code>time_variable</code>: Follow-up time</li>
+<li><code>event_variable</code>: Event indicator</li>
+<li><code>grouping_variable</code>: Stratification variable (optional)</li>
+</ul>
+<h3 id="correlations">CORRELATIONS</h3>
+<p>Correlation between variables.</p>
+<p><strong>Triggers:</strong></p>
+<ul>
+<li>"correlation", "relationship", "association"</li>
+</ul>
+<p><strong>Variables Extracted:</strong></p>
+<ul>
+<li><code>primary_variable</code>: First variable</li>
+<li><code>grouping_variable</code>: Second variable (if specified)</li>
+<li>If no variables specified, compute correlation matrix</li>
+</ul>
+<h2 id="variable-extraction">Variable Extraction</h2>
+<h3 id="fuzzy-matching">Fuzzy Matching</h3>
+<p>Maps query terms to actual column names:</p>
+<div class="highlight"><pre><span></span><code><a href="#__codelineno-3-1" id="__codelineno-3-1" name="__codelineno-3-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_fuzzy_match_variable</span><span class="p">(</span><span class="n">query_term</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<a href="#__codelineno-3-2" id="__codelineno-3-2" name="__codelineno-3-2"></a>    <span class="c1"># Direct match</span>
+<a href="#__codelineno-3-3" id="__codelineno-3-3" name="__codelineno-3-3"></a>    <span class="k">if</span> <span class="n">query_term</span> <span class="ow">in</span> <span class="n">columns</span><span class="p">:</span>
+<a href="#__codelineno-3-4" id="__codelineno-3-4" name="__codelineno-3-4"></a>        <span class="k">return</span> <span class="n">query_term</span>
+<a href="#__codelineno-3-5" id="__codelineno-3-5" name="__codelineno-3-5"></a>
+<a href="#__codelineno-3-6" id="__codelineno-3-6" name="__codelineno-3-6"></a>    <span class="c1"># Fuzzy match with difflib</span>
+<a href="#__codelineno-3-7" id="__codelineno-3-7" name="__codelineno-3-7"></a>    <span class="n">matches</span> <span class="o">=</span> <span class="n">get_close_matches</span><span class="p">(</span>
+<a href="#__codelineno-3-8" id="__codelineno-3-8" name="__codelineno-3-8"></a>        <span class="n">query_term</span><span class="o">.</span><span class="n">lower</span><span class="p">(),</span>
+<a href="#__codelineno-3-9" id="__codelineno-3-9" name="__codelineno-3-9"></a>        <span class="p">[</span><span class="n">c</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">columns</span><span class="p">],</span>
+<a href="#__codelineno-3-10" id="__codelineno-3-10" name="__codelineno-3-10"></a>        <span class="n">n</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+<a href="#__codelineno-3-11" id="__codelineno-3-11" name="__codelineno-3-11"></a>        <span class="n">cutoff</span><span class="o">=</span><span class="mf">0.6</span>
+<a href="#__codelineno-3-12" id="__codelineno-3-12" name="__codelineno-3-12"></a>    <span class="p">)</span>
+<a href="#__codelineno-3-13" id="__codelineno-3-13" name="__codelineno-3-13"></a>
+<a href="#__codelineno-3-14" id="__codelineno-3-14" name="__codelineno-3-14"></a>    <span class="k">return</span> <span class="n">matches</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="n">matches</span> <span class="k">else</span> <span class="kc">None</span>
+</code></pre></div>
+<p><strong>Examples:</strong></p>
+<ul>
+<li>"age" → <code>age_years</code>, <code>patient_age</code></li>
+<li>"died" → <code>mortality</code>, <code>death</code></li>
+<li>"treat" → <code>treatment_arm</code>, <code>treatment</code></li>
+</ul>
+<h3 id="synonym-handling">Synonym Handling</h3>
+<p>Built-in synonym mapping:</p>
+<div class="highlight"><pre><span></span><code><a href="#__codelineno-4-1" id="__codelineno-4-1" name="__codelineno-4-1"></a><span class="n">SYNONYMS</span> <span class="o">=</span> <span class="p">{</span>
+<a href="#__codelineno-4-2" id="__codelineno-4-2" name="__codelineno-4-2"></a>    <span class="s1">'age'</span><span class="p">:</span> <span class="p">[</span><span class="s1">'age_years'</span><span class="p">,</span> <span class="s1">'patient_age'</span><span class="p">,</span> <span class="s1">'age_at_admission'</span><span class="p">],</span>
+<a href="#__codelineno-4-3" id="__codelineno-4-3" name="__codelineno-4-3"></a>    <span class="s1">'mortality'</span><span class="p">:</span> <span class="p">[</span><span class="s1">'died'</span><span class="p">,</span> <span class="s1">'death'</span><span class="p">,</span> <span class="s1">'deceased'</span><span class="p">,</span> <span class="s1">'expired'</span><span class="p">],</span>
+<a href="#__codelineno-4-4" id="__codelineno-4-4" name="__codelineno-4-4"></a>    <span class="s1">'treatment'</span><span class="p">:</span> <span class="p">[</span><span class="s1">'tx'</span><span class="p">,</span> <span class="s1">'therapy'</span><span class="p">,</span> <span class="s1">'intervention'</span><span class="p">],</span>
+<a href="#__codelineno-4-5" id="__codelineno-4-5" name="__codelineno-4-5"></a>    <span class="s1">'outcome'</span><span class="p">:</span> <span class="p">[</span><span class="s1">'result'</span><span class="p">,</span> <span class="s1">'endpoint'</span><span class="p">,</span> <span class="s1">'event'</span><span class="p">]</span>
+<a href="#__codelineno-4-6" id="__codelineno-4-6" name="__codelineno-4-6"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="query-templates">Query Templates</h2>
+<p>Pre-computed template library with embeddings:</p>
+<div class="highlight"><pre><span></span><code><a href="#__codelineno-5-1" id="__codelineno-5-1" name="__codelineno-5-1"></a><span class="n">templates</span> <span class="o">=</span> <span class="p">[</span>
+<a href="#__codelineno-5-2" id="__codelineno-5-2" name="__codelineno-5-2"></a>    <span class="p">{</span>
+<a href="#__codelineno-5-3" id="__codelineno-5-3" name="__codelineno-5-3"></a>        <span class="s2">"template"</span><span class="p">:</span> <span class="s2">"compare </span><span class="si">{outcome}</span><span class="s2"> by </span><span class="si">{group}</span><span class="s2">"</span><span class="p">,</span>
+<a href="#__codelineno-5-4" id="__codelineno-5-4" name="__codelineno-5-4"></a>        <span class="s2">"intent"</span><span class="p">:</span> <span class="s2">"COMPARE_GROUPS"</span><span class="p">,</span>
+<a href="#__codelineno-5-5" id="__codelineno-5-5" name="__codelineno-5-5"></a>        <span class="s2">"slots"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"outcome"</span><span class="p">,</span> <span class="s2">"group"</span><span class="p">]</span>
+<a href="#__codelineno-5-6" id="__codelineno-5-6" name="__codelineno-5-6"></a>    <span class="p">},</span>
+<a href="#__codelineno-5-7" id="__codelineno-5-7" name="__codelineno-5-7"></a>    <span class="p">{</span>
+<a href="#__codelineno-5-8" id="__codelineno-5-8" name="__codelineno-5-8"></a>        <span class="s2">"template"</span><span class="p">:</span> <span class="s2">"what predicts </span><span class="si">{outcome}</span><span class="s2">"</span><span class="p">,</span>
+<a href="#__codelineno-5-9" id="__codelineno-5-9" name="__codelineno-5-9"></a>        <span class="s2">"intent"</span><span class="p">:</span> <span class="s2">"FIND_PREDICTORS"</span><span class="p">,</span>
+<a href="#__codelineno-5-10" id="__codelineno-5-10" name="__codelineno-5-10"></a>        <span class="s2">"slots"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"outcome"</span><span class="p">]</span>
+<a href="#__codelineno-5-11" id="__codelineno-5-11" name="__codelineno-5-11"></a>    <span class="p">},</span>
+<a href="#__codelineno-5-12" id="__codelineno-5-12" name="__codelineno-5-12"></a>    <span class="c1"># ... more templates</span>
+<a href="#__codelineno-5-13" id="__codelineno-5-13" name="__codelineno-5-13"></a><span class="p">]</span>
+</code></pre></div>
+<p>Templates are built dynamically from semantic layer metadata.</p>
+<h2 id="confidence-thresholds">Confidence Thresholds</h2>
+<ul>
+<li><strong>&gt;90%</strong>: High confidence (Tier 1 pattern match)</li>
+<li><strong>75-90%</strong>: Good confidence (Tier 2 semantic match)</li>
+<li><strong>50-75%</strong>: Medium confidence (show interpretation, ask for confirmation)</li>
+<li><strong>&lt;50%</strong>: Low confidence (ask clarifying questions or use structured input)</li>
+</ul>
+<h2 id="error-handling">Error Handling</h2>
+<h3 id="unknown-variables">Unknown Variables</h3>
+<p>If extracted variable doesn't exist:</p>
+<ol>
+<li>Show "Variable not found: X"</li>
+<li>Suggest similar variables</li>
+<li>Allow user to select from dropdown</li>
+</ol>
+<h3 id="ambiguous-intent">Ambiguous Intent</h3>
+<p>If confidence &lt;50%:</p>
+<ol>
+<li>Show possible interpretations</li>
+<li>Ask user to select</li>
+<li>Learn from user's choice (future enhancement)</li>
+</ol>
+<h3 id="invalid-combinations">Invalid Combinations</h3>
+<p>If requested analysis doesn't match variable types:</p>
+<ol>
+<li>Explain incompatibility</li>
+<li>Suggest appropriate analysis</li>
+<li>Allow user to override</li>
+</ol>
+<h2 id="performance">Performance</h2>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Tier 1</th>
+<th>Tier 2</th>
+<th>Tier 3</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Latency</td>
+<td>&lt;1ms</td>
+<td>~50ms</td>
+<td>~2-5s</td>
+</tr>
+<tr>
+<td>Accuracy</td>
+<td>~95%</td>
+<td>~85%</td>
+<td>~70%</td>
+</tr>
+<tr>
+<td>Coverage</td>
+<td>~40%</td>
+<td>~80%</td>
+<td>~100%</td>
+</tr>
+<tr>
+<td>Privacy</td>
+<td>✅ Local</td>
+<td>✅ Local</td>
+<td>⚠️ API</td>
+</tr>
+</tbody>
+</table>
+<h2 id="future-enhancements">Future Enhancements</h2>
+<ol>
+<li><strong>Learning from corrections</strong>: Update template weights based on user feedback</li>
+<li><strong>Multi-step queries</strong>: "Compare survival by treatment, then stratify by age"</li>
+<li><strong>Conditional filters</strong>: "Show mortality for ICU patients only"</li>
+<li><strong>Time constraints</strong>: "30-day mortality" → extract timeframe</li>
+<li><strong>Custom templates</strong>: Allow users to add domain-specific query patterns</li>
+</ol>
+<h2 id="api-reference">API Reference</h2>
+<p>See <a href="../../api-reference/core/#nlqueryengine">API Documentation</a> for detailed class reference.</p>
+<h2 id="next-steps">Next Steps</h2>
+<ul>
+<li>Understand the <a href="../semantic-layer/">Semantic Layer</a></li>
+<li>Learn about <a href="../dataset-registry/">Dataset Registry</a></li>
+<li>Try <a href="../../user-guide/question-driven-analysis/">Question-Driven Analysis</a></li>
+</ul>
+</article>
+</div>
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+</div>
+<button class="md-top md-icon" data-md-component="top" hidden="" type="button">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"></path></svg>
+  Back to top
+</button>
+</main>
+<footer class="md-footer">
+<div class="md-footer-meta md-typeset">
+<div class="md-footer-meta__inner md-grid">
+<div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" rel="noopener" target="_blank">
+      Material for MkDocs
+    </a>
+</div>
+</div>
+</div>
+</footer>
+</div>
+<div class="md-dialog" data-md-component="dialog">
+<div class="md-dialog__inner md-typeset"></div>
+</div>
+<script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+<script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+</body>
+</html>

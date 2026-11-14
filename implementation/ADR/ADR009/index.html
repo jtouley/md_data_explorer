@@ -1,0 +1,2963 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Spec-driven clinical analytics with question-driven semantic analysis">
+      
+      
+        <meta name="author" content="Development Team">
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>ADR009: LLM-Enhanced User Experience and Query Intelligence - Clinical Analytics Platform</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#adr009-llm-enhanced-user-experience-and-query-intelligence" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="Clinical Analytics Platform" class="md-header__button md-logo" aria-label="Clinical Analytics Platform" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Clinical Analytics Platform
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ADR009: LLM-Enhanced User Experience and Query Intelligence
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/yourusername/md_data_explorer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../getting-started/installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../user-guide/question-driven-analysis/" class="md-tabs__link">
+          
+  
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../architecture/overview/" class="md-tabs__link">
+          
+  
+  
+  Architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../security/THREAT_MODEL/" class="md-tabs__link">
+          
+  
+  
+  Security
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../api-reference/core/" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../development/contributing/" class="md-tabs__link">
+          
+  
+  
+  Development
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../vision/PURPOSE/" class="md-tabs__link">
+          
+  
+  
+  Specifications
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="Clinical Analytics Platform" class="md-nav__button md-logo" aria-label="Clinical Analytics Platform" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Clinical Analytics Platform
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/yourusername/md_data_explorer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/quick-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/uploading-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Uploading Data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/question-driven-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/statistical-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Statistical Tests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/interpreting-results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interpreting Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/AS_BUILT_ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    As-built (2025-03)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/ARCHITECTURE_BOUNDARIES/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module boundaries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/semantic-layer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Semantic Layer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/dataset-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dataset Registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/nl-query-engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NL Query Engine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Security
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../security/THREAT_MODEL/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Threat model & backlog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../security/LOCAL_DATA_SECURITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Patient data on this computer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/datasets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Datasets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI Components
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/packaging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packaging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Specifications
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Specifications
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../vision/PURPOSE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Purpose and steel thread
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../MASTER_PLAN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Master plan (roadmap)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--active"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../specs/omnibus_electron_streamlit_cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Electron cutover (omnibus)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--active"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../specs/question-driven-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../specs/multi-table-support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Table Support
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Status
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-adrs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related ADRs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Context">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#current-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current State
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#problems" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Problems
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Decision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#core-principle-llm-as-context-aware-intelligence-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core Principle: LLM as Context-Aware Intelligence Layer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#architecture-multi-purpose-llm-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture: Multi-Purpose LLM Integration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-llm-generated-follow-ups-priority-0" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: LLM-Generated Follow-Ups (Priority 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-query-explanation-and-interpretation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: Query Explanation and Interpretation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-result-interpretation-and-clinical-insights" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3: Result Interpretation and Clinical Insights
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-error-message-translation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4: Error Message Translation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-5-enhanced-filter-extraction-phase-5-alignment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 5: Enhanced Filter Extraction (Phase 5 Alignment)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-6-automated-golden-question-generation-self-improvement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 6: Automated Golden Question Generation (Self-Improvement)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Plan
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation Plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-llm-follow-ups-priority-0" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: LLM Follow-Ups (Priority 0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-query-explanation-priority-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: Query Explanation (Priority 1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-result-interpretation-priority-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3: Result Interpretation (Priority 2)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-error-translation-priority-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4: Error Translation (Priority 2)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-5-enhanced-filter-extraction-priority-1-phase-5-alignment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 5: Enhanced Filter Extraction (Priority 1 - Phase 5 Alignment)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-6-automated-golden-question-generation-priority-2-self-improvement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 6: Automated Golden Question Generation (Priority 2 - Self-Improvement)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternatives Considered
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Alternatives Considered">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-keep-hardcoded-follow-ups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Keep Hardcoded Follow-Ups
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-use-external-llm-api-openai-anthropic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Use External LLM API (OpenAI, Anthropic)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-template-based-follow-ups-no-llm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Template-Based Follow-Ups (No LLM)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-skip-result-interpretation-users-can-interpret" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Skip Result Interpretation (Users Can Interpret)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-regex-only-filter-extraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Regex-Only Filter Extraction
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Consequences">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#positive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Positive
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#negative" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Negative
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#risks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#success-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Success Criteria
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="adr009-llm-enhanced-user-experience-and-query-intelligence">ADR009: LLM-Enhanced User Experience and Query Intelligence</h1>
+<h2 id="status">Status</h2>
+<p>Proposed</p>
+<h2 id="related-adrs">Related ADRs</h2>
+<ul>
+<li><strong><a href="../ADR001/">ADR001: Query Plan Producer, Filtering, and Chat-First Execution Rules</a></strong>: ADR001 owns QueryPlan production and Tier 3 LLM fallback. ADR009 extends ADR001's LLM usage beyond query parsing to include follow-ups, explanations, and result interpretation. ADR009's filter extraction enhancement aligns with ADR001's Phase 5 goal of moving away from regex.</li>
+<li><strong><a href="../ADR003/">ADR003: Clinical Trust Architecture &amp; Adaptive Terminology</a></strong>: ADR003 mentions local LLM (Ollama) as viable option for privacy-sensitive clinical data. ADR009 implements the LLM enhancements that ADR003 deferred to ADR001 or follow-on ADRs.</li>
+</ul>
+<h2 id="context">Context</h2>
+<p>The clinical analytics platform currently uses a local Ollama LLM (Tier 3) only for query parsing fallback when pattern matching and semantic embeddings fail. The LLM is underutilized - it has significant potential to enhance user experience beyond basic query parsing.</p>
+<h3 id="current-state">Current State</h3>
+<p><strong>LLM Usage (Limited)</strong>:
+- <strong>Tier 3 Fallback</strong>: Only used when Tier 1 (pattern matching) and Tier 2 (semantic embeddings) fail
+- <strong>QueryPlan Generation</strong>: Returns structured JSON matching QueryPlan schema (Phase 5)
+- <strong>Privacy-Preserving</strong>: Local Ollama only, no external API calls
+- <strong>Graceful Degradation</strong>: Falls back to low-confidence stub (0.3) if unavailable</p>
+<p><strong>Follow-Up Questions (Disabled)</strong>:
+- Hardcoded follow-up suggestions were removed per user request (see <code>_suggest_follow_ups()</code> in <code>03_💬_Ask_Questions.py</code>)
+- User feedback: "we should also remove the stupid follow-ups unless they come from the LLM"
+- Current TODO: "Add follow_ups field to QueryPlan schema and LLM prompt"</p>
+<p><strong>LLM Infrastructure (Ready)</strong>:
+- <code>OllamaClient</code> with JSON mode support
+- <code>OllamaManager</code> for service management
+- RAG context building (<code>_build_rag_context()</code>)
+- Structured prompt generation (<code>_build_llm_prompt()</code>)
+- QueryPlan validation (<code>QueryPlan.from_dict()</code>)</p>
+<h3 id="problems">Problems</h3>
+<ol>
+<li><strong>Generic Follow-Ups</strong>: Hardcoded follow-ups are context-agnostic and often irrelevant</li>
+<li>Example: "Compare X by treatment group" when no treatment group exists</li>
+<li>Example: "What predicts Y?" when user just asked a descriptive question</li>
+<li>
+<p>User feedback: "stupid follow-ups" - they don't understand query context</p>
+</li>
+<li>
+<p><strong>Limited Query Intelligence</strong>: LLM only used for parsing, not for:</p>
+</li>
+<li>Explaining query interpretation</li>
+<li>Suggesting query refinements</li>
+<li>Interpreting results</li>
+<li>Explaining confidence scores</li>
+<li>
+<p>Error message improvement</p>
+</li>
+<li>
+<p><strong>Filter Extraction Gaps</strong>: Phase 5 goal is LLM-based filter extraction, but current regex-heavy approach still fails</p>
+</li>
+<li>"remove the n/a (0)" not extracted correctly</li>
+<li>"exclude n/a" requires context inference</li>
+<li>
+<p>LLM could handle these naturally with proper prompting</p>
+</li>
+<li>
+<p><strong>No Result Interpretation</strong>: Users get raw statistics but no clinical insights</p>
+</li>
+<li>"Average LDL: 120 mg/dL" - is this good or bad?</li>
+<li>"Count: 45 patients" - is this expected?</li>
+<li>
+<p>LLM could provide clinical context</p>
+</li>
+<li>
+<p><strong>Poor Error Messages</strong>: Technical errors don't help users understand what went wrong</p>
+</li>
+<li>"Column 'ldl_mg_dl' not found" - user asked for "LDL"</li>
+<li>"Invalid operator: &gt;=" - user doesn't understand filter syntax</li>
+<li>LLM could translate technical errors to user-friendly explanations</li>
+</ol>
+<h2 id="decision">Decision</h2>
+<h3 id="core-principle-llm-as-context-aware-intelligence-layer">Core Principle: LLM as Context-Aware Intelligence Layer</h3>
+<p><strong>The LLM should be used for all tasks requiring:</strong>
+- Natural language understanding
+- Context awareness
+- Clinical domain knowledge
+- User-friendly explanations</p>
+<p><strong>The LLM should NOT be used for:</strong>
+- Deterministic computations (use Polars/Ibis)
+- Fast pattern matching (use regex - Tier 1)
+- Simple template matching (use embeddings - Tier 2)
+- Data transformations (use Polars expressions)</p>
+<h3 id="architecture-multi-purpose-llm-integration">Architecture: Multi-Purpose LLM Integration</h3>
+<p>Extend the LLM beyond query parsing to provide:</p>
+<ol>
+<li><strong>Context-Aware Follow-Ups</strong> (Primary)</li>
+<li><strong>Query Explanation</strong> (Secondary)</li>
+<li><strong>Result Interpretation</strong> (Secondary)</li>
+<li><strong>Error Message Translation</strong> (Secondary)</li>
+<li><strong>Filter Extraction Enhancement</strong> (Phase 5 alignment)</li>
+<li><strong>Confidence Explanation</strong> (Observability)</li>
+<li><strong>Automated Golden Question Generation</strong> (Self-Improvement)</li>
+</ol>
+<h2 id="implementation">Implementation</h2>
+<h3 id="phase-1-llm-generated-follow-ups-priority-0">Phase 1: LLM-Generated Follow-Ups (Priority 0)</h3>
+<p><strong>Goal</strong>: Replace hardcoded follow-ups with LLM-generated, context-aware suggestions.</p>
+<p><strong>Schema Extension</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nd">@dataclass</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">QueryPlan</span><span class="p">:</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="c1"># ... existing fields ...</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">follow_ups</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>  <span class="c1"># LLM-generated follow-up questions</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">follow_up_explanation</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>  <span class="c1"># Why these follow-ups are relevant</span>
+</code></pre></div>
+<p><strong>LLM Prompt Enhancement</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_build_llm_prompt_with_follow_ups</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">context</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">previous_result</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">    </span><span class="sd">"""</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="sd">    Build LLM prompt that requests QueryPlan + follow-up suggestions.</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="sd">    Args:</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="sd">        query: User's question</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="sd">        context: RAG context (columns, aliases, examples)</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="sd">        previous_result: Previous query result (for context-aware follow-ups)</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="sd">    Returns:</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="sd">        (system_prompt, user_prompt) tuple</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="sd">    """</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>    <span class="n">system_prompt</span> <span class="o">=</span> <span class="s2">"""You are a medical data query parser and clinical research assistant.</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="s2">Your tasks:</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="s2">1. Parse the query into a QueryPlan (structured JSON)</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="s2">2. Suggest 2-4 relevant follow-up questions based on:</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="s2">   - The current query intent and results</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="s2">   - Available columns in the dataset</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="s2">   - Clinical research patterns (comparison, prediction, exploration)</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="s2">   - What would be logically interesting next steps</span>
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="s2">Return JSON with:</span>
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="s2">- QueryPlan fields (intent, metric, group_by, filters, confidence, explanation)</span>
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a><span class="s2">- follow_ups: List of 2-4 natural language follow-up questions</span>
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a><span class="s2">- follow_up_explanation: Brief explanation of why these follow-ups are relevant</span>
+<a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>
+<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a><span class="s2">Available columns: </span><span class="si">{columns}</span>
+<a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a><span class="s2">Aliases: </span><span class="si">{aliases}</span>
+<a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a><span class="s2">Previous result context: </span><span class="si">{previous_result}</span>
+<a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>
+<a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a><span class="s2">Examples:</span>
+<a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a><span class="si">{examples}</span>
+<a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a>
+<a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a><span class="s2">IMPORTANT:</span>
+<a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a><span class="s2">- Follow-ups must be contextually relevant (not generic)</span>
+<a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a><span class="s2">- Use natural language (not technical column names)</span>
+<a id="__codelineno-1-38" name="__codelineno-1-38" href="#__codelineno-1-38"></a><span class="s2">- Suggest questions that would actually help the user explore the data</span>
+<a id="__codelineno-1-39" name="__codelineno-1-39" href="#__codelineno-1-39"></a><span class="s2">- Avoid suggesting questions that are already answered by the current query"""</span><span class="o">.</span><span class="n">format</span><span class="p">(</span>
+<a id="__codelineno-1-40" name="__codelineno-1-40" href="#__codelineno-1-40"></a>        <span class="n">columns</span><span class="o">=</span><span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">context</span><span class="p">[</span><span class="s2">"columns"</span><span class="p">]),</span>
+<a id="__codelineno-1-41" name="__codelineno-1-41" href="#__codelineno-1-41"></a>        <span class="n">aliases</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">context</span><span class="p">[</span><span class="s2">"aliases"</span><span class="p">]),</span>
+<a id="__codelineno-1-42" name="__codelineno-1-42" href="#__codelineno-1-42"></a>        <span class="n">previous_result</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">previous_result</span><span class="p">)</span> <span class="k">if</span> <span class="n">previous_result</span> <span class="k">else</span> <span class="s2">"None"</span><span class="p">,</span>
+<a id="__codelineno-1-43" name="__codelineno-1-43" href="#__codelineno-1-43"></a>        <span class="n">examples</span><span class="o">=</span><span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="sa">f</span><span class="s2">"- </span><span class="si">{</span><span class="n">ex</span><span class="si">}</span><span class="s2">"</span> <span class="k">for</span> <span class="n">ex</span> <span class="ow">in</span> <span class="n">context</span><span class="p">[</span><span class="s2">"examples"</span><span class="p">]),</span>
+<a id="__codelineno-1-44" name="__codelineno-1-44" href="#__codelineno-1-44"></a>    <span class="p">)</span>
+<a id="__codelineno-1-45" name="__codelineno-1-45" href="#__codelineno-1-45"></a>
+<a id="__codelineno-1-46" name="__codelineno-1-46" href="#__codelineno-1-46"></a>    <span class="n">user_prompt</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"Parse this query and suggest follow-ups: </span><span class="si">{</span><span class="n">query</span><span class="si">}</span><span class="s2">"</span>
+<a id="__codelineno-1-47" name="__codelineno-1-47" href="#__codelineno-1-47"></a>
+<a id="__codelineno-1-48" name="__codelineno-1-48" href="#__codelineno-1-48"></a>    <span class="k">return</span> <span class="p">(</span><span class="n">system_prompt</span><span class="p">,</span> <span class="n">user_prompt</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>UI Integration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_render_llm_follow_ups</span><span class="p">(</span><span class="n">plan</span><span class="p">:</span> <span class="n">QueryPlan</span><span class="p">,</span> <span class="n">run_key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">    </span><span class="sd">"""</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="sd">    Render LLM-generated follow-up questions.</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="sd">    Only shows if plan.follow_ups is non-empty (LLM-generated).</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="sd">    Replaces disabled _suggest_follow_ups() function.</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="sd">    """</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">plan</span><span class="o">.</span><span class="n">follow_ups</span><span class="p">:</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>        <span class="k">return</span>  <span class="c1"># No LLM follow-ups - don't show anything</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>    <span class="n">st</span><span class="o">.</span><span class="n">markdown</span><span class="p">(</span><span class="s2">"**💡 You might also ask:**"</span><span class="p">)</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>    <span class="k">if</span> <span class="n">plan</span><span class="o">.</span><span class="n">follow_up_explanation</span><span class="p">:</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>        <span class="n">st</span><span class="o">.</span><span class="n">caption</span><span class="p">(</span><span class="n">plan</span><span class="o">.</span><span class="n">follow_up_explanation</span><span class="p">)</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>    <span class="n">cols</span> <span class="o">=</span> <span class="n">st</span><span class="o">.</span><span class="n">columns</span><span class="p">(</span><span class="nb">min</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">plan</span><span class="o">.</span><span class="n">follow_ups</span><span class="p">),</span> <span class="mi">2</span><span class="p">))</span>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>    <span class="k">for</span> <span class="n">idx</span><span class="p">,</span> <span class="n">follow_up</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">plan</span><span class="o">.</span><span class="n">follow_ups</span><span class="p">[:</span><span class="mi">4</span><span class="p">]):</span>  <span class="c1"># Limit to 4</span>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>        <span class="n">col</span> <span class="o">=</span> <span class="n">cols</span><span class="p">[</span><span class="n">idx</span> <span class="o">%</span> <span class="nb">len</span><span class="p">(</span><span class="n">cols</span><span class="p">)]</span>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>        <span class="k">with</span> <span class="n">col</span><span class="p">:</span>
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>            <span class="n">button_key</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"llm_followup_</span><span class="si">{</span><span class="n">run_key</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">idx</span><span class="si">}</span><span class="s2">"</span>
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>            <span class="k">if</span> <span class="n">st</span><span class="o">.</span><span class="n">button</span><span class="p">(</span><span class="n">follow_up</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="n">button_key</span><span class="p">,</span> <span class="n">use_container_width</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>                <span class="n">st</span><span class="o">.</span><span class="n">session_state</span><span class="p">[</span><span class="s2">"prefilled_query"</span><span class="p">]</span> <span class="o">=</span> <span class="n">follow_up</span>
+<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>                <span class="n">st</span><span class="o">.</span><span class="n">rerun</span><span class="p">()</span>
+</code></pre></div>
+<p><strong>Benefits</strong>:
+- Context-aware: Follow-ups understand current query and results
+- Clinical relevance: LLM can suggest medically meaningful next steps
+- Natural language: Uses user's terminology, not technical column names
+- Adaptive: Different follow-ups for different query types</p>
+<p><strong>Trade-offs</strong>:
+- Latency: Adds ~1-2 seconds to query parsing (LLM call)
+- Cost: Local Ollama only (no external cost, but requires model download)
+- Quality: Depends on model quality (llama3.1:8b baseline, can upgrade)</p>
+<h3 id="phase-2-query-explanation-and-interpretation">Phase 2: Query Explanation and Interpretation</h3>
+<p><strong>Goal</strong>: Help users understand what the system interpreted from their query.</p>
+<p><strong>Schema Extension</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nd">@dataclass</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">QueryPlan</span><span class="p">:</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="c1"># ... existing fields ...</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">explanation</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>  <span class="c1"># Already exists - enhance with LLM</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">interpretation</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>  <span class="c1"># Natural language interpretation of the query plan</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">confidence_explanation</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>  <span class="c1"># Why confidence is high/low</span>
+</code></pre></div>
+<p><strong>LLM Prompt</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_build_interpretation_prompt</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">plan</span><span class="p">:</span> <span class="n">QueryPlan</span><span class="p">,</span> <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">    </span><span class="sd">"""</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="sd">    Build prompt for LLM to explain query interpretation.</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="sd">    Returns:</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="sd">        (system_prompt, user_prompt) for interpretation generation</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="sd">    """</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="n">system_prompt</span> <span class="o">=</span> <span class="s2">"""You are a clinical data analysis assistant. Explain query interpretations in plain language.</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="s2">Given a QueryPlan and the original query, provide:</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="s2">1. interpretation: What the system understood from the query (plain language)</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="s2">2. confidence_explanation: Why confidence is high/low (what made parsing easy/hard)</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="s2">Be specific about:</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="s2">- Which columns were matched</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="s2">- What filters were extracted</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="s2">- What grouping was detected</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a><span class="s2">- Any ambiguities or assumptions made</span>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a>
+<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a><span class="s2">Use clinical terminology when appropriate."""</span>
+<a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a>
+<a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a>    <span class="n">user_prompt</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"""Query: "</span><span class="si">{</span><span class="n">query</span><span class="si">}</span><span class="s2">"</span>
+<a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a>
+<a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a><span class="s2">QueryPlan:</span>
+<a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a><span class="s2">- Intent: </span><span class="si">{</span><span class="n">plan</span><span class="o">.</span><span class="n">intent</span><span class="si">}</span>
+<a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a><span class="s2">- Metric: </span><span class="si">{</span><span class="n">plan</span><span class="o">.</span><span class="n">metric</span><span class="si">}</span>
+<a id="__codelineno-4-27" name="__codelineno-4-27" href="#__codelineno-4-27"></a><span class="s2">- Group by: </span><span class="si">{</span><span class="n">plan</span><span class="o">.</span><span class="n">group_by</span><span class="si">}</span>
+<a id="__codelineno-4-28" name="__codelineno-4-28" href="#__codelineno-4-28"></a><span class="s2">- Filters: </span><span class="si">{</span><span class="n">plan</span><span class="o">.</span><span class="n">filters</span><span class="si">}</span>
+<a id="__codelineno-4-29" name="__codelineno-4-29" href="#__codelineno-4-29"></a><span class="s2">- Confidence: </span><span class="si">{</span><span class="n">plan</span><span class="o">.</span><span class="n">confidence</span><span class="si">}</span>
+<a id="__codelineno-4-30" name="__codelineno-4-30" href="#__codelineno-4-30"></a>
+<a id="__codelineno-4-31" name="__codelineno-4-31" href="#__codelineno-4-31"></a><span class="s2">Explain what this query asks for and why confidence is </span><span class="si">{</span><span class="n">plan</span><span class="o">.</span><span class="n">confidence</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">."""</span>
+<a id="__codelineno-4-32" name="__codelineno-4-32" href="#__codelineno-4-32"></a>
+<a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a>    <span class="k">return</span> <span class="p">(</span><span class="n">system_prompt</span><span class="p">,</span> <span class="n">user_prompt</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>UI Integration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_render_query_interpretation</span><span class="p">(</span><span class="n">plan</span><span class="p">:</span> <span class="n">QueryPlan</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">    </span><span class="sd">"""Render LLM-generated query interpretation."""</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="k">if</span> <span class="n">plan</span><span class="o">.</span><span class="n">interpretation</span><span class="p">:</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>        <span class="k">with</span> <span class="n">st</span><span class="o">.</span><span class="n">expander</span><span class="p">(</span><span class="s2">"🔍 How I interpreted your query"</span><span class="p">):</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>            <span class="n">st</span><span class="o">.</span><span class="n">markdown</span><span class="p">(</span><span class="n">plan</span><span class="o">.</span><span class="n">interpretation</span><span class="p">)</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>            <span class="k">if</span> <span class="n">plan</span><span class="o">.</span><span class="n">confidence_explanation</span><span class="p">:</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>                <span class="n">st</span><span class="o">.</span><span class="n">caption</span><span class="p">(</span><span class="sa">f</span><span class="s2">"**Confidence**: </span><span class="si">{</span><span class="n">plan</span><span class="o">.</span><span class="n">confidence_explanation</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>Benefits</strong>:
+- Transparency: Users see what system understood
+- Trust: Explains confidence scores
+- Education: Helps users learn to write better queries</p>
+<h3 id="phase-3-result-interpretation-and-clinical-insights">Phase 3: Result Interpretation and Clinical Insights</h3>
+<p><strong>Goal</strong>: Provide clinical context for query results.</p>
+<p><strong>New Function</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">interpret_result_with_llm</span><span class="p">(</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="n">plan</span><span class="p">:</span> <span class="n">QueryPlan</span><span class="p">,</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="n">result</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>    <span class="n">semantic_layer</span><span class="p">:</span> <span class="n">SemanticLayer</span><span class="p">,</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">    </span><span class="sd">"""</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="sd">    Use LLM to interpret query results and provide clinical insights.</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="sd">    Returns:</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="sd">        dict with:</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="sd">        - summary: Brief summary of results</span>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="sd">        - clinical_context: Clinical interpretation (normal/abnormal, expected/unexpected)</span>
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="sd">        - insights: Key insights or patterns detected</span>
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="sd">    """</span>
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>    <span class="c1"># Build prompt with result context</span>
+<a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>    <span class="n">system_prompt</span> <span class="o">=</span> <span class="s2">"""You are a clinical data analyst. Interpret query results and provide clinical insights.</span>
+<a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a>
+<a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a><span class="s2">Given query results, provide:</span>
+<a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a><span class="s2">1. summary: Brief summary of what the results show</span>
+<a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a><span class="s2">2. clinical_context: Clinical interpretation (is this normal? expected? concerning?)</span>
+<a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a><span class="s2">3. insights: Key patterns or insights that stand out</span>
+<a id="__codelineno-6-22" name="__codelineno-6-22" href="#__codelineno-6-22"></a>
+<a id="__codelineno-6-23" name="__codelineno-6-23" href="#__codelineno-6-23"></a><span class="s2">Be specific and use clinical knowledge when relevant."""</span>
+<a id="__codelineno-6-24" name="__codelineno-6-24" href="#__codelineno-6-24"></a>
+<a id="__codelineno-6-25" name="__codelineno-6-25" href="#__codelineno-6-25"></a>    <span class="n">user_prompt</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"""Query: </span><span class="si">{</span><span class="n">plan</span><span class="o">.</span><span class="n">explanation</span><span class="si">}</span>
+<a id="__codelineno-6-26" name="__codelineno-6-26" href="#__codelineno-6-26"></a><span class="s2">Results: </span><span class="si">{</span><span class="n">result</span><span class="si">}</span>
+<a id="__codelineno-6-27" name="__codelineno-6-27" href="#__codelineno-6-27"></a>
+<a id="__codelineno-6-28" name="__codelineno-6-28" href="#__codelineno-6-28"></a><span class="s2">Provide clinical interpretation."""</span>
+<a id="__codelineno-6-29" name="__codelineno-6-29" href="#__codelineno-6-29"></a>
+<a id="__codelineno-6-30" name="__codelineno-6-30" href="#__codelineno-6-30"></a>    <span class="c1"># Call LLM</span>
+<a id="__codelineno-6-31" name="__codelineno-6-31" href="#__codelineno-6-31"></a>    <span class="n">client</span> <span class="o">=</span> <span class="n">get_ollama_client</span><span class="p">()</span>
+<a id="__codelineno-6-32" name="__codelineno-6-32" href="#__codelineno-6-32"></a>    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">user_prompt</span><span class="p">,</span> <span class="n">system_prompt</span><span class="o">=</span><span class="n">system_prompt</span><span class="p">,</span> <span class="n">json_mode</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-6-33" name="__codelineno-6-33" href="#__codelineno-6-33"></a>
+<a id="__codelineno-6-34" name="__codelineno-6-34" href="#__codelineno-6-34"></a>    <span class="c1"># Parse JSON response</span>
+<a id="__codelineno-6-35" name="__codelineno-6-35" href="#__codelineno-6-35"></a>    <span class="n">interpretation</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">response</span><span class="p">)</span> <span class="k">if</span> <span class="n">response</span> <span class="k">else</span> <span class="p">{}</span>
+<a id="__codelineno-6-36" name="__codelineno-6-36" href="#__codelineno-6-36"></a>
+<a id="__codelineno-6-37" name="__codelineno-6-37" href="#__codelineno-6-37"></a>    <span class="k">return</span> <span class="n">interpretation</span>
+</code></pre></div>
+<p><strong>UI Integration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_render_result_interpretation</span><span class="p">(</span><span class="n">interpretation</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">    </span><span class="sd">"""Render LLM-generated result interpretation."""</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">interpretation</span><span class="p">:</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>        <span class="k">return</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    <span class="n">st</span><span class="o">.</span><span class="n">markdown</span><span class="p">(</span><span class="s2">"**📊 Interpretation**"</span><span class="p">)</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>    <span class="k">if</span> <span class="n">interpretation</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"summary"</span><span class="p">):</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>        <span class="n">st</span><span class="o">.</span><span class="n">markdown</span><span class="p">(</span><span class="n">interpretation</span><span class="p">[</span><span class="s2">"summary"</span><span class="p">])</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>    <span class="k">if</span> <span class="n">interpretation</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"clinical_context"</span><span class="p">):</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>        <span class="n">st</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="n">interpretation</span><span class="p">[</span><span class="s2">"clinical_context"</span><span class="p">])</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>    <span class="k">if</span> <span class="n">interpretation</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"insights"</span><span class="p">):</span>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>        <span class="n">st</span><span class="o">.</span><span class="n">success</span><span class="p">(</span><span class="n">interpretation</span><span class="p">[</span><span class="s2">"insights"</span><span class="p">])</span>
+</code></pre></div>
+<p><strong>Benefits</strong>:
+- Clinical relevance: Explains if results are normal/abnormal
+- Education: Helps users understand what results mean
+- Insights: Highlights patterns users might miss</p>
+<p><strong>Trade-offs</strong>:
+- Additional LLM call: Adds latency after query execution
+- Optional: Can be disabled for fast queries
+- Quality: Depends on model's clinical knowledge</p>
+<h3 id="phase-4-error-message-translation">Phase 4: Error Message Translation</h3>
+<p><strong>Goal</strong>: Translate technical errors into user-friendly explanations.</p>
+<p><strong>New Function</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">translate_error_with_llm</span><span class="p">(</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    <span class="n">error</span><span class="p">:</span> <span class="ne">Exception</span><span class="p">,</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    <span class="n">plan</span><span class="p">:</span> <span class="n">QueryPlan</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    <span class="n">semantic_layer</span><span class="p">:</span> <span class="n">SemanticLayer</span><span class="p">,</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">    </span><span class="sd">"""</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="sd">    Use LLM to translate technical errors into user-friendly explanations.</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="sd">    Returns:</span>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="sd">        User-friendly error message</span>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="sd">    """</span>
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>    <span class="n">system_prompt</span> <span class="o">=</span> <span class="s2">"""You are a helpful assistant. Translate technical errors into plain language.</span>
+<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a>
+<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a><span class="s2">Given a technical error and the user's query, provide:</span>
+<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a><span class="s2">- What went wrong (in plain language)</span>
+<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a><span class="s2">- Why it happened</span>
+<a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a><span class="s2">- What the user can do to fix it</span>
+<a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a>
+<a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a><span class="s2">Be specific and actionable."""</span>
+<a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a>
+<a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a>    <span class="n">user_prompt</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"""User query: "</span><span class="si">{</span><span class="n">query</span><span class="si">}</span><span class="s2">"</span>
+<a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a><span class="s2">QueryPlan: </span><span class="si">{</span><span class="n">plan</span><span class="si">}</span>
+<a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a><span class="s2">Error: </span><span class="si">{</span><span class="nb">str</span><span class="p">(</span><span class="n">error</span><span class="p">)</span><span class="si">}</span>
+<a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a>
+<a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a><span class="s2">Translate this error into a helpful explanation."""</span>
+<a id="__codelineno-8-27" name="__codelineno-8-27" href="#__codelineno-8-27"></a>
+<a id="__codelineno-8-28" name="__codelineno-8-28" href="#__codelineno-8-28"></a>    <span class="n">client</span> <span class="o">=</span> <span class="n">get_ollama_client</span><span class="p">()</span>
+<a id="__codelineno-8-29" name="__codelineno-8-29" href="#__codelineno-8-29"></a>    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">user_prompt</span><span class="p">,</span> <span class="n">system_prompt</span><span class="o">=</span><span class="n">system_prompt</span><span class="p">,</span> <span class="n">json_mode</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<a id="__codelineno-8-30" name="__codelineno-8-30" href="#__codelineno-8-30"></a>
+<a id="__codelineno-8-31" name="__codelineno-8-31" href="#__codelineno-8-31"></a>    <span class="k">return</span> <span class="n">response</span> <span class="k">if</span> <span class="n">response</span> <span class="k">else</span> <span class="nb">str</span><span class="p">(</span><span class="n">error</span><span class="p">)</span>  <span class="c1"># Fallback to original error</span>
+</code></pre></div>
+<p><strong>Integration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># In execute_query_plan() error handling:</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="k">try</span><span class="p">:</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">_execute_plan</span><span class="p">(</span><span class="n">plan</span><span class="p">)</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    <span class="c1"># Translate error with LLM</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    <span class="n">user_friendly_error</span> <span class="o">=</span> <span class="n">translate_error_with_llm</span><span class="p">(</span><span class="n">e</span><span class="p">,</span> <span class="n">query</span><span class="p">,</span> <span class="n">plan</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">"query_execution_failed"</span><span class="p">,</span> <span class="n">error</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">),</span> <span class="n">user_error</span><span class="o">=</span><span class="n">user_friendly_error</span><span class="p">)</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    <span class="k">return</span> <span class="p">{</span>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>        <span class="s2">"success"</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>        <span class="s2">"error"</span><span class="p">:</span> <span class="n">user_friendly_error</span><span class="p">,</span>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>        <span class="s2">"technical_error"</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">),</span>  <span class="c1"># Keep for debugging</span>
+<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>    <span class="p">}</span>
+</code></pre></div>
+<p><strong>Benefits</strong>:
+- User-friendly: "Column 'LDL' not found" → "I couldn't find a column matching 'LDL'. Did you mean 'LDL mg/dL' or 'Total Cholesterol'?"
+- Actionable: Suggests fixes
+- Educational: Helps users understand system limitations</p>
+<h3 id="phase-5-enhanced-filter-extraction-phase-5-alignment">Phase 5: Enhanced Filter Extraction (Phase 5 Alignment)</h3>
+<p><strong>Goal</strong>: Use LLM for complex filter extraction instead of regex.</p>
+<p><strong>Current Problem</strong>: Regex patterns fail on:
+- "remove the n/a (0)" - value in parentheses
+- "exclude n/a" - requires context inference
+- "patients on statins, exclude n/a" - multi-part with exclusion</p>
+<p><strong>LLM Solution</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_extract_filters_with_llm</span><span class="p">(</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="bp">self</span><span class="p">,</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    <span class="n">context</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    <span class="n">semantic_layer</span><span class="p">:</span> <span class="n">SemanticLayer</span><span class="p">,</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">FilterSpec</span><span class="p">]:</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">    </span><span class="sd">"""</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="sd">    Use LLM to extract filter conditions from query.</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="sd">    Returns:</span>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="sd">        List of FilterSpec objects</span>
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="sd">    """</span>
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a>    <span class="n">system_prompt</span> <span class="o">=</span> <span class="s2">"""You are a query parser. Extract filter conditions from natural language queries.</span>
+<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a>
+<a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a><span class="s2">Given a query, identify:</span>
+<a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a><span class="s2">- Filter columns (match to available columns or aliases)</span>
+<a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a><span class="s2">- Filter operators (==, !=, &gt;, &lt;, etc.)</span>
+<a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a><span class="s2">- Filter values (extract from query text)</span>
+<a id="__codelineno-10-19" name="__codelineno-10-19" href="#__codelineno-10-19"></a><span class="s2">- Exclusion patterns ("exclude", "remove", "not")</span>
+<a id="__codelineno-10-20" name="__codelineno-10-20" href="#__codelineno-10-20"></a>
+<a id="__codelineno-10-21" name="__codelineno-10-21" href="#__codelineno-10-21"></a><span class="s2">Return JSON with filters array:</span>
+<a id="__codelineno-10-22" name="__codelineno-10-22" href="#__codelineno-10-22"></a><span class="s2">[</span>
+<a id="__codelineno-10-23" name="__codelineno-10-23" href="#__codelineno-10-23"></a><span class="s2">  {</span>
+<a id="__codelineno-10-24" name="__codelineno-10-24" href="#__codelineno-10-24"></a><span class="s2">    "column": "column_name",</span>
+<a id="__codelineno-10-25" name="__codelineno-10-25" href="#__codelineno-10-25"></a><span class="s2">    "operator": "!=",</span>
+<a id="__codelineno-10-26" name="__codelineno-10-26" href="#__codelineno-10-26"></a><span class="s2">    "value": 0,</span>
+<a id="__codelineno-10-27" name="__codelineno-10-27" href="#__codelineno-10-27"></a><span class="s2">    "exclude_nulls": true</span>
+<a id="__codelineno-10-28" name="__codelineno-10-28" href="#__codelineno-10-28"></a><span class="s2">  }</span>
+<a id="__codelineno-10-29" name="__codelineno-10-29" href="#__codelineno-10-29"></a><span class="s2">]</span>
+<a id="__codelineno-10-30" name="__codelineno-10-30" href="#__codelineno-10-30"></a>
+<a id="__codelineno-10-31" name="__codelineno-10-31" href="#__codelineno-10-31"></a><span class="s2">Available columns: </span><span class="si">{columns}</span>
+<a id="__codelineno-10-32" name="__codelineno-10-32" href="#__codelineno-10-32"></a><span class="s2">Aliases: </span><span class="si">{aliases}</span><span class="s2">"""</span><span class="o">.</span><span class="n">format</span><span class="p">(</span>
+<a id="__codelineno-10-33" name="__codelineno-10-33" href="#__codelineno-10-33"></a>        <span class="n">columns</span><span class="o">=</span><span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">context</span><span class="p">[</span><span class="s2">"columns"</span><span class="p">]),</span>
+<a id="__codelineno-10-34" name="__codelineno-10-34" href="#__codelineno-10-34"></a>        <span class="n">aliases</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">context</span><span class="p">[</span><span class="s2">"aliases"</span><span class="p">]),</span>
+<a id="__codelineno-10-35" name="__codelineno-10-35" href="#__codelineno-10-35"></a>    <span class="p">)</span>
+<a id="__codelineno-10-36" name="__codelineno-10-36" href="#__codelineno-10-36"></a>
+<a id="__codelineno-10-37" name="__codelineno-10-37" href="#__codelineno-10-37"></a>    <span class="n">user_prompt</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"Extract filters from: </span><span class="si">{</span><span class="n">query</span><span class="si">}</span><span class="s2">"</span>
+<a id="__codelineno-10-38" name="__codelineno-10-38" href="#__codelineno-10-38"></a>
+<a id="__codelineno-10-39" name="__codelineno-10-39" href="#__codelineno-10-39"></a>    <span class="n">client</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_ollama_client</span><span class="p">()</span>
+<a id="__codelineno-10-40" name="__codelineno-10-40" href="#__codelineno-10-40"></a>    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">user_prompt</span><span class="p">,</span> <span class="n">system_prompt</span><span class="o">=</span><span class="n">system_prompt</span><span class="p">,</span> <span class="n">json_mode</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-10-41" name="__codelineno-10-41" href="#__codelineno-10-41"></a>
+<a id="__codelineno-10-42" name="__codelineno-10-42" href="#__codelineno-10-42"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">response</span><span class="p">:</span>
+<a id="__codelineno-10-43" name="__codelineno-10-43" href="#__codelineno-10-43"></a>        <span class="k">return</span> <span class="p">[]</span>  <span class="c1"># Fallback to regex</span>
+<a id="__codelineno-10-44" name="__codelineno-10-44" href="#__codelineno-10-44"></a>
+<a id="__codelineno-10-45" name="__codelineno-10-45" href="#__codelineno-10-45"></a>    <span class="n">data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
+<a id="__codelineno-10-46" name="__codelineno-10-46" href="#__codelineno-10-46"></a>    <span class="n">filters</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-10-47" name="__codelineno-10-47" href="#__codelineno-10-47"></a>    <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"filters"</span><span class="p">,</span> <span class="p">[]):</span>
+<a id="__codelineno-10-48" name="__codelineno-10-48" href="#__codelineno-10-48"></a>        <span class="n">filters</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">FilterSpec</span><span class="p">(</span>
+<a id="__codelineno-10-49" name="__codelineno-10-49" href="#__codelineno-10-49"></a>            <span class="n">column</span><span class="o">=</span><span class="n">f</span><span class="p">[</span><span class="s2">"column"</span><span class="p">],</span>
+<a id="__codelineno-10-50" name="__codelineno-10-50" href="#__codelineno-10-50"></a>            <span class="n">operator</span><span class="o">=</span><span class="n">f</span><span class="p">[</span><span class="s2">"operator"</span><span class="p">],</span>
+<a id="__codelineno-10-51" name="__codelineno-10-51" href="#__codelineno-10-51"></a>            <span class="n">value</span><span class="o">=</span><span class="n">f</span><span class="p">[</span><span class="s2">"value"</span><span class="p">],</span>
+<a id="__codelineno-10-52" name="__codelineno-10-52" href="#__codelineno-10-52"></a>            <span class="n">exclude_nulls</span><span class="o">=</span><span class="n">f</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"exclude_nulls"</span><span class="p">,</span> <span class="kc">True</span><span class="p">),</span>
+<a id="__codelineno-10-53" name="__codelineno-10-53" href="#__codelineno-10-53"></a>        <span class="p">))</span>
+<a id="__codelineno-10-54" name="__codelineno-10-54" href="#__codelineno-10-54"></a>
+<a id="__codelineno-10-55" name="__codelineno-10-55" href="#__codelineno-10-55"></a>    <span class="k">return</span> <span class="n">filters</span>
+</code></pre></div>
+<p><strong>Integration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># In _llm_parse():</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="c1"># Step 1: Extract filters with LLM</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="n">filters</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_extract_filters_with_llm</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">context</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">semantic_layer</span><span class="p">)</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="c1"># Step 2: Build QueryPlan with LLM-extracted filters</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="n">plan</span> <span class="o">=</span> <span class="n">QueryPlan</span><span class="p">(</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>    <span class="n">intent</span><span class="o">=...</span><span class="p">,</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>    <span class="n">filters</span><span class="o">=</span><span class="n">filters</span><span class="p">,</span>  <span class="c1"># LLM-extracted</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>    <span class="o">...</span>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="p">)</span>
+</code></pre></div>
+<p><strong>Benefits</strong>:
+- Handles complex patterns: "remove the n/a (0)" → extracts value from parentheses
+- Context-aware: Understands "on statins" → infers column
+- Natural language: No regex patterns needed</p>
+<p><strong>Trade-offs</strong>:
+- Latency: LLM call for filter extraction
+- Fallback: Still use regex for simple patterns (Tier 1)</p>
+<h3 id="phase-6-automated-golden-question-generation-self-improvement">Phase 6: Automated Golden Question Generation (Self-Improvement)</h3>
+<p><strong>Goal</strong>: Use LLM to automatically generate and maintain golden questions from real user query logs, creating a self-improving test suite.</p>
+<p><strong>Current State</strong>:
+- Golden questions are manually maintained in <code>tests/eval/golden_questions.yaml</code>
+- QueryLogger already captures all user queries with parsing results and execution metadata
+- EvalHarness evaluates parsing accuracy but doesn't automatically update test cases</p>
+<p><strong>Problem</strong>: Manual maintenance of golden questions is:
+- Time-consuming: Requires manual analysis of query patterns
+- Reactive: New patterns only added after issues are discovered
+- Incomplete: May miss edge cases or high-frequency patterns
+- Stale: Expected outputs may not reflect current system behavior</p>
+<p><strong>LLM Solution</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">generate_golden_questions_from_logs</span><span class="p">(</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>    <span class="n">query_logger</span><span class="p">:</span> <span class="n">QueryLogger</span><span class="p">,</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>    <span class="n">semantic_layer</span><span class="p">:</span> <span class="n">SemanticLayer</span><span class="p">,</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>    <span class="n">llm_client</span><span class="p">:</span> <span class="n">OllamaClient</span><span class="p">,</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>    <span class="n">min_confidence</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.75</span><span class="p">,</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>    <span class="n">min_frequency</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]:</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">    </span><span class="sd">"""</span>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="sd">    Use LLM to analyze query logs and generate golden questions.</span>
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>
+<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="sd">    Args:</span>
+<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="sd">        query_logger: QueryLogger instance with query history</span>
+<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a><span class="sd">        semantic_layer: SemanticLayer for context</span>
+<a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a><span class="sd">        llm_client: OllamaClient for LLM calls</span>
+<a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a><span class="sd">        min_confidence: Minimum confidence to consider query successful</span>
+<a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a><span class="sd">        min_frequency: Minimum occurrences to consider pattern important</span>
+<a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a>
+<a id="__codelineno-12-18" name="__codelineno-12-18" href="#__codelineno-12-18"></a><span class="sd">    Returns:</span>
+<a id="__codelineno-12-19" name="__codelineno-12-19" href="#__codelineno-12-19"></a><span class="sd">        List of golden question dicts ready for YAML</span>
+<a id="__codelineno-12-20" name="__codelineno-12-20" href="#__codelineno-12-20"></a><span class="sd">    """</span>
+<a id="__codelineno-12-21" name="__codelineno-12-21" href="#__codelineno-12-21"></a>    <span class="c1"># Load recent query logs</span>
+<a id="__codelineno-12-22" name="__codelineno-12-22" href="#__codelineno-12-22"></a>    <span class="n">logs</span> <span class="o">=</span> <span class="n">query_logger</span><span class="o">.</span><span class="n">load_recent_logs</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span>
+<a id="__codelineno-12-23" name="__codelineno-12-23" href="#__codelineno-12-23"></a>
+<a id="__codelineno-12-24" name="__codelineno-12-24" href="#__codelineno-12-24"></a>    <span class="c1"># Filter successful queries</span>
+<a id="__codelineno-12-25" name="__codelineno-12-25" href="#__codelineno-12-25"></a>    <span class="n">successful_queries</span> <span class="o">=</span> <span class="p">[</span>
+<a id="__codelineno-12-26" name="__codelineno-12-26" href="#__codelineno-12-26"></a>        <span class="n">log</span> <span class="k">for</span> <span class="n">log</span> <span class="ow">in</span> <span class="n">logs</span>
+<a id="__codelineno-12-27" name="__codelineno-12-27" href="#__codelineno-12-27"></a>        <span class="k">if</span> <span class="n">log</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"query_plan"</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"confidence"</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="n">min_confidence</span>
+<a id="__codelineno-12-28" name="__codelineno-12-28" href="#__codelineno-12-28"></a>        <span class="ow">and</span> <span class="n">log</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"execution"</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"success"</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span>
+<a id="__codelineno-12-29" name="__codelineno-12-29" href="#__codelineno-12-29"></a>    <span class="p">]</span>
+<a id="__codelineno-12-30" name="__codelineno-12-30" href="#__codelineno-12-30"></a>
+<a id="__codelineno-12-31" name="__codelineno-12-31" href="#__codelineno-12-31"></a>    <span class="c1"># Group by query pattern (LLM can identify similar patterns)</span>
+<a id="__codelineno-12-32" name="__codelineno-12-32" href="#__codelineno-12-32"></a>    <span class="n">system_prompt</span> <span class="o">=</span> <span class="s2">"""You are a test suite generator for a clinical analytics platform.</span>
+<a id="__codelineno-12-33" name="__codelineno-12-33" href="#__codelineno-12-33"></a>
+<a id="__codelineno-12-34" name="__codelineno-12-34" href="#__codelineno-12-34"></a><span class="s2">Analyze query logs and generate golden questions (regression test cases) that:</span>
+<a id="__codelineno-12-35" name="__codelineno-12-35" href="#__codelineno-12-35"></a><span class="s2">1. Capture high-frequency query patterns</span>
+<a id="__codelineno-12-36" name="__codelineno-12-36" href="#__codelineno-12-36"></a><span class="s2">2. Test complex queries (filters, grouping, multiple intents)</span>
+<a id="__codelineno-12-37" name="__codelineno-12-37" href="#__codelineno-12-37"></a><span class="s2">3. Cover edge cases (exclusions, ambiguous terms, null handling)</span>
+<a id="__codelineno-12-38" name="__codelineno-12-38" href="#__codelineno-12-38"></a><span class="s2">4. Represent real user queries (not synthetic examples)</span>
+<a id="__codelineno-12-39" name="__codelineno-12-39" href="#__codelineno-12-39"></a>
+<a id="__codelineno-12-40" name="__codelineno-12-40" href="#__codelineno-12-40"></a><span class="s2">For each query log entry, create a golden question with:</span>
+<a id="__codelineno-12-41" name="__codelineno-12-41" href="#__codelineno-12-41"></a><span class="s2">- id: unique identifier (descriptive, e.g., "count_with_exclusion_filter")</span>
+<a id="__codelineno-12-42" name="__codelineno-12-42" href="#__codelineno-12-42"></a><span class="s2">- query: the original query text</span>
+<a id="__codelineno-12-43" name="__codelineno-12-43" href="#__codelineno-12-43"></a><span class="s2">- expected_intent: from query_plan.intent</span>
+<a id="__codelineno-12-44" name="__codelineno-12-44" href="#__codelineno-12-44"></a><span class="s2">- expected_metric: from query_plan.metric (or null)</span>
+<a id="__codelineno-12-45" name="__codelineno-12-45" href="#__codelineno-12-45"></a><span class="s2">- expected_group_by: from query_plan.group_by (or null)</span>
+<a id="__codelineno-12-46" name="__codelineno-12-46" href="#__codelineno-12-46"></a><span class="s2">- expected_filters: from query_plan.filters (if any)</span>
+<a id="__codelineno-12-47" name="__codelineno-12-47" href="#__codelineno-12-47"></a><span class="s2">- notes: why this test case is valuable (frequency, complexity, edge case)</span>
+<a id="__codelineno-12-48" name="__codelineno-12-48" href="#__codelineno-12-48"></a>
+<a id="__codelineno-12-49" name="__codelineno-12-49" href="#__codelineno-12-49"></a><span class="s2">Focus on:</span>
+<a id="__codelineno-12-50" name="__codelineno-12-50" href="#__codelineno-12-50"></a><span class="s2">- Queries that test multiple features (filters + grouping)</span>
+<a id="__codelineno-12-51" name="__codelineno-12-51" href="#__codelineno-12-51"></a><span class="s2">- Queries with complex filter patterns ("remove n/a", "exclude missing")</span>
+<a id="__codelineno-12-52" name="__codelineno-12-52" href="#__codelineno-12-52"></a><span class="s2">- High-frequency patterns that should be regression-tested</span>
+<a id="__codelineno-12-53" name="__codelineno-12-53" href="#__codelineno-12-53"></a><span class="s2">- Edge cases that might break with code changes</span>
+<a id="__codelineno-12-54" name="__codelineno-12-54" href="#__codelineno-12-54"></a>
+<a id="__codelineno-12-55" name="__codelineno-12-55" href="#__codelineno-12-55"></a><span class="s2">Return JSON array of golden questions."""</span>
+<a id="__codelineno-12-56" name="__codelineno-12-56" href="#__codelineno-12-56"></a>
+<a id="__codelineno-12-57" name="__codelineno-12-57" href="#__codelineno-12-57"></a>    <span class="n">user_prompt</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"""Analyze these </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">successful_queries</span><span class="p">)</span><span class="si">}</span><span class="s2"> successful queries and generate golden questions:</span>
+<a id="__codelineno-12-58" name="__codelineno-12-58" href="#__codelineno-12-58"></a>
+<a id="__codelineno-12-59" name="__codelineno-12-59" href="#__codelineno-12-59"></a><span class="si">{</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">successful_queries</span><span class="p">[:</span><span class="mi">100</span><span class="p">],</span><span class="w"> </span><span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span><span class="si">}</span>
+<a id="__codelineno-12-60" name="__codelineno-12-60" href="#__codelineno-12-60"></a>
+<a id="__codelineno-12-61" name="__codelineno-12-61" href="#__codelineno-12-61"></a><span class="s2">Available columns: </span><span class="si">{</span><span class="s1">', '</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">semantic_layer</span><span class="o">.</span><span class="n">get_column_names</span><span class="p">())</span><span class="si">}</span>
+<a id="__codelineno-12-62" name="__codelineno-12-62" href="#__codelineno-12-62"></a><span class="s2">"""</span>
+<a id="__codelineno-12-63" name="__codelineno-12-63" href="#__codelineno-12-63"></a>
+<a id="__codelineno-12-64" name="__codelineno-12-64" href="#__codelineno-12-64"></a>    <span class="n">response</span> <span class="o">=</span> <span class="n">llm_client</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">user_prompt</span><span class="p">,</span> <span class="n">system_prompt</span><span class="o">=</span><span class="n">system_prompt</span><span class="p">,</span> <span class="n">json_mode</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-12-65" name="__codelineno-12-65" href="#__codelineno-12-65"></a>    <span class="n">golden_questions</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">response</span><span class="p">)</span> <span class="k">if</span> <span class="n">response</span> <span class="k">else</span> <span class="p">[]</span>
+<a id="__codelineno-12-66" name="__codelineno-12-66" href="#__codelineno-12-66"></a>
+<a id="__codelineno-12-67" name="__codelineno-12-67" href="#__codelineno-12-67"></a>    <span class="k">return</span> <span class="n">golden_questions</span>
+</code></pre></div>
+<p><strong>Gap Analysis</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">analyze_golden_question_coverage</span><span class="p">(</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>    <span class="n">golden_questions</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>    <span class="n">query_logs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>    <span class="n">llm_client</span><span class="p">:</span> <span class="n">OllamaClient</span><span class="p">,</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">    </span><span class="sd">"""</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="sd">    Use LLM to identify gaps in golden question coverage.</span>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="sd">    Returns:</span>
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="sd">        dict with:</span>
+<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="sd">        - missing_patterns: Query types not covered</span>
+<a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a><span class="sd">        - high_frequency_missing: Common queries missing from suite</span>
+<a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a><span class="sd">        - edge_cases: Complex queries that should be tested</span>
+<a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a><span class="sd">        - suggestions: LLM-generated recommendations</span>
+<a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a><span class="sd">    """</span>
+<a id="__codelineno-13-16" name="__codelineno-13-16" href="#__codelineno-13-16"></a>    <span class="n">system_prompt</span> <span class="o">=</span> <span class="s2">"""Compare golden questions to actual query logs and identify gaps.</span>
+<a id="__codelineno-13-17" name="__codelineno-13-17" href="#__codelineno-13-17"></a>
+<a id="__codelineno-13-18" name="__codelineno-13-18" href="#__codelineno-13-18"></a><span class="s2">Find:</span>
+<a id="__codelineno-13-19" name="__codelineno-13-19" href="#__codelineno-13-19"></a><span class="s2">1. Query patterns in logs that aren't in golden questions</span>
+<a id="__codelineno-13-20" name="__codelineno-13-20" href="#__codelineno-13-20"></a><span class="s2">2. High-frequency queries missing from test suite</span>
+<a id="__codelineno-13-21" name="__codelineno-13-21" href="#__codelineno-13-21"></a><span class="s2">3. Edge cases (complex filters, ambiguous terms) that need coverage</span>
+<a id="__codelineno-13-22" name="__codelineno-13-22" href="#__codelineno-13-22"></a><span class="s2">4. Intent types that are under-tested</span>
+<a id="__codelineno-13-23" name="__codelineno-13-23" href="#__codelineno-13-23"></a>
+<a id="__codelineno-13-24" name="__codelineno-13-24" href="#__codelineno-13-24"></a><span class="s2">Return JSON with:</span>
+<a id="__codelineno-13-25" name="__codelineno-13-25" href="#__codelineno-13-25"></a><span class="s2">- missing_patterns: List of query patterns not covered</span>
+<a id="__codelineno-13-26" name="__codelineno-13-26" href="#__codelineno-13-26"></a><span class="s2">- high_frequency_missing: Queries that appear frequently but aren't tested</span>
+<a id="__codelineno-13-27" name="__codelineno-13-27" href="#__codelineno-13-27"></a><span class="s2">- edge_cases: Complex queries that should be added</span>
+<a id="__codelineno-13-28" name="__codelineno-13-28" href="#__codelineno-13-28"></a><span class="s2">- suggestions: Specific recommendations for new golden questions</span>
+<a id="__codelineno-13-29" name="__codelineno-13-29" href="#__codelineno-13-29"></a><span class="s2">"""</span>
+<a id="__codelineno-13-30" name="__codelineno-13-30" href="#__codelineno-13-30"></a>
+<a id="__codelineno-13-31" name="__codelineno-13-31" href="#__codelineno-13-31"></a>    <span class="n">user_prompt</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"""Golden questions (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">golden_questions</span><span class="p">)</span><span class="si">}</span><span class="s2">):</span>
+<a id="__codelineno-13-32" name="__codelineno-13-32" href="#__codelineno-13-32"></a><span class="si">{</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">golden_questions</span><span class="p">,</span><span class="w"> </span><span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span><span class="si">}</span>
+<a id="__codelineno-13-33" name="__codelineno-13-33" href="#__codelineno-13-33"></a>
+<a id="__codelineno-13-34" name="__codelineno-13-34" href="#__codelineno-13-34"></a><span class="s2">Query logs (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">query_logs</span><span class="p">)</span><span class="si">}</span><span class="s2"> recent queries):</span>
+<a id="__codelineno-13-35" name="__codelineno-13-35" href="#__codelineno-13-35"></a><span class="si">{</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">query_logs</span><span class="p">[:</span><span class="mi">50</span><span class="p">],</span><span class="w"> </span><span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span><span class="si">}</span>
+<a id="__codelineno-13-36" name="__codelineno-13-36" href="#__codelineno-13-36"></a>
+<a id="__codelineno-13-37" name="__codelineno-13-37" href="#__codelineno-13-37"></a><span class="s2">Identify coverage gaps."""</span>
+<a id="__codelineno-13-38" name="__codelineno-13-38" href="#__codelineno-13-38"></a>
+<a id="__codelineno-13-39" name="__codelineno-13-39" href="#__codelineno-13-39"></a>    <span class="n">response</span> <span class="o">=</span> <span class="n">llm_client</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">user_prompt</span><span class="p">,</span> <span class="n">system_prompt</span><span class="o">=</span><span class="n">system_prompt</span><span class="p">,</span> <span class="n">json_mode</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-13-40" name="__codelineno-13-40" href="#__codelineno-13-40"></a>    <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">response</span><span class="p">)</span> <span class="k">if</span> <span class="n">response</span> <span class="k">else</span> <span class="p">{}</span>
+</code></pre></div>
+<p><strong>Automatic Maintenance</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">maintain_golden_questions_automatically</span><span class="p">(</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>    <span class="n">query_logger</span><span class="p">:</span> <span class="n">QueryLogger</span><span class="p">,</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>    <span class="n">golden_questions_path</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>    <span class="n">semantic_layer</span><span class="p">:</span> <span class="n">SemanticLayer</span><span class="p">,</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>    <span class="n">llm_client</span><span class="p">:</span> <span class="n">OllamaClient</span><span class="p">,</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>    <span class="n">dry_run</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="w">    </span><span class="sd">"""</span>
+<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="sd">    Periodically analyze query logs and update golden questions.</span>
+<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>
+<a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a><span class="sd">    Can run as:</span>
+<a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a><span class="sd">    - Background task (weekly/monthly)</span>
+<a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a><span class="sd">    - Manual trigger (CLI command)</span>
+<a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a><span class="sd">    - CI/CD step (before releases)</span>
+<a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a>
+<a id="__codelineno-14-16" name="__codelineno-14-16" href="#__codelineno-14-16"></a><span class="sd">    Args:</span>
+<a id="__codelineno-14-17" name="__codelineno-14-17" href="#__codelineno-14-17"></a><span class="sd">        query_logger: QueryLogger with query history</span>
+<a id="__codelineno-14-18" name="__codelineno-14-18" href="#__codelineno-14-18"></a><span class="sd">        golden_questions_path: Path to golden_questions.yaml</span>
+<a id="__codelineno-14-19" name="__codelineno-14-19" href="#__codelineno-14-19"></a><span class="sd">        semantic_layer: SemanticLayer for context</span>
+<a id="__codelineno-14-20" name="__codelineno-14-20" href="#__codelineno-14-20"></a><span class="sd">        llm_client: OllamaClient for LLM calls</span>
+<a id="__codelineno-14-21" name="__codelineno-14-21" href="#__codelineno-14-21"></a><span class="sd">        dry_run: If True, only report changes without writing</span>
+<a id="__codelineno-14-22" name="__codelineno-14-22" href="#__codelineno-14-22"></a>
+<a id="__codelineno-14-23" name="__codelineno-14-23" href="#__codelineno-14-23"></a><span class="sd">    Returns:</span>
+<a id="__codelineno-14-24" name="__codelineno-14-24" href="#__codelineno-14-24"></a><span class="sd">        dict with:</span>
+<a id="__codelineno-14-25" name="__codelineno-14-25" href="#__codelineno-14-25"></a><span class="sd">        - new_questions: Questions to add</span>
+<a id="__codelineno-14-26" name="__codelineno-14-26" href="#__codelineno-14-26"></a><span class="sd">        - updated_questions: Questions to update</span>
+<a id="__codelineno-14-27" name="__codelineno-14-27" href="#__codelineno-14-27"></a><span class="sd">        - removed_questions: Obsolete questions to remove</span>
+<a id="__codelineno-14-28" name="__codelineno-14-28" href="#__codelineno-14-28"></a><span class="sd">        - coverage_gaps: Identified gaps</span>
+<a id="__codelineno-14-29" name="__codelineno-14-29" href="#__codelineno-14-29"></a><span class="sd">    """</span>
+<a id="__codelineno-14-30" name="__codelineno-14-30" href="#__codelineno-14-30"></a>    <span class="c1"># Load existing golden questions</span>
+<a id="__codelineno-14-31" name="__codelineno-14-31" href="#__codelineno-14-31"></a>    <span class="n">existing</span> <span class="o">=</span> <span class="n">load_golden_questions</span><span class="p">(</span><span class="n">golden_questions_path</span><span class="p">)</span>
+<a id="__codelineno-14-32" name="__codelineno-14-32" href="#__codelineno-14-32"></a>
+<a id="__codelineno-14-33" name="__codelineno-14-33" href="#__codelineno-14-33"></a>    <span class="c1"># Generate new questions from logs</span>
+<a id="__codelineno-14-34" name="__codelineno-14-34" href="#__codelineno-14-34"></a>    <span class="n">new_questions</span> <span class="o">=</span> <span class="n">generate_golden_questions_from_logs</span><span class="p">(</span>
+<a id="__codelineno-14-35" name="__codelineno-14-35" href="#__codelineno-14-35"></a>        <span class="n">query_logger</span><span class="p">,</span> <span class="n">semantic_layer</span><span class="p">,</span> <span class="n">llm_client</span>
+<a id="__codelineno-14-36" name="__codelineno-14-36" href="#__codelineno-14-36"></a>    <span class="p">)</span>
+<a id="__codelineno-14-37" name="__codelineno-14-37" href="#__codelineno-14-37"></a>
+<a id="__codelineno-14-38" name="__codelineno-14-38" href="#__codelineno-14-38"></a>    <span class="c1"># Analyze coverage gaps</span>
+<a id="__codelineno-14-39" name="__codelineno-14-39" href="#__codelineno-14-39"></a>    <span class="n">logs</span> <span class="o">=</span> <span class="n">query_logger</span><span class="o">.</span><span class="n">load_recent_logs</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span>
+<a id="__codelineno-14-40" name="__codelineno-14-40" href="#__codelineno-14-40"></a>    <span class="n">gaps</span> <span class="o">=</span> <span class="n">analyze_golden_question_coverage</span><span class="p">(</span><span class="n">existing</span><span class="p">,</span> <span class="n">logs</span><span class="p">,</span> <span class="n">llm_client</span><span class="p">)</span>
+<a id="__codelineno-14-41" name="__codelineno-14-41" href="#__codelineno-14-41"></a>
+<a id="__codelineno-14-42" name="__codelineno-14-42" href="#__codelineno-14-42"></a>    <span class="c1"># Use LLM to merge: identify duplicates, suggest updates, flag obsolete</span>
+<a id="__codelineno-14-43" name="__codelineno-14-43" href="#__codelineno-14-43"></a>    <span class="n">system_prompt</span> <span class="o">=</span> <span class="s2">"""Compare existing golden questions to newly generated ones.</span>
+<a id="__codelineno-14-44" name="__codelineno-14-44" href="#__codelineno-14-44"></a>
+<a id="__codelineno-14-45" name="__codelineno-14-45" href="#__codelineno-14-45"></a><span class="s2">Tasks:</span>
+<a id="__codelineno-14-46" name="__codelineno-14-46" href="#__codelineno-14-46"></a><span class="s2">1. Identify duplicates (same query pattern, different wording)</span>
+<a id="__codelineno-14-47" name="__codelineno-14-47" href="#__codelineno-14-47"></a><span class="s2">2. Find questions that need updating (expected outputs changed)</span>
+<a id="__codelineno-14-48" name="__codelineno-14-48" href="#__codelineno-14-48"></a><span class="s2">3. Flag obsolete questions (patterns no longer used)</span>
+<a id="__codelineno-14-49" name="__codelineno-14-49" href="#__codelineno-14-49"></a><span class="s2">4. Suggest new questions to add</span>
+<a id="__codelineno-14-50" name="__codelineno-14-50" href="#__codelineno-14-50"></a>
+<a id="__codelineno-14-51" name="__codelineno-14-51" href="#__codelineno-14-51"></a><span class="s2">Return JSON with:</span>
+<a id="__codelineno-14-52" name="__codelineno-14-52" href="#__codelineno-14-52"></a><span class="s2">- new_questions: Questions to add (not duplicates)</span>
+<a id="__codelineno-14-53" name="__codelineno-14-53" href="#__codelineno-14-53"></a><span class="s2">- updated_questions: Existing questions that need updates</span>
+<a id="__codelineno-14-54" name="__codelineno-14-54" href="#__codelineno-14-54"></a><span class="s2">- removed_questions: Obsolete questions to remove</span>
+<a id="__codelineno-14-55" name="__codelineno-14-55" href="#__codelineno-14-55"></a><span class="s2">- duplicates: Questions that are duplicates (keep existing)</span>
+<a id="__codelineno-14-56" name="__codelineno-14-56" href="#__codelineno-14-56"></a><span class="s2">"""</span>
+<a id="__codelineno-14-57" name="__codelineno-14-57" href="#__codelineno-14-57"></a>
+<a id="__codelineno-14-58" name="__codelineno-14-58" href="#__codelineno-14-58"></a>    <span class="n">user_prompt</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"""Existing golden questions (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">existing</span><span class="p">)</span><span class="si">}</span><span class="s2">):</span>
+<a id="__codelineno-14-59" name="__codelineno-14-59" href="#__codelineno-14-59"></a><span class="si">{</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">existing</span><span class="p">,</span><span class="w"> </span><span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span><span class="si">}</span>
+<a id="__codelineno-14-60" name="__codelineno-14-60" href="#__codelineno-14-60"></a>
+<a id="__codelineno-14-61" name="__codelineno-14-61" href="#__codelineno-14-61"></a><span class="s2">Newly generated questions (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">new_questions</span><span class="p">)</span><span class="si">}</span><span class="s2">):</span>
+<a id="__codelineno-14-62" name="__codelineno-14-62" href="#__codelineno-14-62"></a><span class="si">{</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">new_questions</span><span class="p">,</span><span class="w"> </span><span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span><span class="si">}</span>
+<a id="__codelineno-14-63" name="__codelineno-14-63" href="#__codelineno-14-63"></a>
+<a id="__codelineno-14-64" name="__codelineno-14-64" href="#__codelineno-14-64"></a><span class="s2">Merge and recommend changes."""</span>
+<a id="__codelineno-14-65" name="__codelineno-14-65" href="#__codelineno-14-65"></a>
+<a id="__codelineno-14-66" name="__codelineno-14-66" href="#__codelineno-14-66"></a>    <span class="n">response</span> <span class="o">=</span> <span class="n">llm_client</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">user_prompt</span><span class="p">,</span> <span class="n">system_prompt</span><span class="o">=</span><span class="n">system_prompt</span><span class="p">,</span> <span class="n">json_mode</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-14-67" name="__codelineno-14-67" href="#__codelineno-14-67"></a>    <span class="n">recommendations</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">response</span><span class="p">)</span> <span class="k">if</span> <span class="n">response</span> <span class="k">else</span> <span class="p">{}</span>
+<a id="__codelineno-14-68" name="__codelineno-14-68" href="#__codelineno-14-68"></a>
+<a id="__codelineno-14-69" name="__codelineno-14-69" href="#__codelineno-14-69"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">dry_run</span><span class="p">:</span>
+<a id="__codelineno-14-70" name="__codelineno-14-70" href="#__codelineno-14-70"></a>        <span class="c1"># Apply recommendations</span>
+<a id="__codelineno-14-71" name="__codelineno-14-71" href="#__codelineno-14-71"></a>        <span class="n">updated_questions</span> <span class="o">=</span> <span class="n">merge_golden_questions</span><span class="p">(</span>
+<a id="__codelineno-14-72" name="__codelineno-14-72" href="#__codelineno-14-72"></a>            <span class="n">existing</span><span class="p">,</span> <span class="n">recommendations</span><span class="p">,</span> <span class="n">golden_questions_path</span>
+<a id="__codelineno-14-73" name="__codelineno-14-73" href="#__codelineno-14-73"></a>        <span class="p">)</span>
+<a id="__codelineno-14-74" name="__codelineno-14-74" href="#__codelineno-14-74"></a>        <span class="k">return</span> <span class="p">{</span>
+<a id="__codelineno-14-75" name="__codelineno-14-75" href="#__codelineno-14-75"></a>            <span class="s2">"new_questions"</span><span class="p">:</span> <span class="n">recommendations</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"new_questions"</span><span class="p">,</span> <span class="p">[]),</span>
+<a id="__codelineno-14-76" name="__codelineno-14-76" href="#__codelineno-14-76"></a>            <span class="s2">"updated_questions"</span><span class="p">:</span> <span class="n">recommendations</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"updated_questions"</span><span class="p">,</span> <span class="p">[]),</span>
+<a id="__codelineno-14-77" name="__codelineno-14-77" href="#__codelineno-14-77"></a>            <span class="s2">"removed_questions"</span><span class="p">:</span> <span class="n">recommendations</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"removed_questions"</span><span class="p">,</span> <span class="p">[]),</span>
+<a id="__codelineno-14-78" name="__codelineno-14-78" href="#__codelineno-14-78"></a>            <span class="s2">"coverage_gaps"</span><span class="p">:</span> <span class="n">gaps</span><span class="p">,</span>
+<a id="__codelineno-14-79" name="__codelineno-14-79" href="#__codelineno-14-79"></a>            <span class="s2">"total_questions"</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">updated_questions</span><span class="p">),</span>
+<a id="__codelineno-14-80" name="__codelineno-14-80" href="#__codelineno-14-80"></a>        <span class="p">}</span>
+<a id="__codelineno-14-81" name="__codelineno-14-81" href="#__codelineno-14-81"></a>
+<a id="__codelineno-14-82" name="__codelineno-14-82" href="#__codelineno-14-82"></a>    <span class="k">return</span> <span class="n">recommendations</span>
+</code></pre></div>
+<p><strong>CLI Integration</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="c1"># New CLI command: tests/eval/maintain_golden_questions.py</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">    </span><span class="sd">"""CLI tool to maintain golden questions automatically."""</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>    <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="s2">"Maintain golden questions from query logs"</span><span class="p">)</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">"--dry-run"</span><span class="p">,</span> <span class="n">action</span><span class="o">=</span><span class="s2">"store_true"</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">"Report changes without writing"</span><span class="p">)</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">"--log-dir"</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s2">"data/query_logs"</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">"Query log directory"</span><span class="p">)</span>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">"--output"</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s2">"tests/eval/golden_questions.yaml"</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">"Golden questions YAML path"</span><span class="p">)</span>
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>
+<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>    <span class="n">args</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">()</span>
+<a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>
+<a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>    <span class="n">query_logger</span> <span class="o">=</span> <span class="n">QueryLogger</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">log_dir</span><span class="p">)</span>
+<a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a>    <span class="n">semantic_layer</span> <span class="o">=</span> <span class="n">create_semantic_layer_from_config</span><span class="p">()</span>  <span class="c1"># Or load from dataset</span>
+<a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a>    <span class="n">llm_client</span> <span class="o">=</span> <span class="n">get_ollama_client</span><span class="p">()</span>
+<a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a>
+<a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">maintain_golden_questions_automatically</span><span class="p">(</span>
+<a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a>        <span class="n">query_logger</span><span class="p">,</span> <span class="n">Path</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">output</span><span class="p">),</span> <span class="n">semantic_layer</span><span class="p">,</span> <span class="n">llm_client</span><span class="p">,</span> <span class="n">dry_run</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">dry_run</span>
+<a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a>    <span class="p">)</span>
+<a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a>
+<a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"New questions: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s1">'new_questions'</span><span class="p">])</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<a id="__codelineno-15-20" name="__codelineno-15-20" href="#__codelineno-15-20"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Updated questions: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s1">'updated_questions'</span><span class="p">])</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<a id="__codelineno-15-21" name="__codelineno-15-21" href="#__codelineno-15-21"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Removed questions: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s1">'removed_questions'</span><span class="p">])</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<a id="__codelineno-15-22" name="__codelineno-15-22" href="#__codelineno-15-22"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Coverage gaps: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s1">'coverage_gaps'</span><span class="p">])</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>Benefits</strong>:
+- Self-improving: Test suite grows automatically from real usage
+- Real-world coverage: Tests actual user patterns, not synthetic examples
+- Proactive: New patterns added before they cause issues
+- Maintenance: LLM keeps golden questions up-to-date with system behavior
+- Gap detection: Identifies untested query patterns</p>
+<p><strong>Trade-offs</strong>:
+- LLM dependency: Requires Ollama running for maintenance
+- Quality control: Generated questions need review (can be automated with validation)
+- Frequency: Too frequent updates may cause churn (run weekly/monthly)
+- Resource usage: Analyzing large log files requires memory/CPU</p>
+<p><strong>Integration Points</strong>:
+- QueryLogger: Already logs all queries (no changes needed)
+- EvalHarness: Can use generated questions immediately
+- CI/CD: Can run maintenance as part of release process</p>
+<h2 id="implementation-plan">Implementation Plan</h2>
+<h3 id="phase-1-llm-follow-ups-priority-0">Phase 1: LLM Follow-Ups (Priority 0)</h3>
+<p><strong>Tasks</strong>:
+1. Extend QueryPlan schema with <code>follow_ups</code> and <code>follow_up_explanation</code> fields
+2. Update <code>_build_llm_prompt()</code> to request follow-ups
+3. Update <code>_extract_query_intent_from_llm_response()</code> to parse follow-ups
+4. Implement <code>_render_llm_follow_ups()</code> in UI
+5. Remove disabled <code>_suggest_follow_ups()</code> function
+6. Add tests for LLM follow-up generation</p>
+<p><strong>Definition of Done</strong>:
+- [ ] QueryPlan includes <code>follow_ups</code> field
+- [ ] LLM generates context-aware follow-ups
+- [ ] UI renders LLM follow-ups (replaces hardcoded)
+- [ ] Tests verify follow-up quality and relevance
+- [ ] Graceful degradation if LLM unavailable (no follow-ups shown)</p>
+<p><strong>Estimated Effort</strong>: 2-3 days</p>
+<h3 id="phase-2-query-explanation-priority-1">Phase 2: Query Explanation (Priority 1)</h3>
+<p><strong>Tasks</strong>:
+1. Enhance <code>explanation</code> field with LLM-generated interpretation
+2. Add <code>confidence_explanation</code> field
+3. Implement <code>_build_interpretation_prompt()</code>
+4. Add <code>_render_query_interpretation()</code> UI component
+5. Add tests for interpretation quality</p>
+<p><strong>Estimated Effort</strong>: 1-2 days</p>
+<h3 id="phase-3-result-interpretation-priority-2">Phase 3: Result Interpretation (Priority 2)</h3>
+<p><strong>Tasks</strong>:
+1. Implement <code>interpret_result_with_llm()</code> function
+2. Add result interpretation to execution result
+3. Add <code>_render_result_interpretation()</code> UI component
+4. Make interpretation optional (feature flag)
+5. Add tests for interpretation quality</p>
+<p><strong>Estimated Effort</strong>: 2-3 days</p>
+<h3 id="phase-4-error-translation-priority-2">Phase 4: Error Translation (Priority 2)</h3>
+<p><strong>Tasks</strong>:
+1. Implement <code>translate_error_with_llm()</code> function
+2. Integrate into <code>execute_query_plan()</code> error handling
+3. Add tests for error translation quality
+4. Fallback to original error if LLM unavailable</p>
+<p><strong>Estimated Effort</strong>: 1-2 days</p>
+<h3 id="phase-5-enhanced-filter-extraction-priority-1-phase-5-alignment">Phase 5: Enhanced Filter Extraction (Priority 1 - Phase 5 Alignment)</h3>
+<p><strong>Tasks</strong>:
+1. Implement <code>_extract_filters_with_llm()</code> function
+2. Integrate into <code>_llm_parse()</code> flow
+3. Keep regex as fallback for simple patterns
+4. Add tests for complex filter extraction
+5. Remove regex-heavy filter extraction (Phase 4.1 revert)</p>
+<p><strong>Estimated Effort</strong>: 2-3 days</p>
+<h3 id="phase-6-automated-golden-question-generation-priority-2-self-improvement">Phase 6: Automated Golden Question Generation (Priority 2 - Self-Improvement)</h3>
+<p><strong>Tasks</strong>:
+1. Implement <code>generate_golden_questions_from_logs()</code> function
+2. Implement <code>analyze_golden_question_coverage()</code> function
+3. Implement <code>maintain_golden_questions_automatically()</code> function
+4. Create CLI tool <code>tests/eval/maintain_golden_questions.py</code>
+5. Add validation for generated golden questions (schema, uniqueness)
+6. Add tests for golden question generation
+7. Document maintenance workflow (when to run, how to review)</p>
+<p><strong>Definition of Done</strong>:
+- [ ] LLM can generate golden questions from query logs
+- [ ] LLM can identify coverage gaps
+- [ ] CLI tool can maintain golden questions automatically
+- [ ] Generated questions pass validation (schema, eval harness)
+- [ ] Tests verify generation quality
+- [ ] Documentation explains maintenance workflow</p>
+<p><strong>Estimated Effort</strong>: 3-4 days</p>
+<h2 id="alternatives-considered">Alternatives Considered</h2>
+<h3 id="1-keep-hardcoded-follow-ups">1. Keep Hardcoded Follow-Ups</h3>
+<p><strong>Rejected</strong>: User feedback explicitly requested removal. Hardcoded follow-ups are context-agnostic and often irrelevant.</p>
+<h3 id="2-use-external-llm-api-openai-anthropic">2. Use External LLM API (OpenAI, Anthropic)</h3>
+<p><strong>Rejected</strong>: Privacy requirement - clinical data must stay on-device. Local Ollama is the only acceptable option.</p>
+<h3 id="3-template-based-follow-ups-no-llm">3. Template-Based Follow-Ups (No LLM)</h3>
+<p><strong>Rejected</strong>: Templates are too rigid. LLM provides context-aware, adaptive suggestions.</p>
+<h3 id="4-skip-result-interpretation-users-can-interpret">4. Skip Result Interpretation (Users Can Interpret)</h3>
+<p><strong>Rejected</strong>: Clinical context is valuable. Users may not know if "LDL: 120 mg/dL" is normal or concerning. LLM can provide clinical insights.</p>
+<h3 id="5-regex-only-filter-extraction">5. Regex-Only Filter Extraction</h3>
+<p><strong>Rejected</strong>: Current regex approach fails on complex patterns. LLM handles natural language more naturally. Phase 5 plan explicitly moves away from regex.</p>
+<h2 id="consequences">Consequences</h2>
+<h3 id="positive">Positive</h3>
+<ol>
+<li><strong>Better UX</strong>: Context-aware follow-ups are more relevant</li>
+<li><strong>Clinical Value</strong>: Result interpretation provides insights</li>
+<li><strong>User Education</strong>: Explanations help users learn</li>
+<li><strong>Error Handling</strong>: User-friendly errors reduce frustration</li>
+<li><strong>Filter Extraction</strong>: LLM handles complex patterns better than regex</li>
+</ol>
+<h3 id="negative">Negative</h3>
+<ol>
+<li><strong>Latency</strong>: Additional LLM calls add 1-2 seconds per query</li>
+<li><strong>Mitigation</strong>: Make interpretation optional, cache follow-ups</li>
+<li><strong>Model Dependency</strong>: Quality depends on Ollama model</li>
+<li><strong>Mitigation</strong>: Graceful degradation, can upgrade models</li>
+<li><strong>Resource Usage</strong>: LLM requires RAM/CPU</li>
+<li><strong>Mitigation</strong>: Local only, user controls resource usage</li>
+<li><strong>Complexity</strong>: More LLM integration points</li>
+<li><strong>Mitigation</strong>: Centralized LLM client, clear error handling</li>
+</ol>
+<h3 id="risks">Risks</h3>
+<ol>
+<li><strong>LLM Unavailability</strong>: If Ollama not running, features degrade gracefully</li>
+<li><strong>Mitigation</strong>: All features have fallbacks (no follow-ups, original errors, etc.)</li>
+<li><strong>Quality Variability</strong>: LLM output quality may vary</li>
+<li><strong>Mitigation</strong>: Validation, confidence thresholds, user feedback</li>
+<li><strong>Privacy Concerns</strong>: Even local LLM processes sensitive data</li>
+<li><strong>Mitigation</strong>: Local only, no external calls, user controls</li>
+</ol>
+<h2 id="success-criteria">Success Criteria</h2>
+<ol>
+<li><strong>Follow-Ups</strong>: Users find LLM follow-ups more relevant than hardcoded (user testing)</li>
+<li><strong>Query Explanation</strong>: Users understand what system interpreted (reduced confusion)</li>
+<li><strong>Result Interpretation</strong>: Users find clinical insights valuable (user feedback)</li>
+<li><strong>Error Messages</strong>: Users can fix errors based on LLM explanations (reduced support)</li>
+<li><strong>Filter Extraction</strong>: Complex filters extracted correctly (test coverage)</li>
+<li><strong>Golden Questions</strong>: Test suite grows automatically from real usage (coverage metrics improve)</li>
+</ol>
+<h2 id="references">References</h2>
+<ul>
+<li><strong>ADR001</strong>: Query Plan Producer - defines QueryPlan schema</li>
+<li><strong>ADR003</strong>: Clinical Trust Architecture - mentions local LLM as viable option</li>
+<li><strong>Phase 5 Plan</strong>: LLM as Constrained Planner - aligns with filter extraction enhancement</li>
+<li><strong>User Feedback</strong>: "we should also remove the stupid follow-ups unless they come from the LLM"</li>
+<li><strong>Code</strong>: <code>src/clinical_analytics/core/nl_query_engine.py</code> - current LLM integration</li>
+<li><strong>Code</strong>: <code>src/clinical_analytics/ui/pages/03_💬_Ask_Questions.py</code> - disabled follow-ups</li>
+</ul>
+<h2 id="notes">Notes</h2>
+<ul>
+<li><strong>Privacy First</strong>: All LLM usage is local-only (Ollama). No external API calls.</li>
+<li><strong>Graceful Degradation</strong>: All features work without LLM (fallbacks to simpler behavior).</li>
+<li><strong>Quality Over Speed</strong>: LLM calls add latency but improve UX significantly.</li>
+<li><strong>Phase 5 Alignment</strong>: Enhanced filter extraction aligns with Phase 5 goal of moving away from regex.</li>
+<li><strong>Self-Improvement</strong>: Phase 6 enables the system to improve its own test coverage automatically, creating a feedback loop where real usage drives test quality.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

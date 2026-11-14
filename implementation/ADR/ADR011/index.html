@@ -1,0 +1,3250 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Spec-driven clinical analytics with question-driven semantic analysis">
+      
+      
+        <meta name="author" content="Development Team">
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>ADR 011: LLM-Assisted Dataset Context and Metadata Enrichment - Clinical Analytics Platform</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#adr-011-llm-assisted-dataset-context-and-metadata-enrichment" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="Clinical Analytics Platform" class="md-header__button md-logo" aria-label="Clinical Analytics Platform" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Clinical Analytics Platform
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ADR 011: LLM-Assisted Dataset Context and Metadata Enrichment
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/yourusername/md_data_explorer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../getting-started/installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../user-guide/question-driven-analysis/" class="md-tabs__link">
+          
+  
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../architecture/overview/" class="md-tabs__link">
+          
+  
+  
+  Architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../security/THREAT_MODEL/" class="md-tabs__link">
+          
+  
+  
+  Security
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../api-reference/core/" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../development/contributing/" class="md-tabs__link">
+          
+  
+  
+  Development
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../vision/PURPOSE/" class="md-tabs__link">
+          
+  
+  
+  Specifications
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="Clinical Analytics Platform" class="md-nav__button md-logo" aria-label="Clinical Analytics Platform" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Clinical Analytics Platform
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/yourusername/md_data_explorer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/quick-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/uploading-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Uploading Data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/question-driven-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/statistical-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Statistical Tests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/interpreting-results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interpreting Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/AS_BUILT_ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    As-built (2025-03)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/ARCHITECTURE_BOUNDARIES/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module boundaries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/semantic-layer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Semantic Layer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/dataset-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dataset Registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/nl-query-engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NL Query Engine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Security
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../security/THREAT_MODEL/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Threat model & backlog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../security/LOCAL_DATA_SECURITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Patient data on this computer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/datasets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Datasets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI Components
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/packaging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packaging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Specifications
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Specifications
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../vision/PURPOSE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Purpose and steel thread
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../MASTER_PLAN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Master plan (roadmap)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--active"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../specs/omnibus_electron_streamlit_cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Electron cutover (omnibus)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--active"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../specs/question-driven-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../specs/multi-table-support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Table Support
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Status
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#date" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Date
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#owners" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Owners
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-adrs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related ADRs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#context-problem-statement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context / Problem Statement
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Context / Problem Statement">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cold-start-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cold Start Problem
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gap-between-config-driven-engine-and-ux" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gap Between Config-Driven Engine and UX
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#current-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current State
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-Goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Decision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-metadatapatch-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. MetadataPatch Model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-example-json-patch-payloads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Example JSON Patch Payloads
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-resolved-metadata-object" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Resolved Metadata Object
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-overlay-storage-and-merge-precedence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Overlay Storage and Merge Precedence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-llm-suggestion-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. LLM Suggestion Workflow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-ui-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. UI Workflow
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#privacy-security-posture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Privacy / Security Posture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Privacy / Security Posture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#default-mode-schema-profiling-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Default Mode: Schema + Profiling Only
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#optional-gated-mode-sample-rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optional Gated Mode: Sample Rows
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#audit-log" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Audit Log
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternatives Considered
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Alternatives Considered">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-llm-edits-datasetsyaml-directly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. LLM Edits datasets.yaml Directly
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-freeform-notes-only-no-structured-patches" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Freeform Notes Only (No Structured Patches)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-always-auto-apply-llm-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Always Auto-Apply LLM Outputs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-store-enrichments-in-inferredschema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Store Enrichments in InferredSchema
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-global-metadata-inheritance-across-datasets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Global Metadata Inheritance Across Datasets
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Consequences">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#positive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Positive
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#negative" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Negative
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#neutral" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Neutral
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Plan
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation Plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-0-data-model-storage-merge-resolver-p0" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 0: Data Model + Storage + Merge Resolver (P0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-ui-enrichment-patch-log-p1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: UI Enrichment + Patch Log (P1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-llm-suggestion-endpoint-validation-p1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: LLM Suggestion Endpoint + Validation (P1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-optional-gated-sample-mode-p2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3: Optional Gated Sample Mode (P2)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#test-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test Plan
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Test Plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#golden-tests-for-merge-precedence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Golden Tests for Merge Precedence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#property-tests-for-patch-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Property Tests for Patch Validation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#regression-autocontext-determinism" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Regression: AutoContext Determinism
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#open-questions-follow-ups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open Questions / Follow-ups
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Open Questions / Follow-ups">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-where-to-persist-overlays" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Where to Persist Overlays?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-confidence-thresholds-for-auto-apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Confidence Thresholds for Auto-Apply?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-how-to-handle-renamed-columns-across-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. How to Handle Renamed Columns Across Versions?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-codebook-conflict-resolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Codebook Conflict Resolution?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-multi-user-collaboration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Multi-User Collaboration?
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#code-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Code References
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#approval" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Approval
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#revision-history" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Revision History
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="adr-011-llm-assisted-dataset-context-and-metadata-enrichment">ADR 011: LLM-Assisted Dataset Context and Metadata Enrichment</h1>
+<h2 id="status">Status</h2>
+<p>Proposed</p>
+<h2 id="date">Date</h2>
+<p>2026-01-12</p>
+<h2 id="owners">Owners</h2>
+<ul>
+<li>Staff Data Engineer (primary)</li>
+<li>Platform Team</li>
+</ul>
+<h2 id="decision-summary">Decision Summary</h2>
+<ul>
+<li><strong>Metadata Patch Model</strong>: Define <code>MetadataPatch</code> as immutable, schema-validated JSON patches with atomic operations (<code>set_label</code>, <code>add_alias</code>, <code>set_description</code>, <code>set_semantic_type</code>, <code>mark_phi</code>, <code>mark_entity_key</code>, <code>set_unit</code>, <code>set_codebook_entry</code>).</li>
+<li><strong>LLM as Suggestion Engine Only</strong>: LLM produces suggestions as strict JSON payloads validated against <code>MetadataPatch</code> schema. LLM never writes state directly; all suggestions require explicit user acceptance.</li>
+<li><strong>Overlay Architecture</strong>: Store patches as overlays keyed by <code>(upload_id, dataset_version)</code>. Merge precedence: <code>base &lt; inferred &lt; accepted_patches</code>. Rejected/pending patches excluded from AutoContext.</li>
+<li><strong>Privacy-First Local LLM</strong>: Default to schema + profiling + dictionary context only (no raw rows). Optional gated mode for richer samples requires explicit admin toggle, redaction/masking, and retention controls.</li>
+<li><strong>Human-in-the-Loop Workflow</strong>: UI presents diff view for propose → accept/reject → batch apply. All patch operations logged with actor, timestamp, model_id, and prompt hash.</li>
+<li><strong>Deterministic Runtime Merge</strong>: Resolved metadata computed at runtime via deterministic merge resolver. No LLM outputs in production paths until accepted.</li>
+</ul>
+<h2 id="related-adrs">Related ADRs</h2>
+<ul>
+<li><strong><a href="../ADR002/">ADR002: Persistent Storage Layer</a></strong>: Owns metadata JSON schema and persistence. This ADR extends ADR002's metadata schema with overlay storage for patches.</li>
+<li><strong><a href="../ADR003/">ADR003: Clinical Trust Protocol + Adaptive Alias Persistence</a></strong>: Owns alias persistence and trust UI. This ADR builds on ADR003's alias system to add LLM-suggested aliases via patch model.</li>
+<li><strong><a href="../ADR004/">ADR004: Proactive Question Generation</a></strong>: Related feature using LLM for question suggestions. Shares LLM client infrastructure, AutoContext Packager, and privacy constraints.</li>
+</ul>
+<hr />
+<h2 id="context-problem-statement">Context / Problem Statement</h2>
+<h3 id="cold-start-problem">Cold Start Problem</h3>
+<p>When users upload datasets, the system faces a <strong>cold start problem</strong>:</p>
+<ol>
+<li><strong>Opaque Schemas</strong>: Column names like <code>var_001</code>, <code>q3_resp</code>, or <code>hba1c_pct</code> convey no meaning to the semantic layer or NLU engine.</li>
+<li><strong>Missing Context</strong>: No descriptions, units, semantic types, or codebook mappings exist. The AutoContext packager has nothing to inject into Tier 3 LLM prompts.</li>
+<li><strong>Manual Configuration Burden</strong>: Requiring users to manually annotate 50+ columns before querying creates adoption friction (violates ADR003's "10-second onboarding" principle).</li>
+</ol>
+<h3 id="gap-between-config-driven-engine-and-ux">Gap Between Config-Driven Engine and UX</h3>
+<p>The platform uses a config-driven architecture (<code>datasets.yaml</code>, <code>InferredSchema</code>, <code>SemanticLayer</code>) but lacks a <strong>metadata enrichment layer</strong> that:</p>
+<ol>
+<li>Bridges raw schema inference with human-readable descriptions</li>
+<li>Enables LLM to suggest context without directly modifying state</li>
+<li>Allows progressive enrichment without blocking initial use</li>
+<li>Maintains provenance and rollback capability</li>
+</ol>
+<h3 id="current-state">Current State</h3>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Status</th>
+<th>Gap</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>InferredSchema</code></td>
+<td>✅ Exists</td>
+<td>Detects types but no descriptions/semantic types</td>
+</tr>
+<tr>
+<td><code>DictionaryMetadata</code></td>
+<td>✅ Exists</td>
+<td>Extracts from PDFs but not editable post-upload</td>
+</tr>
+<tr>
+<td><code>ColumnContext</code> (AutoContext)</td>
+<td>✅ Exists</td>
+<td>Has <code>codebook</code>, <code>units</code>, <code>dtype</code> but populated only from inference</td>
+</tr>
+<tr>
+<td><code>alias_mappings</code></td>
+<td>✅ Exists (ADR003)</td>
+<td>User/system aliases, but no LLM suggestions</td>
+</tr>
+<tr>
+<td>Column descriptions</td>
+<td>❌ Missing</td>
+<td>No storage or UI for column-level descriptions</td>
+</tr>
+<tr>
+<td>Semantic types</td>
+<td>❌ Missing</td>
+<td>No tagging (PHI, entity_key, measurement, etc.)</td>
+</tr>
+<tr>
+<td>Codebook editing</td>
+<td>❌ Missing</td>
+<td>Extracted from docs but not user-editable</td>
+</tr>
+<tr>
+<td>Enrichment audit trail</td>
+<td>❌ Missing</td>
+<td>No provenance for metadata changes</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="goals">Goals</h2>
+<ol>
+<li>
+<p><strong>Machine-Actionable Metadata</strong>: Store enriched metadata (descriptions, semantic types, units, codebooks) in a structured format usable by AutoContext, NLU, and semantic layer.</p>
+</li>
+<li>
+<p><strong>Human-in-the-Loop Acceptance</strong>: LLM suggestions require explicit user acceptance. Rejected suggestions are logged but never applied. No "auto-apply" of LLM outputs.</p>
+</li>
+<li>
+<p><strong>Deterministic Runtime Merge</strong>: Resolved metadata computed via deterministic precedence rules at runtime. Same inputs always produce same outputs (testable, reproducible).</p>
+</li>
+<li>
+<p><strong>Provenance and Audit Trail</strong>: Every patch operation records actor (user/llm), timestamp, model_id (if LLM), prompt_hash, and before/after diff.</p>
+</li>
+<li>
+<p><strong>Rollback Capability</strong>: Users can revert individual patches or restore to any previous state via version history.</p>
+</li>
+<li>
+<p><strong>Progressive Enrichment</strong>: Users can query immediately with inferred schema. Enrichment is additive and non-blocking.</p>
+</li>
+</ol>
+<h2 id="non-goals">Non-Goals</h2>
+<ol>
+<li>
+<p><strong>LLM Directly Edits YAML/State</strong>: LLM never writes to <code>datasets.yaml</code>, metadata JSON, or any persisted state. It produces suggestions only.</p>
+</li>
+<li>
+<p><strong>Remote LLM Calls</strong>: This ADR assumes local LLM (Ollama). Remote LLM support is out of scope and would require separate privacy review.</p>
+</li>
+<li>
+<p><strong>Perfect Automatic PII Detection</strong>: LLM-suggested <code>mark_phi</code> is a hint, not a guarantee. Manual review required. No claim of HIPAA-compliant auto-detection.</p>
+</li>
+<li>
+<p><strong>Real-Time LLM in Query Path</strong>: LLM enrichment is an offline/batch operation. Query execution uses only accepted metadata.</p>
+</li>
+<li>
+<p><strong>Cross-Dataset Metadata Sharing</strong>: Enrichments are scoped to <code>(upload_id, dataset_version)</code>. No global metadata inheritance.</p>
+</li>
+</ol>
+<hr />
+<h2 id="decision">Decision</h2>
+<h3 id="1-metadatapatch-model">1. MetadataPatch Model</h3>
+<p>Define a structured patch model for atomic metadata operations:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Literal</span><span class="p">,</span> <span class="n">Any</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">enum</span><span class="w"> </span><span class="kn">import</span> <span class="n">Enum</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="k">class</span><span class="w"> </span><span class="nc">PatchOperation</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="n">Enum</span><span class="p">):</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">SET_LABEL</span> <span class="o">=</span> <span class="s2">"set_label"</span>                     <span class="c1"># Human-readable column label</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">ADD_ALIAS</span> <span class="o">=</span> <span class="s2">"add_alias"</span>                     <span class="c1"># Add column alias for NLU</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">REMOVE_ALIAS</span> <span class="o">=</span> <span class="s2">"remove_alias"</span>               <span class="c1"># Remove alias</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="n">SET_DESCRIPTION</span> <span class="o">=</span> <span class="s2">"set_description"</span>         <span class="c1"># Column or dataset description</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    <span class="n">SET_SEMANTIC_TYPE</span> <span class="o">=</span> <span class="s2">"set_semantic_type"</span>     <span class="c1"># identifier, demographic, clinical, etc.</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    <span class="n">MARK_PHI</span> <span class="o">=</span> <span class="s2">"mark_phi"</span>                       <span class="c1"># Flag as protected health information</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    <span class="n">UNMARK_PHI</span> <span class="o">=</span> <span class="s2">"unmark_phi"</span>                   <span class="c1"># Remove PHI flag</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    <span class="n">MARK_ENTITY_KEY</span> <span class="o">=</span> <span class="s2">"mark_entity_key"</span>         <span class="c1"># Flag as entity key (patient_id, encounter_id)</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    <span class="n">SET_UNIT</span> <span class="o">=</span> <span class="s2">"set_unit"</span>                       <span class="c1"># Measurement unit (mg/dL, mmHg, etc.)</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    <span class="n">SET_CODEBOOK_ENTRY</span> <span class="o">=</span> <span class="s2">"set_codebook_entry"</span>   <span class="c1"># Add/update codebook mapping</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    <span class="n">REMOVE_CODEBOOK_ENTRY</span> <span class="o">=</span> <span class="s2">"remove_codebook_entry"</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>    <span class="n">SET_DATASET_DESCRIPTION</span> <span class="o">=</span> <span class="s2">"set_dataset_description"</span>  <span class="c1"># Dataset-level description</span>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="k">class</span><span class="w"> </span><span class="nc">SemanticType</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="n">Enum</span><span class="p">):</span>
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>    <span class="n">IDENTIFIER</span> <span class="o">=</span> <span class="s2">"identifier"</span>       <span class="c1"># Patient ID, encounter ID, etc.</span>
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>    <span class="n">DEMOGRAPHIC</span> <span class="o">=</span> <span class="s2">"demographic"</span>     <span class="c1"># Age, sex, race, etc.</span>
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>    <span class="n">CLINICAL</span> <span class="o">=</span> <span class="s2">"clinical"</span>           <span class="c1"># Diagnoses, vitals, labs</span>
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>    <span class="n">TEMPORAL</span> <span class="o">=</span> <span class="s2">"temporal"</span>           <span class="c1"># Dates, durations</span>
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>    <span class="n">OUTCOME</span> <span class="o">=</span> <span class="s2">"outcome"</span>             <span class="c1"># Binary endpoints</span>
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>    <span class="n">MEASUREMENT</span> <span class="o">=</span> <span class="s2">"measurement"</span>     <span class="c1"># Numeric with units</span>
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>    <span class="n">CODED</span> <span class="o">=</span> <span class="s2">"coded"</span>                 <span class="c1"># Categorical with codebook</span>
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>    <span class="n">FREE_TEXT</span> <span class="o">=</span> <span class="s2">"free_text"</span>         <span class="c1"># Unstructured text</span>
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>    <span class="n">PHI</span> <span class="o">=</span> <span class="s2">"phi"</span>                     <span class="c1"># Protected health information</span>
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a><span class="k">class</span><span class="w"> </span><span class="nc">PatchSource</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="n">Enum</span><span class="p">):</span>
+<a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>    <span class="n">USER</span> <span class="o">=</span> <span class="s2">"user"</span>                   <span class="c1"># Manual user edit via UI</span>
+<a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>    <span class="n">LLM_ACCEPTED</span> <span class="o">=</span> <span class="s2">"llm_accepted"</span>   <span class="c1"># LLM suggestion accepted by user</span>
+<a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>    <span class="n">SYSTEM</span> <span class="o">=</span> <span class="s2">"system"</span>               <span class="c1"># System-generated (e.g., from inference)</span>
+<a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>
+<a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a><span class="k">class</span><span class="w"> </span><span class="nc">PatchStatus</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="n">Enum</span><span class="p">):</span>
+<a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a>    <span class="n">PENDING</span> <span class="o">=</span> <span class="s2">"pending"</span>             <span class="c1"># LLM suggestion awaiting review</span>
+<a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a>    <span class="n">ACCEPTED</span> <span class="o">=</span> <span class="s2">"accepted"</span>           <span class="c1"># Applied to resolved metadata</span>
+<a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a>    <span class="n">REJECTED</span> <span class="o">=</span> <span class="s2">"rejected"</span>           <span class="c1"># User rejected, logged but not applied</span>
+<a id="__codelineno-0-40" name="__codelineno-0-40" href="#__codelineno-0-40"></a>
+<a id="__codelineno-0-41" name="__codelineno-0-41" href="#__codelineno-0-41"></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-0-42" name="__codelineno-0-42" href="#__codelineno-0-42"></a><span class="k">class</span><span class="w"> </span><span class="nc">MetadataPatch</span><span class="p">:</span>
+<a id="__codelineno-0-43" name="__codelineno-0-43" href="#__codelineno-0-43"></a><span class="w">    </span><span class="sd">"""Immutable, atomic metadata patch operation."""</span>
+<a id="__codelineno-0-44" name="__codelineno-0-44" href="#__codelineno-0-44"></a>
+<a id="__codelineno-0-45" name="__codelineno-0-45" href="#__codelineno-0-45"></a>    <span class="n">patch_id</span><span class="p">:</span> <span class="nb">str</span>                           <span class="c1"># UUID v4</span>
+<a id="__codelineno-0-46" name="__codelineno-0-46" href="#__codelineno-0-46"></a>    <span class="n">upload_id</span><span class="p">:</span> <span class="nb">str</span>                          <span class="c1"># Scoped to upload</span>
+<a id="__codelineno-0-47" name="__codelineno-0-47" href="#__codelineno-0-47"></a>    <span class="n">dataset_version</span><span class="p">:</span> <span class="nb">str</span>                    <span class="c1"># Scoped to version (content hash)</span>
+<a id="__codelineno-0-48" name="__codelineno-0-48" href="#__codelineno-0-48"></a>    <span class="n">operation</span><span class="p">:</span> <span class="n">PatchOperation</span>
+<a id="__codelineno-0-49" name="__codelineno-0-49" href="#__codelineno-0-49"></a>    <span class="n">target_column</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span>               <span class="c1"># None for dataset-level ops</span>
+<a id="__codelineno-0-50" name="__codelineno-0-50" href="#__codelineno-0-50"></a>
+<a id="__codelineno-0-51" name="__codelineno-0-51" href="#__codelineno-0-51"></a>    <span class="c1"># Operation-specific payload</span>
+<a id="__codelineno-0-52" name="__codelineno-0-52" href="#__codelineno-0-52"></a>    <span class="n">value</span><span class="p">:</span> <span class="n">Any</span>                              <span class="c1"># New value (type depends on operation)</span>
+<a id="__codelineno-0-53" name="__codelineno-0-53" href="#__codelineno-0-53"></a>    <span class="n">previous_value</span><span class="p">:</span> <span class="n">Any</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>       <span class="c1"># For rollback</span>
+<a id="__codelineno-0-54" name="__codelineno-0-54" href="#__codelineno-0-54"></a>
+<a id="__codelineno-0-55" name="__codelineno-0-55" href="#__codelineno-0-55"></a>    <span class="c1"># Provenance</span>
+<a id="__codelineno-0-56" name="__codelineno-0-56" href="#__codelineno-0-56"></a>    <span class="n">source</span><span class="p">:</span> <span class="n">PatchSource</span> <span class="o">=</span> <span class="n">PatchSource</span><span class="o">.</span><span class="n">USER</span>
+<a id="__codelineno-0-57" name="__codelineno-0-57" href="#__codelineno-0-57"></a>    <span class="n">actor</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"anonymous"</span>                <span class="c1"># User ID or "llm"</span>
+<a id="__codelineno-0-58" name="__codelineno-0-58" href="#__codelineno-0-58"></a>    <span class="n">model_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>             <span class="c1"># e.g., "llama3.1:8b"</span>
+<a id="__codelineno-0-59" name="__codelineno-0-59" href="#__codelineno-0-59"></a>    <span class="n">prompt_hash</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>          <span class="c1"># SHA256 of prompt (for LLM)</span>
+<a id="__codelineno-0-60" name="__codelineno-0-60" href="#__codelineno-0-60"></a>
+<a id="__codelineno-0-61" name="__codelineno-0-61" href="#__codelineno-0-61"></a>    <span class="c1"># Timestamps</span>
+<a id="__codelineno-0-62" name="__codelineno-0-62" href="#__codelineno-0-62"></a>    <span class="n">created_at</span><span class="p">:</span> <span class="n">datetime</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">datetime</span><span class="o">.</span><span class="n">utcnow</span><span class="p">)</span>
+<a id="__codelineno-0-63" name="__codelineno-0-63" href="#__codelineno-0-63"></a>    <span class="n">reviewed_at</span><span class="p">:</span> <span class="n">datetime</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>     <span class="c1"># When accepted/rejected</span>
+<a id="__codelineno-0-64" name="__codelineno-0-64" href="#__codelineno-0-64"></a>
+<a id="__codelineno-0-65" name="__codelineno-0-65" href="#__codelineno-0-65"></a>    <span class="c1"># State</span>
+<a id="__codelineno-0-66" name="__codelineno-0-66" href="#__codelineno-0-66"></a>    <span class="n">status</span><span class="p">:</span> <span class="n">PatchStatus</span> <span class="o">=</span> <span class="n">PatchStatus</span><span class="o">.</span><span class="n">PENDING</span>
+</code></pre></div>
+<h3 id="2-example-json-patch-payloads">2. Example JSON Patch Payloads</h3>
+<p><strong>LLM Suggestion Batch</strong> (raw output from LLM, pre-validation):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">"suggestions"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="nt">"patch_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"550e8400-e29b-41d4-a716-446655440001"</span><span class="p">,</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">      </span><span class="nt">"operation"</span><span class="p">:</span><span class="w"> </span><span class="s2">"set_description"</span><span class="p">,</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">      </span><span class="nt">"target_column"</span><span class="p">:</span><span class="w"> </span><span class="s2">"hba1c_pct"</span><span class="p">,</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">      </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Glycated hemoglobin percentage, measure of average blood glucose over 2-3 months"</span><span class="p">,</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="nt">"confidence"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.92</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">      </span><span class="nt">"patch_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"550e8400-e29b-41d4-a716-446655440002"</span><span class="p">,</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">      </span><span class="nt">"operation"</span><span class="p">:</span><span class="w"> </span><span class="s2">"set_unit"</span><span class="p">,</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">      </span><span class="nt">"target_column"</span><span class="p">:</span><span class="w"> </span><span class="s2">"hba1c_pct"</span><span class="p">,</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">      </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="s2">"%"</span><span class="p">,</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">      </span><span class="nt">"confidence"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.95</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">      </span><span class="nt">"patch_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"550e8400-e29b-41d4-a716-446655440003"</span><span class="p">,</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="w">      </span><span class="nt">"operation"</span><span class="p">:</span><span class="w"> </span><span class="s2">"set_semantic_type"</span><span class="p">,</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="w">      </span><span class="nt">"target_column"</span><span class="p">:</span><span class="w"> </span><span class="s2">"hba1c_pct"</span><span class="p">,</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="w">      </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="s2">"measurement"</span><span class="p">,</span>
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="w">      </span><span class="nt">"confidence"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.88</span>
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a><span class="w">      </span><span class="nt">"patch_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"550e8400-e29b-41d4-a716-446655440004"</span><span class="p">,</span>
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a><span class="w">      </span><span class="nt">"operation"</span><span class="p">:</span><span class="w"> </span><span class="s2">"add_alias"</span><span class="p">,</span>
+<a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a><span class="w">      </span><span class="nt">"target_column"</span><span class="p">:</span><span class="w"> </span><span class="s2">"hba1c_pct"</span><span class="p">,</span>
+<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a><span class="w">      </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="s2">"A1C"</span><span class="p">,</span>
+<a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a><span class="w">      </span><span class="nt">"confidence"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.90</span>
+<a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a><span class="w">      </span><span class="nt">"patch_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"550e8400-e29b-41d4-a716-446655440005"</span><span class="p">,</span>
+<a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a><span class="w">      </span><span class="nt">"operation"</span><span class="p">:</span><span class="w"> </span><span class="s2">"mark_phi"</span><span class="p">,</span>
+<a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a><span class="w">      </span><span class="nt">"target_column"</span><span class="p">:</span><span class="w"> </span><span class="s2">"mrn"</span><span class="p">,</span>
+<a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a><span class="w">      </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a><span class="w">      </span><span class="nt">"confidence"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.85</span>
+<a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-1-38" name="__codelineno-1-38" href="#__codelineno-1-38"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-1-39" name="__codelineno-1-39" href="#__codelineno-1-39"></a><span class="w">      </span><span class="nt">"patch_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"550e8400-e29b-41d4-a716-446655440006"</span><span class="p">,</span>
+<a id="__codelineno-1-40" name="__codelineno-1-40" href="#__codelineno-1-40"></a><span class="w">      </span><span class="nt">"operation"</span><span class="p">:</span><span class="w"> </span><span class="s2">"set_codebook_entry"</span><span class="p">,</span>
+<a id="__codelineno-1-41" name="__codelineno-1-41" href="#__codelineno-1-41"></a><span class="w">      </span><span class="nt">"target_column"</span><span class="p">:</span><span class="w"> </span><span class="s2">"smoking_status"</span><span class="p">,</span>
+<a id="__codelineno-1-42" name="__codelineno-1-42" href="#__codelineno-1-42"></a><span class="w">      </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"code"</span><span class="p">:</span><span class="w"> </span><span class="s2">"1"</span><span class="p">,</span><span class="w"> </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Current smoker"</span><span class="p">},</span>
+<a id="__codelineno-1-43" name="__codelineno-1-43" href="#__codelineno-1-43"></a><span class="w">      </span><span class="nt">"confidence"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.78</span>
+<a id="__codelineno-1-44" name="__codelineno-1-44" href="#__codelineno-1-44"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-1-45" name="__codelineno-1-45" href="#__codelineno-1-45"></a><span class="w">  </span><span class="p">],</span>
+<a id="__codelineno-1-46" name="__codelineno-1-46" href="#__codelineno-1-46"></a><span class="w">  </span><span class="nt">"model_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"llama3.1:8b"</span><span class="p">,</span>
+<a id="__codelineno-1-47" name="__codelineno-1-47" href="#__codelineno-1-47"></a><span class="w">  </span><span class="nt">"prompt_hash"</span><span class="p">:</span><span class="w"> </span><span class="s2">"sha256:a1b2c3d4e5f6..."</span>
+<a id="__codelineno-1-48" name="__codelineno-1-48" href="#__codelineno-1-48"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Accepted Patch</strong> (after user acceptance, persisted to overlay):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">"patch_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"550e8400-e29b-41d4-a716-446655440001"</span><span class="p">,</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">"upload_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"upload_abc123"</span><span class="p">,</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">"dataset_version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"v_7f8a9b0c"</span><span class="p">,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="nt">"operation"</span><span class="p">:</span><span class="w"> </span><span class="s2">"set_description"</span><span class="p">,</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="nt">"target_column"</span><span class="p">:</span><span class="w"> </span><span class="s2">"hba1c_pct"</span><span class="p">,</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">  </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Glycated hemoglobin percentage, measure of average blood glucose over 2-3 months"</span><span class="p">,</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">  </span><span class="nt">"previous_value"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">  </span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"llm_accepted"</span><span class="p">,</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">  </span><span class="nt">"actor"</span><span class="p">:</span><span class="w"> </span><span class="s2">"user_jane_doe"</span><span class="p">,</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">  </span><span class="nt">"model_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"llama3.1:8b"</span><span class="p">,</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">  </span><span class="nt">"prompt_hash"</span><span class="p">:</span><span class="w"> </span><span class="s2">"sha256:a1b2c3d4e5f6..."</span><span class="p">,</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">  </span><span class="nt">"created_at"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-01-12T14:30:00Z"</span><span class="p">,</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">  </span><span class="nt">"reviewed_at"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-01-12T14:32:15Z"</span><span class="p">,</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="w">  </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"accepted"</span>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="p">}</span>
+</code></pre></div>
+<h3 id="3-resolved-metadata-object">3. Resolved Metadata Object</h3>
+<p>The merge resolver produces a <code>ResolvedColumnMetadata</code> object by applying patches in precedence order:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nd">@dataclass</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">ResolvedColumnMetadata</span><span class="p">:</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="sd">"""Fully resolved metadata for a single column."""</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="c1"># Identity</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">canonical_name</span><span class="p">:</span> <span class="nb">str</span>                     <span class="c1"># Original column name</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">label</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>                <span class="c1"># Human-readable label</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">description</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>          <span class="c1"># Full description</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>    <span class="c1"># Type information</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>    <span class="n">inferred_dtype</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"unknown"</span>         <span class="c1"># From schema inference (numeric, categorical, etc.)</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>    <span class="n">semantic_type</span><span class="p">:</span> <span class="n">SemanticType</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>    <span class="c1"># Aliases (for NLU matching)</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>    <span class="n">system_aliases</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>  <span class="c1"># From inference</span>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>    <span class="n">user_aliases</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>    <span class="c1"># From accepted patches</span>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>    <span class="c1"># Measurement metadata</span>
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a>    <span class="n">unit</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>                 <span class="c1"># e.g., "mg/dL", "mmHg"</span>
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a>
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a>    <span class="c1"># Codebook (for coded/categorical columns)</span>
+<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a>    <span class="n">codebook</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>  <span class="c1"># {code: label}</span>
+<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>
+<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a>    <span class="c1"># Flags</span>
+<a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a>    <span class="n">is_phi</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>                    <span class="c1"># Protected health information</span>
+<a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a>    <span class="n">is_entity_key</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>             <span class="c1"># Primary/foreign key</span>
+<a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a>
+<a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a>    <span class="c1"># Provenance</span>
+<a id="__codelineno-3-29" name="__codelineno-3-29" href="#__codelineno-3-29"></a>    <span class="n">enrichment_source</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"base"</span><span class="p">,</span> <span class="s2">"inferred"</span><span class="p">,</span> <span class="s2">"user"</span><span class="p">,</span> <span class="s2">"llm_accepted"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"base"</span>
+<a id="__codelineno-3-30" name="__codelineno-3-30" href="#__codelineno-3-30"></a>    <span class="n">last_updated</span><span class="p">:</span> <span class="n">datetime</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-3-31" name="__codelineno-3-31" href="#__codelineno-3-31"></a>
+<a id="__codelineno-3-32" name="__codelineno-3-32" href="#__codelineno-3-32"></a><span class="nd">@dataclass</span>
+<a id="__codelineno-3-33" name="__codelineno-3-33" href="#__codelineno-3-33"></a><span class="k">class</span><span class="w"> </span><span class="nc">ResolvedDatasetMetadata</span><span class="p">:</span>
+<a id="__codelineno-3-34" name="__codelineno-3-34" href="#__codelineno-3-34"></a><span class="w">    </span><span class="sd">"""Fully resolved metadata for entire dataset."""</span>
+<a id="__codelineno-3-35" name="__codelineno-3-35" href="#__codelineno-3-35"></a>
+<a id="__codelineno-3-36" name="__codelineno-3-36" href="#__codelineno-3-36"></a>    <span class="n">upload_id</span><span class="p">:</span> <span class="nb">str</span>
+<a id="__codelineno-3-37" name="__codelineno-3-37" href="#__codelineno-3-37"></a>    <span class="n">dataset_version</span><span class="p">:</span> <span class="nb">str</span>
+<a id="__codelineno-3-38" name="__codelineno-3-38" href="#__codelineno-3-38"></a>
+<a id="__codelineno-3-39" name="__codelineno-3-39" href="#__codelineno-3-39"></a>    <span class="c1"># Dataset-level</span>
+<a id="__codelineno-3-40" name="__codelineno-3-40" href="#__codelineno-3-40"></a>    <span class="n">display_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-3-41" name="__codelineno-3-41" href="#__codelineno-3-41"></a>    <span class="n">description</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-3-42" name="__codelineno-3-42" href="#__codelineno-3-42"></a>
+<a id="__codelineno-3-43" name="__codelineno-3-43" href="#__codelineno-3-43"></a>    <span class="c1"># Column metadata</span>
+<a id="__codelineno-3-44" name="__codelineno-3-44" href="#__codelineno-3-44"></a>    <span class="n">columns</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">ResolvedColumnMetadata</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
+<a id="__codelineno-3-45" name="__codelineno-3-45" href="#__codelineno-3-45"></a>
+<a id="__codelineno-3-46" name="__codelineno-3-46" href="#__codelineno-3-46"></a>    <span class="c1"># Entity keys (ordered by priority)</span>
+<a id="__codelineno-3-47" name="__codelineno-3-47" href="#__codelineno-3-47"></a>    <span class="n">entity_keys</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+<a id="__codelineno-3-48" name="__codelineno-3-48" href="#__codelineno-3-48"></a>
+<a id="__codelineno-3-49" name="__codelineno-3-49" href="#__codelineno-3-49"></a>    <span class="c1"># Merge provenance</span>
+<a id="__codelineno-3-50" name="__codelineno-3-50" href="#__codelineno-3-50"></a>    <span class="n">base_source</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"inferred_schema"</span>
+<a id="__codelineno-3-51" name="__codelineno-3-51" href="#__codelineno-3-51"></a>    <span class="n">patch_count</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
+<a id="__codelineno-3-52" name="__codelineno-3-52" href="#__codelineno-3-52"></a>    <span class="n">last_merged</span><span class="p">:</span> <span class="n">datetime</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+</code></pre></div>
+<p><strong>Example Resolved Metadata</strong> (after merge):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">{</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">"upload_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"upload_abc123"</span><span class="p">,</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">"dataset_version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"v_7f8a9b0c"</span><span class="p">,</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span><span class="nt">"display_name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Diabetes Registry Q4 2025"</span><span class="p">,</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Patient registry for type 2 diabetes management program"</span><span class="p">,</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">  </span><span class="nt">"columns"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">    </span><span class="nt">"patient_id"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">      </span><span class="nt">"canonical_name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"patient_id"</span><span class="p">,</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">      </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Patient ID"</span><span class="p">,</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">      </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Unique patient identifier (synthetic)"</span><span class="p">,</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">      </span><span class="nt">"inferred_dtype"</span><span class="p">:</span><span class="w"> </span><span class="s2">"id"</span><span class="p">,</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="w">      </span><span class="nt">"semantic_type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"identifier"</span><span class="p">,</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">      </span><span class="nt">"system_aliases"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"patientid"</span><span class="p">,</span><span class="w"> </span><span class="s2">"patient"</span><span class="p">,</span><span class="w"> </span><span class="s2">"id"</span><span class="p">],</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="w">      </span><span class="nt">"user_aliases"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"pt_id"</span><span class="p">,</span><span class="w"> </span><span class="s2">"subject"</span><span class="p">],</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="w">      </span><span class="nt">"is_phi"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="w">      </span><span class="nt">"is_entity_key"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="w">      </span><span class="nt">"enrichment_source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"inferred"</span><span class="p">,</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a><span class="w">      </span><span class="nt">"last_updated"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-01-10T10:00:00Z"</span>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a><span class="w">    </span><span class="nt">"hba1c_pct"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a><span class="w">      </span><span class="nt">"canonical_name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"hba1c_pct"</span><span class="p">,</span>
+<a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a><span class="w">      </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"HbA1c"</span><span class="p">,</span>
+<a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a><span class="w">      </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Glycated hemoglobin percentage, measure of average blood glucose over 2-3 months"</span><span class="p">,</span>
+<a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a><span class="w">      </span><span class="nt">"inferred_dtype"</span><span class="p">:</span><span class="w"> </span><span class="s2">"numeric"</span><span class="p">,</span>
+<a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a><span class="w">      </span><span class="nt">"semantic_type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"measurement"</span><span class="p">,</span>
+<a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a><span class="w">      </span><span class="nt">"system_aliases"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"hba1c"</span><span class="p">,</span><span class="w"> </span><span class="s2">"hemoglobin_a1c"</span><span class="p">],</span>
+<a id="__codelineno-4-27" name="__codelineno-4-27" href="#__codelineno-4-27"></a><span class="w">      </span><span class="nt">"user_aliases"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"A1C"</span><span class="p">,</span><span class="w"> </span><span class="s2">"glycated hemoglobin"</span><span class="p">],</span>
+<a id="__codelineno-4-28" name="__codelineno-4-28" href="#__codelineno-4-28"></a><span class="w">      </span><span class="nt">"unit"</span><span class="p">:</span><span class="w"> </span><span class="s2">"%"</span><span class="p">,</span>
+<a id="__codelineno-4-29" name="__codelineno-4-29" href="#__codelineno-4-29"></a><span class="w">      </span><span class="nt">"is_phi"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<a id="__codelineno-4-30" name="__codelineno-4-30" href="#__codelineno-4-30"></a><span class="w">      </span><span class="nt">"is_entity_key"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<a id="__codelineno-4-31" name="__codelineno-4-31" href="#__codelineno-4-31"></a><span class="w">      </span><span class="nt">"enrichment_source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"llm_accepted"</span><span class="p">,</span>
+<a id="__codelineno-4-32" name="__codelineno-4-32" href="#__codelineno-4-32"></a><span class="w">      </span><span class="nt">"last_updated"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-01-12T14:32:15Z"</span>
+<a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-4-34" name="__codelineno-4-34" href="#__codelineno-4-34"></a><span class="w">    </span><span class="nt">"smoking_status"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-35" name="__codelineno-4-35" href="#__codelineno-4-35"></a><span class="w">      </span><span class="nt">"canonical_name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"smoking_status"</span><span class="p">,</span>
+<a id="__codelineno-4-36" name="__codelineno-4-36" href="#__codelineno-4-36"></a><span class="w">      </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Smoking Status"</span><span class="p">,</span>
+<a id="__codelineno-4-37" name="__codelineno-4-37" href="#__codelineno-4-37"></a><span class="w">      </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Current smoking behavior"</span><span class="p">,</span>
+<a id="__codelineno-4-38" name="__codelineno-4-38" href="#__codelineno-4-38"></a><span class="w">      </span><span class="nt">"inferred_dtype"</span><span class="p">:</span><span class="w"> </span><span class="s2">"categorical"</span><span class="p">,</span>
+<a id="__codelineno-4-39" name="__codelineno-4-39" href="#__codelineno-4-39"></a><span class="w">      </span><span class="nt">"semantic_type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"coded"</span><span class="p">,</span>
+<a id="__codelineno-4-40" name="__codelineno-4-40" href="#__codelineno-4-40"></a><span class="w">      </span><span class="nt">"system_aliases"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"smoking"</span><span class="p">,</span><span class="w"> </span><span class="s2">"tobacco_use"</span><span class="p">],</span>
+<a id="__codelineno-4-41" name="__codelineno-4-41" href="#__codelineno-4-41"></a><span class="w">      </span><span class="nt">"user_aliases"</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span>
+<a id="__codelineno-4-42" name="__codelineno-4-42" href="#__codelineno-4-42"></a><span class="w">      </span><span class="nt">"codebook"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-43" name="__codelineno-4-43" href="#__codelineno-4-43"></a><span class="w">        </span><span class="nt">"1"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Current smoker"</span><span class="p">,</span>
+<a id="__codelineno-4-44" name="__codelineno-4-44" href="#__codelineno-4-44"></a><span class="w">        </span><span class="nt">"2"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Former smoker"</span><span class="p">,</span>
+<a id="__codelineno-4-45" name="__codelineno-4-45" href="#__codelineno-4-45"></a><span class="w">        </span><span class="nt">"3"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Never smoked"</span><span class="p">,</span>
+<a id="__codelineno-4-46" name="__codelineno-4-46" href="#__codelineno-4-46"></a><span class="w">        </span><span class="nt">"9"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Unknown"</span>
+<a id="__codelineno-4-47" name="__codelineno-4-47" href="#__codelineno-4-47"></a><span class="w">      </span><span class="p">},</span>
+<a id="__codelineno-4-48" name="__codelineno-4-48" href="#__codelineno-4-48"></a><span class="w">      </span><span class="nt">"is_phi"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<a id="__codelineno-4-49" name="__codelineno-4-49" href="#__codelineno-4-49"></a><span class="w">      </span><span class="nt">"is_entity_key"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<a id="__codelineno-4-50" name="__codelineno-4-50" href="#__codelineno-4-50"></a><span class="w">      </span><span class="nt">"enrichment_source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"llm_accepted"</span><span class="p">,</span>
+<a id="__codelineno-4-51" name="__codelineno-4-51" href="#__codelineno-4-51"></a><span class="w">      </span><span class="nt">"last_updated"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-01-12T14:35:00Z"</span>
+<a id="__codelineno-4-52" name="__codelineno-4-52" href="#__codelineno-4-52"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-4-53" name="__codelineno-4-53" href="#__codelineno-4-53"></a><span class="w">    </span><span class="nt">"mrn"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-54" name="__codelineno-4-54" href="#__codelineno-4-54"></a><span class="w">      </span><span class="nt">"canonical_name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"mrn"</span><span class="p">,</span>
+<a id="__codelineno-4-55" name="__codelineno-4-55" href="#__codelineno-4-55"></a><span class="w">      </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Medical Record Number"</span><span class="p">,</span>
+<a id="__codelineno-4-56" name="__codelineno-4-56" href="#__codelineno-4-56"></a><span class="w">      </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Hospital medical record number (PHI - masked in exports)"</span><span class="p">,</span>
+<a id="__codelineno-4-57" name="__codelineno-4-57" href="#__codelineno-4-57"></a><span class="w">      </span><span class="nt">"inferred_dtype"</span><span class="p">:</span><span class="w"> </span><span class="s2">"id"</span><span class="p">,</span>
+<a id="__codelineno-4-58" name="__codelineno-4-58" href="#__codelineno-4-58"></a><span class="w">      </span><span class="nt">"semantic_type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"identifier"</span><span class="p">,</span>
+<a id="__codelineno-4-59" name="__codelineno-4-59" href="#__codelineno-4-59"></a><span class="w">      </span><span class="nt">"system_aliases"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"medical_record_number"</span><span class="p">],</span>
+<a id="__codelineno-4-60" name="__codelineno-4-60" href="#__codelineno-4-60"></a><span class="w">      </span><span class="nt">"user_aliases"</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span>
+<a id="__codelineno-4-61" name="__codelineno-4-61" href="#__codelineno-4-61"></a><span class="w">      </span><span class="nt">"is_phi"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-4-62" name="__codelineno-4-62" href="#__codelineno-4-62"></a><span class="w">      </span><span class="nt">"is_entity_key"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<a id="__codelineno-4-63" name="__codelineno-4-63" href="#__codelineno-4-63"></a><span class="w">      </span><span class="nt">"enrichment_source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"llm_accepted"</span><span class="p">,</span>
+<a id="__codelineno-4-64" name="__codelineno-4-64" href="#__codelineno-4-64"></a><span class="w">      </span><span class="nt">"last_updated"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-01-12T14:33:00Z"</span>
+<a id="__codelineno-4-65" name="__codelineno-4-65" href="#__codelineno-4-65"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-4-66" name="__codelineno-4-66" href="#__codelineno-4-66"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-4-67" name="__codelineno-4-67" href="#__codelineno-4-67"></a><span class="w">  </span><span class="nt">"entity_keys"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"patient_id"</span><span class="p">],</span>
+<a id="__codelineno-4-68" name="__codelineno-4-68" href="#__codelineno-4-68"></a><span class="w">  </span><span class="nt">"base_source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"inferred_schema"</span><span class="p">,</span>
+<a id="__codelineno-4-69" name="__codelineno-4-69" href="#__codelineno-4-69"></a><span class="w">  </span><span class="nt">"patch_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="p">,</span>
+<a id="__codelineno-4-70" name="__codelineno-4-70" href="#__codelineno-4-70"></a><span class="w">  </span><span class="nt">"last_merged"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-01-12T14:35:00Z"</span>
+<a id="__codelineno-4-71" name="__codelineno-4-71" href="#__codelineno-4-71"></a><span class="p">}</span>
+</code></pre></div>
+<h3 id="4-overlay-storage-and-merge-precedence">4. Overlay Storage and Merge Precedence</h3>
+<p><strong>Storage Structure</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>data/uploads/
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>├── metadata/
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>│   ├── {upload_id}.json              # Base metadata (ADR002)
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>│   └── overlays/
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>│       └── {upload_id}/
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>│           ├── {dataset_version}/
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>│           │   ├── patches.jsonl     # Append-only patch log
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>│           │   ├── pending.json      # Current pending suggestions
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>│           │   └── resolved.json     # Cached resolved metadata
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>│           └── ...
+</code></pre></div>
+<p><strong>Merge Precedence</strong> (deterministic, lowest to highest priority):</p>
+<ol>
+<li><strong>Base</strong> (<code>base</code>): Empty defaults, column names only</li>
+<li><strong>Inferred</strong> (<code>inferred</code>): From <code>SchemaInferenceEngine</code> and <code>DictionaryMetadata</code> (ADR004)</li>
+<li><strong>Accepted Patches</strong> (<code>accepted_patches</code>): User-accepted patches in chronological order</li>
+</ol>
+<p><strong>Merge Rules</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">resolve_metadata</span><span class="p">(</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="n">upload_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="n">dataset_version</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>    <span class="n">base_schema</span><span class="p">:</span> <span class="n">InferredSchema</span><span class="p">,</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>    <span class="n">patches</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">MetadataPatch</span><span class="p">],</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ResolvedDatasetMetadata</span><span class="p">:</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">    </span><span class="sd">"""</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="sd">    Deterministic merge of base schema with accepted patches.</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="sd">    Rules:</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="sd">    1. Start with base schema (column names, inferred types)</span>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="sd">    2. Apply DictionaryMetadata if available (descriptions, codebooks from docs)</span>
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="sd">    3. Apply accepted patches in chronological order (created_at)</span>
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="sd">    4. Later patches override earlier patches for same (column, operation)</span>
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a><span class="sd">    5. Rejected/pending patches are excluded</span>
+<a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a><span class="sd">    6. Result is deterministic: same inputs → same output</span>
+<a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a><span class="sd">    """</span>
+<a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a>    <span class="n">resolved</span> <span class="o">=</span> <span class="n">ResolvedDatasetMetadata</span><span class="p">(</span>
+<a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a>        <span class="n">upload_id</span><span class="o">=</span><span class="n">upload_id</span><span class="p">,</span>
+<a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a>        <span class="n">dataset_version</span><span class="o">=</span><span class="n">dataset_version</span><span class="p">,</span>
+<a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a>    <span class="p">)</span>
+<a id="__codelineno-6-22" name="__codelineno-6-22" href="#__codelineno-6-22"></a>
+<a id="__codelineno-6-23" name="__codelineno-6-23" href="#__codelineno-6-23"></a>    <span class="c1"># Step 1: Initialize from base schema</span>
+<a id="__codelineno-6-24" name="__codelineno-6-24" href="#__codelineno-6-24"></a>    <span class="k">for</span> <span class="n">col</span> <span class="ow">in</span> <span class="n">base_schema</span><span class="o">.</span><span class="n">all_columns</span><span class="p">:</span>
+<a id="__codelineno-6-25" name="__codelineno-6-25" href="#__codelineno-6-25"></a>        <span class="n">resolved</span><span class="o">.</span><span class="n">columns</span><span class="p">[</span><span class="n">col</span><span class="p">]</span> <span class="o">=</span> <span class="n">ResolvedColumnMetadata</span><span class="p">(</span>
+<a id="__codelineno-6-26" name="__codelineno-6-26" href="#__codelineno-6-26"></a>            <span class="n">canonical_name</span><span class="o">=</span><span class="n">col</span><span class="p">,</span>
+<a id="__codelineno-6-27" name="__codelineno-6-27" href="#__codelineno-6-27"></a>            <span class="n">inferred_dtype</span><span class="o">=</span><span class="n">_infer_dtype</span><span class="p">(</span><span class="n">col</span><span class="p">,</span> <span class="n">base_schema</span><span class="p">),</span>
+<a id="__codelineno-6-28" name="__codelineno-6-28" href="#__codelineno-6-28"></a>            <span class="n">enrichment_source</span><span class="o">=</span><span class="s2">"base"</span><span class="p">,</span>
+<a id="__codelineno-6-29" name="__codelineno-6-29" href="#__codelineno-6-29"></a>        <span class="p">)</span>
+<a id="__codelineno-6-30" name="__codelineno-6-30" href="#__codelineno-6-30"></a>
+<a id="__codelineno-6-31" name="__codelineno-6-31" href="#__codelineno-6-31"></a>    <span class="c1"># Step 2: Apply inferred metadata (DictionaryMetadata)</span>
+<a id="__codelineno-6-32" name="__codelineno-6-32" href="#__codelineno-6-32"></a>    <span class="k">if</span> <span class="n">base_schema</span><span class="o">.</span><span class="n">dictionary_metadata</span><span class="p">:</span>
+<a id="__codelineno-6-33" name="__codelineno-6-33" href="#__codelineno-6-33"></a>        <span class="k">for</span> <span class="n">col</span><span class="p">,</span> <span class="n">desc</span> <span class="ow">in</span> <span class="n">base_schema</span><span class="o">.</span><span class="n">dictionary_metadata</span><span class="o">.</span><span class="n">column_descriptions</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+<a id="__codelineno-6-34" name="__codelineno-6-34" href="#__codelineno-6-34"></a>            <span class="k">if</span> <span class="n">col</span> <span class="ow">in</span> <span class="n">resolved</span><span class="o">.</span><span class="n">columns</span><span class="p">:</span>
+<a id="__codelineno-6-35" name="__codelineno-6-35" href="#__codelineno-6-35"></a>                <span class="n">resolved</span><span class="o">.</span><span class="n">columns</span><span class="p">[</span><span class="n">col</span><span class="p">]</span><span class="o">.</span><span class="n">description</span> <span class="o">=</span> <span class="n">desc</span>
+<a id="__codelineno-6-36" name="__codelineno-6-36" href="#__codelineno-6-36"></a>                <span class="n">resolved</span><span class="o">.</span><span class="n">columns</span><span class="p">[</span><span class="n">col</span><span class="p">]</span><span class="o">.</span><span class="n">enrichment_source</span> <span class="o">=</span> <span class="s2">"inferred"</span>
+<a id="__codelineno-6-37" name="__codelineno-6-37" href="#__codelineno-6-37"></a>
+<a id="__codelineno-6-38" name="__codelineno-6-38" href="#__codelineno-6-38"></a>        <span class="k">for</span> <span class="n">col</span><span class="p">,</span> <span class="n">codebook</span> <span class="ow">in</span> <span class="n">base_schema</span><span class="o">.</span><span class="n">dictionary_metadata</span><span class="o">.</span><span class="n">codebooks</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+<a id="__codelineno-6-39" name="__codelineno-6-39" href="#__codelineno-6-39"></a>            <span class="k">if</span> <span class="n">col</span> <span class="ow">in</span> <span class="n">resolved</span><span class="o">.</span><span class="n">columns</span><span class="p">:</span>
+<a id="__codelineno-6-40" name="__codelineno-6-40" href="#__codelineno-6-40"></a>                <span class="n">resolved</span><span class="o">.</span><span class="n">columns</span><span class="p">[</span><span class="n">col</span><span class="p">]</span><span class="o">.</span><span class="n">codebook</span> <span class="o">=</span> <span class="n">codebook</span>
+<a id="__codelineno-6-41" name="__codelineno-6-41" href="#__codelineno-6-41"></a>                <span class="n">resolved</span><span class="o">.</span><span class="n">columns</span><span class="p">[</span><span class="n">col</span><span class="p">]</span><span class="o">.</span><span class="n">enrichment_source</span> <span class="o">=</span> <span class="s2">"inferred"</span>
+<a id="__codelineno-6-42" name="__codelineno-6-42" href="#__codelineno-6-42"></a>
+<a id="__codelineno-6-43" name="__codelineno-6-43" href="#__codelineno-6-43"></a>    <span class="c1"># Step 3: Apply accepted patches in order</span>
+<a id="__codelineno-6-44" name="__codelineno-6-44" href="#__codelineno-6-44"></a>    <span class="n">accepted</span> <span class="o">=</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">patches</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="n">PatchStatus</span><span class="o">.</span><span class="n">ACCEPTED</span><span class="p">]</span>
+<a id="__codelineno-6-45" name="__codelineno-6-45" href="#__codelineno-6-45"></a>    <span class="n">accepted</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">p</span><span class="p">:</span> <span class="n">p</span><span class="o">.</span><span class="n">created_at</span><span class="p">)</span>
+<a id="__codelineno-6-46" name="__codelineno-6-46" href="#__codelineno-6-46"></a>
+<a id="__codelineno-6-47" name="__codelineno-6-47" href="#__codelineno-6-47"></a>    <span class="k">for</span> <span class="n">patch</span> <span class="ow">in</span> <span class="n">accepted</span><span class="p">:</span>
+<a id="__codelineno-6-48" name="__codelineno-6-48" href="#__codelineno-6-48"></a>        <span class="n">_apply_patch</span><span class="p">(</span><span class="n">resolved</span><span class="p">,</span> <span class="n">patch</span><span class="p">)</span>
+<a id="__codelineno-6-49" name="__codelineno-6-49" href="#__codelineno-6-49"></a>        <span class="n">resolved</span><span class="o">.</span><span class="n">patch_count</span> <span class="o">+=</span> <span class="mi">1</span>
+<a id="__codelineno-6-50" name="__codelineno-6-50" href="#__codelineno-6-50"></a>
+<a id="__codelineno-6-51" name="__codelineno-6-51" href="#__codelineno-6-51"></a>    <span class="n">resolved</span><span class="o">.</span><span class="n">last_merged</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">utcnow</span><span class="p">()</span>
+<a id="__codelineno-6-52" name="__codelineno-6-52" href="#__codelineno-6-52"></a>    <span class="k">return</span> <span class="n">resolved</span>
+</code></pre></div>
+<p><strong>State Transitions</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>                    ┌─────────────────┐
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>                    │  LLM Generates  │
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>                    │   Suggestions   │
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>                    └────────┬────────┘
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>                             │
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>                             ▼
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>                    ┌─────────────────┐
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>                    │     PENDING     │◄──────────────────┐
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>                    │  (not applied)  │                   │
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>                    └────────┬────────┘                   │
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>                             │                            │
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>               ┌─────────────┼─────────────┐              │
+<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>               │             │             │              │
+<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>               ▼             ▼             ▼              │
+<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>      ┌─────────────┐  ┌───────────┐  ┌─────────────┐    │
+<a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a>      │  ACCEPTED   │  │ REJECTED  │  │   EXPIRED   │    │
+<a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a>      │  (applied)  │  │ (logged)  │  │  (30 days)  │    │
+<a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a>      └──────┬──────┘  └───────────┘  └─────────────┘    │
+<a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a>             │                                            │
+<a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a>             │ User can revert                            │
+<a id="__codelineno-7-21" name="__codelineno-7-21" href="#__codelineno-7-21"></a>             └────────────────────────────────────────────┘
+</code></pre></div>
+<h3 id="5-llm-suggestion-workflow">5. LLM Suggestion Workflow</h3>
+<p><strong>LLM produces suggestions ONLY as strict JSON patches</strong>:</p>
+<ol>
+<li>LLM receives schema + profiling + optional dictionary context</li>
+<li>LLM outputs JSON array of <code>MetadataPatch</code> suggestions</li>
+<li>System validates JSON against <code>MetadataPatch</code> schema</li>
+<li>Invalid suggestions are logged and discarded (never surfaced to user)</li>
+<li>Valid suggestions stored as <code>pending</code> patches</li>
+<li>User reviews in UI diff view</li>
+<li>User accepts, rejects, or modifies suggestions</li>
+<li>Only <code>accepted</code> patches are applied to resolved metadata</li>
+</ol>
+<p><strong>LLM Prompt Structure</strong> (schema only, no raw rows by default):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>You are a clinical data analyst. Given the following dataset schema and statistics, suggest metadata enrichments.
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>## Dataset
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>- Upload ID: upload_abc123
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>- Version: v_7f8a9b0c
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>- Row count: 1,247
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>- Column count: 42
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>## Columns (with profiling)
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>| Column | Type | Unique | Null% | Sample Values (masked) |
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>|--------|------|--------|-------|------------------------|
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>| hba1c_pct | float64 | 89 | 2.3% | 5.4, 7.2, 9.1, ... |
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>| smoking_status | int64 | 4 | 0.8% | 1, 2, 3, 9 |
+<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a>| mrn | string | 1247 | 0% | [REDACTED] |
+<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>
+<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>## Available Documentation
+<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a>[Extracted text from data_dictionary.pdf - see ADR004]
+<a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a>
+<a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a>## Task
+<a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a>Output a JSON array of metadata patches. Each patch must have:
+<a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a>- operation: one of [set_label, add_alias, set_description, set_semantic_type, mark_phi, set_unit, set_codebook_entry]
+<a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a>- target_column: column name
+<a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a>- value: the enrichment value
+<a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a>- confidence: your confidence 0.0-1.0
+<a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a>
+<a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a>Only suggest enrichments you are confident about (&gt;0.7). Output valid JSON only.
+</code></pre></div>
+<p><strong>Validation Requirements</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_llm_suggestions</span><span class="p">(</span><span class="n">raw_json</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">MetadataPatch</span><span class="p">]:</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">    </span><span class="sd">"""</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="sd">    Validate LLM output against MetadataPatch schema.</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="sd">    Requirements:</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="sd">    1. Must be valid JSON</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="sd">    2. Must be array of objects</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="sd">    3. Each object must have required fields</span>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="sd">    4. operation must be valid PatchOperation</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="sd">    5. target_column must exist in dataset schema</span>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="sd">    6. value must be correct type for operation</span>
+<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="sd">    7. confidence must be 0.0-1.0</span>
+<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>
+<a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a><span class="sd">    Invalid suggestions are logged and excluded.</span>
+<a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a><span class="sd">    Returns only valid patches with status=PENDING.</span>
+<a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a><span class="sd">    """</span>
+</code></pre></div>
+<h3 id="6-ui-workflow">6. UI Workflow</h3>
+<p><strong>Enrichment Panel</strong> (integrated into dataset detail view):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>┌─────────────────────────────────────────────────────────────────┐
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>│  Dataset: Diabetes Registry Q4 2025                              │
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>│  Version: v_7f8a9b0c | Columns: 42 | Rows: 1,247                │
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>├─────────────────────────────────────────────────────────────────┤
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>│  ⚡ 6 AI Suggestions Available              [Review All] [Dismiss]│
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>├─────────────────────────────────────────────────────────────────┤
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>│                                                                  │
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>│  Column: hba1c_pct                                               │
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>│  ┌─────────────────────────────────────────────────────────────┐│
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>│  │ Current         │ Suggested (AI)                            ││
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>│  │─────────────────│────────────────────────────────────────────││
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>│  │ Label: (none)   │ Label: HbA1c                               ││
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a>│  │ Desc: (none)    │ Desc: Glycated hemoglobin percentage...    ││
+<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a>│  │ Unit: (none)    │ Unit: %                                    ││
+<a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a>│  │ Type: numeric   │ Type: measurement                          ││
+<a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a>│  │ Aliases: []     │ Aliases: ["A1C", "glycated hemoglobin"]   ││
+<a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a>│  └─────────────────────────────────────────────────────────────┘│
+<a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a>│                                                                  │
+<a id="__codelineno-10-19" name="__codelineno-10-19" href="#__codelineno-10-19"></a>│  [✓ Accept All] [✓ Accept Selected] [✗ Reject] [✎ Edit]          │
+<a id="__codelineno-10-20" name="__codelineno-10-20" href="#__codelineno-10-20"></a>│                                                                  │
+<a id="__codelineno-10-21" name="__codelineno-10-21" href="#__codelineno-10-21"></a>├─────────────────────────────────────────────────────────────────┤
+<a id="__codelineno-10-22" name="__codelineno-10-22" href="#__codelineno-10-22"></a>│  Column: mrn                                                     │
+<a id="__codelineno-10-23" name="__codelineno-10-23" href="#__codelineno-10-23"></a>│  ┌─────────────────────────────────────────────────────────────┐│
+<a id="__codelineno-10-24" name="__codelineno-10-24" href="#__codelineno-10-24"></a>│  │ ⚠️ PHI Flag Suggested                                        ││
+<a id="__codelineno-10-25" name="__codelineno-10-25" href="#__codelineno-10-25"></a>│  │                                                              ││
+<a id="__codelineno-10-26" name="__codelineno-10-26" href="#__codelineno-10-26"></a>│  │ AI suggests marking 'mrn' as Protected Health Information   ││
+<a id="__codelineno-10-27" name="__codelineno-10-27" href="#__codelineno-10-27"></a>│  │ Confidence: 85%                                              ││
+<a id="__codelineno-10-28" name="__codelineno-10-28" href="#__codelineno-10-28"></a>│  │                                                              ││
+<a id="__codelineno-10-29" name="__codelineno-10-29" href="#__codelineno-10-29"></a>│  │ [✓ Confirm PHI] [✗ Not PHI]                                  ││
+<a id="__codelineno-10-30" name="__codelineno-10-30" href="#__codelineno-10-30"></a>│  └─────────────────────────────────────────────────────────────┘│
+<a id="__codelineno-10-31" name="__codelineno-10-31" href="#__codelineno-10-31"></a>└─────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+<p><strong>Batch Operations</strong>:</p>
+<ul>
+<li>Accept All: Apply all pending suggestions</li>
+<li>Accept Selected: Apply checked suggestions only</li>
+<li>Reject: Mark as rejected (logged, not applied)</li>
+<li>Edit: Modify suggestion before accepting</li>
+</ul>
+<p><strong>History View</strong> (audit trail):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>┌─────────────────────────────────────────────────────────────────┐
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>│  Enrichment History                           [Export] [Revert]  │
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>├─────────────────────────────────────────────────────────────────┤
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>│  2026-01-12 14:35:00 | user_jane_doe | set_codebook_entry       │
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>│    Column: smoking_status                                        │
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>│    Added: {"1": "Current smoker", "2": "Former smoker", ...}    │
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>│    Source: llm_accepted (llama3.1:8b)                           │
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>│                                                         [Revert] │
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>├─────────────────────────────────────────────────────────────────┤
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>│  2026-01-12 14:33:00 | user_jane_doe | mark_phi                  │
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>│    Column: mrn                                                   │
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>│    Changed: false → true                                         │
+<a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>│    Source: llm_accepted (llama3.1:8b)                           │
+<a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>│                                                         [Revert] │
+<a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a>├─────────────────────────────────────────────────────────────────┤
+<a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a>│  2026-01-12 14:32:15 | user_jane_doe | set_description          │
+<a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a>│    Column: hba1c_pct                                             │
+<a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a>│    Added: "Glycated hemoglobin percentage..."                   │
+<a id="__codelineno-11-19" name="__codelineno-11-19" href="#__codelineno-11-19"></a>│    Source: llm_accepted (llama3.1:8b)                           │
+<a id="__codelineno-11-20" name="__codelineno-11-20" href="#__codelineno-11-20"></a>│                                                         [Revert] │
+<a id="__codelineno-11-21" name="__codelineno-11-21" href="#__codelineno-11-21"></a>└─────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+<hr />
+<h2 id="privacy-security-posture">Privacy / Security Posture</h2>
+<p>Even with a local LLM (Ollama), enforce privacy controls:</p>
+<h3 id="default-mode-schema-profiling-only">Default Mode: Schema + Profiling Only</h3>
+<p><strong>What LLM sees</strong>:
+- Column names and inferred types
+- Aggregate statistics (count, null%, unique count, min/max for numerics)
+- Value distributions (histogram bins, not raw values)
+- Extracted documentation text (ADR004)</p>
+<p><strong>What LLM does NOT see</strong>:
+- Raw row data
+- Individual patient values
+- Identifiable patterns in data
+- Full text of free-text columns</p>
+<h3 id="optional-gated-mode-sample-rows">Optional Gated Mode: Sample Rows</h3>
+<p>For richer context (e.g., inferring codebooks from actual values), an admin-gated mode allows sample rows:</p>
+<p><strong>Requirements</strong>:
+1. <strong>Explicit Admin Toggle</strong>: <code>ENABLE_LLM_SAMPLE_ROWS=true</code> environment variable
+2. <strong>Redaction/Masking</strong>: PHI-flagged columns replaced with <code>[REDACTED]</code>
+3. <strong>No Persistence</strong>: Sample rows used transiently, never logged or cached
+4. <strong>Row Limit</strong>: Maximum 10 sample rows
+5. <strong>Audit Log</strong>: Records that sample mode was used (but not the samples themselves)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nd">@dataclass</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">LLMContext</span><span class="p">:</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">    </span><span class="sd">"""Context provided to LLM for enrichment suggestions."""</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>    <span class="c1"># Always included</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>    <span class="n">upload_id</span><span class="p">:</span> <span class="nb">str</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>    <span class="n">dataset_version</span><span class="p">:</span> <span class="nb">str</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>    <span class="n">schema_summary</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>      <span class="c1"># Column names, types, stats</span>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>    <span class="n">doc_context</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span>             <span class="c1"># Extracted documentation</span>
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>
+<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a>    <span class="c1"># Gated mode only</span>
+<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a>    <span class="n">sample_rows</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># Max 10, PHI redacted</span>
+<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a>    <span class="n">sample_mode_enabled</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+<a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a>
+<a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">to_prompt</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a><span class="w">        </span><span class="sd">"""Generate LLM prompt from context."""</span>
+</code></pre></div>
+<h3 id="audit-log">Audit Log</h3>
+<p>Every LLM interaction is logged:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="p">{</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="nt">"event_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"evt_123456"</span><span class="p">,</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">  </span><span class="nt">"timestamp"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-01-12T14:30:00Z"</span><span class="p">,</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">  </span><span class="nt">"event_type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"llm_enrichment_request"</span><span class="p">,</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">  </span><span class="nt">"upload_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"upload_abc123"</span><span class="p">,</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">  </span><span class="nt">"dataset_version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"v_7f8a9b0c"</span><span class="p">,</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="w">  </span><span class="nt">"actor"</span><span class="p">:</span><span class="w"> </span><span class="s2">"user_jane_doe"</span><span class="p">,</span>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="w">  </span><span class="nt">"model_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"llama3.1:8b"</span><span class="p">,</span>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="w">  </span><span class="nt">"prompt_hash"</span><span class="p">:</span><span class="w"> </span><span class="s2">"sha256:a1b2c3d4e5f6..."</span><span class="p">,</span>
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="w">  </span><span class="nt">"sample_mode_enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="w">  </span><span class="nt">"suggestion_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">6</span><span class="p">,</span>
+<a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a><span class="w">  </span><span class="nt">"validation_failures"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a><span class="w">  </span><span class="nt">"latency_ms"</span><span class="p">:</span><span class="w"> </span><span class="mi">2340</span>
+<a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a><span class="p">}</span>
+</code></pre></div>
+<hr />
+<h2 id="alternatives-considered">Alternatives Considered</h2>
+<h3 id="1-llm-edits-datasetsyaml-directly">1. LLM Edits datasets.yaml Directly</h3>
+<p><strong>Rejected because</strong>:
+- No audit trail or rollback
+- Risk of corrupting config file
+- No human review before apply
+- Violates "LLM as suggestion engine" principle</p>
+<h3 id="2-freeform-notes-only-no-structured-patches">2. Freeform Notes Only (No Structured Patches)</h3>
+<p><strong>Rejected because</strong>:
+- Not machine-actionable (can't use in AutoContext)
+- No merge semantics
+- No conflict resolution
+- Loses type safety</p>
+<h3 id="3-always-auto-apply-llm-outputs">3. Always Auto-Apply LLM Outputs</h3>
+<p><strong>Rejected because</strong>:
+- LLM confidence != correctness
+- Clinical domain requires human review
+- PHI detection cannot be fully automated
+- Violates ADR003's trust principles</p>
+<h3 id="4-store-enrichments-in-inferredschema">4. Store Enrichments in InferredSchema</h3>
+<p><strong>Rejected because</strong>:
+- <code>InferredSchema</code> is compute-derived, not user-editable
+- No separation between inferred and user-accepted
+- No patch history or rollback
+- Breaks single-responsibility principle</p>
+<h3 id="5-global-metadata-inheritance-across-datasets">5. Global Metadata Inheritance Across Datasets</h3>
+<p><strong>Rejected because</strong>:
+- Column names are dataset-specific
+- "age" in dataset A may differ from "age" in dataset B
+- Increases complexity without clear benefit
+- Scope isolation prevents cross-contamination</p>
+<hr />
+<h2 id="consequences">Consequences</h2>
+<h3 id="positive">Positive</h3>
+<ol>
+<li>
+<p><strong>Machine-Actionable Context</strong>: AutoContext can include rich metadata (descriptions, aliases, semantic types) for better Tier 3 LLM query parsing.</p>
+</li>
+<li>
+<p><strong>Progressive Enrichment</strong>: Users start querying immediately; enrichment is additive and non-blocking.</p>
+</li>
+<li>
+<p><strong>Auditability</strong>: Full provenance trail for compliance and debugging.</p>
+</li>
+<li>
+<p><strong>Rollback Safety</strong>: Any enrichment can be reverted without data loss.</p>
+</li>
+<li>
+<p><strong>LLM Guardrails</strong>: Strict JSON validation prevents malformed suggestions from reaching users.</p>
+</li>
+<li>
+<p><strong>Privacy by Default</strong>: Schema-only mode protects sensitive data while still enabling useful suggestions.</p>
+</li>
+</ol>
+<h3 id="negative">Negative</h3>
+<ol>
+<li>
+<p><strong>Operational Complexity</strong>: New storage layer (overlays), merge resolver, and UI components to maintain.</p>
+</li>
+<li>
+<p><strong>UX Overhead</strong>: Users must review and accept suggestions (not fully automatic).</p>
+</li>
+<li>
+<p><strong>LLM Latency</strong>: Enrichment suggestions add 2-5 seconds per batch (acceptable for offline operation).</p>
+</li>
+<li>
+<p><strong>Storage Growth</strong>: Patch logs grow over time (mitigated by periodic compaction).</p>
+</li>
+</ol>
+<h3 id="neutral">Neutral</h3>
+<ol>
+<li>
+<p><strong>Local LLM Dependency</strong>: Requires Ollama running locally. Not a new constraint (ADR004 already requires it).</p>
+</li>
+<li>
+<p><strong>Learning Curve</strong>: Users must understand diff/accept workflow. Mitigated by clear UI.</p>
+</li>
+</ol>
+<hr />
+<h2 id="implementation-plan">Implementation Plan</h2>
+<h3 id="phase-0-data-model-storage-merge-resolver-p0">Phase 0: Data Model + Storage + Merge Resolver (P0)</h3>
+<p><strong>Files</strong>:
+- <code>src/clinical_analytics/core/metadata_patch.py</code> - Patch model and operations
+- <code>src/clinical_analytics/core/metadata_resolver.py</code> - Merge resolver
+- <code>src/clinical_analytics/storage/overlay_store.py</code> - Overlay persistence</p>
+<p><strong>Deliverables</strong>:
+1. <code>MetadataPatch</code> dataclass with validation
+2. <code>PatchLog</code> for append-only storage (JSONL)
+3. <code>resolve_metadata()</code> function with precedence rules
+4. Unit tests for merge semantics (golden tests)</p>
+<p><strong>TDD Workflow</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># RED: Write failing tests for merge precedence</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>tests/core/test_metadata_resolver.py<span class="w"> </span>-xvs
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="c1"># GREEN: Implement resolver</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="c1"># ... implement ...</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="c1"># VERIFY: All tests pass</span>
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>make<span class="w"> </span>test-core
+<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>make<span class="w"> </span>check<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">"feat: Phase 0 - Metadata patch model and merge resolver"</span>
+</code></pre></div></p>
+<h3 id="phase-1-ui-enrichment-patch-log-p1">Phase 1: UI Enrichment + Patch Log (P1)</h3>
+<p><strong>Files</strong>:
+- <code>src/clinical_analytics/ui/components/enrichment_panel.py</code> - Diff view component
+- <code>src/clinical_analytics/ui/components/history_viewer.py</code> - Audit trail UI
+- <code>src/clinical_analytics/api/routes/metadata.py</code> - API endpoints (if FastAPI)</p>
+<p><strong>Deliverables</strong>:
+1. Column enrichment panel with diff view
+2. Accept/reject/edit workflow
+3. History viewer with revert capability
+4. Integration with existing dataset detail page</p>
+<p><strong>TDD Workflow</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>make<span class="w"> </span>test-ui<span class="w"> </span><span class="nv">PYTEST_ARGS</span><span class="o">=</span><span class="s2">"tests/ui/test_enrichment_panel.py -xvs"</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>make<span class="w"> </span>check<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">"feat: Phase 1 - UI enrichment panel and patch log"</span>
+</code></pre></div></p>
+<h3 id="phase-2-llm-suggestion-endpoint-validation-p1">Phase 2: LLM Suggestion Endpoint + Validation (P1)</h3>
+<p><strong>Files</strong>:
+- <code>src/clinical_analytics/core/llm_enrichment.py</code> - LLM integration
+- <code>src/clinical_analytics/core/llm_json.py</code> - Extend with patch validation</p>
+<p><strong>Deliverables</strong>:
+1. <code>generate_enrichment_suggestions()</code> function
+2. JSON schema validation for LLM output
+3. Confidence filtering (&gt;0.7 threshold)
+4. Integration with existing LLM client (ADR004)</p>
+<p><strong>TDD Workflow</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>tests/core/test_llm_enrichment.py<span class="w"> </span>-xvs
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>make<span class="w"> </span>check<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">"feat: Phase 2 - LLM suggestion generation with validation"</span>
+</code></pre></div></p>
+<h3 id="phase-3-optional-gated-sample-mode-p2">Phase 3: Optional Gated Sample Mode (P2)</h3>
+<p><strong>Files</strong>:
+- <code>src/clinical_analytics/core/llm_context.py</code> - Context builder with masking
+- <code>config/privacy.yaml</code> - Privacy settings</p>
+<p><strong>Deliverables</strong>:
+1. Environment variable gate (<code>ENABLE_LLM_SAMPLE_ROWS</code>)
+2. PHI column redaction
+3. Audit logging for sample mode usage
+4. Admin documentation</p>
+<p><strong>TDD Workflow</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>tests/core/test_llm_context.py<span class="w"> </span>-xvs
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>make<span class="w"> </span>check<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">"feat: Phase 3 - Gated sample rows mode with redaction"</span>
+</code></pre></div></p>
+<hr />
+<h2 id="test-plan">Test Plan</h2>
+<h3 id="golden-tests-for-merge-precedence">Golden Tests for Merge Precedence</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">TestMergePrecedence</span><span class="p">:</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="w">    </span><span class="sd">"""Golden tests verifying deterministic merge behavior."""</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_base_only_returns_column_names</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="w">        </span><span class="sd">"""Base schema provides column names, no enrichments."""</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_inferred_overrides_base</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="w">        </span><span class="sd">"""DictionaryMetadata descriptions override base."""</span>
+<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a>
+<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_accepted_patches_override_inferred</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a><span class="w">        </span><span class="sd">"""User-accepted patches override inferred metadata."""</span>
+<a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a>
+<a id="__codelineno-18-13" name="__codelineno-18-13" href="#__codelineno-18-13"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_later_patches_override_earlier</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-18-14" name="__codelineno-18-14" href="#__codelineno-18-14"></a><span class="w">        </span><span class="sd">"""Chronologically later patches win for same (column, op)."""</span>
+<a id="__codelineno-18-15" name="__codelineno-18-15" href="#__codelineno-18-15"></a>
+<a id="__codelineno-18-16" name="__codelineno-18-16" href="#__codelineno-18-16"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_rejected_patches_excluded</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-18-17" name="__codelineno-18-17" href="#__codelineno-18-17"></a><span class="w">        </span><span class="sd">"""Rejected patches do not affect resolved metadata."""</span>
+<a id="__codelineno-18-18" name="__codelineno-18-18" href="#__codelineno-18-18"></a>
+<a id="__codelineno-18-19" name="__codelineno-18-19" href="#__codelineno-18-19"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_pending_patches_excluded</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-18-20" name="__codelineno-18-20" href="#__codelineno-18-20"></a><span class="w">        </span><span class="sd">"""Pending patches do not affect resolved metadata."""</span>
+<a id="__codelineno-18-21" name="__codelineno-18-21" href="#__codelineno-18-21"></a>
+<a id="__codelineno-18-22" name="__codelineno-18-22" href="#__codelineno-18-22"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_deterministic_output</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-18-23" name="__codelineno-18-23" href="#__codelineno-18-23"></a><span class="w">        </span><span class="sd">"""Same inputs always produce same resolved metadata."""</span>
+</code></pre></div>
+<h3 id="property-tests-for-patch-validation">Property Tests for Patch Validation</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">hypothesis</span><span class="w"> </span><span class="kn">import</span> <span class="n">given</span><span class="p">,</span> <span class="n">strategies</span> <span class="k">as</span> <span class="n">st</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="k">class</span><span class="w"> </span><span class="nc">TestPatchValidation</span><span class="p">:</span>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="w">    </span><span class="sd">"""Property-based tests for patch validation."""</span>
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>
+<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a>    <span class="nd">@given</span><span class="p">(</span><span class="n">st</span><span class="o">.</span><span class="n">text</span><span class="p">())</span>
+<a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_invalid_json_rejected</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">raw</span><span class="p">):</span>
+<a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a><span class="w">        </span><span class="sd">"""Malformed JSON never produces valid patches."""</span>
+<a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a>
+<a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a>    <span class="nd">@given</span><span class="p">(</span><span class="n">st</span><span class="o">.</span><span class="n">lists</span><span class="p">(</span><span class="n">st</span><span class="o">.</span><span class="n">fixed_dictionaries</span><span class="p">({</span><span class="o">...</span><span class="p">})))</span>
+<a id="__codelineno-19-11" name="__codelineno-19-11" href="#__codelineno-19-11"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_invalid_operations_rejected</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">patches</span><span class="p">):</span>
+<a id="__codelineno-19-12" name="__codelineno-19-12" href="#__codelineno-19-12"></a><span class="w">        </span><span class="sd">"""Unknown operations are rejected."""</span>
+<a id="__codelineno-19-13" name="__codelineno-19-13" href="#__codelineno-19-13"></a>
+<a id="__codelineno-19-14" name="__codelineno-19-14" href="#__codelineno-19-14"></a>    <span class="nd">@given</span><span class="p">(</span><span class="n">st</span><span class="o">.</span><span class="n">lists</span><span class="p">(</span><span class="n">st</span><span class="o">.</span><span class="n">fixed_dictionaries</span><span class="p">({</span><span class="o">...</span><span class="p">})))</span>
+<a id="__codelineno-19-15" name="__codelineno-19-15" href="#__codelineno-19-15"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_missing_columns_rejected</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">patches</span><span class="p">):</span>
+<a id="__codelineno-19-16" name="__codelineno-19-16" href="#__codelineno-19-16"></a><span class="w">        </span><span class="sd">"""Patches targeting non-existent columns are rejected."""</span>
+</code></pre></div>
+<h3 id="regression-autocontext-determinism">Regression: AutoContext Determinism</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">TestAutoContextDeterminism</span><span class="p">:</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="w">    </span><span class="sd">"""Ensure AutoContext excludes unaccepted suggestions."""</span>
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a>
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_pending_suggestions_excluded_from_autocontext</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="w">        </span><span class="sd">"""Pending LLM suggestions do not appear in AutoContext."""</span>
+<a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a>
+<a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_rejected_suggestions_excluded_from_autocontext</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="w">        </span><span class="sd">"""Rejected suggestions do not appear in AutoContext."""</span>
+<a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a>
+<a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_accepted_enrichments_included_in_autocontext</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-20-11" name="__codelineno-20-11" href="#__codelineno-20-11"></a><span class="w">        </span><span class="sd">"""Accepted patches appear in AutoContext column metadata."""</span>
+<a id="__codelineno-20-12" name="__codelineno-20-12" href="#__codelineno-20-12"></a>
+<a id="__codelineno-20-13" name="__codelineno-20-13" href="#__codelineno-20-13"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">test_autocontext_deterministic_across_runs</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-20-14" name="__codelineno-20-14" href="#__codelineno-20-14"></a><span class="w">        </span><span class="sd">"""Same patches produce identical AutoContext."""</span>
+</code></pre></div>
+<hr />
+<h2 id="open-questions-follow-ups">Open Questions / Follow-ups</h2>
+<h3 id="1-where-to-persist-overlays">1. Where to Persist Overlays?</h3>
+<p><strong>Options</strong>:
+- <strong>JSONL files</strong> (current proposal): Simple, human-readable, append-only
+- <strong>SQLite</strong>: Better querying, but adds dependency
+- <strong>DuckDB</strong>: Already in stack, could extend <code>analytics.duckdb</code></p>
+<p><strong>Recommendation</strong>: Start with JSONL for MVP. Migrate to SQLite/DuckDB if query patterns require it.</p>
+<h3 id="2-confidence-thresholds-for-auto-apply">2. Confidence Thresholds for Auto-Apply?</h3>
+<p><strong>Current decision</strong>: No auto-apply. All suggestions require human acceptance.</p>
+<p><strong>Future consideration</strong>: Could add opt-in "auto-accept if confidence &gt; 0.95 AND not PHI-related" mode. Requires user preference storage and additional trust analysis.</p>
+<h3 id="3-how-to-handle-renamed-columns-across-versions">3. How to Handle Renamed Columns Across Versions?</h3>
+<p><strong>Scenario</strong>: User uploads v1 with column "hba1c", enriches it. Later uploads v2 with column renamed to "hba1c_pct".</p>
+<p><strong>Options</strong>:
+- <strong>Orphan detection</strong>: Mark patches as orphaned if target_column missing in new version
+- <strong>Column mapping</strong>: Allow user to map old column → new column
+- <strong>Automatic matching</strong>: Use fuzzy matching to suggest column mappings</p>
+<p><strong>Recommendation</strong>: Implement orphan detection for MVP. Column mapping wizard for Phase 2+.</p>
+<h3 id="4-codebook-conflict-resolution">4. Codebook Conflict Resolution?</h3>
+<p><strong>Scenario</strong>: LLM suggests <code>{"1": "Yes", "2": "No"}</code> but user knows it's <code>{"1": "Male", "2": "Female"}</code>.</p>
+<p><strong>Current handling</strong>: User rejects LLM suggestion and manually enters correct codebook.</p>
+<p><strong>Future enhancement</strong>: Allow partial accept (keep structure, change labels).</p>
+<h3 id="5-multi-user-collaboration">5. Multi-User Collaboration?</h3>
+<p><strong>Current scope</strong>: Single-user tool. No concurrent edit handling.</p>
+<p><strong>Future consideration</strong>: If multi-user, need optimistic locking or CRDT-style merge for patches.</p>
+<hr />
+<h2 id="code-references">Code References</h2>
+<ul>
+<li><code>src/clinical_analytics/core/schema_inference.py</code> - <code>InferredSchema</code>, <code>DictionaryMetadata</code></li>
+<li><code>src/clinical_analytics/core/autocontext.py</code> - <code>AutoContext</code>, <code>ColumnContext</code></li>
+<li><code>src/clinical_analytics/core/semantic.py</code> - <code>SemanticLayer.add_user_alias()</code></li>
+<li><code>src/clinical_analytics/ui/storage/user_datasets.py</code> - Metadata persistence</li>
+<li><code>src/clinical_analytics/core/llm_json.py</code> - LLM JSON validation</li>
+</ul>
+<hr />
+<h2 id="approval">Approval</h2>
+<ul>
+<li>[ ] Staff Data Engineer review</li>
+<li>[ ] Security/Privacy review (PHI handling)</li>
+<li>[ ] UX review (enrichment workflow)</li>
+</ul>
+<h2 id="revision-history">Revision History</h2>
+<ul>
+<li><strong>2026-01-12</strong>: Initial proposal (ADR011 created)</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

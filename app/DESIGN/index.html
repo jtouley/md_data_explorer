@@ -1,0 +1,2821 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Spec-driven clinical analytics with question-driven semantic analysis">
+      
+      
+        <meta name="author" content="Development Team">
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>Renderer design direction - Clinical Analytics Platform</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#renderer-design-direction" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Clinical Analytics Platform" class="md-header__button md-logo" aria-label="Clinical Analytics Platform" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Clinical Analytics Platform
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Renderer design direction
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/yourusername/md_data_explorer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../user-guide/question-driven-analysis/" class="md-tabs__link">
+          
+  
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../architecture/overview/" class="md-tabs__link">
+          
+  
+  
+  Architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../security/THREAT_MODEL/" class="md-tabs__link">
+          
+  
+  
+  Security
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../api-reference/core/" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../development/contributing/" class="md-tabs__link">
+          
+  
+  
+  Development
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../vision/PURPOSE/" class="md-tabs__link">
+          
+  
+  
+  Specifications
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Clinical Analytics Platform" class="md-nav__button md-logo" aria-label="Clinical Analytics Platform" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Clinical Analytics Platform
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/yourusername/md_data_explorer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quick-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/uploading-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Uploading Data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/question-driven-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/statistical-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Statistical Tests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/interpreting-results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interpreting Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/AS_BUILT_ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    As-built (2025-03)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/ARCHITECTURE_BOUNDARIES/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module boundaries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/semantic-layer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Semantic Layer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/dataset-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dataset Registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/nl-query-engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NL Query Engine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Security
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../security/THREAT_MODEL/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Threat model & backlog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../security/LOCAL_DATA_SECURITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Patient data on this computer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/datasets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Datasets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI Components
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/packaging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packaging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Specifications
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Specifications
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../vision/PURPOSE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Purpose and steel thread
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../implementation/MASTER_PLAN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Master plan (roadmap)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--active"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../specs/omnibus_electron_streamlit_cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Electron cutover (omnibus)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--active"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../specs/question-driven-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../specs/multi-table-support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Table Support
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-brief" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The brief
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-all-four-audits-agree" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where all four audits agree
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-they-disagree-and-what-we-chose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where they disagree, and what we chose
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Where they disagree, and what we chose">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#held-card-amber-left-rule-or-tinted-card-with-a-border" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Held card: amber left rule, or tinted card with a border?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fonts-source-serif-4-source-sans-3-or-ibm-plex" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fonts: Source Serif 4 + Source Sans 3, or IBM Plex?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dark-base-121413-161513-or-141412" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dark base: #121413, #161513 or #141412?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#refused-blue-info-or-neutral" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Refused: blue "info", or neutral?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#user-question-muted-line-or-bubble" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        User question: muted line or bubble?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#status-pills-on-every-message" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Status pills on every message?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hidden-cells-hidden-or-11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hidden cells: "—", "hidden", or "&lt;11"?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#session-titles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session titles
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tokens" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tokens
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tokens">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#measured-contrast-wcag-2x-relative-luminance-re-computed-from-indexcss-by-electronsrcdesigntokenstestjs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measured contrast (WCAG 2.x relative luminance; re-computed from index.css by electron/src/designTokens.test.js)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#type" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Type
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#space-radius-elevation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Space, radius, elevation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#motion-after-kowalski" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Motion (after Kowalski)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#message-states" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Message states
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#theme" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Theme
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#navigation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Navigation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#copy-deck" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Copy deck
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fonts-and-licences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fonts and licences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="renderer-design-direction">Renderer design direction</h1>
+<p>Status: adopted for the Electron renderer (<code>electron/index.html</code>, <code>electron/src/index.css</code>,
+<code>electron/src/renderer.js</code> and the panel modules). This page is the contract the CSS and the
+renderer implement. Values here are the source of truth; change them here first.</p>
+<h2 id="the-brief">The brief</h2>
+<p>The owner asked for an app that feels like a conversation-first assistant, but for clinicians
+rather than programmers, with a dark mode, and with <strong>evidence-backed reasoning, always</strong>.</p>
+<p>We borrow interaction and layout <em>patterns</em> that conversation-first apps share: one centred
+reading column, a composer docked at the bottom, a left sidebar with past conversations titled
+by their first question, quiet chrome. We copy no product's name, logo, brand colours, icons or
+assets. The sage accent, the warm neutrals and the type pairing are this app's own.</p>
+<p>Four independent audits, each applying one designer's published skill set, were rendered in
+Playwright against the pre-redesign renderer (<code>m2int</code>). Their reports and screenshots live in
+the session scratchpad under <code>design_audit/{mengto,owl,conardli,kowalski}</code>. The skills are
+criteria, not authority: where they disagree, the decision below rests on measured evidence or
+on what a clinician has to do with the screen.</p>
+<h2 id="where-all-four-audits-agree">Where all four audits agree</h2>
+<table>
+<thead>
+<tr>
+<th>Finding</th>
+<th>Evidence (audit)</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>No dark mode at all</td>
+<td>Light and dark renders byte-identical (all four)</td>
+<td>Full semantic token set, light + dark, System/Light/Dark toggle</td>
+</tr>
+<tr>
+<td>Chat squeezed by panels</td>
+<td>48 px of chat at 1280×820 under a 454 px preview and a 215 px enrichment block (ConardLi, Kowalski); ~115 px (MengTo); ~40 px (Owl)</td>
+<td>Dataset preview, metadata suggestions and change history move to a dataset panel that opens from the sidebar. The chat owns the main column</td>
+</tr>
+<tr>
+<td>Message states look alike</td>
+<td>Answer, hold, refusal and crash rendered with the same box (Owl, ConardLi, Kowalski)</td>
+<td>Each state has its own shape, a word and an icon, not colour alone</td>
+</tr>
+<tr>
+<td>Plan line is the smallest text on the card</td>
+<td>12.8 px mono (Owl, ConardLi)</td>
+<td>Plan shown as a 16 px labelled list in the body face</td>
+</tr>
+<tr>
+<td>Mono, left-aligned table; literal "suppressed" reads as data</td>
+<td>All four</td>
+<td>Body face with tabular figures, numbers right-aligned, hidden cells muted with a footnote</td>
+</tr>
+<tr>
+<td>Emoji and glyph icons, generic copy</td>
+<td>📊, ◉, ⟳, →, ✕, ✓/✗; "Claim:" prefix; "Group comparison" twice (all four)</td>
+<td>One small inline stroke-icon set; claim is the headline; the intent label shown once as a caption</td>
+</tr>
+<tr>
+<td>Centred column, docked composer</td>
+<td>720–760 px (all four)</td>
+<td>760 px column, composer docked and pinned</td>
+</tr>
+<tr>
+<td>Sessions titled by first question</td>
+<td>Every session read "Dataset: ds_cohort" (Owl, ConardLi, MengTo)</td>
+<td>See "Session titles" below for what is possible today</td>
+</tr>
+<tr>
+<td>Claim as headline + quiet stats line</td>
+<td>MengTo, Kowalski, ConardLi</td>
+<td>Headline sentence, then one stats line, then caveats; split done in the renderer without changing a word or number</td>
+</tr>
+<tr>
+<td>Held plan as a draft awaiting approval</td>
+<td>All four</td>
+<td>Tinted draft card with its own heading and two plain-language buttons</td>
+</tr>
+<tr>
+<td>Refusal is a calm notice, not an error</td>
+<td>All four</td>
+<td>Neutral notice with "Not answered" label; errors keep the danger colour</td>
+</tr>
+<tr>
+<td>Bugs</td>
+<td><code>.thinking-dots span</code> also matches <code>.thinking-stage</code> (one letter per line, Kowalski frame <code>stream-11-1302ms.png</code>); <code>white-space: pre-wrap</code> blank bands; Arial buttons; doubled quotes on examples; rogue <code>#2563eb</code> hover; composer disabled while streaming; new answer below the fold</td>
+<td>All fixed (see the re-audit table in the session report)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="where-they-disagree-and-what-we-chose">Where they disagree, and what we chose</h2>
+<h3 id="held-card-amber-left-rule-or-tinted-card-with-a-border">Held card: amber left rule, or tinted card with a border?</h3>
+<p>MengTo and Kowalski proposed an amber/accent left rule; ConardLi proposed a tinted card with a
+1 px border and no stripe. <strong>Decision: tinted card + 1 px border, no stripe.</strong>
+Evidence: MengTo's own <code>no-ai-design-slop</code> checklist lists "a thick accent stripe is attached to
+one side of a rounded card" as a slop pattern (<code>ARTICLE.md</code>, line 88), so the stripe contradicts
+the skill that proposed it. Functionally, a left rule is also the shape of a quotation or a
+callout; a <em>draft</em> is better signalled by a different surface plus a heading that says what to
+do ("Check this plan before it runs"). The border passes 3:1 against its tint in both themes
+(3.51 light, 3.10 dark).</p>
+<h3 id="fonts-source-serif-4-source-sans-3-or-ibm-plex">Fonts: Source Serif 4 + Source Sans 3, or IBM Plex?</h3>
+<p>MengTo ranked Source Serif 4 + Source Sans 3 first; ConardLi proposed IBM Plex Sans + Plex Mono.
+<strong>Decision: Source Sans 3 for all interface text and tables; Source Serif 4 only for the claim
+headline and the empty-state greeting. No mono face.</strong>
+Evidence: the audits agree the mono plan line and mono table are the problem, so a mono face has
+no remaining job. Source Serif was drawn as a companion to Source Sans, so the pair shares
+proportions and needs no tuning. Source Sans 3 ships tabular lining figures (<code>tnum</code>), which the
+right-aligned tables rely on. A serif headline gives the one sentence that matters a distinct
+voice from the interface around it, which is the "one authored moment" MengTo asks for. Both
+are SIL OFL 1.1 and were taken from Adobe's own repositories (see "Fonts and licences").</p>
+<h3 id="dark-base-121413-161513-or-141412">Dark base: #121413, #161513 or #141412?</h3>
+<p>Owl proposed a green-tinted <code>#121413</code>, ConardLi a warm <code>#161513</code>, Kowalski a neutral-warm
+<code>#141412</code>, MengTo <code>#1B1A18</code>. <strong>Decision: <code>#161513</code> (warm).</strong> The light theme is a warm paper
+(<code>#F7F6F3</code>); a warm dark keeps the two themes the same app. A green-tinted base lowers the
+separation of the sage accent, which is the only hue that marks "act here". Elevation is shown by
+lightness steps (<code>#161513</code> → <code>#1B1A18</code> → <code>#211F1D</code> → <code>#2C2A27</code>), not shadows (Owl,
+ConardLi, Kowalski agree on that).</p>
+<h3 id="refused-blue-info-or-neutral">Refused: blue "info", or neutral?</h3>
+<p>Owl proposed blue (<code>#33598a</code> / <code>#9db8e0</code>); ConardLi a slate neutral; Kowalski "calm, not red".
+<strong>Decision: neutral.</strong> Uses the secondary text colour on the sidebar surface, with an info
+icon and the words "Not answered". A refusal on privacy grounds is the product working, so it
+must not borrow the error's red; a second accent hue (blue) would compete with sage, which
+already means "you can act". The word and icon carry the meaning (WCAG 1.4.1).</p>
+<h3 id="user-question-muted-line-or-bubble">User question: muted line or bubble?</h3>
+<p>MengTo proposed the question as a small muted line above each answer; ConardLi a right-aligned
+bubble. <strong>Decision: right-aligned bubble on the sunken surface, max 80 % width.</strong> The chain a
+clinician audits is question → plan → answer. A muted line makes their own words look like
+metadata; the bubble keeps turn-taking legible when scanning back.</p>
+<h3 id="status-pills-on-every-message">Status pills on every message?</h3>
+<p>Owl proposed "Answered ✓ / Needs your OK / Not answered / Error" pills on every message.
+<strong>Decision: label only the states that need different action</strong> (held, refused, error, stopped).
+An answer is shown by its claim; a pill saying "Answered" on every turn is noise (MengTo's
+restraint criterion). Answers get the analysis type ("Group comparison") as a caption.</p>
+<h3 id="hidden-cells-hidden-or-11">Hidden cells: "—", "hidden", or "&lt;11"?</h3>
+<p>MengTo proposed "—" with a footnote "fewer than 11 patients"; ConardLi "&lt;11" with †; Owl a muted
+italic "hidden". <strong>Decision: muted italic "hidden" with a † and one footnote; cells that the API
+already sends as "&lt;11" keep that text, muted, with the same †.</strong>
+Evidence: the API marks <em>both</em> primary small cells (1–10) <em>and</em> secondary cells (hidden so a small
+cell cannot be worked out from a total) with the same word, deliberately, so the two cannot be
+told apart (<code>result_presentation.py</code>, <code>_mask</code>). Rendering every hidden cell as "fewer than 11"
+would be false for secondary cells; rendering "—" reads as "missing" or "zero" in clinical
+tables. The footnote says what is true for both: "Hidden to protect privacy: counts from 1 to 10
+are not shown, and some other cells are hidden so those counts can't be worked out from totals."
+Within one answer the API uses one marker: when the table hides a count, the claim does not write
+"&lt;11" for it either. It says "n hidden" (n, the exclusions and any rows a filter removed add up to
+the dataset's row count, and n plus the exclusions is the filtered cohort a COUNT shows, so n is
+hidden when any of them is small, together with every group size; with n hidden the clause never
+mentions exclusions, even when their count is large enough to show: "n hidden; 50 excluded" would
+tell a small n apart from a small exclusion count, and "n=377; some excluded" would give the
+exclusions away to a second COUNT), "count hidden", or "Total count hidden." for a filtered count.
+The semantic layer sends the rows the filters removed (<code>n_filtered_out</code>, counted where compute
+filtered them, in the unit of the total: patients for a distinct-patient count), so the presenter
+never works it out per analysis type.
+A statistic that can be one patient's value (a mean, a median, min and max, a group's mean or
+median) is shown only when the count beside it is present, is a whole number and is not hidden.
+If the count is missing or is text or a decimal, the statistic is hidden as well, and the claim
+says "Statistics for ldl are not shown because n is missing." or "Median time to death (days) is
+not shown because n is missing." A table cell that should be a count but is not a whole number is
+hidden like a small count.
+"&lt;11" appears only when it is the answer's sole hidden count, e.g. "Total count: &lt;11."
+We never write "&lt;5"; the threshold is 11.
+Only the API's exact tokens mean hidden: the lowercase <code>suppressed</code> and <code>&lt;11</code> (built from the
+threshold). Any other text, such as an age band "&lt;65" or a category spelled "Suppressed", is a
+label and is shown as written, with no † and no footnote.</p>
+<p><strong>Data check (cohort details) uses one label only.</strong> Its report (<code>contracts/quality.py</code>) shows
+every suppressed count the same way, as "some … ; count hidden to protect privacy", never "&lt;11":
+with a visible row total, two labels would tell a reader that the non-"&lt;11" hidden counts are 11
+or more, and a column's missing + bad + valid counts would then pin a small one. A hidden count
+there only means "at least 1" (zero is shown as 0). A check whose count is hidden always has the
+status "review", whatever the value (a pass/warning would say which side of a threshold it is on:
+1 of 20 missing "passed" at 5% meant exactly 1), so the summary and "N things to review" depend
+only on shown numbers. When any count in a column is 1–10, all of that column's non-zero counts
+are hidden together (hiding only some would let a reader work out which was smaller). A column
+gets one problem-value check at most: a coded column whose name looks like "age" or "BMI" gets
+its codebook check, not a range (codes are not measurements). The row count is always shown, as
+in the meta line and the first-rows overview; tables of 1–12 rows show it but hide every column
+count, zeros included, with the line "{N} rows: too few rows to report counts". Its footnote: "Hidden to protect privacy:
+counts from 1 to 10 are not shown, and some larger counts are hidden too so those can't be
+worked out from the totals. A hidden count is never zero."</p>
+<h3 id="session-titles">Session titles</h3>
+<p>All audits ask for sessions titled by their first question. The API does not persist messages
+(<code>message_count</code> is always 0 for real sessions; conversation history is in memory), so there is
+no first question to show after a restart. <strong>Decision:</strong> sessions created in this run are titled by
+their first question (held in memory only); others read "Earlier conversation". The renderer
+also reads a <code>title</code> field if the API ever sends one. We rejected saving question text in
+<code>localStorage</code>: questions can identify patients, and a copy there would survive "Delete
+dataset", which promises to remove every session for that dataset
+(<code>docs/security/LOCAL_DATA_SECURITY.md</code>). Follow-up for the API: persist the first question with
+the session so deleting the dataset deletes it too.</p>
+<h2 id="tokens">Tokens</h2>
+<p>All colours are semantic custom properties on <code>:root</code>, overridden under
+<code>:root[data-theme="dark"]</code> and <code>@media (prefers-color-scheme: dark) :root:not([data-theme="light"])</code>.
+<code>color-scheme: light dark</code> lets native controls and scrollbars follow.</p>
+<table>
+<thead>
+<tr>
+<th>Token</th>
+<th>Light</th>
+<th>Dark</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--bg</code></td>
+<td><code>#F7F6F3</code></td>
+<td><code>#161513</code></td>
+<td>Canvas, chat column</td>
+</tr>
+<tr>
+<td><code>--surface-1</code></td>
+<td><code>#EFEDE8</code></td>
+<td><code>#1B1A18</code></td>
+<td>Sidebar, refusal notice</td>
+</tr>
+<tr>
+<td><code>--surface-2</code></td>
+<td><code>#FFFFFF</code></td>
+<td><code>#211F1D</code></td>
+<td>Composer, tables, panels</td>
+</tr>
+<tr>
+<td><code>--surface-3</code></td>
+<td><code>#FFFFFF</code> + shadow</td>
+<td><code>#2C2A27</code></td>
+<td>Menus, sheets</td>
+</tr>
+<tr>
+<td><code>--sunken</code></td>
+<td><code>#ECEAE4</code></td>
+<td><code>#272522</code></td>
+<td>User question bubble, table head</td>
+</tr>
+<tr>
+<td><code>--border</code></td>
+<td><code>#E3E0D9</code></td>
+<td><code>#33302C</code></td>
+<td>Decorative hairlines (not a UI boundary)</td>
+</tr>
+<tr>
+<td><code>--border-strong</code></td>
+<td><code>#847F75</code></td>
+<td><code>#77726A</code></td>
+<td>Control boundaries (inputs, select, secondary buttons)</td>
+</tr>
+<tr>
+<td><code>--text-1</code></td>
+<td><code>#1C1B19</code></td>
+<td><code>#ECEAE5</code></td>
+<td>Body, headline</td>
+</tr>
+<tr>
+<td><code>--text-2</code></td>
+<td><code>#4A4844</code></td>
+<td><code>#BDB9B1</code></td>
+<td>Secondary text, stats line</td>
+</tr>
+<tr>
+<td><code>--text-3</code></td>
+<td><code>#68655F</code></td>
+<td><code>#9A968E</code></td>
+<td>Captions, meta, hidden cells</td>
+</tr>
+<tr>
+<td><code>--accent</code></td>
+<td><code>#3F6E4E</code></td>
+<td><code>#7FB08E</code></td>
+<td>Primary action, focus, active session</td>
+</tr>
+<tr>
+<td><code>--accent-hover</code></td>
+<td><code>#345C41</code></td>
+<td><code>#96C2A3</code></td>
+<td>Primary hover</td>
+</tr>
+<tr>
+<td><code>--accent-subtle</code></td>
+<td><code>#E4ECE5</code></td>
+<td><code>#22302A</code></td>
+<td>Selected rows, chips hover</td>
+</tr>
+<tr>
+<td><code>--on-accent</code></td>
+<td><code>#FFFFFF</code></td>
+<td><code>#10140F</code></td>
+<td>Text on primary</td>
+</tr>
+<tr>
+<td><code>--held</code> / <code>--held-bg</code> / <code>--held-border</code></td>
+<td><code>#8A5A12</code> / <code>#FBF3E4</code> / <code>#A57A33</code></td>
+<td><code>#E0B46A</code> / <code>#2A2318</code> / <code>#8A6A32</code></td>
+<td>Plan awaiting approval</td>
+</tr>
+<tr>
+<td><code>--notice</code> / <code>--notice-bg</code></td>
+<td><code>#4A4844</code> / <code>#EFEDE8</code></td>
+<td><code>#BDB9B1</code> / <code>#1B1A18</code></td>
+<td>Refusal</td>
+</tr>
+<tr>
+<td><code>--danger</code> / <code>--danger-bg</code></td>
+<td><code>#A8373A</code> / <code>#FBEDEC</code></td>
+<td><code>#E58C86</code> / <code>#2E1C1B</code></td>
+<td>Errors, delete</td>
+</tr>
+</tbody>
+</table>
+<h3 id="measured-contrast-wcag-2x-relative-luminance-re-computed-from-indexcss-by-electronsrcdesigntokenstestjs">Measured contrast (WCAG 2.x relative luminance; re-computed from <code>index.css</code> by <code>electron/src/designTokens.test.js</code>)</h3>
+<p>Minimums: 4.5:1 for text, 3:1 for UI boundaries. All pairs below pass.</p>
+<table>
+<thead>
+<tr>
+<th>Pair</th>
+<th>Light</th>
+<th>Dark</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>text-1 on bg / surface-1 / surface-2 / sunken</td>
+<td>15.92 / 14.71 / 17.21 / 14.31</td>
+<td>15.18 / 14.46 / 13.66 / 12.71</td>
+</tr>
+<tr>
+<td>text-2 on bg / surface-1 / surface-2 / sunken</td>
+<td>8.44 / 7.80 / 9.12 / 7.58</td>
+<td>9.33 / 8.89 / 8.40 / 7.82</td>
+</tr>
+<tr>
+<td>text-3 on bg / surface-1 / surface-2 / sunken</td>
+<td>5.37 / 4.96 / 5.81 / 4.83</td>
+<td>6.19 / 5.90 / 5.58 / 5.19</td>
+</tr>
+<tr>
+<td>accent (as text) on bg / surface-1 / surface-2</td>
+<td>5.47 / 5.05 / 5.91</td>
+<td>7.39 / 7.04 / 6.65</td>
+</tr>
+<tr>
+<td>accent on accent-subtle</td>
+<td>4.91</td>
+<td>5.58</td>
+</tr>
+<tr>
+<td>on-accent on accent / accent-hover</td>
+<td>5.91 / 7.63</td>
+<td>7.53 / 9.34</td>
+</tr>
+<tr>
+<td>held on held-bg; text-1 on held-bg</td>
+<td>5.36; 15.61</td>
+<td>8.07; 12.92</td>
+</tr>
+<tr>
+<td>notice on notice-bg</td>
+<td>7.80</td>
+<td>8.89</td>
+</tr>
+<tr>
+<td>danger on bg / surface-2 / danger-bg</td>
+<td>5.94 / 6.42 / 5.63</td>
+<td>7.32 / 6.59 / 6.49</td>
+</tr>
+<tr>
+<td>border-strong on bg / surface-1 / surface-2 (UI, ≥3)</td>
+<td>3.68 / 3.40 / 3.98</td>
+<td>3.82 / 3.64 / 3.44</td>
+</tr>
+<tr>
+<td>held-border on held-bg (UI, ≥3)</td>
+<td>3.51</td>
+<td>3.10</td>
+</tr>
+</tbody>
+</table>
+<p><code>--border</code> is decorative only (hairlines between rows); every interactive boundary uses
+<code>--border-strong</code> or the accent.</p>
+<h3 id="type">Type</h3>
+<table>
+<thead>
+<tr>
+<th>Token</th>
+<th>Size / line-height</th>
+<th>Face, weight</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--fs-xs</code></td>
+<td>12 / 16</td>
+<td>Sans 500</td>
+<td>Captions, date group headings, footnotes</td>
+</tr>
+<tr>
+<td><code>--fs-sm</code></td>
+<td>13 / 18</td>
+<td>Sans 400</td>
+<td>Stats line, meta, table head</td>
+</tr>
+<tr>
+<td><code>--fs-md</code></td>
+<td>14 / 20</td>
+<td>Sans 400–600</td>
+<td>Sidebar, buttons, table cells</td>
+</tr>
+<tr>
+<td><code>--fs-body</code></td>
+<td>16 / 25</td>
+<td>Sans 400</td>
+<td>Question, notices, plan, composer</td>
+</tr>
+<tr>
+<td><code>--fs-claim</code></td>
+<td>20 / 28</td>
+<td>Serif 500</td>
+<td>Claim headline</td>
+</tr>
+<tr>
+<td><code>--fs-display</code></td>
+<td>28 / 34</td>
+<td>Serif 500</td>
+<td>Empty-state greeting</td>
+</tr>
+</tbody>
+</table>
+<p>Weights 400/500/600 only. Sentence case everywhere (no tracked uppercase). Numbers in tables
+use <code>font-variant-numeric: tabular-nums lining-nums</code>.</p>
+<h3 id="space-radius-elevation">Space, radius, elevation</h3>
+<ul>
+<li>Spacing: 4, 8, 12, 16, 24, 32, 48, 64 (<code>--sp-1</code> … <code>--sp-8</code>). Nothing off this ladder.</li>
+<li>Radii: 6 controls, 10 cards/tables/panels, 16 composer, full for chips.</li>
+<li>Elevation: light uses <code>--shadow-1</code> on the composer and <code>--shadow-2</code> on menus/sheets; dark uses
+  no shadows, only a lighter surface plus a 1 px border.</li>
+<li>Layout: sidebar 264 px; chat column max 760 px with 24 px side padding; dataset panel 440 px
+  sheet from the right. Under 1000 px wide the sidebar narrows to 232 px; the column stays
+  fluid. Under 700 CSS px (the 800 × 600 minimum window at 200% zoom is 400 px wide) the sidebar
+  folds behind a "Cohort and conversations" toggle (<code>aria-expanded</code>). The open drawer is not
+  modal: its close button and Escape return focus to the toggle; a click outside it or focus
+  moving out of it closes it; its scroll is contained. The language model banner can be
+  dismissed so the composer stays on screen; the offline banner cannot, because its "Try again"
+  is the only way to reconnect. The composer shows the same 2 px <code>--focus-ring</code>
+  outline as every other control on <code>:focus-within</code>.</li>
+</ul>
+<h3 id="motion-after-kowalski">Motion (after Kowalski)</h3>
+<table>
+<thead>
+<tr>
+<th>Token</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--ease-out</code></td>
+<td><code>cubic-bezier(.23, 1, .32, 1)</code></td>
+</tr>
+<tr>
+<td><code>--ease-in-out</code></td>
+<td><code>cubic-bezier(.77, 0, .175, 1)</code></td>
+</tr>
+<tr>
+<td><code>--dur-press</code></td>
+<td>100 ms</td>
+</tr>
+<tr>
+<td><code>--dur-hover</code></td>
+<td>120 ms</td>
+</tr>
+<tr>
+<td><code>--dur-pop</code></td>
+<td>180 ms</td>
+</tr>
+<tr>
+<td><code>--dur-enter</code></td>
+<td>220 ms</td>
+</tr>
+<tr>
+<td><code>--dur-exit</code></td>
+<td>140 ms</td>
+</tr>
+<tr>
+<td><code>--press-scale</code></td>
+<td>.97</td>
+</tr>
+</tbody>
+</table>
+<p>Choreography:
+- <strong>Send</strong>: button presses to <code>scale(.97)</code> (transform only). The question bubble enters at once
+  (opacity + 4 px rise, 180 ms).
+- <strong>Working</strong>: three dots pulse opacity on a 1.2 s cycle; the stage text ("Reading your
+  question", "Running the analysis") is a sibling, static, and swaps text without moving. After
+  3 s an elapsed counter appears.
+- <strong>Answer lands</strong>: the card enters with opacity 0→1, <code>translateY(6px)</code>→0, <code>blur(2px)</code>→0 over
+  220 ms; caption, claim, stats and table stagger by 40–60 ms. Numbers never count up.
+- <strong>Held card</strong>: same entry. After "Run this analysis" the plan stays and the result arrives
+  below; after "Not what I meant" the buttons are replaced by a one-line note.
+- <strong>Scroll</strong>: when the reader was at the bottom, a new answer is scrolled into view; if the
+  answer is taller than the view, its top is aligned instead so the headline is never off-screen.
+- <strong>Hover</strong> effects are gated behind <code>(hover: hover)</code>. Transitions name their properties (no
+  <code>transition: all</code>).
+- <strong>Reduced motion</strong>: no translate, no blur, no pulse; opacity fades of 150 ms remain, scroll
+  is instant.</p>
+<h2 id="message-states">Message states</h2>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Shape</th>
+<th>Label / icon</th>
+<th>Copy</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Answered</td>
+<td>No box; caption, serif headline (an <code>h3</code>; the message is an <code>article</code> labelled by its question), stats line, what was computed, caveats, table, footnote</td>
+<td>Analysis type as caption</td>
+<td>Claim text from the API, unchanged; under it the plan from <code>plan_line</code> as a small list that always shows who was included ("Age over 83") and what was counted ("Rows" or "Patients (each Patient ID once)"). The footnote appears whenever anything is hidden, in the table or in the claim ("Total count hidden."). A table whose every value is hidden is not drawn; a table with more than 20 groups is never drawn ("The table isn’t shown because it has N groups…"). Table numbers use the claim's precision (p-values aside); "outcome=0" reads "Outcome: 0". The live region reads "Answer: {headline}".</td>
+</tr>
+<tr>
+<td>Held</td>
+<td>Tinted draft card with border</td>
+<td>Clock icon + "Check this plan before it runs"</td>
+<td>API reason, a next step (for words it couldn't place: "This cohort has LDL and HDL. If you meant one of them, choose “Not what I meant” and ask again using its name."), then the plan as a labelled list (a missing value reads "Not set"; internal flags are not shown), the exact plan text on demand, buttons "Run this analysis" / "Not what I meant" ("Not what I meant" is the primary button when words were left out)</td>
+</tr>
+<tr>
+<td>Confirmed</td>
+<td>Held card, buttons replaced</td>
+<td>"You approved this plan. The answer is below."</td>
+<td>Result streams below. If the answer below is a refusal or an error: "Not run — see below."</td>
+</tr>
+<tr>
+<td>Rejected</td>
+<td>Held card, buttons replaced</td>
+<td>"Not run."</td>
+<td>"Not run. Rephrase your question below."</td>
+</tr>
+<tr>
+<td>Refused</td>
+<td>Neutral notice</td>
+<td>Info icon + "Not answered"</td>
+<td>API reason, then "Your question is back in the box below so you can change it."</td>
+</tr>
+<tr>
+<td>Error</td>
+<td>Danger-tinted notice</td>
+<td>Alert icon + "Something went wrong"</td>
+<td>A plain sentence, never engine or exception text ("Execution error: …" is an error, not a refusal). A network failure: "Couldn’t reach the analysis engine. Ask again; if it keeps happening, restart the app." An HTTP 5xx: "The analysis engine ran into a problem with this question. Ask again in other words; if it keeps happening, restart the app." A 4xx keeps the server’s reason in plain words (a 404 for a deleted cohort: "This cohort no longer exists…"). Upload, delete and panel errors never mention "this question" The engine's exact words only behind "Copy details"; question restored</td>
+</tr>
+<tr>
+<td>Loading</td>
+<td>Dots + stage text</td>
+<td>—</td>
+<td>"Reading your question", "Running the analysis", "· 4 s" after 3 s</td>
+</tr>
+<tr>
+<td>Streaming</td>
+<td>Send becomes Stop; composer stays editable</td>
+<td>Stop icon</td>
+<td>Enter while busy: "Wait for this answer, or press Stop."</td>
+</tr>
+<tr>
+<td>Stopped</td>
+<td>Muted note</td>
+<td>"Stopped"</td>
+<td>"Stopped waiting for this answer.", shown the moment Stop is pressed, even before the question reached the engine (the request is aborted). After an approved plan, its card settles ("You approved this plan, then stopped waiting. Ask again to see an answer.") and is never offered again.</td>
+</tr>
+<tr>
+<td>Empty (no cohort)</td>
+<td>Centred</td>
+<td>—</td>
+<td>"Choose a cohort to begin." + Upload / Use the sample cohort</td>
+</tr>
+<tr>
+<td>Empty (cohort chosen)</td>
+<td>Centred serif greeting + chips</td>
+<td>—</td>
+<td>"What would you like to know about {cohort}?" + three questions built from its columns (fill the box, never auto-send)</td>
+</tr>
+<tr>
+<td>Offline</td>
+<td>Banner at the top of the main column; empty state explains</td>
+<td>Alert icon</td>
+<td>"Can't reach the analysis engine on this computer." + Try again; empty state "Waiting for the analysis engine."</td>
+</tr>
+<tr>
+<td>Deleting</td>
+<td>In-page dialog under the cohort switcher</td>
+<td>—</td>
+<td>Existing delete copy; "Deleting…" while busy</td>
+</tr>
+</tbody>
+</table>
+<h2 id="theme">Theme</h2>
+<ul>
+<li>Three choices: System, Light, Dark, as a segmented radio group in the sidebar footer.</li>
+<li>Electron: the renderer calls <code>window.appTheme.set(source)</code> (preload → <code>ipcMain.handle</code>), main
+  sets <code>nativeTheme.themeSource</code>, which drives <code>prefers-color-scheme</code> in the page, and persists
+  the choice to <code>settings.json</code> in the app's user-data folder. Main reads it before the window is
+  created and sets the window <code>backgroundColor</code> to match, so the first frame is already the right
+  theme. Only the app's own page may call it, and only these three values are accepted.
+  Main also passes the saved choice to preload (<code>--ca-theme=&lt;source&gt;</code>), exposed as
+  <code>appTheme.initial</code>, and the <code>&lt;head&gt;</code> script uses it first, so a stale <code>localStorage</code> copy can
+  never paint the other theme.</li>
+<li>Browser (Vite, Playwright): an inline script in <code>&lt;head&gt;</code> reads <code>localStorage</code> (wrapped in
+  <code>try</code>) and sets <code>data-theme</code> before first paint; the stylesheet does the rest.</li>
+<li>Theme change cross-fades background and text colours for 200 ms (none under reduced motion).</li>
+</ul>
+<h2 id="navigation">Navigation</h2>
+<ul>
+<li><strong>Sidebar</strong> (top to bottom): app name; cohort switcher (native <code>&lt;select&gt;</code>, so keyboard and
+  screen readers work as before) with a ⋯ button opening a small menu: Upload a file, Use the
+  sample cohort, Preview and details, Refresh the list, Delete this cohort; a meta line
+  "400 rows · 14 variables" (rows, not "patients": a file can hold several rows per patient,
+  and the meta line must not claim what it has not checked); a "New question" button; past conversations grouped by
+  Today / Yesterday / Previous 7 days / Older; footer with the on-this-computer status and the
+  theme switch.</li>
+<li><strong>Main</strong>: the chat column and the docked composer only. An offline banner appears only when
+  the engine cannot be reached; the "Backend connected" badge is gone.</li>
+<li><strong>Dataset panel</strong>: a sheet from the right with the preview table, variable suggestions and
+  change history. Opened from the ⋯ menu or the meta line; Escape or the close button returns
+  focus to where it came from.</li>
+</ul>
+<h2 id="copy-deck">Copy deck</h2>
+<p>Plain clinical language; "cohort" for the uploaded dataset, "rows" for rows (the API's own claims
+say "patients" where it has counted patients), no internal ids on screen.</p>
+<table>
+<thead>
+<tr>
+<th>Where</th>
+<th>Before</th>
+<th>After</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Title</td>
+<td>Clinical Analytics + ◉</td>
+<td>Clinical Analytics (text only)</td>
+</tr>
+<tr>
+<td>Status (connected)</td>
+<td>Backend connected</td>
+<td>Running on this computer</td>
+</tr>
+<tr>
+<td>Status (offline)</td>
+<td>Backend unavailable</td>
+<td>Can't reach the analysis engine on this computer.</td>
+</tr>
+<tr>
+<td>LLM banner, not reachable</td>
+<td>Local LLM (Ollama) is not reachable at … Tier-3 NL fallback …</td>
+<td>Some questions need the local language model, which isn't running. Simple questions still work.</td>
+</tr>
+<tr>
+<td>LLM banner, model missing</td>
+<td>Ollama is running but the default model "…" was not found …</td>
+<td>The local language model "{model}" isn't installed, so some questions won't work. Simple questions still work.</td>
+</tr>
+<tr>
+<td>Sidebar heading</td>
+<td>SESSIONS / + New</td>
+<td>(date groups) / New question</td>
+</tr>
+<tr>
+<td>Session row</td>
+<td>Dataset: ds_cohort · 6 msgs · 5m ago</td>
+<td>{first question} or "Earlier conversation" / {cohort} · 5 min ago (the message count was dropped: the API always reports 0)</td>
+</tr>
+<tr>
+<td>Session delete</td>
+<td>✕ + window.confirm</td>
+<td>Icon button "Delete conversation: {title}", in-row confirm "Delete this conversation? It can't be recovered." Keep / Delete (focus on Keep; Escape keeps)</td>
+</tr>
+<tr>
+<td>Dataset select placeholder</td>
+<td>Select a dataset...</td>
+<td>Choose a cohort…</td>
+</tr>
+<tr>
+<td>Dataset meta</td>
+<td>400 rows • 14 columns</td>
+<td>400 rows · 14 variables (sidebar; opens the details panel)</td>
+</tr>
+<tr>
+<td>Upload</td>
+<td>Upload dataset / Load sample / ✓ x uploaded / ✗ Upload failed:</td>
+<td>Upload a file… / Use the sample cohort / "The cohort “{name}” is ready." (plain text colour, not the accent) / "Couldn't upload “{file}”. {reason}"</td>
+</tr>
+<tr>
+<td>Delete</td>
+<td>Delete dataset</td>
+<td>Delete this cohort… (menu)</td>
+</tr>
+<tr>
+<td>Welcome</td>
+<td>📊 Welcome to Clinical Analytics … "Try asking:"</td>
+<td>No cohort: "Choose a cohort to begin." With cohort: "What would you like to know about {cohort}?"</td>
+</tr>
+<tr>
+<td>Placeholder</td>
+<td>Ask a question about your data...</td>
+<td>Ask about {cohort}…</td>
+</tr>
+<tr>
+<td>Hint</td>
+<td>Press Enter to ask; Shift+Enter for a new line</td>
+<td>Enter to ask · Shift+Enter for a new line</td>
+</tr>
+<tr>
+<td>Hint (none)</td>
+<td>Select a dataset to start asking questions</td>
+<td>Choose a cohort to begin.</td>
+</tr>
+<tr>
+<td>Working</td>
+<td>Processing… / Stage: planning</td>
+<td>Reading your question… / Running the analysis…</td>
+</tr>
+<tr>
+<td>Claim</td>
+<td>Claim: {claim} + title twice</td>
+<td>{headline} / {stats line} / {caveats}; title once as caption</td>
+</tr>
+<tr>
+<td>Hidden cell</td>
+<td>suppressed</td>
+<td>hidden† / &lt;11† + footnote</td>
+</tr>
+<tr>
+<td>Upload ready + data check</td>
+<td>✓ x uploaded</td>
+<td>"The cohort “{name}” is ready." + "Data check found N things to review in cohort details." and an "Open cohort details" button / "Data check found nothing to flag." / "Data check could not run."</td>
+</tr>
+<tr>
+<td>Cohort details: data check</td>
+<td>(none)</td>
+<td>Section "Data check": the API's lines as a list (suppressed counts read "some …; count hidden to protect privacy"), the data-check footnote; on failure "Data check could not run: {reason}. You can still ask questions."</td>
+</tr>
+<tr>
+<td>Hold heading</td>
+<td>(none)</td>
+<td>Check this plan before it runs</td>
+</tr>
+<tr>
+<td>Confirm / Reject</td>
+<td>Confirm / Reject</td>
+<td>Run this analysis / Not what I meant</td>
+</tr>
+<tr>
+<td>Rejected</td>
+<td>Query rejected — not executed.</td>
+<td>Not run. Rephrase your question below.</td>
+</tr>
+<tr>
+<td>Confirm while busy</td>
+<td>Wait for the current answer to finish, then confirm.</td>
+<td>Wait for the current answer to finish, then run this.</td>
+</tr>
+<tr>
+<td>Refusal</td>
+<td>Error: … / The question could not be answered: …</td>
+<td>Not answered + reason + "Your question is back in the box below so you can change it."</td>
+</tr>
+<tr>
+<td>Crash</td>
+<td>Sorry, I encountered an error: …</td>
+<td>Something went wrong + message</td>
+</tr>
+<tr>
+<td>Lost stream</td>
+<td>Connection lost. Please try again.</td>
+<td>The connection to the analysis engine dropped before the answer arrived. Ask again.</td>
+</tr>
+<tr>
+<td>Busy hint</td>
+<td>Working on your answer. Press Stop to stop waiting.</td>
+<td>Wait for this answer, or press Stop.</td>
+</tr>
+<tr>
+<td>Native dialogs</td>
+<td>Paths, exit signals, log lines, build commands</td>
+<td>One plain sentence (a folder or data path the user must act on stays in it); tracebacks, log lines and build commands behind "Copy details", which re-shows the dialog with "Details copied. Paste them to whoever supports the app."</td>
+</tr>
+<tr>
+<td>App menu</td>
+<td>Electron default (Reload, Toggle Developer Tools)</td>
+<td>File, Edit, View (zoom, full screen), Window; no Reload; developer tools only in development</td>
+</tr>
+<tr>
+<td>Session switched</td>
+<td>Session restored. Switched to session sess_…</td>
+<td>Continuing an earlier conversation. Earlier answers aren't shown here; new questions continue it.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="fonts-and-licences">Fonts and licences</h2>
+<p>Bundled in <code>electron/src/fonts/</code>, unmodified, served from the app (no network at runtime).</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Source (primary)</th>
+<th>Version</th>
+<th>Licence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SourceSans3VF-Upright.woff2</code></td>
+<td><code>adobe-fonts/source-sans</code>, branch <code>release</code>, <code>WOFF2/VF/SourceSans3VF-Upright.ttf.woff2</code></td>
+<td>3.3408</td>
+<td>SIL OFL 1.1</td>
+</tr>
+<tr>
+<td><code>SourceSans3VF-Italic.woff2</code></td>
+<td>same repository, <code>WOFF2/VF/SourceSans3VF-Italic.ttf.woff2</code></td>
+<td>3.3408</td>
+<td>SIL OFL 1.1</td>
+</tr>
+<tr>
+<td><code>SourceSerif4VF-Roman.woff2</code></td>
+<td><code>adobe-fonts/source-serif</code>, branch <code>release</code>, <code>WOFF2/VAR/SourceSerif4Variable-Roman.ttf.woff2</code></td>
+<td>4.328</td>
+<td>SIL OFL 1.1</td>
+</tr>
+</tbody>
+</table>
+<p>The licence files were fetched from the same repositories (<code>LICENSE.md</code>) and are committed as
+<code>electron/src/fonts/SourceSans3-OFL.md</code> and <code>SourceSerif4-OFL.md</code>. Both name the Reserved Font
+Name "Source": the files are shipped unmodified (no subsetting or renaming), which the OFL permits
+when bundled with software, together with the licence.</p>
+<h2 id="known-limits">Known limits</h2>
+<ul>
+<li>Session titles after a restart need the API to persist the first question (see above).</li>
+<li>Earlier answers in a resumed session are not shown: the API has no transcript endpoint.</li>
+<li>The confirm request is built in one function (<code>buildConfirmRequest</code> in
+  <code>electron/src/confirmHold.js</code>) so a server-issued hold token can be added in one place.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

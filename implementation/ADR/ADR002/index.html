@@ -1,0 +1,3112 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Spec-driven clinical analytics with question-driven semantic analysis">
+      
+      
+        <meta name="author" content="Development Team">
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>ADR 002: Persistent Storage Layer with DuckDB and Deferred Ibis Integration - Clinical Analytics Platform</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#adr-002-persistent-storage-layer-with-duckdb-and-deferred-ibis-integration" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="Clinical Analytics Platform" class="md-header__button md-logo" aria-label="Clinical Analytics Platform" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Clinical Analytics Platform
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ADR 002: Persistent Storage Layer with DuckDB and Deferred Ibis Integration
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/yourusername/md_data_explorer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../getting-started/installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../user-guide/question-driven-analysis/" class="md-tabs__link">
+          
+  
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../architecture/overview/" class="md-tabs__link">
+          
+  
+  
+  Architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../security/THREAT_MODEL/" class="md-tabs__link">
+          
+  
+  
+  Security
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../api-reference/core/" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../development/contributing/" class="md-tabs__link">
+          
+  
+  
+  Development
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../vision/PURPOSE/" class="md-tabs__link">
+          
+  
+  
+  Specifications
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="Clinical Analytics Platform" class="md-nav__button md-logo" aria-label="Clinical Analytics Platform" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Clinical Analytics Platform
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/yourusername/md_data_explorer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/quick-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/uploading-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Uploading Data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/question-driven-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/statistical-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Statistical Tests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/interpreting-results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interpreting Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/AS_BUILT_ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    As-built (2025-03)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/ARCHITECTURE_BOUNDARIES/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module boundaries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/semantic-layer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Semantic Layer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/dataset-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dataset Registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/nl-query-engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NL Query Engine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Security
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../security/THREAT_MODEL/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Threat model & backlog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../security/LOCAL_DATA_SECURITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Patient data on this computer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/datasets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Datasets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI Components
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/packaging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packaging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Specifications
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Specifications
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../vision/PURPOSE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Purpose and steel thread
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../MASTER_PLAN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Master plan (roadmap)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--active"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../specs/omnibus_electron_streamlit_cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Electron cutover (omnibus)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--active"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../specs/question-driven-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../specs/multi-table-support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Table Support
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Status
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Context">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#problems-with-current-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Problems with Current Architecture
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#clinical-research-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Clinical Research Requirements
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#technical-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Technical Constraints
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-state-as-of-2025-01-xx" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current State (As of 2025-01-XX)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Current State (As of 2025-01-XX)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#whats-implemented" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What's Implemented
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#whats-missing-adr-vision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What's Missing (ADR Vision)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#current-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current Architecture
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gap-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gap Analysis
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Decision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dataset-versioning-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dataset Versioning Contract
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#metadata-json-schema-authoritative" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metadata JSON Schema (Authoritative)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#immediate-implementation-this-sprint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Immediate Implementation (This Sprint)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Immediate Implementation (This Sprint)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#core-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core Components
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deferred-to-future-not-in-this-sprint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deferred to Future (NOT in This Sprint)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Deferred to Future (NOT in This Sprint)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-were-not-using-ibis-now" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why We're NOT Using Ibis Now
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-to-reconsider-ibis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to Reconsider Ibis
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#migration-plan-current-state-adr-vision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Migration Plan: Current State → ADR Vision
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Migration Plan: Current State → ADR Vision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-0-feature-parity-priority-0-do-first" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 0: Feature Parity (Priority 0 - Do First) ⚠️
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-duckdb-backed-persistence-priority-1-do-next" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: DuckDB-Backed Persistence (Priority 1 - Do Next)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-lazy-evaluation-parquet-export-priority-1-do-next" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: Lazy Evaluation &amp; Parquet Export (Priority 1 - Do Next)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-conversation-history-priority-2-do-after-core" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3: Conversation History (Priority 2 - Do After Core)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Plan
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation Plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-0-feature-parity-2-hours-do-first" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 0: Feature Parity (2 hours) - Do First
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-duckdb-backed-persistence-4-hours" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: DuckDB-Backed Persistence (4 hours)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-lazy-evaluation-parquet-export-3-hours" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: Lazy Evaluation &amp; Parquet Export (3 hours)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-conversation-history-1-hour" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3: Conversation History (1 hour)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-validation-1-hour" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4: Validation (1 hour)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Consequences">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#positive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Positive
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#negative" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Negative
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#risks-mitigations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risks &amp; Mitigations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#not-addressed-future-adrs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NOT Addressed (Future ADRs)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternatives Considered
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Alternatives Considered">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-keep-session-only-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Keep Session-Only State
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-direct-parquet-only-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Direct Parquet-Only Storage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-ibis-duckdb-parquet-now" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Ibis + DuckDB + Parquet Now
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-postgresql-instead-of-duckdb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. PostgreSQL Instead of DuckDB
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-sqlite-instead-of-duckdb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. SQLite Instead of DuckDB
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#success-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Success Metrics
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Success Metrics">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#must-have-gono-go" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Must-Have (Go/No-Go)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nice-to-have" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Nice-to-Have
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="References">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#technical-documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Technical Documentation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#related-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related Decisions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#code-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Code References
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision-makers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision Makers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#review-date" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Review Date
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-a-ibis-decision-criteria-future-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Appendix A: Ibis Decision Criteria (Future Reference)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Appendix A: Ibis Decision Criteria (Future Reference)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#performance-triggers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance Triggers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#complexity-triggers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Complexity Triggers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#maintenance-triggers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Maintenance Triggers
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-b-storage-format-comparison" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Appendix B: Storage Format Comparison
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#adr-created" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADR Created
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="adr-002-persistent-storage-layer-with-duckdb-and-deferred-ibis-integration">ADR 002: Persistent Storage Layer with DuckDB and Deferred Ibis Integration</h1>
+<h2 id="status">Status</h2>
+<p><strong>ACCEPTED</strong> - 2024-12-29
+<strong>IN PROGRESS</strong> - Partial implementation complete; migration to full vision in progress</p>
+<h2 id="context">Context</h2>
+<p>The MD Data Explorer currently stores all uploaded clinical datasets and analysis results in Streamlit session state (in-memory only). This creates critical usability and scalability issues:</p>
+<h3 id="problems-with-current-architecture">Problems with Current Architecture</h3>
+<ol>
+<li><strong>Session Volatility</strong>: Data disappears on page refresh, browser crash, or Streamlit reload</li>
+<li><strong>Memory Bloat</strong>: Large datasets (e.g., MIMIC-III tables) consume RAM unnecessarily</li>
+<li><strong>No Query Optimization</strong>: Entire datasets loaded into memory for every query</li>
+<li><strong>Broken Iterative Workflow</strong>: Physicians cannot upload data once and return to it later</li>
+<li><strong>Unreachable Optimizations</strong>: Lazy Polars code paths never execute because data is eagerly loaded at upload</li>
+</ol>
+<h3 id="clinical-research-requirements">Clinical Research Requirements</h3>
+<ul>
+<li><strong>Reproducibility</strong>: Analysis must be repeatable across sessions with identical results</li>
+<li><strong>Longitudinal Analysis</strong>: Datasets span months/years; must support incremental loading</li>
+<li><strong>Trust</strong>: Data loss mid-analysis destroys clinical confidence in the platform</li>
+<li><strong>HIPAA Compliance</strong>: File-based storage avoids cloud vendor complications in MVP phase</li>
+</ul>
+<h3 id="technical-constraints">Technical Constraints</h3>
+<ul>
+<li>Single-user MVP (no multi-tenancy yet)</li>
+<li>Development cycles are unpredictable (unknown when next work window occurs)</li>
+<li>Must enable lazy evaluation for large-than-memory datasets</li>
+<li>Need audit trail for clinical research validation</li>
+</ul>
+<h2 id="current-state-as-of-2025-01-xx">Current State (As of 2025-01-XX)</h2>
+<h3 id="whats-implemented">What's Implemented</h3>
+<p><strong>1. Basic Persistence (File-Based)</strong>
+- ✅ <code>UserDatasetStorage</code> class exists (<code>src/clinical_analytics/ui/storage/user_datasets.py</code>)
+- ✅ CSV files stored in <code>data/uploads/raw/</code> (survives restarts)
+- ✅ Metadata JSON in <code>data/uploads/metadata/</code> (schema, mappings, quality warnings)
+- ✅ Upload tracking with unique <code>upload_id</code> (timestamp + hash)</p>
+<p><strong>2. Semantic Layer Integration</strong>
+- ✅ <code>UploadedDataset</code> class integrates with registry system
+- ✅ Semantic layer initializes DuckDB tables on-demand (in-memory, not persistent)
+- ✅ Multi-table uploads: Individual tables saved to <code>{upload_id}_tables/</code> directory
+- ✅ Multi-table uploads: All tables registered in DuckDB semantic layer</p>
+<p><strong>3. Multi-Table Support</strong>
+- ✅ <code>save_zip_upload()</code> extracts and saves individual tables
+- ✅ <code>MultiTableHandler</code> detects relationships and builds unified cohort
+- ✅ Individual tables accessible via semantic layer</p>
+<h3 id="whats-missing-adr-vision">What's Missing (ADR Vision)</h3>
+<p><strong>1. DuckDB-Backed Persistence</strong>
+- ❌ No persistent DuckDB database at <code>data/analytics.duckdb</code>
+- ❌ No DataStore class managing centralized DuckDB connection
+- ❌ Tables only exist in-memory during semantic layer initialization
+- ❌ No ACID guarantees (file-based only)</p>
+<p><strong>2. Parquet Export</strong>
+- ❌ No Parquet export for lazy Polars scanning
+- ❌ All queries use CSV (slower, no columnar optimization)</p>
+<p><strong>3. Lazy Evaluation</strong>
+- ❌ <code>get_upload_data()</code> returns pandas DataFrame (eager loading)
+- ❌ No lazy Polars frames for query optimization
+- ❌ Entire datasets loaded into memory for every query</p>
+<p><strong>4. Conversation History</strong>
+- ❌ No JSONL conversation history
+- ❌ No query/result persistence across sessions</p>
+<p><strong>5. Session Recovery</strong>
+- ❌ No explicit recovery flow on app startup
+- ❌ Datasets persist but not automatically restored to session</p>
+<p><strong>6. Feature Parity Issue (Critical)</strong>
+- ⚠️ <strong>Multi-table uploads</strong>: Individual tables registered in DuckDB, saved to disk
+- ⚠️ <strong>Single-table uploads (legacy)</strong>: Only unified cohort CSV, no individual table persistence, no individual table registration in DuckDB
+- ⚠️ <strong>Single-table uploads (new, after ADR007)</strong>: Should have individual table persistence, but may still have gaps in semantic layer registration
+- ⚠️ <strong>Both upload types</strong>: Get semantic layer created, but individual table registrations depend on metadata and directory structure
+- ⚠️ Both should have identical persistence and query capabilities</p>
+<p><strong>Impact on Query Failures</strong>: Legacy single-table uploads missing individual table registrations in DuckDB directly contributes to the NL query engine failures documented in ADR001. Without proper table registration, the semantic layer has limited metadata, causing variable matching to fail and leading to wrong variable selection and incorrect query results. This feature parity gap is not just a storage issue - it's a query capability issue that breaks basic functionality.</p>
+<p><strong>7. Dataset Versioning (Missing)</strong>
+- ❌ No content-based versioning (re-upload same data creates duplicate storage)
+- ❌ No immutable dataset identity (can't track query results to specific dataset version)
+- ❌ No idempotent query execution (same query on same data runs multiple times)</p>
+<h3 id="current-architecture">Current Architecture</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Single-Table Upload (Legacy):
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  CSV/Excel/SPSS → UserDatasetStorage.save_upload()
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    → CSV saved to data/uploads/raw/{upload_id}.csv
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    → Metadata JSON saved to data/uploads/metadata/{upload_id}.json
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    → Semantic layer loads CSV on-demand (in-memory DuckDB)
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    → ❌ Missing: Individual table registration in DuckDB (no tables in metadata)
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    → ❌ Missing: {upload_id}_tables/ directory (legacy format)
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    → ⚠️ Semantic layer exists but has limited metadata (cohort only, not individual tables)
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>Single-Table Upload (New, after ADR007):
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>  CSV/Excel/SPSS → normalize_upload_to_table_list() → save_table_list()
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    → Table saved to data/uploads/raw/{upload_id}_tables/table_0.csv
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    → Unified cohort CSV saved to data/uploads/raw/{upload_id}.csv
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    → Metadata JSON with tables list and inferred_schema
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    → Semantic layer registers table in DuckDB (if tables in metadata and directory exists)
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>Multi-Table Upload:
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>  ZIP → UserDatasetStorage.save_zip_upload()
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>    → Individual tables saved to data/uploads/raw/{upload_id}_tables/
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>    → Unified cohort CSV saved to data/uploads/raw/{upload_id}.csv
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>    → Metadata JSON with table list and relationships
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>    → Semantic layer registers all tables in DuckDB (in-memory)
+</code></pre></div>
+<h3 id="gap-analysis">Gap Analysis</h3>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>ADR Vision</th>
+<th>Current State</th>
+<th>Priority</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Feature Parity</strong></td>
+<td>Both upload types identical</td>
+<td>Multi-table richer than single</td>
+<td><strong>P0 - Now</strong></td>
+</tr>
+<tr>
+<td><strong>DuckDB Persistence</strong></td>
+<td>Persistent tables with ACID</td>
+<td>In-memory only</td>
+<td><strong>P1 - Now</strong></td>
+</tr>
+<tr>
+<td><strong>Lazy Evaluation</strong></td>
+<td>Polars lazy frames</td>
+<td>Pandas eager loading</td>
+<td><strong>P1 - Now</strong></td>
+</tr>
+<tr>
+<td><strong>Parquet Export</strong></td>
+<td>Columnar format for scanning</td>
+<td>CSV only</td>
+<td><strong>P2 - Next</strong></td>
+</tr>
+<tr>
+<td><strong>DataStore Class</strong></td>
+<td>Centralized DuckDB manager</td>
+<td>UserDatasetStorage (CSV-only)</td>
+<td><strong>P1 - Now</strong></td>
+</tr>
+<tr>
+<td><strong>Conversation History</strong></td>
+<td>JSONL audit trail</td>
+<td>Not implemented</td>
+<td><strong>P2 - Next</strong></td>
+</tr>
+</tbody>
+</table>
+<h2 id="decision">Decision</h2>
+<h3 id="dataset-versioning-contract">Dataset Versioning Contract</h3>
+<p><strong>ADR002 owns dataset identity and versioning</strong> - this is the foundation for idempotent query execution and result caching.</p>
+<p><strong>Versioning Rules</strong>:
+- <code>upload_id</code> = immutable storage key (timestamp + hash, never changes)
+- <code>dataset_version</code> = content hash of canonicalized tables (or table hashes aggregated)
+- Re-upload behavior:
+  - If same content hash: reuse <code>dataset_version</code>, don't duplicate tables/artifacts
+  - If different: write new versioned directory
+- Query execution uses <code>(upload_id, dataset_version)</code> for idempotent run keys</p>
+<p><strong>Implementation</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">compute_dataset_version</span><span class="p">(</span><span class="n">tables</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">    </span><span class="sd">"""Compute content hash of canonicalized tables."""</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">hashes</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="k">for</span> <span class="n">table</span> <span class="ow">in</span> <span class="n">tables</span><span class="p">:</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>        <span class="c1"># Canonicalize: sort rows, normalize column order</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>        <span class="n">canonical</span> <span class="o">=</span> <span class="n">table</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">table</span><span class="o">.</span><span class="n">columns</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">table</span><span class="o">.</span><span class="n">columns</span><span class="p">))</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>        <span class="n">table_hash</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="n">canonical</span><span class="o">.</span><span class="n">write_parquet</span><span class="p">())</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()[:</span><span class="mi">16</span><span class="p">]</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>        <span class="n">hashes</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">table_hash</span><span class="p">)</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    <span class="k">return</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="s2">"|"</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">hashes</span><span class="p">)</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()[:</span><span class="mi">16</span><span class="p">]</span>
+</code></pre></div></p>
+<h3 id="metadata-json-schema-authoritative">Metadata JSON Schema (Authoritative)</h3>
+<p><strong>ADR002 owns the metadata JSON schema</strong> - this is where adaptive aliases (ADR003), semantic configs, and provenance live.</p>
+<p><strong>Minimum Schema</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">"upload_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"20251228_163830_28450494"</span><span class="p">,</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">"dataset_version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"a1b2c3d4e5f6g7h8"</span><span class="p">,</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">"created_at"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2025-12-28T16:38:30Z"</span><span class="p">,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="nt">"source_files"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"data.csv"</span><span class="p">],</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="nt">"provenance"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">    </span><span class="nt">"upload_type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"single"</span><span class="w"> </span><span class="err">|</span><span class="w"> </span><span class="s2">"multi"</span><span class="p">,</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">    </span><span class="nt">"tables"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">      </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"table_0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"row_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">1000</span><span class="p">,</span><span class="w"> </span><span class="nt">"fingerprint"</span><span class="p">:</span><span class="w"> </span><span class="s2">"abc123"</span><span class="p">}</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">    </span><span class="p">]</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">  </span><span class="nt">"schema"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">    </span><span class="nt">"inferred_schema"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">      </span><span class="nt">"table_0"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="w">        </span><span class="nt">"columns"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="w">          </span><span class="nt">"patient_id"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Utf8"</span><span class="p">,</span><span class="w"> </span><span class="nt">"is_identifier"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">},</span>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="w">          </span><span class="nt">"LDL mg/dL"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Float64"</span><span class="p">,</span><span class="w"> </span><span class="nt">"units"</span><span class="p">:</span><span class="w"> </span><span class="s2">"mg/dL"</span><span class="p">}</span>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="w">        </span><span class="p">}</span>
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="w">      </span><span class="p">}</span>
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a><span class="w">  </span><span class="nt">"alias_mappings"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a><span class="w">    </span><span class="nt">"user_aliases"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a><span class="w">      </span><span class="nt">"VL"</span><span class="p">:</span><span class="w"> </span><span class="s2">"viral_load"</span><span class="p">,</span>
+<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a><span class="w">      </span><span class="nt">"LDL"</span><span class="p">:</span><span class="w"> </span><span class="s2">"LDL mg/dL"</span>
+<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a><span class="w">    </span><span class="nt">"system_aliases"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a><span class="w">      </span><span class="nt">"viral_load"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"VL"</span><span class="p">,</span><span class="w"> </span><span class="s2">"viral load"</span><span class="p">,</span><span class="w"> </span><span class="s2">"vload"</span><span class="p">]</span>
+<a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a><span class="w">  </span><span class="nt">"semantic_config"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a><span class="w">    </span><span class="nt">"base_view"</span><span class="p">:</span><span class="w"> </span><span class="s2">"patient_level"</span><span class="p">,</span>
+<a id="__codelineno-2-33" name="__codelineno-2-33" href="#__codelineno-2-33"></a><span class="w">    </span><span class="nt">"metrics"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="err">...</span><span class="p">],</span>
+<a id="__codelineno-2-34" name="__codelineno-2-34" href="#__codelineno-2-34"></a><span class="w">    </span><span class="nt">"dimensions"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="err">...</span><span class="p">]</span>
+<a id="__codelineno-2-35" name="__codelineno-2-35" href="#__codelineno-2-35"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-2-36" name="__codelineno-2-36" href="#__codelineno-2-36"></a><span class="w">  </span><span class="nt">"query_history"</span><span class="p">:</span><span class="w"> </span><span class="p">[]</span><span class="w">  </span><span class="c1">// Optional: lightweight query plan + result metadata</span>
+<a id="__codelineno-2-37" name="__codelineno-2-37" href="#__codelineno-2-37"></a><span class="p">}</span>
+</code></pre></div></p>
+<p><strong>Alias Scope Rules</strong> (prevents "poison" aliases):
+- Aliases scoped to <code>(upload_id, dataset_version)</code> - not global
+- If schema changes and target column missing: mark alias orphaned and ignore
+- Prevents aliases from breaking other datasets</p>
+<h3 id="immediate-implementation-this-sprint">Immediate Implementation (This Sprint)</h3>
+<p>Implement <strong>DuckDB-backed persistent storage</strong> with the following architecture:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>CSV Upload → Polars Validation → DuckDB Table → Parquet Export → Lazy Polars Queries
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>                                       ↓
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>                                 Metadata JSON
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>                                       ↓
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>                              Conversation History (JSONL)
+</code></pre></div>
+<h4 id="core-components">Core Components</h4>
+<p><strong>1. DataStore Class</strong> (<code>semantic_layer/storage.py</code>)
+- Manages DuckDB connection at <code>data/analytics.duckdb</code>
+- Persists datasets as DuckDB tables (ACID guarantees)
+- Exports to Parquet for Polars lazy scanning (columnar optimization)
+- Stores metadata separately as JSON (schema versioning, audit trail)
+- Appends conversation history as JSONL (lightweight, streaming-friendly)</p>
+<p><strong>2. Modified Upload Flow</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Before: st.session_state.uploaded_data = df</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="c1"># After:  store.save_dataset(df, dataset_name, metadata)</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="c1">#         st.session_state.current_dataset = dataset_name  # Reference only</span>
+</code></pre></div></p>
+<p><strong>3. Query Execution Pattern</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># Load as lazy frame (deferred computation)</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">lazy_df</span> <span class="o">=</span> <span class="n">store</span><span class="o">.</span><span class="n">load_dataset</span><span class="p">(</span><span class="n">dataset_name</span><span class="p">)</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="c1"># Apply filters (predicate pushdown in Polars)</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">filtered</span> <span class="o">=</span> <span class="n">lazy_df</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="c1"># Materialize only final results</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="n">result</span> <span class="o">=</span> <span class="n">filtered</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="o">...</span><span class="p">)</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+</code></pre></div></p>
+<p><strong>4. Session Recovery</strong>
+- On app startup, detect existing datasets
+- Offer to reload previous session data
+- Restore conversation history from JSONL</p>
+<p><strong>5. Artifacts and Result Persistence (Optional)</strong>
+- Store lightweight query metadata: <code>QueryPlan</code> JSON + generated SQL + row_count
+- Do NOT store patient-level exports by default (only on explicit download)
+- Supports trust + audit (ADR003) without inflating memory/session_state
+- Format: <code>query_history</code> array in metadata JSON (optional field)</p>
+<h3 id="deferred-to-future-not-in-this-sprint">Deferred to Future (NOT in This Sprint)</h3>
+<p><strong>Ibis Integration</strong> - Explicitly punting this decision for the following reasons:</p>
+<h4 id="why-were-not-using-ibis-now">Why We're NOT Using Ibis Now</h4>
+<ol>
+<li><strong>Single Backend</strong>: We only use DuckDB; Ibis's multi-backend abstraction is overkill</li>
+<li><strong>Polars Performance</strong>: For in-memory ETL, Polars is faster than Ibis → DuckDB → Polars roundtrip</li>
+<li><strong>Simple Semantic Layer</strong>: Current needs (column aliasing, basic aggregations) don't require Ibis's expression DSL</li>
+<li><strong>Learning Curve</strong>: Adding Ibis now slows delivery without clear value</li>
+<li><strong>Migration Path Exists</strong>: Can add Ibis later without rewriting storage layer</li>
+</ol>
+<h4 id="when-to-reconsider-ibis">When to Reconsider Ibis</h4>
+<ul>
+<li><strong>Multi-table joins</strong>: If semantic layer needs complex star schema queries</li>
+<li><strong>Pushdown Optimization</strong>: When filtering large tables before Polars materialization</li>
+<li><strong>Cross-dialect needs</strong>: If we add Postgres/BigQuery support</li>
+<li><strong>Metric definitions</strong>: When we need reusable, composable analytical expressions</li>
+</ul>
+<p><strong>Trigger for revisit:</strong> When a single query requires &gt;3 joins OR dataset size exceeds 10GB</p>
+<h2 id="migration-plan-current-state-adr-vision">Migration Plan: Current State → ADR Vision</h2>
+<h3 id="phase-0-feature-parity-priority-0-do-first">Phase 0: Feature Parity (Priority 0 - Do First) ⚠️</h3>
+<p><strong>Goal</strong>: Eliminate disparity between single-table and multi-table uploads. Both must be first-class citizens.</p>
+<p><strong>Prerequisite</strong>: This phase implements <strong><a href="../ADR007/">ADR 007: Feature Parity Architecture</a></strong>, which establishes the core principle "Single-Table = Multi-Table with 1 Table" and defines the unified architecture.</p>
+<p><strong>See ADR 007 for complete implementation details, code examples, and migration strategy.</strong></p>
+<p><strong>High-Level Tasks</strong> (detailed in ADR 007):
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>[ ] Normalize upload handling (ADR 007 Phase 1)
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    - Create normalize_upload_to_table_list() function
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    - Both save_upload() and save_zip_upload() use unified code path
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>[ ] Unify persistence (ADR 007 Phase 2)
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>    - Both upload types save individual tables to {upload_id}_tables/
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>    - Both use same metadata schema (inferred_schema format)
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>[ ] Unify semantic layer registration (ADR 007 Phase 3)
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>    - Both register all tables in DuckDB identically
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>    - Both support all granularity levels
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>[ ] Unify data access (ADR 007 Phase 4)
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>    - Both return Polars lazy frames (not pandas eager)
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>    - Both support predicate pushdown
+<a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>
+<a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a>[ ] Remove conditional logic (ADR 007 Phase 5)
+<a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a>    - Eliminate all upload-type conditionals
+<a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a>    - Single code path handles both upload types
+</code></pre></div></p>
+<p><strong>Success Criteria</strong> (from ADR 007):
+- Single-table and multi-table uploads have identical persistence structure
+- Both upload types register all tables in DuckDB semantic layer
+- Both upload types support lazy Polars evaluation
+- Both upload types use same metadata schema (<code>inferred_schema</code> format)
+- No conditional logic based on upload type exists in codebase
+- Same query produces identical results for both upload types</p>
+<h3 id="phase-1-duckdb-backed-persistence-priority-1-do-next">Phase 1: DuckDB-Backed Persistence (Priority 1 - Do Next)</h3>
+<p><strong>Goal</strong>: Implement persistent DuckDB storage as specified in ADR vision.</p>
+<p><strong>Tasks</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>[ ] Create DataStore class (or extend UserDatasetStorage)
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    - Manage persistent DuckDB connection at data/analytics.duckdb
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    - Provide save_dataset() and load_dataset() methods
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    - Handle both single-table and multi-table uploads uniformly
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>[ ] Migrate from CSV-only to DuckDB + CSV hybrid
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>    - Save to DuckDB table (primary storage, ACID guarantees)
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>    - Keep CSV as export format (backward compatibility)
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>    - Update save_upload() and save_zip_upload() to use DataStore
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>[ ] Register all tables in persistent DuckDB
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>    - Single-table: Register unified cohort table
+<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>    - Multi-table: Register all individual tables
+<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>    - Ensure tables persist across app restarts
+<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>
+<a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a>[ ] Add session recovery logic
+<a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a>    - On app startup, detect existing datasets in DuckDB
+<a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a>    - Restore dataset references to session state
+<a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a>    - Test that uploads survive app restart
+</code></pre></div></p>
+<p><strong>Success Criteria</strong>:
+- Datasets persist in DuckDB (not just CSV)
+- Tables survive app restarts
+- Both upload types use same persistence mechanism
+- ACID guarantees for data integrity</p>
+<h3 id="phase-2-lazy-evaluation-parquet-export-priority-1-do-next">Phase 2: Lazy Evaluation &amp; Parquet Export (Priority 1 - Do Next)</h3>
+<p><strong>Goal</strong>: Enable lazy Polars evaluation with Parquet columnar storage.</p>
+<p><strong>Tasks</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>[ ] Add Parquet export after DuckDB persistence
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    - Export DuckDB tables to Parquet format
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    - Store Parquet files alongside CSV (for lazy scanning)
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    - Verify compression ratio (target: ≥40% smaller than CSV)
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>[ ] Implement lazy frame loading
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>    - load_dataset() returns Polars lazy frame (not pandas DataFrame)
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>    - Use Parquet for lazy scanning (columnar optimization)
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>    - Ensure predicate pushdown works correctly
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>[ ] Update query execution paths
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>    - Replace all pandas eager loading with Polars lazy frames
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>    - Update query_describe.py to use lazy frames
+<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a>    - Update query_compare.py to use lazy frames
+<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>    - Verify lazy evaluation defers computation
+</code></pre></div></p>
+<p><strong>Success Criteria</strong>:
+- Queries use lazy Polars frames (not eager pandas)
+- Parquet files are ≥40% smaller than CSV
+- Predicate pushdown works correctly
+- 1M+ row datasets query without OOM errors</p>
+<h3 id="phase-3-conversation-history-priority-2-do-after-core">Phase 3: Conversation History (Priority 2 - Do After Core)</h3>
+<p><strong>Goal</strong>: Add JSONL conversation history for reproducibility.</p>
+<p><strong>Note</strong>: This coordinates with ADR003 Phase 1 (Trust Layer) - conversation history provides audit trail for verification UI.</p>
+<p><strong>Findings from ADR001 Implementation (2025-12-30):</strong></p>
+<p>During ADR001 implementation, we identified comprehensive logging requirements that should be captured in the JSONL logger:</p>
+<p><strong>Current Logging State (via structlog):</strong>
+- ✅ Query parsing events logged (<code>query_parse_start</code>, <code>query_parse_success</code>, <code>query_parse_failure</code>)
+- ✅ Filter extraction logged (<code>filters_extracted</code>, <code>filters_extracted_in_parse</code>)
+- ✅ Execution events logged (<code>analysis_execution_start</code>, <code>analysis_computation_complete</code>)
+- ✅ Result metadata logged (<code>analysis_result_stored</code>, <code>confidence_displayed</code>)
+- ❌ <strong>Missing</strong>: Persistent JSONL file logging (only in-memory structlog)
+- ❌ <strong>Missing</strong>: Query result metadata (row counts, execution time, SQL generated)
+- ❌ <strong>Missing</strong>: Parsing logic details (which tier succeeded, why confidence is what it is)
+- ❌ <strong>Missing</strong>: Cross-session persistence (logs lost on restart)
+- ❌ <strong>Missing</strong>: Follow-up suggestion interactions</p>
+<p><strong>Required Log Entry Structure:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="p">{</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">"timestamp"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2025-12-30T10:30:45.123456Z"</span><span class="p">,</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span><span class="nt">"session_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"streamlit_session_abc123"</span><span class="p">,</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">  </span><span class="nt">"query"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">    </span><span class="nt">"text"</span><span class="p">:</span><span class="w"> </span><span class="s2">"how many patients were on statins and which statin was most prescribed?"</span><span class="p">,</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">    </span><span class="nt">"intent"</span><span class="p">:</span><span class="w"> </span><span class="s2">"COUNT"</span><span class="p">,</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">    </span><span class="nt">"confidence"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.90</span><span class="p">,</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="w">    </span><span class="nt">"parsing_tier"</span><span class="p">:</span><span class="w"> </span><span class="s2">"pattern_match"</span><span class="p">,</span>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="w">    </span><span class="nt">"parsing_attempts"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"tier"</span><span class="p">:</span><span class="w"> </span><span class="s2">"pattern_match"</span><span class="p">,</span><span class="w"> </span><span class="nt">"result"</span><span class="p">:</span><span class="w"> </span><span class="s2">"success"</span><span class="p">,</span><span class="w"> </span><span class="nt">"confidence"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.90</span><span class="p">}],</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="w">    </span><span class="nt">"query_plan"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="w">      </span><span class="nt">"intent"</span><span class="p">:</span><span class="w"> </span><span class="s2">"COUNT"</span><span class="p">,</span>
+<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="w">      </span><span class="nt">"metric"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="w">      </span><span class="nt">"group_by"</span><span class="p">:</span><span class="w"> </span><span class="s2">"statin_used"</span><span class="p">,</span>
+<a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a><span class="w">      </span><span class="nt">"filters"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"column"</span><span class="p">:</span><span class="w"> </span><span class="s2">"statin_prescribed"</span><span class="p">,</span><span class="w"> </span><span class="nt">"operator"</span><span class="p">:</span><span class="w"> </span><span class="s2">"=="</span><span class="p">,</span><span class="w"> </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">"exclude_nulls"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">}],</span>
+<a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a><span class="w">      </span><span class="nt">"confidence"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.90</span><span class="p">,</span>
+<a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a><span class="w">      </span><span class="nt">"explanation"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Counting patients on statins, grouped by statin type"</span><span class="p">,</span>
+<a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a><span class="w">      </span><span class="nt">"run_key"</span><span class="p">:</span><span class="w"> </span><span class="s2">"abc123def456..."</span>
+<a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a><span class="w">  </span><span class="nt">"execution"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a><span class="w">    </span><span class="nt">"run_key"</span><span class="p">:</span><span class="w"> </span><span class="s2">"abc123def456..."</span><span class="p">,</span>
+<a id="__codelineno-9-22" name="__codelineno-9-22" href="#__codelineno-9-22"></a><span class="w">    </span><span class="nt">"dataset_version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"user_upload_20251229_225650_45c58677"</span><span class="p">,</span>
+<a id="__codelineno-9-23" name="__codelineno-9-23" href="#__codelineno-9-23"></a><span class="w">    </span><span class="nt">"execution_time_ms"</span><span class="p">:</span><span class="w"> </span><span class="mi">234</span><span class="p">,</span>
+<a id="__codelineno-9-24" name="__codelineno-9-24" href="#__codelineno-9-24"></a><span class="w">    </span><span class="nt">"cohort_shape"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">807</span><span class="p">,</span><span class="w"> </span><span class="mi">45</span><span class="p">],</span>
+<a id="__codelineno-9-25" name="__codelineno-9-25" href="#__codelineno-9-25"></a><span class="w">    </span><span class="nt">"filters_applied"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-9-26" name="__codelineno-9-26" href="#__codelineno-9-26"></a><span class="w">    </span><span class="nt">"filtered_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">807</span><span class="p">,</span>
+<a id="__codelineno-9-27" name="__codelineno-9-27" href="#__codelineno-9-27"></a><span class="w">    </span><span class="nt">"original_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">807</span>
+<a id="__codelineno-9-28" name="__codelineno-9-28" href="#__codelineno-9-28"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-9-29" name="__codelineno-9-29" href="#__codelineno-9-29"></a><span class="w">  </span><span class="nt">"result"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-9-30" name="__codelineno-9-30" href="#__codelineno-9-30"></a><span class="w">    </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"count"</span><span class="p">,</span>
+<a id="__codelineno-9-31" name="__codelineno-9-31" href="#__codelineno-9-31"></a><span class="w">    </span><span class="nt">"headline"</span><span class="p">:</span><span class="w"> </span><span class="s2">"807 patients"</span><span class="p">,</span>
+<a id="__codelineno-9-32" name="__codelineno-9-32" href="#__codelineno-9-32"></a><span class="w">    </span><span class="nt">"total_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">807</span><span class="p">,</span>
+<a id="__codelineno-9-33" name="__codelineno-9-33" href="#__codelineno-9-33"></a><span class="w">    </span><span class="nt">"grouped_by"</span><span class="p">:</span><span class="w"> </span><span class="s2">"statin_used"</span><span class="p">,</span>
+<a id="__codelineno-9-34" name="__codelineno-9-34" href="#__codelineno-9-34"></a><span class="w">    </span><span class="nt">"grouped_counts"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"0"</span><span class="p">:</span><span class="w"> </span><span class="mi">327</span><span class="p">,</span><span class="w"> </span><span class="nt">"1"</span><span class="p">:</span><span class="w"> </span><span class="mi">278</span><span class="p">,</span><span class="w"> </span><span class="nt">"2"</span><span class="p">:</span><span class="w"> </span><span class="mi">152</span><span class="p">,</span><span class="w"> </span><span class="nt">"3"</span><span class="p">:</span><span class="w"> </span><span class="mi">41</span><span class="p">,</span><span class="w"> </span><span class="nt">"4"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="nt">"5"</span><span class="p">:</span><span class="w"> </span><span class="mi">7</span><span class="p">}</span>
+<a id="__codelineno-9-35" name="__codelineno-9-35" href="#__codelineno-9-35"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-9-36" name="__codelineno-9-36" href="#__codelineno-9-36"></a><span class="w">  </span><span class="nt">"follow_ups"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-9-37" name="__codelineno-9-37" href="#__codelineno-9-37"></a><span class="w">    </span><span class="nt">"suggestions_shown"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"Filter Statin Used... and count again"</span><span class="p">,</span><span class="w"> </span><span class="s2">"Break down the count by a grouping variable"</span><span class="p">],</span>
+<a id="__codelineno-9-38" name="__codelineno-9-38" href="#__codelineno-9-38"></a><span class="w">    </span><span class="nt">"suggestion_clicked"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span>
+<a id="__codelineno-9-39" name="__codelineno-9-39" href="#__codelineno-9-39"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-9-40" name="__codelineno-9-40" href="#__codelineno-9-40"></a><span class="p">}</span>
+</code></pre></div></p>
+<p><strong>What Should Be Logged:</strong>
+1. <strong>Query Parsing</strong>: Original query text, parsed intent, confidence, parsing tier, all parsing attempts, extracted variables, full QueryPlan JSON
+2. <strong>Execution</strong>: Run key, dataset version, execution time, cohort shape, filters applied, filtered vs original counts
+3. <strong>Results</strong>: Result type, headline/summary, key metrics, result metadata
+4. <strong>UI Interactions</strong>: Follow-up suggestions shown, follow-up suggestion clicked, confidence display shown
+5. <strong>Errors</strong>: Parsing failures, execution errors, variable selection fallbacks</p>
+<p><strong>Implementation Notes:</strong>
+- Lightweight design: JSONL format (one JSON object per line, append-only)
+- Stream-friendly: Can tail logs in real-time
+- No full result data: Only metadata (results stored separately via run_key)
+- Compress old logs (&gt;90 days) to save space
+- Async logging: Don't block UI on file I/O
+- Batch writes: Flush every N entries or every T seconds
+- Privacy: No PHI in logs (only metadata, counts, column names)</p>
+<p><strong>Integration Points:</strong>
+- Hook into <code>execute_analysis_with_idempotency()</code> to log execution
+- Hook into <code>NLQueryEngine.parse_query()</code> to log parsing
+- Hook into <code>_suggest_follow_ups()</code> to log suggestions
+- Hook into conversation history to log UI interactions</p>
+<p><strong>Tasks</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>[ ] Append queries + results to JSONL on execution
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    - Store query text, parameters, and results
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    - Use JSONL format (streaming-friendly, append-only)
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    - Store in data/uploads/conversations/{upload_id}.jsonl
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    - Include full QueryPlan JSON, parsing attempts, execution metadata
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>[ ] Load history on app startup
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>    - Restore conversation history for active datasets
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>    - Display in UI for reproducibility
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>[ ] Add "Clear history" button for testing
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>    - Allow users to reset conversation history
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a>    - Useful for testing and privacy
+<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a>
+<a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a>[ ] Implement QueryLogger class
+<a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a>    - New module: src/clinical_analytics/storage/query_logger.py
+<a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a>    - Methods: log_query(), log_execution(), log_result(), log_follow_up()
+<a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a>    - Handles file rotation, compression, async writes
+<a id="__codelineno-10-19" name="__codelineno-10-19" href="#__codelineno-10-19"></a>
+<a id="__codelineno-10-20" name="__codelineno-10-20" href="#__codelineno-10-20"></a>[ ] Log follow-up suggestion interactions
+<a id="__codelineno-10-21" name="__codelineno-10-21" href="#__codelineno-10-21"></a>    - Track which suggestions were shown
+<a id="__codelineno-10-22" name="__codelineno-10-22" href="#__codelineno-10-22"></a>    - Track which suggestions were clicked
+<a id="__codelineno-10-23" name="__codelineno-10-23" href="#__codelineno-10-23"></a>    - Store in follow_ups section of log entry
+</code></pre></div></p>
+<p><strong>Additional Consideration</strong>: ADR003 Phase 3 (Adaptive Dictionary) will also need persistence for user-added alias mappings. These should be stored in dataset metadata JSON (not separate files) to align with this ADR's persistence architecture.</p>
+<p><strong>Success Criteria</strong>:
+- Conversation history persists across restarts
+- All queries and results are logged
+- History is accessible in UI</p>
+<h2 id="implementation-plan">Implementation Plan</h2>
+<p><strong>Note</strong>: This plan has been updated to reflect the migration path from current state to ADR vision. See "Migration Plan" section above for detailed phased approach.</p>
+<h3 id="phase-0-feature-parity-2-hours-do-first">Phase 0: Feature Parity (2 hours) - Do First</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>[ ] Ensure single-table uploads register in DuckDB semantic layer
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>[ ] Unify storage format for both upload types
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>[ ] Replace eager pandas loading with lazy Polars
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>[ ] Test feature parity between single-table and multi-table
+</code></pre></div>
+<h3 id="phase-1-duckdb-backed-persistence-4-hours">Phase 1: DuckDB-Backed Persistence (4 hours)</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>[ ] Create DataStore class (or extend UserDatasetStorage)
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>[ ] Migrate from CSV-only to DuckDB + CSV hybrid
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>[ ] Register all tables in persistent DuckDB
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>[ ] Add session recovery logic to app.py
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>[ ] Write tests/test_storage.py for persistence verification
+</code></pre></div>
+<h3 id="phase-2-lazy-evaluation-parquet-export-3-hours">Phase 2: Lazy Evaluation &amp; Parquet Export (3 hours)</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>[ ] Add Parquet export after DuckDB persistence
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>[ ] Implement lazy frame loading (replace pandas eager)
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>[ ] Update query_describe.py to use lazy frames
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>[ ] Update query_compare.py to use lazy frames
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>[ ] Verify lazy frame execution with predicate pushdown
+</code></pre></div>
+<h3 id="phase-3-conversation-history-1-hour">Phase 3: Conversation History (1 hour)</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>[ ] Append queries + results to JSONL on execution
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>[ ] Load history on app startup
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>[ ] Add "Clear history" button for testing
+</code></pre></div>
+<h3 id="phase-4-validation-1-hour">Phase 4: Validation (1 hour)</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>[ ] Test upload → refresh → data persists in DuckDB
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>[ ] Test conversation history survives restart
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>[ ] Verify Parquet file compression vs CSV size (≥40% reduction)
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>[ ] Confirm lazy evaluation with 1M row test dataset (no OOM)
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>[ ] Verify feature parity: single-table and multi-table identical
+</code></pre></div>
+<h2 id="consequences">Consequences</h2>
+<h3 id="positive">Positive</h3>
+<ul>
+<li><strong>Persistence</strong>: Data survives browser crashes, Streamlit reloads, session timeouts</li>
+<li><strong>Performance</strong>: Lazy evaluation enables processing datasets larger than RAM</li>
+<li><strong>Storage Efficiency</strong>: Parquet compression reduces disk usage ~60% vs CSV</li>
+<li><strong>Reproducibility</strong>: JSONL conversation history provides audit trail</li>
+<li><strong>Future-Proof</strong>: Can add Ibis later without storage layer rewrite</li>
+<li><strong>HIPAA-Friendly</strong>: Local file-based storage avoids cloud vendor contracts</li>
+</ul>
+<h3 id="negative">Negative</h3>
+<ul>
+<li><strong>Disk Usage</strong>: Stores data in both DuckDB and Parquet (trade-off for lazy scanning)</li>
+<li><strong>Complexity</strong>: Two storage formats (DuckDB + Parquet) instead of one</li>
+<li><strong>Migration Path</strong>: If we add Ibis, need to refactor query execution (not storage)</li>
+<li><strong>No Concurrent Users</strong>: DuckDB file locking limits to single user (acceptable for MVP)</li>
+</ul>
+<h3 id="risks-mitigations">Risks &amp; Mitigations</h3>
+<table>
+<thead>
+<tr>
+<th>Risk</th>
+<th>Impact</th>
+<th>Mitigation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DuckDB file corruption</td>
+<td>Data loss</td>
+<td>Add backup exports to Parquet on dataset save</td>
+</tr>
+<tr>
+<td>Parquet/DuckDB schema drift</td>
+<td>Query failures</td>
+<td>Store schema version in metadata JSON; validate on load</td>
+</tr>
+<tr>
+<td>Conversation history bloat</td>
+<td>Slow app startup</td>
+<td>Implement history rotation (keep last 50 entries)</td>
+</tr>
+<tr>
+<td>Lazy frame bugs</td>
+<td>Incorrect results</td>
+<td>Add integration tests comparing eager vs lazy execution</td>
+</tr>
+</tbody>
+</table>
+<h3 id="not-addressed-future-adrs">NOT Addressed (Future ADRs)</h3>
+<ul>
+<li>Multi-user support (requires PostgreSQL or row-level locking)</li>
+<li>Cloud deployment (S3/GCS storage backends)</li>
+<li>Real-time collaboration (operational transforms)</li>
+<li>Dimensional modeling (star schemas, conformed dimensions)</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives Considered</h2>
+<h3 id="1-keep-session-only-state">1. Keep Session-Only State</h3>
+<p><strong>Rejected</strong>: Breaks clinical workflow; data loss destroys trust</p>
+<h3 id="2-direct-parquet-only-storage">2. Direct Parquet-Only Storage</h3>
+<p><strong>Rejected</strong>: No ACID guarantees; complex for metadata management; can't execute SQL queries</p>
+<h3 id="3-ibis-duckdb-parquet-now">3. Ibis + DuckDB + Parquet Now</h3>
+<p><strong>Rejected</strong>: Adds complexity without clear value; can add Ibis later when needs justify it</p>
+<h3 id="4-postgresql-instead-of-duckdb">4. PostgreSQL Instead of DuckDB</h3>
+<p><strong>Rejected</strong>: Requires server management; overkill for single-user MVP; HIPAA complications</p>
+<h3 id="5-sqlite-instead-of-duckdb">5. SQLite Instead of DuckDB</h3>
+<p><strong>Rejected</strong>: Lacks analytical SQL functions (percentiles, window functions); slower for OLAP queries</p>
+<h2 id="success-metrics">Success Metrics</h2>
+<h3 id="must-have-gono-go">Must-Have (Go/No-Go)</h3>
+<ul>
+<li>[ ] Upload 100MB dataset, refresh page → data reloads in &lt;2 seconds</li>
+<li>[ ] Run 5 queries, restart app → conversation history shows all 5</li>
+<li>[ ] Test with 1M rows → queries execute without OOM errors</li>
+<li>[ ] Parquet files are ≥40% smaller than source CSV</li>
+</ul>
+<h3 id="nice-to-have">Nice-to-Have</h3>
+<ul>
+<li>[ ] Lazy evaluation visibly defers computation (add logging to verify)</li>
+<li>[ ] DuckDB analytical functions (percentile_cont) work correctly</li>
+<li>[ ] Metadata JSON enables schema versioning (not used yet, but structure exists)</li>
+</ul>
+<h2 id="references">References</h2>
+<h3 id="technical-documentation">Technical Documentation</h3>
+<ul>
+<li><a href="https://duckdb.org/docs/sql/introduction">DuckDB SQL Documentation</a></li>
+<li><a href="https://pola-rs.github.io/polars/user-guide/lazy/using/">Polars Lazy API</a></li>
+<li><a href="https://ibis-project.org/">Ibis Documentation</a> - For future reference</li>
+</ul>
+<h3 id="related-decisions">Related Decisions</h3>
+<ul>
+<li><strong>ADR 007</strong>: Feature Parity Architecture - <strong>PREREQUISITE</strong> for Phase 1+. ADR 007 must be completed before Phase 1+ can proceed, as it establishes unified architecture that Phase 1+ builds upon.</li>
+<li><strong><a href="../ADR001/">ADR001: Query Plan Producer, Filtering, and Chat-First Execution Rules</a></strong>:</li>
+<li>ADR001 depends on ADR002 for <code>dataset_version</code> (for idempotent run keys)</li>
+<li>ADR001 depends on ADR002 for metadata read/write (QueryPlan persistence)</li>
+<li>ADR001 does NOT depend on ADR003 (trust UI is separate)</li>
+<li><strong><a href="../ADR003/">ADR003: Clinical Trust Protocol + Adaptive Alias Persistence</a></strong>:</li>
+<li>ADR003 depends on ADR002 for storing alias mappings in metadata JSON (per <code>(upload_id, dataset_version)</code> scope)</li>
+<li>ADR003 depends on ADR002 for audit metadata (query history, provenance)</li>
+<li>ADR003 does NOT own NLU parsing (that's ADR001)</li>
+<li><strong>ADR 004 (Future)</strong>: When to adopt Ibis for semantic layer</li>
+<li><strong>ADR 005 (Future)</strong>: Multi-table join strategy</li>
+<li><strong>ADR 006 (Future)</strong>: Cloud deployment storage backends</li>
+</ul>
+<h3 id="code-references">Code References</h3>
+<ul>
+<li><code>src/clinical_analytics/ui/storage/user_datasets.py</code> - Current UserDatasetStorage implementation</li>
+<li><code>src/clinical_analytics/datasets/uploaded/definition.py</code> - UploadedDataset class (semantic layer integration)</li>
+<li><code>semantic_layer/storage.py</code> - DataStore implementation (to be created)</li>
+<li><code>tests/test_storage.py</code> - Persistence validation tests (to be created)</li>
+</ul>
+<h2 id="decision-makers">Decision Makers</h2>
+<ul>
+<li><strong>Jason</strong> (Technical Lead): Approved architecture</li>
+<li><strong>Clinical Stakeholder</strong> (Infectious Disease Physician): Validated workflow requirements</li>
+</ul>
+<h2 id="review-date">Review Date</h2>
+<p><strong>2025-01-15</strong> - After 2 weeks of production use, evaluate:
+1. Are there performance issues with lazy evaluation?
+2. Has conversation history proven useful for reproducibility?
+3. Do we need Ibis for any emerging query patterns?
+4. Should we migrate to cloud storage or stay file-based?</p>
+<hr />
+<h2 id="appendix-a-ibis-decision-criteria-future-reference">Appendix A: Ibis Decision Criteria (Future Reference)</h2>
+<p>We will reconsider Ibis when <strong>any</strong> of these conditions are met:</p>
+<h3 id="performance-triggers">Performance Triggers</h3>
+<ul>
+<li>[ ] Query execution time &gt;5 seconds for common queries</li>
+<li>[ ] Need to filter 10GB+ datasets before loading into Polars</li>
+<li>[ ] Memory usage &gt;80% during query execution</li>
+</ul>
+<h3 id="complexity-triggers">Complexity Triggers</h3>
+<ul>
+<li>[ ] Semantic layer has &gt;5 reusable metric definitions</li>
+<li>[ ] Need to support 3+ table joins in single query</li>
+<li>[ ] Cross-dialect support required (Postgres, BigQuery, etc.)</li>
+</ul>
+<h3 id="maintenance-triggers">Maintenance Triggers</h3>
+<ul>
+<li>[ ] Custom Polars query logic duplicated &gt;3 times</li>
+<li>[ ] Schema evolution requires manual query rewrites</li>
+<li>[ ] Users request SQL export of queries (Ibis compiles to SQL)</li>
+</ul>
+<p><strong>When triggered, create ADR 002 with concrete Ibis migration plan.</strong></p>
+<h2 id="appendix-b-storage-format-comparison">Appendix B: Storage Format Comparison</h2>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Read Speed</th>
+<th>Write Speed</th>
+<th>Compression</th>
+<th>Query Pushdown</th>
+<th>ACID</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Session State</strong></td>
+<td>Instant</td>
+<td>Instant</td>
+<td>None</td>
+<td>N/A</td>
+<td>No</td>
+</tr>
+<tr>
+<td><strong>CSV</strong></td>
+<td>Slow</td>
+<td>Fast</td>
+<td>None</td>
+<td>No</td>
+<td>No</td>
+</tr>
+<tr>
+<td><strong>Parquet</strong></td>
+<td>Fast</td>
+<td>Moderate</td>
+<td>High (~60%)</td>
+<td>Yes (Polars)</td>
+<td>No</td>
+</tr>
+<tr>
+<td><strong>DuckDB</strong></td>
+<td>Fast</td>
+<td>Fast</td>
+<td>Moderate (~40%)</td>
+<td>Yes (SQL)</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><strong>Our Hybrid</strong></td>
+<td>Fast</td>
+<td>Moderate</td>
+<td>High (Parquet)</td>
+<td>Yes (both)</td>
+<td>Yes (DuckDB)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Rationale for hybrid approach:</strong> DuckDB provides ACID and SQL analytics; Parquet enables Polars lazy optimization. Disk usage trade-off is acceptable for clinical research workflow benefits.
+```</p>
+<hr />
+<h2 id="adr-created">ADR Created</h2>
+<p>This ADR documents:</p>
+<ol>
+<li><strong>Why we're adding persistence NOW</strong> (session state is broken)</li>
+<li><strong>Why we're using DuckDB + Parquet</strong> (not alternatives)</li>
+<li><strong>Why we're NOT using Ibis yet</strong> (explicit deferral with criteria for revisit)</li>
+<li><strong>Concrete implementation plan</strong> (4 phases, 8 hours total)</li>
+<li><strong>Success metrics</strong> (testable go/no-go criteria)</li>
+<li><strong>Review trigger</strong> (2 weeks, reassess Ibis decision)</li>
+</ol>
+<p>The ADR makes it clear this is <strong>not</strong> punting on architectural decisions—it's choosing the simplest thing that solves the immediate problem while leaving the door open for Ibis when complexity justifies it.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

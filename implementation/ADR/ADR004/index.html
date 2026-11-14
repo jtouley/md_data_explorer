@@ -1,0 +1,2730 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Spec-driven clinical analytics with question-driven semantic analysis">
+      
+      
+        <meta name="author" content="Development Team">
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>ADR 004: Automated Schema Inference via Documentation Ingestion (RAG) - Clinical Analytics Platform</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#adr-004-automated-schema-inference-via-documentation-ingestion-rag" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="Clinical Analytics Platform" class="md-header__button md-logo" aria-label="Clinical Analytics Platform" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Clinical Analytics Platform
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ADR 004: Automated Schema Inference via Documentation Ingestion (RAG)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/yourusername/md_data_explorer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../getting-started/installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../user-guide/question-driven-analysis/" class="md-tabs__link">
+          
+  
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../architecture/overview/" class="md-tabs__link">
+          
+  
+  
+  Architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../security/THREAT_MODEL/" class="md-tabs__link">
+          
+  
+  
+  Security
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../api-reference/core/" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../development/contributing/" class="md-tabs__link">
+          
+  
+  
+  Development
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../vision/PURPOSE/" class="md-tabs__link">
+          
+  
+  
+  Specifications
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="Clinical Analytics Platform" class="md-nav__button md-logo" aria-label="Clinical Analytics Platform" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Clinical Analytics Platform
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/yourusername/md_data_explorer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/quick-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/uploading-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Uploading Data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/question-driven-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/statistical-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Statistical Tests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/interpreting-results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interpreting Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/AS_BUILT_ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    As-built (2025-03)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/ARCHITECTURE_BOUNDARIES/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module boundaries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/semantic-layer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Semantic Layer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/dataset-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dataset Registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/nl-query-engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NL Query Engine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Security
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../security/THREAT_MODEL/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Threat model & backlog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../security/LOCAL_DATA_SECURITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Patient data on this computer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/datasets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Datasets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI Components
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/packaging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packaging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Specifications
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Specifications
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../vision/PURPOSE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Purpose and steel thread
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../MASTER_PLAN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Master plan (roadmap)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--active"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../specs/omnibus_electron_streamlit_cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Electron cutover (omnibus)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--active"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../specs/question-driven-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../specs/multi-table-support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Table Support
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Status
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-adrs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related ADRs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Decision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-documentation-ingestion-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Documentation Ingestion Pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-context-aware-schema-inference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Context-Aware Schema Inference
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-architecture-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Architecture Changes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-tier-3-autocontext-packager-p0" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Tier 3 AutoContext Packager (P0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-documentation-detection-and-extraction-p0" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: Documentation Detection and Extraction (P0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-schema-inference-integration-p0" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: Schema Inference Integration (P0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-tier-3-autocontext-packager-p0" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3: Tier 3 AutoContext Packager (P0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-testing-p1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4: Testing (P1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Consequences">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#positive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Positive
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#negative" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Negative
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mitigations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mitigations
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternatives Considered
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Alternatives Considered">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ocr-for-scanned-pdfs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OCR for Scanned PDFs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#separate-upload-dictionary-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Separate "Upload Dictionary" Flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#llm-based-extraction-immediate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LLM-Based Extraction (Immediate)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#structured-dictionary-format-jsonyaml" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Structured Dictionary Format (JSON/YAML)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rollback-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rollback Plan
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Rollback Plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#feature-flags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Feature Flags
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rollback-procedure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rollback Procedure
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#granularity-trade-offs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Granularity Trade-Offs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#monitoring-recommendations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Monitoring Recommendations
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#code-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Code References
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="References">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#related-adrs_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related ADRs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#related-plans" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related Plans
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="adr-004-automated-schema-inference-via-documentation-ingestion-rag">ADR 004: Automated Schema Inference via Documentation Ingestion (RAG)</h1>
+<h2 id="status">Status</h2>
+<p><strong>Implemented</strong> (All phases complete)</p>
+<p><strong>Implementation Date</strong>: 2026-01-04</p>
+<p><strong>Completed Phases</strong>:
+- ✅ Phase 1: Documentation Detection and Extraction
+- ✅ Phase 2: Schema Inference Integration
+- ✅ Phase 3: Tier 3 AutoContext Packager
+- ✅ Phase 4: Proactive Question Generation
+- ✅ Phase 5: Comprehensive Testing</p>
+<p><strong>Implementation Notes</strong>:
+- Documentation extraction from ZIP uploads implemented in <code>doc_parser.py</code>
+- Schema inference enhanced with <code>doc_context</code> parameter in <code>SchemaInferenceEngine.infer_schema()</code>
+- Question generation implemented with deterministic fallback and LLM support
+- Integration tests verify end-to-end flow
+- Performance tests confirm doc extraction &lt;5s budget</p>
+<h2 id="related-adrs">Related ADRs</h2>
+<ul>
+<li><strong><a href="../ADR002/">ADR002: Persistent Storage Layer</a></strong>: ADR002 owns metadata JSON schema and persistence. ADR004's extracted documentation context will be stored in ADR002's metadata schema (per <code>upload_id</code> + <code>dataset_version</code> scope).</li>
+<li><strong><a href="../ADR003/">ADR003: Clinical Trust Architecture &amp; Adaptive Terminology</a></strong>: ADR003 owns semantic layer execution and alias persistence. ADR004's documentation context will enhance schema inference, which feeds into ADR003's semantic layer registration. ADR004's AutoContext Packager provides bounded, privacy-safe context to ADR001's Tier 3 LLM fallback, enabling grounded query parsing.</li>
+<li><strong><a href="../ADR001/">ADR001: Query Plan Producer, Filtering, and Chat-First Execution Rules</a></strong>: ADR001 owns Tier 3 LLM fallback implementation. ADR004 provides AutoContext Pack to Tier 3 so it can produce valid QueryPlans for negation, multi-part queries, and codebook-driven columns.</li>
+</ul>
+<h2 id="context">Context</h2>
+<p>The "Zero-Friction" onboarding goal (ADR 003) is currently hindered by the limitations of pure data-based schema inference. When a user uploads a complex dataset (e.g., MIMIC-IV, custom hospital exports), the <code>SchemaInferenceEngine</code> attempts to map columns to semantic concepts (e.g., mapping <code>ITEMID: 220045</code> to <code>Heart Rate</code>) based solely on column names and data samples. This heuristic approach is error-prone and often requires manual user correction, violating the "Zero-Config" principle.</p>
+<p>However, many of these datasets are uploaded as ZIP files that explicitly contain data dictionaries or definition files (PDFs, Markdown, text files) in a <code>docs/</code> subdirectory or root directory. These documents contain the "ground truth" needed to accurately map the schema, but they are currently ignored by the platform.</p>
+<p><strong>Real-World Evidence</strong>:</p>
+<ul>
+<li>MIMIC-IV datasets include comprehensive data dictionaries (PDF) defining all <code>ITEMID</code> codes and their clinical meanings</li>
+<li>Hospital export ZIPs often contain <code>README.md</code> or <code>data_dictionary.txt</code> files explaining column encodings</li>
+<li>Research datasets from PhysioNet include detailed documentation PDFs in <code>docs/</code> subdirectories</li>
+<li>Current system treats these files as "noise" and skips them during ZIP extraction</li>
+</ul>
+<p><strong>Current Limitations</strong>:</p>
+<ol>
+<li><strong>Ambiguous Column Names</strong>: <code>val1</code>, <code>val2</code>, <code>ITEMID: 220045</code> cannot be mapped without context</li>
+<li><strong>Encoding Confusion</strong>: Categorical variables encoded as <code>1: Yes 2: No</code> require documentation to understand meaning</li>
+<li><strong>Missing Semantic Context</strong>: System cannot distinguish between similar columns (e.g., <code>heart_rate_1</code> vs <code>heart_rate_2</code>) without descriptions</li>
+<li><strong>Manual Correction Required</strong>: Users must manually fix schema mappings after upload, breaking "Zero-Config" promise</li>
+<li><strong>Tier 3 LLM Flying Blind</strong>: ADR001's Tier 3 LLM fallback returns low-confidence plans with no variables (e.g., <code>confidence=0.3, matched_vars=[]</code> for "average BMI") because it lacks schema context. This produces "COUNT with no variables" and "group by patient_id" failures (see ADR003 Production Contract Violations).</li>
+</ol>
+<h2 id="decision">Decision</h2>
+<p>We will implement <strong>Retrieval-Augmented Generation (RAG) for Schema Inference</strong> by treating uploaded documentation as a first-class input signal.</p>
+<p>Additionally, we will extend ADR004 to provide <strong>Tier 3 AutoContext Packager</strong> - a bounded, privacy-safe context pack for ADR001's Tier 3 LLM fallback. This addresses the "NLU without grounded context" problem where Tier 3 returns low-confidence plans with no variables because it lacks schema cues.</p>
+<h3 id="1-documentation-ingestion-pipeline">1. Documentation Ingestion Pipeline</h3>
+<p>We will modify the <code>UserDatasetStorage</code> and <code>normalize_upload_to_table_list()</code> to actively scan for and ingest documentation files during the upload/extraction process.</p>
+<p><strong>Detection</strong>: When processing a ZIP upload, the system will identify files in <code>docs/</code> or root directories with relevant extensions:
+- <code>.pdf</code> - Data dictionary PDFs (most common)
+- <code>.md</code>, <code>.markdown</code> - Markdown documentation
+- <code>.txt</code> - Plain text data dictionaries
+- <code>.docx</code> - Word documents (optional, lower priority)</p>
+<p><strong>Extraction</strong>: A new <code>DocParser</code> service will extract text content from these files:
+- <strong>PDF</strong>: Use <code>pymupdf</code> (fitz) for fast, license-compatible extraction
+- <strong>Markdown/Text</strong>: Direct text extraction
+- <strong>Word</strong>: Use <code>python-docx</code> if needed (optional)</p>
+<p><strong>Storage</strong>: Extracted text will be stored alongside the dataset metadata:
+- Location: <code>metadata/data_dictionary_context.txt</code> (or <code>metadata/doc_context_{filename}.txt</code> for multiple files)
+- Format: Plain text concatenation of all extracted documentation
+- Truncation: If total text exceeds 50,000 characters, truncate with warning (prevents LLM context overflow)</p>
+<h3 id="2-context-aware-schema-inference">2. Context-Aware Schema Inference</h3>
+<p>We will refactor <code>SchemaInferenceEngine</code> to accept this extracted documentation context.</p>
+<p><strong>Enhanced Method</strong>: <code>infer_schema_with_context(df: pl.DataFrame, doc_context: str | None = None) -&gt; InferredSchema</code></p>
+<p><strong>Prompt Engineering</strong> (for LLM-based inference, if implemented in future):
+- <strong>Before</strong>: "Here are columns <code>A</code>, <code>B</code>, <code>C</code> and some sample rows. Guess what they are."
+- <strong>After</strong>: "Here are columns <code>A</code>, <code>B</code>, <code>C</code>. Here is the user's uploaded data dictionary which defines <code>A</code> as 'Heart Rate (beats per minute)'. Map these columns to the standard schema."</p>
+<p><strong>Current Implementation</strong> (non-LLM):
+- Use <code>DictionaryMetadata</code> class (already exists in <code>schema_inference.py</code>) to parse structured information from documentation
+- Enhance <code>parse_dictionary_pdf()</code> to extract column descriptions, types, and valid values
+- Merge dictionary metadata with data-driven inference (already implemented in <code>infer_schema_with_dictionary()</code>)
+- Use dictionary hints to improve confidence scores and resolve ambiguous columns</p>
+<h3 id="3-architecture-changes">3. Architecture Changes</h3>
+<p><strong>New Component</strong>: <code>src/clinical_analytics/core/doc_parser.py</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">extract_context_from_docs</span><span class="p">(</span><span class="n">file_paths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">    </span><span class="sd">"""</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="sd">    Iterates through provided paths, detects file types (PDF/TXT/MD),</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="sd">    extracts text, and concatenates into a context string.</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="sd">    Truncates to safe token limits if necessary.</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="sd">    Args:</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="sd">        file_paths: List of paths to documentation files</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="sd">    Returns:</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="sd">        Concatenated text context (truncated to 50,000 chars if needed)</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="sd">    """</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    <span class="c1"># Implementation details:</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    <span class="c1"># - PDF: Use pymupdf (fitz) for extraction</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    <span class="c1"># - Markdown/Text: Direct read</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    <span class="c1"># - Concatenate with separators</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    <span class="c1"># - Truncate with warning if &gt;50k chars</span>
+</code></pre></div>
+<p><strong>Modified Component</strong>: <code>src/clinical_analytics/ui/storage/user_datasets.py</code></p>
+<ul>
+<li>Update <code>extract_zip_tables()</code> to separate data files (CSV/Parquet) from documentation files</li>
+<li>Add <code>extract_documentation_files(zip_file: zipfile.ZipFile) -&gt; list[Path]</code> helper</li>
+<li>Call <code>doc_parser.extract_context_from_docs()</code> on identified documentation files immediately after extraction</li>
+<li>Store extracted context in metadata: <code>metadata["doc_context"] = extracted_text</code></li>
+</ul>
+<p><strong>Modified Component</strong>: <code>src/clinical_analytics/core/schema_inference.py</code></p>
+<ul>
+<li>Update <code>infer_schema()</code> signature to accept <code>doc_context: str | None = None</code></li>
+<li>If <code>doc_context</code> provided, parse it using existing <code>parse_dictionary_pdf()</code> logic (or new text parsing)</li>
+<li>Merge dictionary metadata with data-driven inference (enhance existing <code>infer_schema_with_dictionary()</code>)</li>
+<li>Use dictionary descriptions to improve column mapping confidence</li>
+</ul>
+<p><strong>Integration Point</strong>: <code>UserDatasetStorage.save_zip_upload()</code></p>
+<ul>
+<li>After extracting tables, extract documentation files</li>
+<li>Call <code>doc_parser.extract_context_from_docs()</code> on documentation files</li>
+<li>Store <code>doc_context</code> in metadata JSON</li>
+<li>Pass <code>doc_context</code> to <code>SchemaInferenceEngine.infer_schema_with_context()</code> when inferring schema</li>
+</ul>
+<h3 id="4-tier-3-autocontext-packager-p0">4. Tier 3 AutoContext Packager (P0)</h3>
+<p><strong>Goal</strong>: Provide a bounded, privacy-safe, deterministic context pack to ADR001's Tier 3 LLM fallback, enabling grounded query parsing for negation, multi-part queries, and codebook-driven columns.</p>
+<p><strong>Problem</strong>: Production logs show Tier 3 returns <code>DESCRIBE, confidence=0.3, matched_vars=[]</code> for queries like "average BMI" / "average LDL" because the model has no schema cues. This produces "COUNT with no variables" and "group by patient_id" failures (see ADR003 Production Contract Violations). The root cause is "LLM without grounding" - Tier 3 is flying blind without authoritative schema context.</p>
+<p><strong>Solution</strong>: AutoContext Pack provides structured, privacy-safe, deterministic dataset context to Tier 3. This pack is <strong>authoritative and closed</strong> - it contains only what exists in the dataset and documentation, nothing more.</p>
+<p><strong>Key Principle</strong>: ADR004 owns <strong>Context Assembly</strong> (deterministic construction from existing data), not reasoning. The LLM's role is <strong>context selection and mapping</strong>, not generation or invention.</p>
+<p><strong>AutoContext Pack Schema</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nd">@dataclass</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">AutoContext</span><span class="p">:</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="sd">"""Bounded, privacy-safe context pack for Tier 3 LLM."""</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">dataset</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span>  <span class="c1"># {upload_id, dataset_version, display_name}</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">entity_keys</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>  <span class="c1"># Candidate columns ranked (e.g., ["patient_id", "encounter_id"])</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">columns</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">ColumnContext</span><span class="p">]</span>  <span class="c1"># Column catalog with metadata</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="n">glossary</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>  <span class="c1"># Extracted terms, abbreviations, notes from documentation</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="n">constraints</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>  <span class="c1"># {no_row_level_data: true, max_tokens: N}</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="nd">@dataclass</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="k">class</span><span class="w"> </span><span class="nc">ColumnContext</span><span class="p">:</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">    </span><span class="sd">"""Column metadata for AutoContext."""</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>  <span class="c1"># Canonical column name</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    <span class="n">normalized_name</span><span class="p">:</span> <span class="nb">str</span>  <span class="c1"># Normalized for matching</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>    <span class="n">system_aliases</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>  <span class="c1"># System-generated aliases (from alias index)</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>    <span class="n">user_aliases</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>  <span class="c1"># User-taught aliases (from ADR003 Phase 2)</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>    <span class="n">dtype</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"numeric"</span><span class="p">,</span> <span class="s2">"categorical"</span><span class="p">,</span> <span class="s2">"datetime"</span><span class="p">,</span> <span class="s2">"id"</span><span class="p">]</span>  <span class="c1"># Inferred type</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>    <span class="n">units</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span>  <span class="c1"># Detected units (mg/dL, %, etc.)</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>    <span class="n">codebook</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span>  <span class="c1"># Categorical value dictionary (e.g., {"1": "Yes", "2": "No", "0": "n/a"})</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>    <span class="n">stats</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>  <span class="c1"># Lightweight profiling:</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>        <span class="c1"># numeric: {min, max, mean, missing_pct}</span>
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>        <span class="c1"># categorical: {top_values: [{value, count, pct}], missing_pct}</span>
+</code></pre></div>
+<p><strong>Included (Safe + High Signal)</strong>:
+- Dataset identifiers: <code>upload_id</code>, <code>dataset_version</code>, <code>display_name</code>
+- Primary key / entity key candidates: <code>patient_id</code>, etc. (ranked by confidence)
+- Column catalog with:
+  - Canonical column name
+  - Normalized aliases (system + user from ADR003)
+  - Inferred type: numeric / categorical / datetime / id-like
+  - Units if detected (mg/dL, %, etc.)
+  - Categorical value dictionary (top N + codebook if present: <code>1: Yes, 2: No</code>)
+- Lightweight profiling:
+  - Numeric: min/max/mean + % missing
+  - Categorical: top N frequencies + % missing
+- Extracted dictionary text from uploads: codebooks, definitions, abbreviations</p>
+<p><strong>Explicitly Excluded (Privacy Guardrail)</strong>:
+- ❌ No patient-level rows or raw record samples
+- ❌ No free-form "here are 100 random rows" garbage
+- ❌ No PHI in context (only aggregated stats and dictionaries)</p>
+<p><strong>Construction Rules</strong> (Deterministic, No LLM):</p>
+<ol>
+<li><strong>Build from multiple sources</strong> (all deterministic):</li>
+<li>Inferred schema + profiling (from <code>SchemaInferenceEngine</code>)</li>
+<li>Extracted documentation dictionary (PDF/DOC/TXT from Phase 1)</li>
+<li>Persisted alias mappings (from ADR003 Phase 2 - user aliases)</li>
+<li>
+<p><strong>No LLM inference or generation</strong> - only what exists in dataset and documentation</p>
+</li>
+<li>
+<p><strong>Token budget enforcement</strong> (for LLM context window):</p>
+</li>
+<li>Keep only columns relevant to query terms (lexical + alias match)</li>
+<li>Include top-K "similar" columns if needed (semantic similarity)</li>
+<li>Cap categorical top values at N (e.g., top 10 frequencies)</li>
+<li>
+<p>Truncate glossary to most relevant terms</p>
+</li>
+<li>
+<p><strong>Privacy rule</strong>: Do not include row-level samples in AutoContext. Only include aggregated stats and dictionaries.</p>
+</li>
+<li>
+<p><strong>Deterministic construction</strong>: AutoContext Pack is produced without an LLM. Think: compiler metadata, not chat memory. Same inputs (schema, docs, aliases) always produce same AutoContext.</p>
+</li>
+</ol>
+<p><strong>Integration with ADR003 Trust UI</strong>:</p>
+<ul>
+<li>Trust UI (ADR003 Phase 1) must display the exact AutoContext summary passed to Tier 3</li>
+<li>Show alongside raw plan and alias-resolved plan for auditability</li>
+<li>Enables users to verify what context the model saw (critical for trust)</li>
+<li>Format: "Tier 3 context: [N] columns, [M] entity keys, glossary: [terms]"</li>
+<li><strong>Note</strong>: UI display of context belongs to ADR003 (trust surface), not ADR004</li>
+</ul>
+<p><strong>Model Usage</strong>:</p>
+<ul>
+<li>AutoContext is consumed by ADR001's Tier 3 LLM fallback (not ADR003)</li>
+<li>Tier 3 uses the same model as configured in ADR001 (e.g., <code>llama3.1:8b</code> via Ollama if local LLM enabled)</li>
+<li>AutoContext is model-agnostic - it's a structured context pack that works with any LLM provider</li>
+</ul>
+<p><strong>Ownership Boundaries</strong>:</p>
+<ul>
+<li><strong>ADR004 owns</strong>: Context Assembly (deterministic construction from schema, docs, aliases)</li>
+<li><strong>ADR001 owns</strong>: Tier 3 LLM implementation (consumes AutoContext, produces QueryPlan)</li>
+<li><strong>ADR003 owns</strong>: Execution validation (refuses plans referencing columns not in AutoContext), confidence gating, run-key construction, UI display of context</li>
+<li><strong>ADR002 owns</strong>: Metadata persistence (where AutoContext may be cached)</li>
+</ul>
+<p><strong>ADR004 is supply. ADR003 is enforcement.</strong></p>
+<p><strong>LLM Contract</strong> (Critical - Prevents Hallucination):</p>
+<p>Tier 3 LLM may:
+- <strong>Select</strong> which columns from AutoContext are relevant to the query
+- <strong>Map</strong> query phrases to known aliases in AutoContext
+- <strong>Express</strong> negation and multi-part structure using QueryPlan schema
+- <strong>Emit</strong> QueryPlan only using fields present in AutoContext</p>
+<p>Tier 3 LLM may NOT:
+- ❌ <strong>Invent</strong> columns not present in AutoContext
+- ❌ <strong>Invent</strong> filters not derivable from AutoContext codebooks
+- ❌ <strong>Infer</strong> entities not explicitly marked in AutoContext (e.g., cannot "assume" patient_id semantics unless AutoContext labels it as entity_key)
+- ❌ <strong>Enrich</strong> or generate context beyond what's in AutoContext</p>
+<p><strong>Enforcement</strong>: ADR003 validation (Phase 3) refuses execution if QueryPlan references columns not present in AutoContext. This prevents hallucinated plans from executing.</p>
+<p><strong>How Tier 3 Consumes AutoContext</strong>:</p>
+<p>Tier 3 prompt should be <strong>structured parsing</strong>, not chat:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>System: "Return only JSON matching QueryPlan schema. You may only reference columns present in the AutoContext pack."
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>Provide:
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>- The query text
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>- The AutoContext pack (structured JSON) - AUTHORITATIVE, CLOSED
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>- Allowed operators / intents list
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>- QueryPlan schema with required fields
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>Require fields:
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>- intent
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>- primary_variable or grouping_variable when intent needs it (must exist in AutoContext)
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>- explicit filters list with negation encoded structurally (values must exist in AutoContext codebooks)
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>- requires_filters/entity_key/scope per ADR003 extensions
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>- requires_grouping per ADR003 extensions
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>Constraint: All column references must exist in AutoContext. If query mentions a column not in AutoContext, return QueryPlan with confidence=0.0 and failure_reason="Column not found in dataset."
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>Validate and refuse if it violates the contract. No "best effort execution" on invalid plans.
+</code></pre></div>
+<p><strong>Rationale</strong>: Structured prompt with authoritative, closed context enables Tier 3 to:
+- Map "BMI" → canonical column name using aliases (only if BMI column exists in AutoContext)
+- Understand "1: Yes 2: No" → categorical codebook (only if codebook present in AutoContext)
+- Identify <code>patient_id</code> as entity_key → avoid grouping on it (only if AutoContext labels it as entity_key)
+- Extract "not on statin" → filter condition using codebook values (only if statin column + codebook exist in AutoContext)</p>
+<p>This directly addresses production failures where Tier 3 returns plans with no variables or wrong grouping. The key constraint: <strong>"may only reference columns present in AutoContext"</strong> - this is the entire ballgame.</p>
+<h2 id="implementation">Implementation</h2>
+<h3 id="phase-1-documentation-detection-and-extraction-p0">Phase 1: Documentation Detection and Extraction (P0)</h3>
+<p><strong>Goal</strong>: Identify and extract documentation files from ZIP uploads.</p>
+<p><strong>Files to Modify</strong>:
+- <code>src/clinical_analytics/ui/storage/user_datasets.py</code>
+  - Add <code>extract_documentation_files()</code> helper
+  - Update <code>extract_zip_tables()</code> to return both tables and doc files
+  - Store doc files in <code>{upload_id}/docs/</code> directory</p>
+<p><strong>New File</strong>: <code>src/clinical_analytics/core/doc_parser.py</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="sd">"""</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="sd">Documentation Parser for Schema Inference</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="sd">Extracts text content from various documentation formats (PDF, Markdown, text)</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="sd">to provide context for schema inference.</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="sd">"""</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="k">def</span><span class="w"> </span><span class="nf">extract_context_from_docs</span><span class="p">(</span><span class="n">file_paths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">    </span><span class="sd">"""</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="sd">    Extract text content from documentation files.</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="sd">    Args:</span>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="sd">        file_paths: List of paths to documentation files</span>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="sd">    Returns:</span>
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="sd">        Concatenated text context (truncated to 50,000 chars if needed)</span>
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="sd">    """</span>
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a>    <span class="c1"># Implementation:</span>
+<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a>    <span class="c1"># 1. Iterate through file_paths</span>
+<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>    <span class="c1"># 2. Detect file type (PDF, MD, TXT)</span>
+<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a>    <span class="c1"># 3. Extract text using appropriate library</span>
+<a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a>    <span class="c1"># 4. Concatenate with separators</span>
+<a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a>    <span class="c1"># 5. Truncate if &gt;50k chars (with warning log)</span>
+<a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a>    <span class="k">pass</span>
+<a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a>
+<a id="__codelineno-3-29" name="__codelineno-3-29" href="#__codelineno-3-29"></a><span class="k">def</span><span class="w"> </span><span class="nf">extract_pdf_text</span><span class="p">(</span><span class="n">pdf_path</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<a id="__codelineno-3-30" name="__codelineno-3-30" href="#__codelineno-3-30"></a><span class="w">    </span><span class="sd">"""Extract text from PDF using pymupdf."""</span>
+<a id="__codelineno-3-31" name="__codelineno-3-31" href="#__codelineno-3-31"></a>    <span class="c1"># Use pymupdf (fitz) for extraction</span>
+<a id="__codelineno-3-32" name="__codelineno-3-32" href="#__codelineno-3-32"></a>    <span class="k">pass</span>
+<a id="__codelineno-3-33" name="__codelineno-3-33" href="#__codelineno-3-33"></a>
+<a id="__codelineno-3-34" name="__codelineno-3-34" href="#__codelineno-3-34"></a><span class="k">def</span><span class="w"> </span><span class="nf">extract_markdown_text</span><span class="p">(</span><span class="n">md_path</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<a id="__codelineno-3-35" name="__codelineno-3-35" href="#__codelineno-3-35"></a><span class="w">    </span><span class="sd">"""Extract text from Markdown file."""</span>
+<a id="__codelineno-3-36" name="__codelineno-3-36" href="#__codelineno-3-36"></a>    <span class="c1"># Direct read (preserve structure)</span>
+<a id="__codelineno-3-37" name="__codelineno-3-37" href="#__codelineno-3-37"></a>    <span class="k">pass</span>
+</code></pre></div>
+<p><strong>Dependencies</strong>: Add <code>pymupdf</code> to <code>pyproject.toml</code>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">[project]</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">dependencies</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="c1"># ... existing dependencies ...</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="s2">"pymupdf&gt;=1.23.0"</span><span class="p">,</span><span class="w">  </span><span class="c1"># PDF extraction (fitz)</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="p">]</span>
+</code></pre></div></p>
+<p><strong>Success Criteria</strong>:
+- [ ] Documentation files detected in ZIP uploads (<code>docs/</code> or root)
+- [ ] PDF, Markdown, and text files extracted successfully
+- [ ] Extracted text stored in metadata JSON
+- [ ] Files stored in <code>{upload_id}/docs/</code> for audit trail</p>
+<h3 id="phase-2-schema-inference-integration-p0">Phase 2: Schema Inference Integration (P0)</h3>
+<p><strong>Goal</strong>: Pass documentation context to schema inference engine.</p>
+<p><strong>Files to Modify</strong>:
+- <code>src/clinical_analytics/core/schema_inference.py</code>
+  - Update <code>infer_schema()</code> to accept <code>doc_context: str | None = None</code>
+  - Enhance <code>parse_dictionary_pdf()</code> to also parse plain text (not just PDF)
+  - Use <code>doc_context</code> to populate <code>DictionaryMetadata</code> when available
+  - Merge dictionary metadata with data-driven inference</p>
+<p><strong>Files to Modify</strong>:
+- <code>src/clinical_analytics/ui/storage/user_datasets.py</code>
+  - In <code>save_zip_upload()</code>, extract documentation and pass to schema inference
+  - Store <code>doc_context</code> in metadata JSON for future reference</p>
+<p><strong>Success Criteria</strong>:
+- [ ] <code>SchemaInferenceEngine.infer_schema()</code> accepts <code>doc_context</code> parameter
+- [ ] Documentation context improves column mapping confidence
+- [ ] Dictionary metadata merged with data-driven inference
+- [ ] Schema inference uses dictionary descriptions when available</p>
+<h3 id="phase-3-tier-3-autocontext-packager-p0">Phase 3: Tier 3 AutoContext Packager (P0)</h3>
+<p><strong>Goal</strong>: Build bounded, privacy-safe context pack for ADR001's Tier 3 LLM fallback.</p>
+<p><strong>New Component</strong>: <code>src/clinical_analytics/core/autocontext.py</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="sd">"""</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="sd">AutoContext Packager for Tier 3 LLM Fallback</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="sd">Builds bounded, privacy-safe context packs from schema inference,</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="sd">documentation, and alias mappings to enable grounded query parsing.</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="sd">"""</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Literal</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="nd">@dataclass</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="k">class</span><span class="w"> </span><span class="nc">ColumnContext</span><span class="p">:</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="w">    </span><span class="sd">"""Column metadata for AutoContext."""</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>    <span class="n">normalized_name</span><span class="p">:</span> <span class="nb">str</span>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a>    <span class="n">system_aliases</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+<a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>    <span class="n">user_aliases</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+<a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>    <span class="n">dtype</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"numeric"</span><span class="p">,</span> <span class="s2">"categorical"</span><span class="p">,</span> <span class="s2">"datetime"</span><span class="p">,</span> <span class="s2">"id"</span><span class="p">]</span>
+<a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a>    <span class="n">units</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a>    <span class="n">codebook</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a>    <span class="n">stats</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a>
+<a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a><span class="nd">@dataclass</span>
+<a id="__codelineno-5-24" name="__codelineno-5-24" href="#__codelineno-5-24"></a><span class="k">class</span><span class="w"> </span><span class="nc">AutoContext</span><span class="p">:</span>
+<a id="__codelineno-5-25" name="__codelineno-5-25" href="#__codelineno-5-25"></a><span class="w">    </span><span class="sd">"""Bounded, privacy-safe context pack for Tier 3 LLM."""</span>
+<a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a>    <span class="n">dataset</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span>  <span class="c1"># {upload_id, dataset_version, display_name}</span>
+<a id="__codelineno-5-27" name="__codelineno-5-27" href="#__codelineno-5-27"></a>    <span class="n">entity_keys</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>  <span class="c1"># Candidate columns ranked</span>
+<a id="__codelineno-5-28" name="__codelineno-5-28" href="#__codelineno-5-28"></a>    <span class="n">columns</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">ColumnContext</span><span class="p">]</span>
+<a id="__codelineno-5-29" name="__codelineno-5-29" href="#__codelineno-5-29"></a>    <span class="n">glossary</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>  <span class="c1"># Extracted terms, abbreviations, notes</span>
+<a id="__codelineno-5-30" name="__codelineno-5-30" href="#__codelineno-5-30"></a>    <span class="n">constraints</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>  <span class="c1"># {no_row_level_data: true, max_tokens: N}</span>
+<a id="__codelineno-5-31" name="__codelineno-5-31" href="#__codelineno-5-31"></a>
+<a id="__codelineno-5-32" name="__codelineno-5-32" href="#__codelineno-5-32"></a><span class="k">def</span><span class="w"> </span><span class="nf">build_autocontext</span><span class="p">(</span>
+<a id="__codelineno-5-33" name="__codelineno-5-33" href="#__codelineno-5-33"></a>    <span class="n">semantic_layer</span><span class="p">,</span>
+<a id="__codelineno-5-34" name="__codelineno-5-34" href="#__codelineno-5-34"></a>    <span class="n">inferred_schema</span><span class="p">,</span>
+<a id="__codelineno-5-35" name="__codelineno-5-35" href="#__codelineno-5-35"></a>    <span class="n">doc_context</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-5-36" name="__codelineno-5-36" href="#__codelineno-5-36"></a>    <span class="n">query_terms</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-5-37" name="__codelineno-5-37" href="#__codelineno-5-37"></a>    <span class="n">max_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4000</span><span class="p">,</span>
+<a id="__codelineno-5-38" name="__codelineno-5-38" href="#__codelineno-5-38"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AutoContext</span><span class="p">:</span>
+<a id="__codelineno-5-39" name="__codelineno-5-39" href="#__codelineno-5-39"></a><span class="w">    </span><span class="sd">"""</span>
+<a id="__codelineno-5-40" name="__codelineno-5-40" href="#__codelineno-5-40"></a><span class="sd">    Build AutoContext pack from schema inference, documentation, and aliases.</span>
+<a id="__codelineno-5-41" name="__codelineno-5-41" href="#__codelineno-5-41"></a>
+<a id="__codelineno-5-42" name="__codelineno-5-42" href="#__codelineno-5-42"></a><span class="sd">    **Deterministic construction** - no LLM inference. Same inputs always produce same output.</span>
+<a id="__codelineno-5-43" name="__codelineno-5-43" href="#__codelineno-5-43"></a><span class="sd">    Think: compiler metadata, not chat memory.</span>
+<a id="__codelineno-5-44" name="__codelineno-5-44" href="#__codelineno-5-44"></a>
+<a id="__codelineno-5-45" name="__codelineno-5-45" href="#__codelineno-5-45"></a><span class="sd">    Args:</span>
+<a id="__codelineno-5-46" name="__codelineno-5-46" href="#__codelineno-5-46"></a><span class="sd">        semantic_layer: SemanticLayer instance (for aliases, column metadata)</span>
+<a id="__codelineno-5-47" name="__codelineno-5-47" href="#__codelineno-5-47"></a><span class="sd">        inferred_schema: InferredSchema from SchemaInferenceEngine</span>
+<a id="__codelineno-5-48" name="__codelineno-5-48" href="#__codelineno-5-48"></a><span class="sd">        doc_context: Extracted documentation text (from Phase 1)</span>
+<a id="__codelineno-5-49" name="__codelineno-5-49" href="#__codelineno-5-49"></a><span class="sd">        query_terms: Optional query terms for relevance filtering</span>
+<a id="__codelineno-5-50" name="__codelineno-5-50" href="#__codelineno-5-50"></a><span class="sd">        max_tokens: Token budget for context (default: 4000)</span>
+<a id="__codelineno-5-51" name="__codelineno-5-51" href="#__codelineno-5-51"></a>
+<a id="__codelineno-5-52" name="__codelineno-5-52" href="#__codelineno-5-52"></a><span class="sd">    Returns:</span>
+<a id="__codelineno-5-53" name="__codelineno-5-53" href="#__codelineno-5-53"></a><span class="sd">        AutoContext pack (privacy-safe, bounded, authoritative, closed)</span>
+<a id="__codelineno-5-54" name="__codelineno-5-54" href="#__codelineno-5-54"></a>
+<a id="__codelineno-5-55" name="__codelineno-5-55" href="#__codelineno-5-55"></a><span class="sd">    Raises:</span>
+<a id="__codelineno-5-56" name="__codelineno-5-56" href="#__codelineno-5-56"></a><span class="sd">        ValueError: If no columns found in schema (empty dataset)</span>
+<a id="__codelineno-5-57" name="__codelineno-5-57" href="#__codelineno-5-57"></a><span class="sd">    """</span>
+<a id="__codelineno-5-58" name="__codelineno-5-58" href="#__codelineno-5-58"></a>    <span class="c1"># Implementation (all deterministic, no LLM):</span>
+<a id="__codelineno-5-59" name="__codelineno-5-59" href="#__codelineno-5-59"></a>    <span class="c1"># 1. Extract entity keys from inferred_schema (patient_id, etc.) - deterministic ranking</span>
+<a id="__codelineno-5-60" name="__codelineno-5-60" href="#__codelineno-5-60"></a>    <span class="c1"># 2. Build column catalog from semantic layer:</span>
+<a id="__codelineno-5-61" name="__codelineno-5-61" href="#__codelineno-5-61"></a>    <span class="c1">#    - Get canonical columns (from schema)</span>
+<a id="__codelineno-5-62" name="__codelineno-5-62" href="#__codelineno-5-62"></a>    <span class="c1">#    - Get system aliases (from alias index - deterministic)</span>
+<a id="__codelineno-5-63" name="__codelineno-5-63" href="#__codelineno-5-63"></a>    <span class="c1">#    - Get user aliases (from ADR003 persisted mappings - deterministic)</span>
+<a id="__codelineno-5-64" name="__codelineno-5-64" href="#__codelineno-5-64"></a>    <span class="c1">#    - Get inferred types (from schema inference - deterministic)</span>
+<a id="__codelineno-5-65" name="__codelineno-5-65" href="#__codelineno-5-65"></a>    <span class="c1">#    - Get codebooks (from column name patterns: "1: Yes 2: No" - deterministic parsing)</span>
+<a id="__codelineno-5-66" name="__codelineno-5-66" href="#__codelineno-5-66"></a>    <span class="c1">#    - Get lightweight stats (min/max/mean for numeric, top N for categorical - deterministic aggregation)</span>
+<a id="__codelineno-5-67" name="__codelineno-5-67" href="#__codelineno-5-67"></a>    <span class="c1"># 3. Extract glossary from doc_context (abbreviations, definitions - deterministic text extraction)</span>
+<a id="__codelineno-5-68" name="__codelineno-5-68" href="#__codelineno-5-68"></a>    <span class="c1"># 4. Filter columns by relevance if query_terms provided (lexical + alias match - deterministic)</span>
+<a id="__codelineno-5-69" name="__codelineno-5-69" href="#__codelineno-5-69"></a>    <span class="c1"># 5. Enforce token budget (truncate if needed - deterministic truncation strategy)</span>
+<a id="__codelineno-5-70" name="__codelineno-5-70" href="#__codelineno-5-70"></a>    <span class="c1"># 6. Validate no row-level data included (assertion check)</span>
+<a id="__codelineno-5-71" name="__codelineno-5-71" href="#__codelineno-5-71"></a>    <span class="c1"># 7. Return authoritative, closed AutoContext (only what exists, nothing invented)</span>
+<a id="__codelineno-5-72" name="__codelineno-5-72" href="#__codelineno-5-72"></a>    <span class="k">pass</span>
+</code></pre></div>
+<p><strong>Files to Modify</strong>:
+- <code>src/clinical_analytics/core/nl_query_engine.py</code> (ADR001's Tier 3)
+  - Update <code>_llm_parse()</code> to accept <code>AutoContext</code> parameter
+  - Build structured prompt with AutoContext pack
+  - Use AutoContext for variable matching and codebook understanding</p>
+<p><strong>Files to Modify</strong>:
+- <code>src/clinical_analytics/core/semantic.py</code>
+  - Add method to extract column metadata for AutoContext
+  - Provide user aliases (from ADR003 Phase 2 persistence)</p>
+<p><strong>Integration with ADR003 Trust UI</strong>:
+- Trust UI (Phase 1) must display AutoContext summary passed to Tier 3
+- Show alongside raw plan and alias-resolved plan
+- Format: "Tier 3 context: [N] columns, [M] entity keys, glossary: [terms]"</p>
+<p><strong>Success Criteria</strong>:
+- [ ] AutoContext pack built deterministically from schema inference + documentation + aliases (no LLM in construction)
+- [ ] No row-level data in AutoContext (privacy-safe)
+- [ ] Token budget enforced (truncation if needed)
+- [ ] AutoContext is authoritative and closed (only contains what exists in dataset/docs)
+- [ ] Tier 3 receives AutoContext and uses it for variable matching (only references columns in AutoContext)
+- [ ] ADR003 validation refuses QueryPlans referencing columns not in AutoContext
+- [ ] Trust UI displays AutoContext summary for auditability
+- [ ] Tier 3 produces valid QueryPlans with variables (not <code>matched_vars=[]</code>) when columns exist in AutoContext
+- [ ] Tier 3 returns <code>confidence=0.0</code> with <code>failure_reason="Column not found in dataset"</code> when query mentions column not in AutoContext</p>
+<h3 id="phase-4-testing-p1">Phase 4: Testing (P1)</h3>
+<p><strong>Goal</strong>: Verify documentation ingestion improves schema inference accuracy.</p>
+<p><strong>New Test File</strong>: <code>tests/core/test_doc_parser.py</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_extract_pdf_text</span><span class="p">():</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">    </span><span class="sd">"""Test PDF text extraction."""</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="c1"># Create mock PDF with column definitions</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>    <span class="c1"># Verify text extraction works</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_extract_markdown_text</span><span class="p">():</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">    </span><span class="sd">"""Test Markdown text extraction."""</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>    <span class="c1"># Create mock Markdown file</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>    <span class="c1"># Verify text extraction preserves structure</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_extract_context_truncation</span><span class="p">():</span>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="w">    </span><span class="sd">"""Test that large documentation is truncated appropriately."""</span>
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>    <span class="c1"># Create large text file (&gt;50k chars)</span>
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>    <span class="c1"># Verify truncation with warning</span>
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>
+<a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_schema_inference_with_doc_context</span><span class="p">():</span>
+<a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a><span class="w">    </span><span class="sd">"""Test that documentation context improves schema inference."""</span>
+<a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a>    <span class="c1"># Create test DataFrame with ambiguous columns</span>
+<a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a>    <span class="c1"># Create documentation file defining columns</span>
+<a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a>    <span class="c1"># Verify schema inference uses documentation</span>
+</code></pre></div>
+<p><strong>New Test File</strong>: <code>tests/loader/test_doc_extraction.py</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_zip_extraction_includes_docs</span><span class="p">():</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">    </span><span class="sd">"""Test that ZIP extraction identifies documentation files."""</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="c1"># Create ZIP with CSV + PDF in docs/</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="c1"># Verify docs are extracted and stored</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_schema_inference_with_uploaded_docs</span><span class="p">():</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">    </span><span class="sd">"""End-to-end test: upload ZIP with docs, verify schema inference."""</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>    <span class="c1"># Create ZIP with CSV + data dictionary PDF</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>    <span class="c1"># Upload via UserDatasetStorage</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>    <span class="c1"># Verify schema inference uses documentation</span>
+</code></pre></div>
+<p><strong>New Test File</strong>: <code>tests/core/test_autocontext.py</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_build_autocontext_no_row_data</span><span class="p">():</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">    </span><span class="sd">"""Test that AutoContext excludes row-level data."""</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    <span class="n">context</span> <span class="o">=</span> <span class="n">build_autocontext</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    <span class="c1"># Verify no patient IDs, no raw rows in context</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    <span class="k">assert</span> <span class="s2">"patient_id"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">context</span><span class="o">.</span><span class="n">columns</span><span class="p">)</span>  <span class="c1"># Only metadata, not values</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_autocontext_includes_codebooks</span><span class="p">():</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">    </span><span class="sd">"""Test that categorical codebooks are included."""</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>    <span class="c1"># Column: "Statin Used: 0: n/a 1: Atorvastatin ..."</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>    <span class="c1"># Verify codebook extracted: {"0": "n/a", "1": "Atorvastatin", ...}</span>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_autocontext_token_budget</span><span class="p">():</span>
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="w">    </span><span class="sd">"""Test token budget enforcement."""</span>
+<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a>    <span class="c1"># Create large schema (100+ columns)</span>
+<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>    <span class="c1"># Verify truncation to max_tokens</span>
+<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>
+<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_autocontext_query_relevance_filtering</span><span class="p">():</span>
+<a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a><span class="w">    </span><span class="sd">"""Test that query terms filter relevant columns."""</span>
+<a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a>    <span class="c1"># Query mentions "BMI" and "LDL"</span>
+<a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a>    <span class="c1"># Verify AutoContext includes BMI and LDL columns + similar columns</span>
+<a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a>    <span class="c1"># Excludes irrelevant columns</span>
+<a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a>
+<a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_autocontext_includes_user_aliases</span><span class="p">():</span>
+<a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a><span class="w">    </span><span class="sd">"""Test that user aliases from ADR003 are included."""</span>
+<a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a>    <span class="c1"># User taught "VL" → "viral_load"</span>
+<a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a>    <span class="c1"># Verify AutoContext includes user_aliases: ["VL"] for viral_load column</span>
+</code></pre></div>
+<p><strong>Success Criteria</strong>:
+- [ ] Unit tests for doc parser (PDF, Markdown, text)
+- [ ] Integration tests for ZIP extraction with docs
+- [ ] End-to-end test: upload ZIP with docs, verify improved schema inference
+- [ ] Unit tests for AutoContext packager (privacy, codebooks, token budget)
+- [ ] Integration test: Tier 3 receives AutoContext and produces valid plans
+- [ ] Test coverage &gt;80% for new code</p>
+<h2 id="consequences">Consequences</h2>
+<h3 id="positive">Positive</h3>
+<ul>
+<li><strong>High-Accuracy Mapping</strong>: Resolves ambiguous columns (e.g., <code>val1</code> vs <code>val2</code>) by reading the actual definition</li>
+<li><strong>True Zero-Config</strong>: MIMIC-style datasets can be mapped automatically without user intervention</li>
+<li><strong>Utilizes Existing User Behavior</strong>: Users already have these files in their ZIP exports; we just need to read them</li>
+<li><strong>Improved Confidence Scores</strong>: Dictionary metadata provides ground truth, increasing inference confidence</li>
+<li><strong>Better Column Descriptions</strong>: Schema includes rich descriptions from documentation, improving downstream analysis</li>
+<li><strong>Grounded Tier 3 Parsing</strong>: AutoContext enables Tier 3 to produce valid QueryPlans with variables, addressing "COUNT with no variables" and "group by patient_id" failures</li>
+<li><strong>Privacy-Safe Context</strong>: AutoContext provides schema cues without exposing patient-level data</li>
+</ul>
+<h3 id="negative">Negative</h3>
+<ul>
+<li><strong>New Dependencies</strong>: Requires adding PDF processing libraries (<code>pymupdf</code>) to <code>pyproject.toml</code></li>
+<li><strong>Token Usage</strong>: Documentation can be verbose. We must implement truncation or summarization strategies to prevent overflowing the LLM context window (though modern windows of 128k+ tokens make this less risky for future LLM integration)</li>
+<li><strong>Processing Time</strong>: Parsing PDFs adds a few seconds to the initial upload/processing step</li>
+<li><strong>Storage Overhead</strong>: Extracted documentation text stored in metadata JSON increases file size</li>
+<li><strong>Parsing Complexity</strong>: PDF structure varies widely; heuristics may miss some column definitions</li>
+<li><strong>AutoContext Construction Overhead</strong>: Building AutoContext pack adds processing time (schema profiling, alias resolution, codebook extraction)</li>
+<li><strong>Token Budget Management</strong>: AutoContext must fit within LLM context window; truncation may drop less-relevant columns</li>
+</ul>
+<h3 id="mitigations">Mitigations</h3>
+<ul>
+<li><strong>Truncation Strategy</strong>: Limit extracted text to 50,000 characters with clear warning logs</li>
+<li><strong>Lazy Parsing</strong>: Only parse documentation when schema inference confidence is low (future optimization)</li>
+<li><strong>Caching</strong>: Store parsed dictionary metadata in metadata JSON to avoid re-parsing on schema re-inference</li>
+<li><strong>Graceful Degradation</strong>: If documentation parsing fails, fall back to data-driven inference (no breaking changes)</li>
+<li><strong>AutoContext Token Budget</strong>: Enforce max_tokens (default 4000) with relevance filtering (query terms) and truncation (least relevant columns first)</li>
+<li><strong>Privacy Validation</strong>: AutoContext builder validates no row-level data included (assertion check before passing to Tier 3)</li>
+<li><strong>Incremental Construction</strong>: Build AutoContext on-demand (when Tier 3 invoked) rather than pre-computing for all queries</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives Considered</h2>
+<h3 id="ocr-for-scanned-pdfs">OCR for Scanned PDFs</h3>
+<p><strong>Rejected</strong>: Most data dictionaries (MIMIC, hospital exports) are digital-native PDFs. OCR adds massive complexity (Tesseract) and slowness for edge cases we don't strictly need yet. Can be added in future if scanned PDFs become common.</p>
+<h3 id="separate-upload-dictionary-flow">Separate "Upload Dictionary" Flow</h3>
+<p><strong>Rejected</strong>: Increases friction. The goal is to handle the ZIP file the user <em>already has</em>, not ask them to separate files manually. Manual upload flow would violate "Zero-Config" principle.</p>
+<h3 id="llm-based-extraction-immediate">LLM-Based Extraction (Immediate)</h3>
+<p><strong>Deferred</strong>: Current implementation uses pattern matching and heuristics (existing <code>parse_dictionary_pdf()</code>). LLM-based extraction can be added in future if heuristics prove insufficient.</p>
+<p><strong>Note</strong>: AutoContext Packager (Phase 3) provides context to Tier 3 LLM, but documentation extraction itself remains heuristic-based (not LLM-based) for MVP.</p>
+<h3 id="structured-dictionary-format-jsonyaml">Structured Dictionary Format (JSON/YAML)</h3>
+<p><strong>Rejected</strong>: Users don't have structured dictionaries - they have PDFs and Markdown. We must work with what users actually provide, not impose new format requirements.</p>
+<h2 id="rollback-plan">Rollback Plan</h2>
+<p>ADR004 is designed with <strong>surgical rollback</strong> capabilities through phase-level feature flags. Each phase can be independently disabled without code deployment.</p>
+<h3 id="feature-flags">Feature Flags</h3>
+<p>Configure in <code>config/nl_query.yaml</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># ADR004: Feature Flags for Surgical Rollback</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="nt">adr004_enable_doc_extraction</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">       </span><span class="c1"># Phase 1: PDF/MD/TXT extraction from ZIP uploads</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="nt">adr004_enable_schema_context</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">       </span><span class="c1"># Phase 2: Context-aware schema inference with docs</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="nt">adr004_enable_autocontext</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">          </span><span class="c1"># Phase 3: Tier 3 AutoContext packager for LLM fallback</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="nt">adr004_enable_question_generation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span><span class="w"> </span><span class="c1"># Phase 4: Proactive question generation (default: false for rollout)</span>
+</code></pre></div>
+<h3 id="rollback-procedure">Rollback Procedure</h3>
+<p>If a phase causes issues in production:</p>
+<ol>
+<li><strong>Identify the problematic phase</strong>:</li>
+<li>Phase 1 (Doc Extraction): Issues with PDF parsing, missing dependencies, performance degradation</li>
+<li>Phase 2 (Schema Context): Incorrect schema inference, codebook mapping errors</li>
+<li>Phase 3 (AutoContext): Token budget exceeded, Tier 3 LLM errors</li>
+<li>
+<p>Phase 4 (Question Generation): LLM timeout, inappropriate questions generated</p>
+</li>
+<li>
+<p><strong>Disable the phase</strong> in <code>config/nl_query.yaml</code>:
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="l l-Scalar l-Scalar-Plain">adr004_enable_[phase]</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span><span class="w">  </span><span class="c1"># Set to false</span>
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Restart service</strong> (config is loaded at startup):
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Docker/Kubernetes</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>kubectl<span class="w"> </span>rollout<span class="w"> </span>restart<span class="w"> </span>deployment/clinical-analytics
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1"># Streamlit</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>pkill<span class="w"> </span>-f<span class="w"> </span>streamlit
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>streamlit<span class="w"> </span>run<span class="w"> </span>app.py
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Phase is disabled</strong> - no code deployment needed:</p>
+</li>
+<li>Phase 1 disabled: Documentation files ignored during upload (falls back to data-only inference)</li>
+<li>Phase 2 disabled: Schema inference uses data-only approach (no doc_context)</li>
+<li>Phase 3 disabled: Tier 3 LLM fallback works without AutoContext (lower confidence expected)</li>
+<li>
+<p>Phase 4 disabled: No proactive questions generated (users can still ask questions manually)</p>
+</li>
+<li>
+<p><strong>Monitor and investigate</strong> root cause while system remains operational</p>
+</li>
+</ol>
+<h3 id="granularity-trade-offs">Granularity Trade-Offs</h3>
+<p><strong>Feature Flag Rollback</strong> (implemented):
+- ✅ No code deployment needed
+- ✅ Per-phase disable (surgical)
+- ✅ Service restart only (~5-10s downtime)
+- ❌ Cannot rollback individual commits within a phase</p>
+<p><strong>Git Rollback</strong> (not implemented):
+- ❌ Requires code deployment
+- ❌ All-or-nothing (entire PR must be reverted)
+- ❌ Longer rollback time (~15-30 min)
+- ✅ Can rollback individual commits</p>
+<p><strong>Design Choice</strong>: Feature flags chosen because production issues are typically <strong>phase-specific</strong> (e.g., "PDF parsing broke", not "commit abc123 broke"). Disabling an entire phase is the correct operational granularity.</p>
+<h3 id="monitoring-recommendations">Monitoring Recommendations</h3>
+<p>Monitor these metrics post-deployment:</p>
+<p><strong>Phase 1 (Doc Extraction)</strong>:
+- Doc extraction latency (&lt;5s budget enforced in tests)
+- PDF parsing errors
+- Memory usage during extraction</p>
+<p><strong>Phase 2 (Schema Context)</strong>:
+- Schema inference accuracy (codebook coverage, column mappings)
+- User overrides (if users manually correct inferred schema, Phase 2 may be underperforming)</p>
+<p><strong>Phase 3 (AutoContext)</strong>:
+- Token usage (should stay &lt;4000 tokens)
+- Tier 3 LLM confidence (should improve with AutoContext)
+- AutoContext build time</p>
+<p><strong>Phase 4 (Question Generation)</strong>:
+- LLM timeout rate (should be &lt;5% of requests)
+- Question quality (user feedback, question usage rate)
+- Question generation latency</p>
+<h2 id="code-references">Code References</h2>
+<ul>
+<li><code>src/clinical_analytics/core/schema_inference.py</code> - Schema inference engine (target for doc context integration)</li>
+<li><code>src/clinical_analytics/ui/storage/user_datasets.py</code> - ZIP upload processing (target for doc extraction)</li>
+<li><code>src/clinical_analytics/core/schema_inference.py:DictionaryMetadata</code> - Existing dictionary metadata class (can be extended)</li>
+<li><code>src/clinical_analytics/core/schema_inference.py:parse_dictionary_pdf()</code> - Existing PDF parsing (can be enhanced for text/Markdown)</li>
+</ul>
+<h2 id="references">References</h2>
+<h3 id="related-adrs_1">Related ADRs</h3>
+<ul>
+<li><strong><a href="../ADR002/">ADR002: Persistent Storage Layer</a></strong>: Defines metadata JSON schema where <code>doc_context</code> will be stored</li>
+<li><strong><a href="../ADR003/">ADR003: Clinical Trust Architecture &amp; Adaptive Terminology</a></strong>: Schema inference feeds into semantic layer registration (ADR003's responsibility). AutoContext Packager integrates with ADR003's trust UI to display context passed to Tier 3 for auditability.</li>
+<li><strong><a href="../ADR001/">ADR001: Query Plan Producer, Filtering, and Chat-First Execution Rules</a></strong>: ADR001's Tier 3 LLM fallback consumes AutoContext Pack to produce valid QueryPlans. AutoContext addresses "NLU without grounded context" failures where Tier 3 returns low-confidence plans with no variables.</li>
+</ul>
+<h3 id="related-plans">Related Plans</h3>
+<ul>
+<li><strong>Zero-Friction Onboarding</strong> (ADR003 context): Documentation ingestion directly supports "Zero-Config" goal</li>
+<li><strong>Multi-Table Handler Refactor</strong>: Documentation extraction should work for both single-file and multi-table uploads (feature parity)</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

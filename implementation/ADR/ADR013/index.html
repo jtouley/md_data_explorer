@@ -1,0 +1,2858 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Spec-driven clinical analytics with question-driven semantic analysis">
+      
+      
+        <meta name="author" content="Development Team">
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>ADR013: Contract-governed SQL path - Clinical Analytics Platform</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#adr013-contract-governed-sql-path" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="Clinical Analytics Platform" class="md-header__button md-logo" aria-label="Clinical Analytics Platform" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Clinical Analytics Platform
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ADR013: Contract-governed SQL path
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/yourusername/md_data_explorer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../getting-started/installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../user-guide/question-driven-analysis/" class="md-tabs__link">
+          
+  
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../architecture/overview/" class="md-tabs__link">
+          
+  
+  
+  Architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../security/THREAT_MODEL/" class="md-tabs__link">
+          
+  
+  
+  Security
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../api-reference/core/" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../development/contributing/" class="md-tabs__link">
+          
+  
+  
+  Development
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../vision/PURPOSE/" class="md-tabs__link">
+          
+  
+  
+  Specifications
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="Clinical Analytics Platform" class="md-nav__button md-logo" aria-label="Clinical Analytics Platform" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Clinical Analytics Platform
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/yourusername/md_data_explorer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/quick-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/uploading-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Uploading Data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/question-driven-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/statistical-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Statistical Tests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/interpreting-results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interpreting Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/AS_BUILT_ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    As-built (2025-03)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/ARCHITECTURE_BOUNDARIES/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module boundaries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/semantic-layer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Semantic Layer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/dataset-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dataset Registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/nl-query-engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NL Query Engine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Security
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../security/THREAT_MODEL/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Threat model & backlog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../security/LOCAL_DATA_SECURITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Patient data on this computer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/datasets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Datasets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI Components
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/packaging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packaging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Specifications
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Specifications
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../vision/PURPOSE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Purpose and steel thread
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../MASTER_PLAN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Master plan (roadmap)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--active"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../specs/omnibus_electron_streamlit_cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Electron cutover (omnibus)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--active"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../specs/question-driven-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../specs/multi-table-support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Table Support
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Status
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0-what-exists-today-constraints-this-design-keeps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0. What exists today (constraints this design keeps)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-the-contract-as-the-single-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The contract as the single context
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. The contract as the single context">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#11-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.1 Shape
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#12-sources-in-precedence-order-last-wins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.2 Sources, in precedence order (last wins)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#13-revisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.3 Revisions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#14-context-rendering-replaces-autocontexts-inputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.4 Context rendering (replaces AutoContext's inputs)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#15-odps-product-file-p5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.5 ODPS product file (P5)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#16-review-in-the-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.6 Review in the app
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-static-validation-srcclinical_analyticssqlvalidatepy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Static validation (src/clinical_analytics/sql/validate.py)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Static validation (src/clinical_analytics/sql/validate.py)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-step-4-scope-what-106-built" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 Step 4 scope: what #106 built
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-sandboxed-execution-sqlsandboxpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Sandboxed execution (sql/sandbox.py)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-privacy-on-any-result-shape-sqlprivacypy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Privacy on any result shape (sql/privacy.py)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Privacy on any result shape (sql/privacy.py)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-lineage-of-the-patient-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 Lineage of the patient key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-corepost-split-and-companions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 Core/post split and companions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-suppression-reuses-_suppress_lines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 Suppression (reuses _suppress_lines)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#44-patterns-that-cant-be-enforced-refused-with-the-text-shown" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4 Patterns that can't be enforced (refused, with the text shown)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#45-per-answer-filter-check-and-step-by-step-count-step-4-both-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.5 Per-answer filter check and step-by-step count (step 4, both paths)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-correctness-guards-and-the-p5-planner-gate-contractsgatepy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Correctness guards and the P5 planner gate (contracts/gate.py)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Correctness guards and the P5 planner gate (contracts/gate.py)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-using-answer_checks-on-sql" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1 Using answer_checks on SQL
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#52-gate-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.2 Gate rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-generation-transparency-editing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Generation, transparency, editing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Generation, transparency, editing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#61-generation-sqlgeneratepy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 Generation (sql/generate.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#62-plain-language-plan-sqlexplainpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.2 Plain-language plan (sql/explain.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#63-editing-and-re-running" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.3 Editing and re-running
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#64-routing-corequery_servicepy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.4 Routing (core/query_service.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-statistics-as-tools-sqltoolspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Statistics as tools (sql/tools.py)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-follow-ups-and-conversation-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Follow-ups and conversation state
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-charts-sqlchartpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Charts (sql/chart.py)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-lineage-p3-and-methods-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Lineage (P3) and methods export
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-evaluation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Evaluation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="11. Evaluation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#111-corpus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.1 Corpus
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#112-questions-and-oracles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.2 Questions and oracles
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#113-harness-and-scoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.3 Harness and scoring
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-migration-and-pr-breakdown" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12. Migration and PR breakdown
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="12. Migration and PR breakdown">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#coexistence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coexistence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-to-delete-and-when" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What to delete, and when
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#prs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PRs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#critical-files-for-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Critical Files for Implementation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="adr013-contract-governed-sql-path">ADR013: Contract-governed SQL path</h1>
+<h2 id="status">Status</h2>
+<p>Proposed (2026-11-13). Base: <code>origin/main</code> @ 9ef3fe1. Reference design; the steel thread in <a href="../../../vision/PURPOSE/">Purpose and steel thread</a> decides which part is built next.</p>
+<p><strong>Revised 2026-11-14</strong> (base <code>origin/main</code> @ 16e94c6), after an outside review and the COVID-MS baseline from #104:</p>
+<ul>
+<li><strong>Step 3</strong> takes the alias step (§1.4) and the column-choice hold (§5.1) from later PRs, and confirmations re-run the stored plan (§6.3).</li>
+<li><strong>Step 4</strong> is cut down to what #106 built (§2.1). The CTE and <code>__pid</code> lineage machinery (§4.1–4.2) waits until after MVP, and only if the corpus needs it. A per-answer check of every combination of filters, per group, and a step-by-step patient count are added on both paths (§4.5).</li>
+<li><strong>Differencing across questions</strong> moves from a session ledger to a dataset-version log, at step 6 (§4.4, §12).</li>
+<li><strong>The harness</strong> grades answered right and correctly held separately, and adds a held-out question set (§11.3).</li>
+<li><strong>These wait:</strong> revisions (§1.3), ODPS (§1.5), review UI (§1.6), charts (§9), lineage (§10) and packaging.</li>
+</ul>
+<h2 id="0-what-exists-today-constraints-this-design-keeps">0. What exists today (constraints this design keeps)</h2>
+<ul>
+<li><strong>The intent path.</strong> <code>NLQueryEngine</code> (<code>core/nl_query_engine.py</code>) runs pattern, then embedding, then LLM tiers. It produces <code>QueryPlan</code> (<code>core/query_plan.py:103</code>, five intents). <code>QueryService.ask</code> (<code>core/query_service.py</code>) does the locked prepare, an unlocked parse, then a locked <code>_finish</code>. <code>_finish</code> runs validation, measurement and grouping refusals, <code>answer_checks</code> findings, word accounting, <code>execute_query_plan</code>, then <code>format_execution_result</code>, <code>present_analysis</code>.</li>
+<li><strong>Privacy.</strong> The privacy core is <code>core/result_presentation.py</code>:</li>
+<li><code>_suppress_lines(cells, lines, floors)</code> does primary and secondary suppression for any set of lines with known totals.</li>
+<li><code>suppress_with_exclusions</code> treats <code>n_filtered_out</code> as a hidden cell.</li>
+<li>Small groups are folded into <code>OTHER_LABEL</code>.</li>
+<li><code>MIN_CELL_SIZE = SMALL_CELL_THRESHOLD = 11</code> (<code>contracts/config.py</code>, <code>nl_query.yaml</code>).</li>
+<li><strong>Statistics.</strong> <code>analysis/compute.py::compute_analysis_by_type(df, context, entity_key)</code> takes a Polars frame and an <code>AnalysisContext</code>. It runs t-test, ANOVA, chi-square, Fisher, logistic regression with ORs and CIs, Kaplan–Meier, log-rank, Cox and correlation. Analysis floors are in <code>analysis/sample_floors.py</code>.</li>
+<li><strong>Contract.</strong> <code>contracts/builder.py::build_contract</code> writes one ODCS v3.2.0 file per upload version to <code>contracts/&lt;upload_id&gt;/&lt;version&gt;.odcs.yaml</code>, write-once (<code>store.write_contract</code>).</li>
+<li>It covers only the <code>unified</code> object.</li>
+<li>It already carries description, synonyms, unit, <code>clinicalSemanticType</code>, enum codebook and the <code>phi</code> tag from <code>ResolvedDatasetMetadata</code>.</li>
+<li>Only the DQ checks read it.</li>
+<li><code>contracts/config.py</code> says "Not bumped yet when a patch is accepted later: the re-contract trigger is deferred."</li>
+<li><strong>Declarations.</strong> <code>contracts/declarations.py</code> stores grain and <code>LevelMapping</code> per version in <code>declarations.json</code>.</li>
+<li><strong>AutoContext.</strong> <code>core/autocontext.py</code> is built separately, from the alias index and <code>get_column_metadata</code>. It is called only from <code>NLQueryEngine._llm_parse</code> (around line 2311).</li>
+<li>It ships <code>min</code>, <code>max</code> and <code>top_values</code> with counts, and does not filter small cells. That is a privacy gap.</li>
+<li>It crashed on uploads.</li>
+<li><strong>Metadata patches (ADR011).</strong> <code>core/metadata_patch.py</code>, <code>core/overlay_store.py</code> and <code>api/routes/enrichments.py</code> provide pending, accept, reject, revert and history. Patch <code>provenance</code> can be <code>llm</code>, <code>user</code> or <code>dictionary</code>.</li>
+<li><strong>Documentation (ADR004).</strong> <code>core/doc_parser.py::extract_context_from_docs</code> feeds <code>SchemaInference.parse_dictionary_text</code>, which returns <code>DictionaryMetadata</code> (descriptions, types, valid values, codebooks).</li>
+<li><strong>Storage.</strong></li>
+<li>Each stored table is <code>parquet/{upload_id}_{table}_{version}.parquet</code> (<code>table_parquet_path</code>).</li>
+<li>The cohort is <code>parquet/{upload_id}__cohort_{...}.parquet</code>.</li>
+<li>Metadata holds <code>tables</code>, <code>parquet_paths</code> and <code>relationships</code>.</li>
+<li><strong>Dependencies.</strong> sqlglot 30.31.0 is already in <code>uv.lock</code>, pulled in by Ibis 12. DuckDB is 2.0.x.</li>
+<li><strong>Model.</strong> <code>nl_query.yaml</code> sets the default to <code>llama3.1:8b</code> with fallback <code>llama3.2:3b</code>. This spec plans for 3B: it is the smallest model the app falls back to (<code>ollama_fallback_model</code>), so the design has to work at that size. <code>OllamaClient.generate</code> posts to <code>/api/generate</code>, JSON mode, with no tool calling.</li>
+</ul>
+<h2 id="1-the-contract-as-the-single-context">1. The contract as the single context</h2>
+<h3 id="11-shape">1.1 Shape</h3>
+<p>There is one ODCS v3.2.0 document per (upload_id, dataset_version, revision). There is one <code>schema[]</code> object per stored table plus <code>unified</code> (the cohort). Top-level <code>customProperties</code> hold <code>uploadId</code>, <code>datasetVersion</code>, <code>revision</code>, <code>minCellSize</code>, <code>metadataPatchIds</code>, <code>declarations</code> and <code>productRef</code>.</p>
+<p>Per table object:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">labevents</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">physicalName</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">labevents</span><span class="w">            </span><span class="c1"># view name the SQL path exposes</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">logicalType</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">object</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="s">"Laboratory</span><span class="nv"> </span><span class="s">measurements</span><span class="nv"> </span><span class="s">..."</span><span class="w">          </span><span class="c1"># doc / patch / user</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="nt">dataGranularityDescription</span><span class="p">:</span><span class="w"> </span><span class="s">"One</span><span class="nv"> </span><span class="s">row</span><span class="nv"> </span><span class="s">per</span><span class="nv"> </span><span class="s">lab</span><span class="nv"> </span><span class="s">result"</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span><span class="nt">customProperties</span><span class="p">:</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">property</span><span class="p">:</span><span class="w"> </span><span class="nv">grain</span><span class="p p-Indicator">,</span><span class="nt"> value</span><span class="p">:</span><span class="w"> </span><span class="nv">event</span><span class="p p-Indicator">}</span><span class="w">                 </span><span class="c1"># patient | visit | event | reference</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">property</span><span class="p">:</span><span class="w"> </span><span class="nv">patientKey</span><span class="p p-Indicator">,</span><span class="nt"> value</span><span class="p">:</span><span class="w"> </span><span class="nv">subject_id</span><span class="p p-Indicator">}</span><span class="w">       </span><span class="c1"># null for reference tables</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">property</span><span class="p">:</span><span class="w"> </span><span class="nv">timeColumn</span><span class="p p-Indicator">,</span><span class="nt"> value</span><span class="p">:</span><span class="w"> </span><span class="nv">charttime</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">property</span><span class="p">:</span><span class="w"> </span><span class="nv">privacyClass</span><span class="p p-Indicator">,</span><span class="nt"> value</span><span class="p">:</span><span class="w"> </span><span class="nv">patient_level</span><span class="p p-Indicator">}</span><span class="w">  </span><span class="c1"># patient_level | public_aggregate</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">  </span><span class="nt">relationships</span><span class="p">:</span><span class="w">                                      </span><span class="c1"># ODCS v3.1+ relationships</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">foreignKey</span><span class="p p-Indicator">,</span><span class="nt"> from</span><span class="p">:</span><span class="w"> </span><span class="nv">labevents.subject_id</span><span class="p p-Indicator">,</span><span class="nt"> to</span><span class="p">:</span><span class="w"> </span><span class="nv">patients.subject_id</span><span class="p p-Indicator">,</span><span class="nt"> customProperties</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[{</span><span class="nt">property</span><span class="p">:</span><span class="w"> </span><span class="nv">cardinality</span><span class="p p-Indicator">,</span><span class="nt"> value</span><span class="p">:</span><span class="w"> </span><span class="nv">many_to_one</span><span class="p p-Indicator">}]}</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">foreignKey</span><span class="p p-Indicator">,</span><span class="nt"> from</span><span class="p">:</span><span class="w"> </span><span class="nv">labevents.hadm_id</span><span class="p p-Indicator">,</span><span class="nt"> to</span><span class="p">:</span><span class="w"> </span><span class="nv">admissions.hadm_id</span><span class="p p-Indicator">,</span><span class="nt"> customProperties</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[{</span><span class="nt">property</span><span class="p">:</span><span class="w"> </span><span class="nv">cardinality</span><span class="p p-Indicator">,</span><span class="nt"> value</span><span class="p">:</span><span class="w"> </span><span class="nv">many_to_one</span><span class="p p-Indicator">}]}</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">  </span><span class="nt">properties</span><span class="p">:</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">valuenum</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="w">      </span><span class="nt">physicalName</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">valuenum</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="w">      </span><span class="nt">logicalType</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">number</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="w">      </span><span class="nt">physicalType</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Float64</span>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="w">      </span><span class="nt">businessName</span><span class="p">:</span><span class="w"> </span><span class="s">"Lab</span><span class="nv"> </span><span class="s">value"</span>
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="w">      </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="s">"..."</span>
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="w">      </span><span class="nt">synonyms</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[{</span><span class="nt">synonym</span><span class="p">:</span><span class="w"> </span><span class="nv">result</span><span class="p p-Indicator">}]</span>
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="w">      </span><span class="nt">classification</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">public|restricted</span>
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="w">      </span><span class="nt">tags</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">phi</span><span class="p p-Indicator">]</span><span class="w">                                      </span><span class="c1"># only when PHI</span>
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="w">      </span><span class="nt">enum</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[{</span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="nv">1</span><span class="p p-Indicator">,</span><span class="nt"> label</span><span class="p">:</span><span class="w"> </span><span class="s">"Positive"</span><span class="p p-Indicator">}]</span><span class="w">            </span><span class="c1"># documented codebook, never observed values</span>
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="w">      </span><span class="nt">customProperties</span><span class="p">:</span>
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">property</span><span class="p">:</span><span class="w"> </span><span class="nv">semanticType</span><span class="p p-Indicator">,</span><span class="nt"> value</span><span class="p">:</span><span class="w"> </span><span class="nv">measurement</span><span class="p p-Indicator">}</span><span class="w"> </span><span class="c1"># identifier|demographic|clinical|temporal|outcome|measurement|coded|rate|count|free_text</span>
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">property</span><span class="p">:</span><span class="w"> </span><span class="nv">unit</span><span class="p p-Indicator">,</span><span class="nt"> value</span><span class="p">:</span><span class="w"> </span><span class="s">"mg/dL"</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">property</span><span class="p">:</span><span class="w"> </span><span class="nv">unitSource</span><span class="p p-Indicator">,</span><span class="nt"> value</span><span class="p">:</span><span class="w"> </span><span class="nv">dictionary</span><span class="p p-Indicator">}</span><span class="w">    </span><span class="c1"># dictionary|patch|user|header|assumed</span>
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">property</span><span class="p">:</span><span class="w"> </span><span class="nv">missingTokens</span><span class="p p-Indicator">,</span><span class="nt"> value</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"NA"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"-999"</span><span class="p p-Indicator">]}</span>
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">property</span><span class="p">:</span><span class="w"> </span><span class="nv">privacyClass</span><span class="p p-Indicator">,</span><span class="nt"> value</span><span class="p">:</span><span class="w"> </span><span class="nv">none</span><span class="p p-Indicator">}</span><span class="w">        </span><span class="c1"># identifier | phi | public_aggregate | none</span>
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">property</span><span class="p">:</span><span class="w"> </span><span class="nv">concept</span><span class="p p-Indicator">,</span><span class="nt"> value</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">system</span><span class="p">:</span><span class="w"> </span><span class="nv">LOINC</span><span class="p p-Indicator">,</span><span class="nt"> code</span><span class="p">:</span><span class="w"> </span><span class="s">"2160-0"</span><span class="p p-Indicator">,</span><span class="nt"> display</span><span class="p">:</span><span class="w"> </span><span class="s">"Creatinine</span><span class="nv"> </span><span class="s">[Mass/volume]</span><span class="nv"> </span><span class="s">in</span><span class="nv"> </span><span class="s">Serum</span><span class="nv"> </span><span class="s">or</span><span class="nv"> </span><span class="s">Plasma"</span><span class="p p-Indicator">}}</span>
+<a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">property</span><span class="p">:</span><span class="w"> </span><span class="nv">weightColumn</span><span class="p p-Indicator">,</span><span class="nt"> value</span><span class="p">:</span><span class="w"> </span><span class="nv">population</span><span class="p p-Indicator">}</span><span class="w">  </span><span class="c1"># for rate columns: required to pool</span>
+<a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">property</span><span class="p">:</span><span class="w"> </span><span class="nv">provenance</span><span class="p p-Indicator">,</span><span class="nt"> value</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="s">"dictionary:mimic_iv_demo_dictionary.pdf#p4"</span><span class="p p-Indicator">,</span><span class="nt"> unit</span><span class="p">:</span><span class="w"> </span><span class="s">"patch:p_123"</span><span class="p p-Indicator">}}</span>
+</code></pre></div>
+<p>The rule from <code>builder.py</code> stays: observed values (levels, min and max) are never written into the contract. Samples are computed when the prompt is rendered (see 1.4).</p>
+<h3 id="12-sources-in-precedence-order-last-wins">1.2 Sources, in precedence order (last wins)</h3>
+<ol>
+<li><strong>Inference.</strong> dtype; <code>classify_variable</code>; header codebooks (<code>code_labels</code>); <code>parse_column_name</code> units; <code>MultiTableHandler.classify_tables</code> grain and keys; <code>metadata["relationships"]</code>.</li>
+<li><strong>Documentation.</strong> <code>doc_parser.extract_context_from_docs</code> feeds <code>SchemaInference.parse_dictionary_text</code>, which returns <code>DictionaryMetadata</code>. Each entry becomes a <code>MetadataPatch(provenance="dictionary")</code>:</li>
+<li>When the dictionary names the column exactly (normalised), the patch is auto-accepted.</li>
+<li>When the match is fuzzy, the patch stays PENDING.</li>
+<li>Either way, documentation flows through the one ADR011 review flow.</li>
+<li><strong>Accepted ADR011 patches</strong>, from <code>llm</code>, <code>user</code> or <code>dictionary</code>.</li>
+<li><strong>Declarations.</strong> Grain, level merges and units (a new <code>UnitDeclaration</code>) from <code>declarations.json</code>, copied into <code>customProperties.declarations</code>.</li>
+<li><strong>Vocabulary (P4).</strong> <code>contracts/vocabulary.py</code> matches columns to a curated LOINC subset by name, synonym and unit. Matches are proposed as pending <code>SET_CONCEPT</code> patches (a new <code>PatchOperation</code>). Accepted concepts add synonyms to the alias index.</li>
+</ol>
+<h3 id="13-revisions">1.3 Revisions</h3>
+<ul>
+<li><strong>Files.</strong> Revision 0 stays at the existing write-once path. Later revisions go to <code>contracts/&lt;upload_id&gt;/&lt;dataset_version&gt;/rev-&lt;NNNN&gt;.odcs.yaml</code> and <code>version: 1.&lt;N&gt;.0</code>. The pointer <code>.../current.json</code> (<code>{"revision": N, "sha256": ...}</code>) is written last through <code>storage/atomic.py</code> as the commit point.</li>
+<li><strong>New module <code>contracts/revisions.py</code>:</strong></li>
+<li><code>ContractChange</code> is a union: <code>PatchDecision | DeclarationStored | UserEdit | PortChange</code>.</li>
+<li><code>apply_change(contract: OpenDataContractStandard, change: ContractChange) -&gt; OpenDataContractStandard</code> is a pure transform, and is unit-tested.</li>
+<li><code>revise(data_dir, upload_id, dataset_version, change) -&gt; ContractRef</code> runs under <code>storage/metadata_lock</code>.</li>
+<li><code>current_contract(data_dir, upload_id, dataset_version) -&gt; tuple[DatasetContract, ContractRef]</code>.</li>
+<li><strong><code>ContractRef</code></strong> is a frozen dataclass <code>(upload_id, dataset_version, revision, sha256)</code>, shown as <code>"{upload_id}/{version}@1.{rev}.0#{sha12}"</code>.</li>
+<li><strong>Triggers.</strong> A new revision comes from:</li>
+<li>patch accept, reject or revert (<code>OverlayStore.accept_patch</code> and the others call <code>revise</code>);</li>
+<li><code>QueryService._declare</code>;</li>
+<li>a user edit in the review UI;</li>
+<li>a product-port change.</li>
+</ul>
+<p>This retires the "re-contract trigger is deferred" note.
+- <strong>Typed read view.</strong> <code>contracts/context.py::DatasetContract</code> is a typed facade over the ODCS model: <code>tables: dict[str, TableSpec]</code> and <code>TableSpec.columns: dict[str, ColumnSpec]</code>. The gate and the renderer read only this.</p>
+<h3 id="14-context-rendering-replaces-autocontexts-inputs">1.4 Context rendering (replaces AutoContext's inputs)</h3>
+<p><code>contracts/context.py</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">render_context</span><span class="p">(</span><span class="n">contract</span><span class="p">:</span> <span class="n">DatasetContract</span><span class="p">,</span> <span class="n">ref</span><span class="p">:</span> <span class="n">ContractRef</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">purpose</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"intent"</span><span class="p">,</span> <span class="s2">"sql"</span><span class="p">],</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>                   <span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">budget_tokens</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">sampler</span><span class="p">:</span> <span class="n">SafeSampler</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>                   <span class="n">tables</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RenderedContext</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="k">class</span><span class="w"> </span><span class="nc">RenderedContext</span><span class="p">:</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">;</span> <span class="n">tables</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">];</span> <span class="n">columns</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">];</span> <span class="n">tokens</span><span class="p">:</span> <span class="nb">int</span><span class="p">;</span> <span class="n">ref</span><span class="p">:</span> <span class="n">ContractRef</span>
+</code></pre></div>
+<ul>
+<li><strong>Relevance.</strong> Columns are scored with the existing MiniLM <code>core/embeddings.py</code> over businessName, description, synonyms and concept display. The renderer always includes:</li>
+<li>every key and <code>timeColumn</code> of each chosen table;</li>
+<li>each relationship between chosen tables.</li>
+<li><strong>Line format, one per column:</strong>
+  <code>labevents.valuenum NUMBER unit=mg/dL type=measurement concept=LOINC:2160-0 "Creatinine" — Lab value. levels: …</code></li>
+<li><strong>Budget.</strong> Counted with tiktoken, as today. Drop order when over budget:</li>
+<li>samples;</li>
+<li>codebook entries beyond 12;</li>
+<li>descriptions truncated to 160 characters;</li>
+<li>least-relevant non-key columns.</li>
+<li><strong><code>SafeSampler</code></strong> (<code>contracts/sampling.py</code>) reads the sandbox connection (section 3):</li>
+<li><strong>Categorical, coded or demographic columns with privacyClass <code>none</code>.</strong> Levels come from <code>SELECT col FROM v GROUP BY col HAVING COUNT(DISTINCT key) &gt;= MIN_CELL_SIZE ORDER BY COUNT(DISTINCT key) DESC LIMIT 12</code>. No counts are sent to the model. Rows are used when the table has no key, and a reference table gets no samples. A column with more than <code>MAX_GROUP_LEVELS</code> levels gets "many values" and no samples.</li>
+<li><strong>Numeric columns.</strong> p05, p50 and p95 to 2 significant figures, only when at least <code>5 * MIN_CELL_SIZE</code> patients have a value. Never min or max.</li>
+<li><strong>Dates.</strong> Year of p05 and p95 only.</li>
+<li><strong>Identifier, PHI and free-text columns.</strong> No samples, ever.</li>
+<li><strong>Intent path.</strong> <code>build_autocontext(...)</code> keeps its signature as a thin adapter: it calls <code>render_context(purpose="intent")</code> and maps the result to the existing <code>AutoContext</code> and <code>ColumnContext</code>. Its <code>stats</code> drop <code>min</code>, <code>max</code> and counted <code>top_values</code>. <code>_llm_parse</code> passes the <code>ContractRef</code>. This removes the crashing reconstruction path (<code>_reconstruct_inferred_schema_from_semantic_layer</code>).</li>
+<li><strong>Aliases (step 3; was P4).</strong> <code>SemanticLayer._build_alias_index</code> adds contract synonyms, descriptions and codebook labels, and word accounting reads them. A question word counts as used when the contract accounts for it: "MS type" matches <code>ms_type2</code>'s description, and "admitted" matches <code>covid19_admission_hospital</code>'s. The model and the planner then read only the contract. This is the general form of the word-by-word rules on <code>fix/covid-ms-holds</code>. Concept displays follow with the P4 vocabulary.</li>
+</ul>
+<h3 id="15-odps-product-file-p5">1.5 ODPS product file (P5)</h3>
+<p><code>contracts/&lt;upload_id&gt;/&lt;dataset_version&gt;/product.odps.yaml</code> follows the Bitol Open Data Product Standard:
+- <code>outputPorts</code> lists the views the SQL path may query (name, <code>contractRef</code>).
+- <code>customProperties</code> holds <code>minCellSize</code>, <code>sqlProfile: "mdde-sql-1"</code> (allowlist version), <code>maxCoreRows: 5000</code>, <code>timeoutSeconds: 10</code>, <code>maxJoins</code> (per model tier).</p>
+<p>The user can hide a table, such as free-text notes, from questions. Hiding a table removes its port and makes a new revision. Module: <code>contracts/product.py::current_product(...) -&gt; DataProduct</code>.</p>
+<h3 id="16-review-in-the-app">1.6 Review in the app</h3>
+<ul>
+<li><strong>API.</strong> Extend <code>api/routes/enrichments.py</code>:</li>
+<li><code>GET /datasets/{id}/contract</code> returns the rendered tables and columns, the provenance of each field, and <code>ContractRef</code>.</li>
+<li><code>GET /datasets/{id}/contract/revisions</code> returns <code>[{revision, ts, change_summary}]</code>.</li>
+<li><code>PATCH /datasets/{id}/contract/columns/{table}/{column}</code> is a user edit. It becomes a <code>MetadataPatch(provenance="user")</code> that is accepted on creation.</li>
+<li>Existing pending, accept, reject and revert are unchanged; each now returns the new <code>ContractRef</code>.</li>
+<li><strong>Electron.</strong> Turn <code>electron/src/enrichmentPanel.js</code> into a contract panel: a table, then columns, each with description, unit, type, codebook and privacy. Pending suggestions show inline with Accept and Reject. <code>patchHistoryPanel.js</code> shows revisions.</li>
+</ul>
+<h2 id="2-static-validation-srcclinical_analyticssqlvalidatepy">2. Static validation (<code>src/clinical_analytics/sql/validate.py</code>)</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">ValidatedQuery</span><span class="p">:</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">canonical_sql</span><span class="p">:</span> <span class="nb">str</span>               <span class="c1"># sqlglot-generated from the checked AST (what runs)</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">ast</span><span class="p">:</span> <span class="n">sqlglot</span><span class="o">.</span><span class="n">exp</span><span class="o">.</span><span class="n">Expression</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">core</span><span class="p">:</span> <span class="n">CoreSplit</span>                  <span class="c1"># section 4.2</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">column_use</span><span class="p">:</span> <span class="n">ColumnUse</span>            <span class="c1"># section 5.1</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">views</span><span class="p">:</span> <span class="nb">frozenset</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="k">def</span><span class="w"> </span><span class="nf">validate_sql</span><span class="p">(</span><span class="n">sql</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">catalog</span><span class="p">:</span> <span class="n">SqlCatalog</span><span class="p">,</span> <span class="n">product</span><span class="p">:</span> <span class="n">DataProduct</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ValidatedQuery</span>  <span class="c1"># raises SqlRefusal(reason: str)</span>
+</code></pre></div>
+<p>Steps, each with a plain-language <code>SqlRefusal</code>:</p>
+<ol>
+<li><strong>One statement.</strong> <code>duckdb.extract_statements(sql)</code> must return exactly 1 statement of <code>StatementType.SELECT</code>. DuckDB's own parser is the authority for statement type.</li>
+<li><strong>Parse.</strong> <code>sqlglot.parse_one(sql, dialect="duckdb")</code>. The root must be <code>Select</code>, or <code>Select</code> with <code>With</code>, or <code>Union</code> (constrained in step 8).</li>
+<li>Forbidden node types anywhere: <code>Create</code>, <code>Insert</code>, <code>Update</code>, <code>Delete</code>, <code>Drop</code>, <code>Alter</code>, <code>Copy</code>, <code>Attach</code>, <code>Pragma</code>, <code>Set</code>, <code>Command</code>, <code>Into</code>, recursive <code>With</code>, <code>Lateral</code>, and <code>Table</code> function calls.</li>
+<li><strong>Qualify.</strong> <code>sqlglot.optimizer.qualify.qualify(ast, schema=catalog.sqlglot_schema(), dialect="duckdb", expand_stars=True, validate_qualify_columns=True)</code>. Every column resolves to a view.column in the contract, which is the gate's "every column must exist" rule. Unknown tables or tables not in <code>product.outputPorts</code> are refused.</li>
+<li><strong>Function allowlist.</strong> <code>sql/functions.py::ALLOWED: dict[str, FunctionRule]</code>. Anything not listed is refused, including all table functions, <code>read_*</code>, <code>glob</code>, <code>query</code>, <code>getenv</code>, <code>current_setting</code>, <code>duckdb_*</code>, <code>pragma_*</code>, <code>random</code>, <code>uuid</code>, <code>now</code> and <code>current_date</code>, which break reproducibility.</li>
+<li><strong>Aggregates:</strong> count, count(distinct), count_if, sum, avg, median, quantile_cont, min, max, stddev_samp, var_samp, bool_and, bool_or.</li>
+<li><strong>Scalars:</strong> arithmetic, round, floor, ceil, abs, ln, exp, sqrt, power, greatest, least, coalesce, nullif, CASE, cast/try_cast, lower, upper, trim, length, substring, contains, starts_with, regexp_matches with a literal pattern of 100 characters or fewer, date_trunc, date_part/extract, year, month, date_diff, date_add with interval literals, make_date, strftime.</li>
+<li><strong>Windows:</strong> row_number, rank, dense_rank, lag, lead, first_value, last_value, and sum, count or avg OVER.</li>
+<li><strong>Bounded series:</strong> <code>range</code> and <code>generate_series</code> with literal bounds and at most 1000 values, for calendar spines.</li>
+<li><strong>Refused with a pointer:</strong> <code>corr</code>, <code>regr_*</code>, <code>covar_*</code>, <code>mode</code>, <code>list</code>, <code>array_agg</code>, <code>string_agg</code>, <code>histogram</code>, <code>arg_min</code>, <code>arg_max</code>, <code>any_value</code> and <code>first</code> in aggregates.</li>
+<li><strong>Privacy-class rules:</strong></li>
+<li>Identifier columns may appear only in join conditions, <code>COUNT(DISTINCT key)</code>, <code>PARTITION BY</code> and <code>GROUP BY</code> of non-final blocks. They may never be projected in the final output, grouped at the final block, or compared with a literal. A comparison with a literal would be a question about one patient.</li>
+<li>PHI columns may appear only inside <code>year()</code>, <code>date_trunc('year'|'month', …)</code>, <code>date_diff</code> or predicates. They may never be projected raw.</li>
+<li><strong>Limits.</strong></li>
+<li>At most <code>product.maxJoins</code> joins: 1 for 3B, 4 for 7–8B.</li>
+<li>AST size of 400 nodes or fewer.</li>
+<li>CTE depth of 6 or less.</li>
+<li>An existing <code>LIMIT</code> above 5000 is refused.</li>
+<li><strong>Contract gate (P5),</strong> in <code>contracts/gate.py</code>, section 5.</li>
+<li><strong>Shape.</strong> The core/post split of section 4.2 must succeed, or the query is refused with the reason for that pattern.</li>
+</ol>
+<p><code>canonical_sql = ast.sql(dialect="duckdb")</code> after the privacy rewrite. What runs is always text generated from the AST that was checked, never the model's text.</p>
+<h3 id="21-step-4-scope-what-106-built">2.1 Step 4 scope: what #106 built</h3>
+<p>Step 4 builds this smaller version, not all of §2–§4. The rest waits until the corpus needs it.</p>
+<ul>
+<li><strong>One table, the contract's <code>unified</code> object.</strong> No joins, CTEs, subqueries, <code>UNION</code>, <code>ROLLUP</code>, <code>CUBE</code> or <code>GROUPING SETS</code>.</li>
+<li><strong>At most one dimension.</strong> It may be any row-level expression, such as <code>CASE</code> bands, <code>year()</code> or <code>date_trunc</code>.</li>
+<li><strong>Measures</strong> are arithmetic over <code>count(*)</code>, <code>count(col)</code>, <code>count(DISTINCT id)</code>, <code>count_if</code>, <code>sum</code>, <code>avg</code>, <code>median</code>, <code>quantile_cont</code> and <code>stddev</code>/<code>var_samp</code>, each with an optional <code>FILTER</code>. Value aggregates take a bare numeric column.</li>
+<li><strong>Refused:</strong> listings, <code>HAVING</code>, <code>QUALIFY</code>, windows, <code>MIN</code>/<code>MAX</code>, more than 200 groups, and visit-level data (an ID that repeats).</li>
+<li><strong>Not needed yet:</strong> the core/post split and <code>__pid</code> lineage (§4.1–4.2), because there are no per-patient CTEs.</li>
+<li><strong><code>sqlglot</code> is declared directly</strong> in <code>pyproject.toml</code> with a major-version bound. The validator's safety depends on its AST, so an Ibis upgrade must not change it silently.</li>
+</ul>
+<h2 id="3-sandboxed-execution-sqlsandboxpy">3. Sandboxed execution (<code>sql/sandbox.py</code>)</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">SandboxConnection</span><span class="p">:</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">catalog</span><span class="p">:</span> <span class="n">SqlCatalog</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">memory_limit</span><span class="p">:</span> <span class="n">DuckdbMemoryLimit</span><span class="p">,</span> <span class="n">threads</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span> <span class="o">...</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">sql</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">timeout_s</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">max_rows</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span>  <span class="c1"># raises SqlTimeout, SqlTooManyRows</span>
+</code></pre></div>
+<ul>
+<li><strong>Separate connection.</strong> A separate in-memory <code>duckdb.connect(":memory:", config={...})</code> per leased dataset version, owned by the <code>SemanticLayer</code> lease (<code>api/layer_cache.py</code>). It is never the Ibis connection, so the model's SQL can't touch layer state.</li>
+<li><strong>Connect config:</strong></li>
+<li><code>enable_external_access=false</code>;</li>
+<li><code>allowed_paths=[&lt;exact parquet files from metadata["parquet_paths"] and the cohort&gt;]</code>;</li>
+<li><code>autoinstall_known_extensions=false</code>, <code>autoload_known_extensions=false</code>, <code>allow_community_extensions=false</code>, <code>allow_unsigned_extensions=false</code>;</li>
+<li><code>memory_limit</code> set to the layer's share (<code>CACHED_LAYER_MEMORY_LIMIT</code>), <code>threads=DUCKDB_THREADS</code>;</li>
+<li><code>max_temp_directory_size='0B'</code>.</li>
+<li><strong>Catalog views.</strong> <code>SqlCatalog.from_contract(contract, metadata)</code> creates views like <code>CREATE VIEW "labevents" AS SELECT &lt;typed columns, missing tokens to NULL, confirmed LevelMapping merges as CASE&gt; FROM read_parquet(?)</code>. This gives the SQL path the same merged levels as the intent path's <code>remap_levels</code>. Then <code>SET lock_configuration=true</code>.</li>
+<li><strong>Read-only.</strong> Only views exist, the validator admits only SELECT, and external access is off. Even a validator bypass can't read or write files or attach a database. PR4 has a test that runs <code>read_text('/etc/passwd')</code>, <code>COPY</code> and <code>ATTACH</code> directly on the connection and expects errors.</li>
+<li><strong>Time limit.</strong> A <code>threading.Timer(timeout_s, con.interrupt)</code>.</li>
+<li><strong>Row limit.</strong> The core is wrapped as <code>SELECT * FROM (&lt;core&gt;) LIMIT max_rows+1</code>. Getting more than <code>max_rows</code> rows is refused ("too many groups to check for small cells").</li>
+<li><strong>Locking.</strong> Its own lock. It is not the layer's <code>_con_lock</code>, so the SQL path never blocks intent questions.</li>
+</ul>
+<h2 id="4-privacy-on-any-result-shape-sqlprivacypy">4. Privacy on any result shape (<code>sql/privacy.py</code>)</h2>
+<h3 id="41-lineage-of-the-patient-key">4.1 Lineage of the patient key</h3>
+<p><strong>Waits until after MVP, and only if the corpus needs it</strong> (§2.1). The step 4 path has no CTEs.</p>
+<p>Every block (CTE, subquery or final) is classified by <code>classify_block(select, catalog) -&gt; BlockKind</code>:</p>
+<ul>
+<li><strong><code>row_level</code></strong>: no GROUP BY or aggregate. The rewriter adds <code>&lt;view&gt;.&lt;patientKey&gt; AS __pid</code> to the projection when missing. It is taken from the leftmost patient-bearing source, and a join on declared keys keeps it.</li>
+<li><strong><code>per_patient</code></strong>: GROUP BY includes <code>__pid</code> or the patient key. <code>__pid</code> is kept as a group key, and windows <code>PARTITION BY __pid</code> are allowed.</li>
+<li><strong><code>core</code></strong>: the one aggregating block whose GROUP BY does not include the patient key. It must read only <code>row_level</code> or <code>per_patient</code> inputs, or reference tables.</li>
+<li><strong><code>post</code></strong>: blocks above the core that read only the core's output.</li>
+</ul>
+<p>Refused:
+- an aggregation not by patient that feeds another aggregation, which loses lineage and is how averaged rates get pooled;
+- two core blocks;
+- a patient-bearing input whose <code>__pid</code> can't be derived.</p>
+<h3 id="42-corepost-split-and-companions">4.2 Core/post split and companions</h3>
+<p><code>CoreSplit(core_sql, post_sql | None, dims: list[str], measures: list[MeasureSpec])</code>.</p>
+<ul>
+<li><strong>Core rewrite.</strong> For the core block with dimensions <code>D</code>:</li>
+<li>Add <code>COUNT(DISTINCT __pid) AS __n</code>.</li>
+<li>For every aggregate node <code>agg(arg) [FILTER (WHERE f)]</code> inside output expression <code>m_i</code>, add:<ul>
+<li><code>COUNT(DISTINCT __pid) FILTER (WHERE f AND arg IS NOT NULL) AS __nn_i_k</code>, the patients with a value;</li>
+<li>for indicator arguments only, <code>COUNT(DISTINCT __pid) FILTER (WHERE f AND arg IS NOT NULL AND arg &lt;&gt; 0 AND arg IS NOT FALSE) AS __nz_i_k</code>.</li>
+</ul>
+</li>
+<li>An argument is an indicator when, statically, it is a boolean, a comparison, or a CASE with constant 0/1 or NULL branches. At runtime, a numeric argument with 2 or fewer distinct values in the core input is also treated as one.</li>
+<li><code>COUNT(*)</code>, <code>COUNT(x)</code>, <code>SUM(indicator)</code>, <code>AVG(indicator)</code> and <code>count_if</code> are additive patient-derived measures.</li>
+<li><strong>Windows inside the core.</strong> <code>SUM|COUNT|AVG(agg) OVER (PARTITION BY subset of D)</code>, used for shares of a total, stay in the core and inherit the companions of their row.</li>
+<li><strong>Moved to post.</strong> <code>HAVING</code>, <code>ORDER BY</code>, <code>LIMIT</code>, <code>QUALIFY</code>, <code>LAG</code>, <code>LEAD</code> and the rank family are lifted out of the core into post. Applied before suppression, a <code>HAVING n &gt; 10</code> would turn the removed groups into one cell that can be worked out from the total.</li>
+<li><strong>Reference counts</strong>, computed by the runtime in the same sandbox call:</li>
+<li><code>P_all</code>: distinct patients in the dataset, from cached base counts;</li>
+<li><code>P_core</code>: distinct <code>__pid</code> in the core's input after WHERE;</li>
+<li><code>P_cte[j]</code>: for each patient-bearing CTE <code>j</code> whose pids are a superset of the core input, checked with <code>NOT EXISTS</code>. This is the "C. diff positives" cohort a user could count separately.</li>
+</ul>
+<h3 id="43-suppression-reuses-_suppress_lines">4.3 Suppression (reuses <code>_suppress_lines</code>)</h3>
+<p><strong>Step 4 design (#106).</strong> #106 goes further than the text below in three places, and those are the design:</p>
+<ol>
+<li><strong><code>WHERE</code> becomes <code>FILTER</code>.</strong> The patients the whole <code>WHERE</code> removes are counted per group and per aggregate partition, not only against the whole table. So the same query run without its <code>WHERE</code> can't difference out a small group. The terms of the <code>WHERE</code> are not checked against each other, and two filtered aggregates are not checked against each other; §4.5 adds that.</li>
+<li><strong>Value aggregates take bare columns only.</strong> <code>avg(1000*(x&gt;5) + x/1e6)</code> would encode a count that the indicator rule misses.</li>
+<li><strong>No error can depend on the data.</strong> Row expressions run inside <code>TRY(...)</code> and measures in <code>DOUBLE</code>, so <code>CASE WHEN &lt;one patient&gt; THEN CAST('x' AS INT)</code> and integer overflow can't act as an oracle.</li>
+</ol>
+<p>The rest of this section describes the full design for when the core/post split exists.</p>
+<p><code>suppress_core(frame, split, refs) -&gt; SuppressedCore(rows, hidden: set[CellKey], folded: bool, notes)</code>.</p>
+<ul>
+<li><strong>Cells.</strong></li>
+<li><code>__n</code> per row.</li>
+<li>For additive measures: <code>nz</code>, <code>zeros = nn − nz</code> and <code>nulls = __n − nn</code> per row.</li>
+<li>Virtual cells, never shown: <code>outside_all = P_all − P_core</code> and <code>outside_j = P_cte[j] − P_core</code>. They work the way <code>suppress_with_exclusions</code> treats <code>n_filtered_out</code>.</li>
+<li><strong>Lines</strong> (sets whose total is treated as known):</li>
+<li><strong>(a)</strong> For each count family, all rows plus <code>outside_all</code>, which totals <code>P_all</code>. The same again with <code>outside_j</code> for each reference CTE.</li>
+<li><strong>(b)</strong> Within a row, <code>{nz, zeros, nulls}</code>, which totals <code>__n</code>.</li>
+<li><strong>(c)</strong> For two or more dimensions, marginal lines per dimension, as <code>suppress_count_matrix</code> builds them.</li>
+<li><strong>(d)</strong> When rows overlap (section 6.2), the overlap <code>Σ__n − P_core</code> as a virtual cell in line (a).</li>
+<li><strong>Primary hiding.</strong> A cell is hidden when it is 1–10. Floors: <code>MIN_GROUP_N</code> for groups when a tool runs.</li>
+<li><strong>What a hidden cell does to its row.</strong></li>
+<li>Hidden <code>__n</code>: the whole row is folded into one <code>OTHER_LABEL</code> row whose measures are recomputed by re-running the core with those dimension values merged into one level. If that row is itself 1–10, it is dropped and the note says "groups of fewer than 11 patients are not shown". The labels of small groups are never shown, as in <code>_fold_rows</code>.</li>
+<li>Hidden <code>nz</code>, <code>zeros</code> or <code>nulls</code>: every measure built on that aggregate shows <code>SECONDARY_SUPPRESSED</code>.</li>
+<li>A continuous measure (mean, median, quantile) is shown only if <code>nn ≥ MIN_CELL_SIZE</code>.</li>
+<li>MIN or MAX of a numeric is shown under the same rule. MIN or MAX of a date or timestamp is refused statically unless it is wrapped in <code>year()</code> or <code>date_trunc</code>.</li>
+<li><strong>Post stage.</strong> The post SQL runs in the sandbox over the suppressed, folded core registered as <code>core</code> (Arrow), with hidden cells as NULL and the <code>__*</code> columns dropped. <code>LAG</code> over a hidden cell gives NULL, and ranks run over shown rows only, so the post stage can't leak. The note says "ranked among groups of at least 11 patients".</li>
+</ul>
+<h3 id="44-patterns-that-cant-be-enforced-refused-with-the-text-shown">4.4 Patterns that can't be enforced (refused, with the text shown)</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Why</th>
+<th>Refusal</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Final output not aggregated (patient listings, <code>SELECT *</code>)</td>
+<td>Each row is one patient</td>
+<td>"This would list individual patients."</td>
+</tr>
+<tr>
+<td>Aggregation of aggregates not grouped by patient</td>
+<td>Lineage to patients is lost</td>
+<td>"Averaging group results hides how many patients each one has. Ask for the measure over patients directly."</td>
+</tr>
+<tr>
+<td><code>UNION</code>, <code>INTERSECT</code> or <code>EXCEPT</code> at or above the core; <code>GROUPING SETS</code>, <code>ROLLUP</code>, <code>CUBE</code></td>
+<td>Row overlap can't be bounded statically (a "Both" row)</td>
+<td>"Combined or total rows can reveal small groups." Row-level <code>UNION ALL</code> of event tables that each carry <code>__pid</code> is allowed.</td>
+</tr>
+<tr>
+<td>Scalar or correlated subqueries in the final SELECT</td>
+<td>Hidden extra cohorts</td>
+<td>"Write it as a WITH step."</td>
+</tr>
+<tr>
+<td><code>list</code>, <code>string_agg</code>, <code>array_agg</code>, <code>arg_min/max</code>, <code>any_value</code>, <code>mode</code> on text</td>
+<td>Return a patient's value</td>
+<td>Function refused</td>
+</tr>
+<tr>
+<td>Identifier compared with a literal, or projected</td>
+<td>Single patient</td>
+<td>"A question about one patient."</td>
+</tr>
+<tr>
+<td>More than 5000 core groups, or the final group by is the patient key</td>
+<td>Every cell is small</td>
+<td>"Too many groups to check."</td>
+</tr>
+<tr>
+<td>Differences across separate questions (<code>count(A)</code> then <code>count(A and p)</code>)</td>
+<td>Caught when one answer's conditions include all of the other's and the groupings match, or the one with fewer conditions is not grouped (§4.5). Not caught otherwise: a changed threshold ("over 65", then "over 66") or a different grouping.</td>
+<td>Residual risk, stated in <a href="../../../vision/PURPOSE/#what-privacy-does-not-cover-yet">Purpose</a>; <code>docs/security/THREAT_MODEL.md</code> gets the entry with #106. At step 6, a dataset-version log of shown counts refuses a count one filter change away from a count already shown (§12). It is kept per dataset version, not per session, because a new chat would reset a session ledger.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="45-per-answer-filter-check-and-step-by-step-count-step-4-both-paths">4.5 Per-answer filter check and step-by-step count (step 4, both paths)</h3>
+<p>This borrows two mechanisms. <a href="https://github.com/datashield/dsBase">DataSHIELD</a>'s subset rule (<code>R/dataFrameSubsetDS1.R</code>) flags a subset that differs from its parent by a few rows; here it is strict and refuses. <a href="https://github.com/OHDSI/Atlas">OHDSI ATLAS</a> reports inclusion-rule attrition from a bitmask of which rules each person meets (<a href="https://book.ohdsi.org/Cohorts.html">Book of OHDSI, ch. 10</a>).</p>
+<p><strong>What #106 checks today.</strong> Per group, #106 counts the patients its whole <code>WHERE</code> removes, and splits each aggregate's group into the rows it reads (<code>FILTER</code>, <code>count_if</code>, non-null values, each value of a coded column) and the rest. That stops a difference with the same query without its <code>WHERE</code>, and between a filtered and an unfiltered count. It does not compare two filtered aggregates, or the terms of one <code>WHERE</code>, with each other. On #106's branch (<code>eb2eec5</code>), <code>SELECT count(*) FILTER (WHERE a = 1) - count(*) FILTER (WHERE a = 1 AND b = 1 AND c = 1)</code> returns 5 on a synthetic table where 5 patients with <code>a = 1</code> fail both <code>b</code> and <code>c</code>. The check below closes that. It goes into <code>sql/privacy.py</code> before <code>ENABLE_SQL_QUERIES</code> can be on by default, and into the question path with PR 6.</p>
+<ul>
+<li><strong>Conditions.</strong> An answer's conditions are every top-level <code>AND</code> term of its <code>WHERE</code>, of each <code>FILTER</code> and of each <code>count_if</code>, plus <code>&lt;column&gt; IS NOT NULL</code> for each column that a <code>count(column)</code> or a value aggregate reads. On the question path they are the plan's filters. Conditions are compared as rendered from the checked tree, so <code>age &gt; 65</code> and <code>65 &lt; age</code> are two conditions: stricter, never weaker.</li>
+<li><strong>Cells.</strong> Each condition becomes an indicator, <code>coalesce(TRY(&lt;condition&gt;), false)</code>. <code>NOT p</code> is its own indicator, never computed as the opposite of <code>p</code>, because a row where <code>p</code> is NULL is false in both. One grouped query counts patients per group and per combination of indicators: 2^k cells per group, ATLAS's bitmask. For a value aggregate over a coded column (at most 20 values), each cell is split per value, as #106 already does.</li>
+<li><strong>The rule.</strong> Every cell is a count for <code>_suppress_lines</code>, with #106's lines: a group's cells add up to the group, and each cell across groups adds up to the same query without <code>GROUP BY</code>. A group's measures are shown only when none of its cells is hidden. An ungrouped answer with a hidden cell is withheld: "This answer, with its filters, would let a reader work out a count of 1 to 10 patients. Ask with fewer filters or a coarser grouping." Every count a shown answer reveals about its conditions is then a sum of cells that are each 0 or at least 11. This holds however the conditions are split, because every measure counts the rows that meet a set of them; splitting only decides how strict the check is. That covers:</li>
+<li><strong>dropping any set of filters, not only one.</strong> <code>count(A)</code> minus <code>count(A and B and C)</code> is the patients with A who fail B, C or both: three cells, each checked;</li>
+<li><strong>differencing inside one answer,</strong> through <code>FILTER</code> clauses, <code>count_if</code> or arithmetic between differently filtered counts;</li>
+<li><strong>a filter that removes 11 or more overall but 1–10 in one group,</strong> because cells are per group.</li>
+<li><strong>Fail closed.</strong> More than 4 conditions, <code>IS NOT NULL</code> terms included (16 cells per group, 3,200 at 200 groups), are refused, never checked in part. If the counting query fails, nothing is shown. Both paths read the threshold from <code>SMALL_CELL_THRESHOLD</code> and pass their cells to one shared function; only the counting query differs (DuckDB on the SQL path, Polars on the question path).</li>
+<li><strong>Across answers, without memory.</strong> The check never reads earlier answers, and it doesn't need to when one answer's conditions include all of the other's, and both group the same way or the one with fewer conditions is not grouped. Each count the answer with fewer conditions shows is then a sum of the other answer's cells, and that answer checked them all, whichever came first. That is why "count A, then count A and B" is safe. It is not because a later answer removes more patients: how many "A and B and C" removes from "A and B" is unrelated to how many "A and B" removed from "A". Answers whose conditions aren't nested, or that group differently, are the residual risk in §4.4.</li>
+<li><strong>The step-by-step count.</strong> Every answer shows the attrition line, CONSORT style: "1,141 patients → 612 women → 341 with RRMS", one step per condition in the order written. It is the cheapest form of "method shown". Each count in it is a sum of the answer's cells, so the counts are what get hidden, never only the steps: with 612 and 605 shown, a hidden step of 7 is still 7. A count is hidden when any cell it adds up is hidden. The shown counts, with the dataset total the app shows, are lines in the same <code>_suppress_lines</code> call, so complementary suppression hides more cells, and so more counts, until no hidden cell is the difference of two shown counts. In an answer with no hidden cell, every count and every step is already 0 or at least 11.</li>
+<li><strong>Tests.</strong> Each case above is an adversarial test, on synthetic data, on both paths: two filters dropped at once (the 5 patients who fail both B and C), nested <code>FILTER</code> differencing (the query above), a filter that removes 3 patients in one group and 40 overall, the attrition line <code>1,141 → 612 → 605 → 341</code>, and a NULL-valued condition with its <code>NOT</code>. They join <code>tests/sql/test_privacy_adversarial.py</code> on #106 and the intent-path privacy tests.</li>
+<li><strong>Before the flag defaults on,</strong> add <a href="https://github.com/AI-SDC/ACRO">ACRO</a>'s dominance and p-ratio checks for <code>sum</code> and <code>avg</code> of continuous columns (#106 lists means as a residual risk).</li>
+</ul>
+<h2 id="5-correctness-guards-and-the-p5-planner-gate-contractsgatepy">5. Correctness guards and the P5 planner gate (<code>contracts/gate.py</code>)</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">GateResult</span><span class="p">:</span> <span class="n">refusal</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">;</span> <span class="n">holds</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">];</span> <span class="n">notes</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">def</span><span class="w"> </span><span class="nf">check_sql</span><span class="p">(</span><span class="n">q</span><span class="p">:</span> <span class="n">ValidatedQuery</span><span class="p">,</span> <span class="n">contract</span><span class="p">:</span> <span class="n">DatasetContract</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GateResult</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="k">def</span><span class="w"> </span><span class="nf">check_plan</span><span class="p">(</span><span class="n">plan</span><span class="p">:</span> <span class="n">QueryPlan</span><span class="p">,</span> <span class="n">contract</span><span class="p">:</span> <span class="n">DatasetContract</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GateResult</span>   <span class="c1"># intent path too, called in QueryService._finish before execute</span>
+</code></pre></div>
+<h3 id="51-using-answer_checks-on-sql">5.1 Using <code>answer_checks</code> on SQL</h3>
+<p>Add <code>ColumnUse</code> to <code>core/answer_checks.py</code>. Today the checks read a <code>QueryPlan</code>; this extracts the column-level inputs they need:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">ColumnUse</span><span class="p">:</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="n">view</span><span class="p">:</span> <span class="nb">str</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">statistic_columns</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>   <span class="c1"># args of avg/median/sum/stddev/quantile (non-indicator)</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">group_columns</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>       <span class="c1"># core GROUP BY dims</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="n">equality_values</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="o">...</span><span class="p">]</span>  <span class="c1"># col = 'literal', col IN (...)</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="n">limit_columns</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>       <span class="c1"># any predicate column</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>    <span class="n">counted</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"patients"</span><span class="p">,</span> <span class="s2">"rows"</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>    <span class="n">statistic_kind</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"describe"</span><span class="p">,</span> <span class="s2">"compare"</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="k">def</span><span class="w"> </span><span class="nf">column_use_of_plan</span><span class="p">(</span><span class="n">plan</span><span class="p">:</span> <span class="n">QueryPlan</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ColumnUse</span>            <span class="c1"># adapter; existing behaviour</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="k">def</span><span class="w"> </span><span class="nf">data_findings</span><span class="p">(</span><span class="n">stats</span><span class="p">:</span> <span class="n">ViewStats</span><span class="p">,</span> <span class="n">use</span><span class="p">:</span> <span class="n">ColumnUse</span><span class="p">,</span> <span class="n">declarations</span><span class="p">,</span> <span class="n">version</span><span class="p">,</span> <span class="n">report</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Findings</span>
+</code></pre></div>
+<p><code>ViewStats</code> is a protocol with <code>rows()</code>, <code>distinct(col)</code>, <code>missing(col)</code>, <code>value_counts(col)</code> and <code>dtype(col)</code>. <code>SemanticLayer</code> implements it for the base view, and <code>SandboxConnection</code> implements it per view, with a cache per contract revision. The body of <code>QueryService._data_findings</code> moves into <code>data_findings</code>. Mapping:</p>
+<table>
+<thead>
+<tr>
+<th>Existing check</th>
+<th>SQL application</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>grain_of</code>, <code>declared_visits</code>, <code>grain_hold_reason</code>, <code>missing_key_note</code></td>
+<td>Per patient-bearing view in the core input. A hold applies when the view's grain is undeclared and repeated and a count is <code>COUNT(*)</code> or <code>COUNT(x)</code> (rows). Tables the contract grains as <code>event</code> don't hold, but their counts are labelled "rows (events)".</td>
+</tr>
+<tr>
+<td><code>metric_refusal</code>, <code>statistic_refusal</code></td>
+<td>Every <code>statistic_columns</code> entry, so values like "&lt;5" stored as text are refused.</td>
+</tr>
+<tr>
+<td><code>variant_findings</code></td>
+<td>Group columns and string equality literals. This gives the same hold and <code>LevelMapping</code>, and confirming it changes the catalog view and the contract revision.</td>
+</tr>
+<tr>
+<td><code>implausible_sentences</code></td>
+<td>Statistic and limit columns.</td>
+</tr>
+<tr>
+<td><code>grouped_count_refusal</code>, <code>share_refusal</code>, <code>varies_within_patient</code></td>
+<td>Core dims and indicator measures at visit grain.</td>
+</tr>
+<tr>
+<td><code>measurement_grouping_reason</code>, <code>grouping_problem</code></td>
+<td>Core dims, unless the dim is wrapped in a binning expression (<code>floor(x/10)*10</code>, <code>CASE</code> ranges, <code>date_trunc</code>).</td>
+</tr>
+<tr>
+<td><code>missingness_notes</code>, <code>report_notes</code></td>
+<td>All columns read.</td>
+</tr>
+<tr>
+<td>Word accounting (<code>unjustified_elements</code>)</td>
+<td>Replaced by <code>sql/accounting.py::unasked_literals(question, history, ast)</code>. A WHERE literal or threshold that doesn't appear in the question, the earlier turns or a confirmed synonym is held: "The query limits to <code>&lt;x&gt;</code>, which the question did not mention."</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Word-accounting holds on the question path (step 3).</strong> This borrows <a href="https://github.com/microsoft/data-formulator">Data Formulator</a>'s mix of picking and typing.</p>
+<ul>
+<li><strong>Choose, don't rephrase.</strong> When the contract doesn't account for a word, the hold no longer says "rephrase it with a column or value" (<code>core/word_accounting.py</code>). It offers the 2–3 contract columns that best match the word, ranked by the existing MiniLM embeddings (§1.4), plus "none of these".</li>
+<li><strong>Saved once per dataset.</strong> The choice becomes an accepted <code>MetadataPatch(provenance="user")</code> synonym, so the contract accounts for the word from then on.</li>
+<li><strong>In the harness,</strong> a question with <code>confirm: true</code> picks the oracle's column. Its grade is reported as right after one clarification, apart from both answered right and correctly held (§11.3).</li>
+<li><strong>At step 4,</strong> a word-accounting hold routes to model-written SQL instead (§6.4). <code>unasked_literals</code> still holds a <code>WHERE</code> literal the question never asked for.</li>
+</ul>
+<p><strong>Cap on hand-written vocabulary rules.</strong> No question-specific vocabulary goes into <code>word_accounting.py</code> or <code>question_vocabulary.py</code>; new words come from the contract. From <code>fix/covid-ms-holds</code>, only dataset-independent grammar merges: "broken down by" read as "by", and joining a hyphenated name when a column spells it that way. Domain verbs such as <code>PLACE_VERBS</code> do not. The count of hand-written rules after that merge is the cap: a new rule must replace one. Without the cap, rules get tuned to the 15 questions that score them.</p>
+<h3 id="52-gate-rules">5.2 Gate rules</h3>
+<ul>
+<li><strong>Columns exist.</strong> Done by <code>qualify</code> against the contract schema.</li>
+<li><strong>Joins use declared keys.</strong> Every JOIN ON must be a conjunction of equalities that match a contract <code>relationships</code> entry, in either direction. Extra conjuncts may only be inequalities or BETWEEN on <code>temporal</code> columns (time windows), or literal filters. Cross joins are refused, except to a reference table or a <code>range</code> spine.</li>
+<li><strong>Fan-out.</strong> After a <code>one_to_many</code> join, SUM, AVG or COUNT(*) of a column from the "one" side is refused ("counted once per <child row>").</li>
+<li><strong>Means of codes.</strong> AVG, SUM, MEDIAN or STDDEV of <code>semanticType ∈ {coded, identifier, demographic-categorical}</code>, or of a column with <code>enum</code>, is refused with the same wording as <code>numeric_text.statistic_refusal</code>. A binary 0/1 outcome is allowed and is labelled a share.</li>
+<li><strong>Pooling rates.</strong> AVG or SUM over <code>semanticType=rate</code>, or a name matching <code>rate|pct|percent|per_?\d+|proportion|ratio</code> on a reference table, is refused unless it has the form <code>SUM(rate*w)/SUM(w)</code> with <code>w</code> the contract's <code>weightColumn</code>. The refusal shows that rewrite.</li>
+<li><strong>Overlapping categories.</strong></li>
+<li>Static: refuse a dim level literal in <code>{'all','both','total','overall','any'}</code> (case-insensitive) inside CASE or WHERE on a group column.</li>
+<li>Contract and data: when a dimension's documented codebook, or its observed levels from the sampler, include such a level, the gate adds <code>WHERE col NOT IN (&lt;total levels&gt;)</code> and says so in the explanation, or holds when the user filtered on it explicitly. Example: CDC "All Sexes".</li>
+<li>Runtime: when <code>Σ__n &gt; P_core</code>, add the overlap line (4.3 d). The note reads "patients appear in more than one row; rows do not add up to the total".</li>
+<li><strong>Units.</strong></li>
+<li><code>+</code>, <code>-</code>, comparison, <code>COALESCE</code>, <code>GREATEST</code> or <code>UNION</code> between columns with different contract units is refused unless one side is wrapped in the sandbox macro <code>convert_unit(x, 'from', 'to')</code>. The macro is defined from the P4 vocabulary's conversion table.</li>
+<li>A literal threshold against a column outside <code>[p01/10, p99*10]</code> of observed values is held: "check units: <code>&lt;col&gt;</code> is recorded in <code>&lt;unit&gt;</code>". The percentiles are computed in the sandbox and never shown.</li>
+<li>Each result column gets a unit:<ul>
+<li><code>AVG</code> or <code>MEDIAN(x)</code> gets unit(x);</li>
+<li><code>COUNT(DISTINCT pid)</code> gets "patients";</li>
+<li><code>COUNT(*)</code> gets "visits", "events" or "rows" by grain;</li>
+<li>a ratio gets "per <denominator>".</li>
+</ul>
+</li>
+<li>A column alias that says patients when it counts rows is held, using the same unit logic as <code>query_service._unit_of</code>.</li>
+</ul>
+<h2 id="6-generation-transparency-editing">6. Generation, transparency, editing</h2>
+<h3 id="61-generation-sqlgeneratepy">6.1 Generation (<code>sql/generate.py</code>)</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">generate</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">RenderedContext</span><span class="p">,</span> <span class="n">examples</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">SqlExample</span><span class="p">],</span> <span class="n">history</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">SqlTurn</span><span class="p">],</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>             <span class="n">client</span><span class="p">:</span> <span class="n">OllamaClient</span><span class="p">,</span> <span class="n">feedback</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ModelOutput</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">ModelOutput</span><span class="p">:</span> <span class="n">sql</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">;</span> <span class="n">tool</span><span class="p">:</span> <span class="n">ToolCall</span> <span class="o">|</span> <span class="kc">None</span><span class="p">;</span> <span class="n">raw_sha256</span><span class="p">:</span> <span class="nb">str</span>
+</code></pre></div>
+<ul>
+<li><strong>Request.</strong> Ollama <code>/api/generate</code> with <code>format</code> set to a JSON schema (<code>{"sql": string|null, "tool": {...}|null}</code>), temperature 0, <code>num_ctx</code> 8192, and the timeout <code>llm_timeout_parse_s</code>.</li>
+<li><strong>Examples.</strong> <code>resources/config/sql_examples.yaml</code> holds about 40 pairs of question and SQL over a toy patients/visits/labs/meds/micro schema. They cover top-N, rank, trend by year, percent change, pivot with <code>count_if</code>, rate per population, a 90-day window join, before/after, first-per-patient windows and follow-up edits. Three are retrieved by embedding similarity.</li>
+<li><strong>Repair.</strong> Up to 2 retries, feeding back the <code>SqlRefusal</code> text, following the <code>_retry_with_dba_feedback_llm</code> pattern.</li>
+<li><strong>3B settings.</strong> <code>maxJoins=1</code>, a context budget of 2500 tokens, and SQL only (the tool calls come from routing, 6.4).</li>
+<li><strong>What a 7–8B model changes.</strong></li>
+<li><code>maxJoins=4</code>, with time-window joins and follow-up edits enabled.</li>
+<li>A 4000-token budget.</li>
+<li>Tool calls in the same output.</li>
+<li>Add <code>ollama_sql_model</code> to <code>nl_query.yaml</code>. Benchmark <code>qwen2.5-coder:7b</code> and <code>qwen2.5-coder:3b</code> against the llama models, since code-tuned models usually do better at SQL. The benchmark picks the default.</li>
+</ul>
+<h3 id="62-plain-language-plan-sqlexplainpy">6.2 Plain-language plan (<code>sql/explain.py</code>)</h3>
+<p><code>explain(q: ValidatedQuery, contract) -&gt; list[str]</code> is deterministic, built from the AST and contract business names, never from model text. Example:</p>
+<ol>
+<li>"Start from microbiology results where the test is <em>C. difficile toxin</em> and the result is <em>positive</em>. Keep each patient's first positive test."</li>
+<li>"Join prescriptions on patient, for antibiotics started in the 90 days before that test."</li>
+<li>"Count distinct patients by year of the test. Groups under 11 patients are hidden."</li>
+</ol>
+<p>It also lists the rewrites the gate added (total levels excluded, HAVING moved).</p>
+<h3 id="63-editing-and-re-running">6.3 Editing and re-running</h3>
+<ul>
+<li><code>QueryRequest</code> adds:</li>
+<li><code>mode: Literal["auto","intent","sql"] = "auto"</code>;</li>
+<li><code>sql: str | None</code>, a user-edited query that runs through the same <code>validate_sql</code>, gate and privacy steps with no model.</li>
+<li><code>QueryResult</code> adds <code>answer_id: str</code>, <code>route: Literal["intent","sql","tool"]</code> and <code>sql: SqlPayload | None</code>, where <code>SqlPayload</code> is <code>{sql: canonical_sql, explanation: list[str], columns: list[ResultColumn], contract_ref: str}</code>.</li>
+<li>A new route <code>POST /queries/sql/check</code> returns validation and explanation without running anything, for live checking in the editor.</li>
+<li>SSE adds <code>sql_generated</code> and <code>sql_checked</code>.</li>
+<li>Holds reuse the confirm flow: <code>plan_hash = sha256(canonical_sql + contract_ref + sorted(holds))</code>.</li>
+<li><strong>A confirmation re-runs the stored plan</strong> (both paths, from step 3). The server keeps the plan it hashed, with what the plan was built against: the dataset version, the <code>contract_ref</code> and the layer's <code>state_generation</code>. On confirm, it runs that plan only if all three still match and the plan passes validation and the gate again. Otherwise it refuses: "The dataset or its description changed after you were asked to confirm. Ask the question again." A re-upload changes the version, and an accepted <code>MetadataPatch</code>, such as a column-choice synonym (§5.1), changes the <code>contract_ref</code>. It never re-parses the question. Today the question path re-parses, and the nondeterministic model tier can produce a different plan: <code>covid_ms-or-012</code> was confirmed and then held again with "This plan is different from the one you approved" (<code>core/execution_gate.py</code>).</li>
+<li>Electron gets a new <code>electron/src/sqlPanel.js</code>: a collapsible "How this was computed" with the explanation, the SQL in a textarea, and <strong>Run edited query</strong>.</li>
+</ul>
+<h3 id="64-routing-corequery_servicepy">6.4 Routing (<code>core/query_service.py</code>)</h3>
+<p><code>QueryService.ask</code> runs the intent path first. That path is the fast one, and its golden suites show 0 WRONG. The new <code>sql_fallback_eligible(result) -&gt; bool</code> is true when any of these hold:
+- parse failed;
+- confidence was below the threshold with no data hold;
+- the only hold is the word-accounting hold (<code>unused_words_reason</code>);
+- the plan was invalid because of an unsupported shape.</p>
+<p>Data holds (grain, spellings, implausible values) never fall back, because only the user can settle them. Then <code>SqlQueryService.ask_sql(...)</code> runs (<code>sql/service.py</code>), with the same three-step locking pattern and <code>state_generation</code> re-check.</p>
+<p><strong>Step 4 is done</strong> when this fallback runs on one table and the questions that word accounting would hold are answered by model-written SQL. #106, which runs only user-typed SQL, does not finish step 4 on its own.</p>
+<h2 id="7-statistics-as-tools-sqltoolspy">7. Statistics as tools (<code>sql/tools.py</code>)</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">ToolName</span> <span class="o">=</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"describe"</span><span class="p">,</span> <span class="s2">"compare_groups"</span><span class="p">,</span> <span class="s2">"find_predictors"</span><span class="p">,</span> <span class="s2">"survival"</span><span class="p">,</span> <span class="s2">"correlations"</span><span class="p">]</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="k">class</span><span class="w"> </span><span class="nc">ToolCall</span><span class="p">:</span> <span class="n">tool</span><span class="p">:</span> <span class="n">ToolName</span><span class="p">;</span> <span class="n">cohort_sql</span><span class="p">:</span> <span class="nb">str</span><span class="p">;</span> <span class="n">outcome</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">;</span> <span class="n">group</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>                <span class="n">predictors</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">();</span> <span class="n">time</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">;</span> <span class="n">event</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+</code></pre></div>
+<ul>
+<li><code>cohort_sql</code> is validated with <code>validate_sql(..., allow_patient_rows=True)</code>. That is the only exception to "aggregated output": the frame never leaves the process.</li>
+<li>It must be <code>row_level</code> or <code>per_patient</code> with <code>__pid</code> unique per row (checked at runtime), or it is held for grain.</li>
+<li>It may have at most 12 columns, all named in the tool arguments.</li>
+<li>The frame goes to an <code>AnalysisContext</code> (intent, primary, grouping, predictors, time, event variables). Then <code>compute_analysis_by_type(df, context, entity_key="__pid")</code>, with <code>analysis["n_filtered_out"] = P_all − P_core</code> so <code>suppress_with_exclusions</code> sees the complement. Then <code>QueryService._with_findings</code> (findings from <code>ColumnUse</code>), then <code>present_analysis</code>.</li>
+<li>All of the existing floors, folding, OR/CI rendering and suppression apply unchanged.</li>
+<li>In SQL, <code>corr</code>, <code>regr_*</code> and test-like constructs are refused with "use the statistics tool".</li>
+<li>With 3B, the tool is picked by routing: an intent-path parse with intent COMPARE_GROUPS, FIND_PREDICTORS, SURVIVAL or CORRELATIONS whose cohort can't be expressed as filters. The model writes only <code>cohort_sql</code>. With 7–8B, the model can return the full <code>ToolCall</code>.</li>
+</ul>
+<h2 id="8-follow-ups-and-conversation-state">8. Follow-ups and conversation state</h2>
+<ul>
+<li><strong><code>SqlTurn</code>:</strong> <code>{question, route, canonical_sql, cohort_sql | None, columns: [name, kind, unit], contract_ref}</code>. No result values. This is an invariant with a test: no prompt contains a number from a presented table. <a href="https://github.com/dominodatalab/clinical-data-explorer">Domino Clinical Data Explorer</a> enforces the same rule per tool.</li>
+<li><strong>Storage.</strong> In the session DB: add <code>Message.payload_json</code> with an Alembic migration (<code>api/models/database.py</code>). <code>AsyncQueryService.conversation_history</code> returns <code>SqlTurn</code>s for the SQL route.</li>
+<li><strong>Prompt.</strong> The model sees the last 2 turns' question and SQL and is told to edit the SQL ("now by year", "only women").</li>
+<li><strong>"Those patients".</strong> The previous <code>cohort_sql</code>, or the core input of the last turn, is available as CTE <code>previous_cohort</code>. It is re-validated and recomputed, never cached results, so privacy is enforced again.</li>
+<li><strong>Contract changes.</strong> When <code>contract_ref</code> differs from the previous turn, the earlier SQL is re-validated against the new contract. A column that is now missing is refused with the reason.</li>
+</ul>
+<h2 id="9-charts-sqlchartpy">9. Charts (<code>sql/chart.py</code>)</h2>
+<ul>
+<li><code>choose_chart(columns: list[ResultColumn], rows) -&gt; ChartSpec | None</code> widens <code>ChartSpec.type</code> to <code>bar|line|grouped_bar|heatmap</code>. It is rule-based:</li>
+<li>one temporal dim and 1–3 measures: <code>line</code>;</li>
+<li>one categorical dim (at most <code>MAX_GROUP_LEVELS</code>) and one measure: <code>bar</code>;</li>
+<li>two dims: <code>grouped_bar</code>, or <code>heatmap</code> when either has more than 6 levels;</li>
+<li>otherwise a table.</li>
+<li>A model <code>chart</code> hint is accepted only if it names result columns.</li>
+<li>Data comes from presented rows only. Hidden cells are drawn as hatched gaps labelled "hidden (fewer than 11 patients)".</li>
+<li>Histograms are core aggregates over <code>floor(x/w)*w</code> bins, so small bins are hidden.</li>
+<li>Electron gets <code>electron/src/chartView.js</code> (inline SVG, no external library, which fits the CSP).</li>
+<li><code>query_plan.generate_chart_spec</code> moves here once both paths use it.</li>
+</ul>
+<h2 id="10-lineage-p3-and-methods-export">10. Lineage (P3) and methods export</h2>
+<ul>
+<li><strong>Events.</strong> <code>lineage/events.py</code> writes <code>&lt;data home&gt;/lineage/&lt;upload_id&gt;/events.jsonl</code> through <code>storage/atomic.py</code> append semantics. Event kinds:</li>
+<li><code>upload</code>;</li>
+<li><code>contract_revision</code> (change, <code>ContractRef</code>);</li>
+<li><code>patch_decision</code>;</li>
+<li><code>declaration</code>;</li>
+<li><code>plan</code> (run_key, plan_hash);</li>
+<li><code>answer</code>: <code>{answer_id, route, contract_ref, product_ref, run_key|sql_sha256, canonical_sql, explanation, tool, model:{name, digest}, app_version, checks:{refusal, holds, notes}, suppression:{hidden_cells, folded}, presented_sha256}</code>.</li>
+<li><strong>No patient values.</strong> SQL literals come from the question. The presented answer is stored only as a hash.</li>
+<li><strong>Index.</strong> <code>lineage/index.py</code> rebuilds <code>&lt;data home&gt;/lineage/lineage.duckdb</code> with tables <code>nodes(id, kind, attrs JSON)</code> and <code>edges(src, dst, kind)</code> from the JSONL. The JSONL is the source of truth.</li>
+<li><strong>Hooks:</strong></li>
+<li><code>UserDatasetStorage</code> save (upload);</li>
+<li><code>contracts/revisions.revise</code>;</li>
+<li><code>OverlayStore.accept_patch</code>, <code>reject_patch</code> and revert;</li>
+<li><code>QueryService._finish</code> and <code>SqlQueryService</code> (answer).</li>
+<li>Dataset deletion (<code>storage/dataset_deletion.py</code>) removes the lineage directory.</li>
+<li><strong>Methods export.</strong> <code>lineage/methods.py::methods_markdown(answer_id)</code> feeds <code>GET /answers/{answer_id}/methods?format=md|json</code>. Sections:</li>
+<li>data source (dataset, version, contract version, source sha256);</li>
+<li>cohort definition (explanation);</li>
+<li>variables, with description, unit and concept taken from the contract at that <code>contract_ref</code>;</li>
+<li>statistical methods (test names and CI method from the analysis payload);</li>
+<li>the privacy rule applied;</li>
+<li>software (app, DuckDB, statsmodels, lifelines, model and digest);</li>
+<li>the SQL appendix.</li>
+</ul>
+<h2 id="11-evaluation">11. Evaluation</h2>
+<h3 id="111-corpus">11.1 Corpus</h3>
+<p><code>src/clinical_analytics/eval/corpus/corpus.yaml</code> lists each dataset's <code>id</code>, <code>url</code>, <code>sha256</code>, <code>license</code>, <code>dictionary_url</code>, <code>prepare</code> (a function name) and <code>tables</code>. The data is fetched to <code>&lt;data home&gt;/bench/</code> by <code>make bench-corpus-fetch</code> and is never committed (<code>check_no_data_files.py</code>). Datasets:</p>
+<ul>
+<li><strong>COVID-MS GDSI public sample.</strong> Patient grain, with coded columns and a dictionary.</li>
+<li><strong>PhysioNet Sepsis 2019.</strong> Training set A, CC-BY 4.0. Hourly PSV files are joined into one long table with <code>patient_id</code> taken from the file name; this is the visit/hour grain test.</li>
+<li><strong>MIMIC-III demo and MIMIC-IV demo (ODbL).</strong> Multi-table ZIP: patients, admissions, prescriptions, microbiologyevents, labevents, d_labitems. These test joins and time windows, including the C. diff question. Because there are 100 patients, many answers must be HELD, which tests privacy.</li>
+<li><strong>UCI Diabetes 130-US hospitals.</strong> Encounter grain, readmission and rates.</li>
+<li><strong>UCI Heart Disease (Cleveland).</strong> Coded categoricals, for the means-of-codes guard.</li>
+<li><strong>A CDC state-year table with <code>All Sexes</code> and <code>All Ages</code> rows, and a rate per 100k with population.</strong> For example, NCHS provisional COVID-19 deaths by sex, age and state. It tests overlapping categories and pooling. Pin the exact table in the manifest.</li>
+</ul>
+<h3 id="112-questions-and-oracles">11.2 Questions and oracles</h3>
+<ul>
+<li>Questions live in <code>tests/eval/corpus/questions/&lt;dataset&gt;.yaml</code>. Each has <code>{id, question, capability, follow_up_of?, expect: answer|held, confirm: bool}</code>. There are about 300 across these capabilities:</li>
+<li>count, describe, top-N, rank;</li>
+<li>trend by year, percent change, pivot, rate per population;</li>
+<li>time-window join, window function, before/after;</li>
+<li>follow-up chain, statistics tool, arbitrary aggregate;</li>
+<li>guard probes (grain, overlap, units, pooling, codes);</li>
+<li>privacy probes: listings, HAVING tricks, LAG next to small cells, complements of a CTE, identifier literals, <code>read_parquet</code> and <code>COPY</code> injection in the question text;</li>
+<li>unenforceable patterns, with <code>expect: held</code>.</li>
+<li>Oracles are <code>tests/eval/corpus/oracles/&lt;dataset&gt;.py</code>: Polars only, written without reading the app's SQL. Each returns <code>OracleAnswer(frame, unit, cell_patients: dict[CellKey, int])</code>, so the scorer knows which cells must be hidden.</li>
+</ul>
+<h3 id="113-harness-and-scoring">11.3 Harness and scoring</h3>
+<ul>
+<li><code>eval/corpus/run.py</code> (<code>make bench-sql MODEL=llama3.2:3b</code>). Each run:</li>
+<li>sets a fresh <code>CLINICAL_ANALYTICS_DATA_HOME</code> temporary directory and starts a fresh API process (TestClient on <code>api.main</code>), so there are no layer caches, prompt-learning overlays or declarations;</li>
+<li>uploads every dataset through <code>POST /datasets/upload</code>, the real staging path;</li>
+<li>asks each question chain in a new session;</li>
+<li>when <code>confirm: true</code>, confirms holds the way <code>eval/headless.ask(confirm=True)</code> does.</li>
+<li>Grading reads the presented answer (<code>presented_answer</code>-style), never raw frames:</li>
+<li><strong>RIGHT:</strong> every shown value matches the oracle (counts exact; statistics within 1e-4 relative), labels and unit match, and every oracle cell of 1–10 patients is hidden. Secondary hidden cells are allowed. An <code>expect: held</code> question that is held counts as RIGHT.</li>
+<li><strong>WRONG:</strong> a shown value differs, the unit or grain is wrong, a non-hidden oracle row is missing, an <code>expect: held</code> question is answered, or there is a <strong>LEAK</strong> (a shown cell with 1–10 oracle patients, or a small level's label).</li>
+<li><strong>HELD:</strong> held or refused with a reason when <code>expect: answer</code>.</li>
+<li><strong>ERROR:</strong> exception, timeout, model unavailable, or validation failed after retries.</li>
+<li>Each question runs 3 times at temperature 0 to show nondeterminism. A WRONG in any run counts.</li>
+<li><strong>Two rates, never added together</strong> (from step 3). RIGHT mixes usefulness with safety, because a correctly held <code>expect: held</code> question is RIGHT (<code>eval/corpus/score.py</code>). The harness therefore reports:</li>
+<li><strong>answered right</strong> ÷ questions with <code>expect: answer</code>, the usefulness rate (COVID-MS baseline: 1 of 14);</li>
+<li><strong>correctly held</strong> ÷ questions with <code>expect: held</code>;</li>
+<li><strong>right after one clarification</strong>, for a <code>confirm: true</code> question answered after one column choice (§5.1);</li>
+<li><strong>unsafe</strong> = WRONG ÷ all questions, which must be 0. A LEAK is graded WRONG and flagged, so it is counted once, inside WRONG.</li>
+</ul>
+<p>The CI gate runs <code>make accept DATASET=covid_ms MODEL=none</code>, the pattern and embedding tiers without a model, and gates on its answered-right count against a baseline stored in the repository, not on RIGHT. That count measures the question path without the model. The run with the model is the manual release gate below.
+- <strong>Held-out questions.</strong> Each corpus dataset gets a permanent <code>tests/eval/corpus/questions/&lt;dataset&gt;.heldout.yaml</code>: about 15 paraphrases of the same intents, written by someone who has not read the code, graded by the same oracles. Dev and held-out results are reported separately, and only held-out results count toward a step's "done". Fixes are never tuned on the held-out file. The COVID-MS file lands on <code>main</code> and is scored there, with and without the model, before #107 merges; that run is the baseline step 3's "rises" is measured against.
+- <strong>Issues.</strong> Each reproducible WRONG, LEAK, ERROR or unacceptable HOLD has a GitHub issue per cause (see <a href="../../../vision/PURPOSE/#merge-gate">Merge gate</a>). Question YAML gains <code>issue:</code> and <code>fixed_by:</code> keys, so a regression names its issue and PR.
+- The run records the model digest, not only its name.
+- <strong>Ship bar:</strong>
+  - 0 WRONG (including 0 LEAK) for both the 3B model and the chosen 7–8B model;
+  - no answered-right regressions on the intent-expressible subset compared with the intent path alone;
+  - the answered-right rate reported per capability, on held-out questions.
+- <strong>CI.</strong> The privacy and validator adversarial suites run on the synthetic fixtures (<code>tests/sql/</code>), and the <code>MODEL=none</code> acceptance run gates as above. The full benchmark with the model is a manual, release-gate job because it needs Ollama.</p>
+<h2 id="12-migration-and-pr-breakdown">12. Migration and PR breakdown</h2>
+<h3 id="coexistence">Coexistence</h3>
+<ul>
+<li>The intent path stays the first route.</li>
+<li>The SQL path is behind <code>sql_path.enabled</code> in <code>nl_query.yaml</code>, default false until PR 8 meets the ship bar.</li>
+<li>Both paths go through <code>contracts/gate.py</code> and both write lineage.</li>
+</ul>
+<h3 id="what-to-delete-and-when">What to delete, and when</h3>
+<ul>
+<li><strong>Immediately, in PR 1:</strong></li>
+<li><code>resources/config/ollama.yaml</code>, which is reference only and not read;</li>
+<li>the <code>stats</code> min/max/top_values and <code>_reconstruct_inferred_schema_from_semantic_layer</code> in <code>autocontext.py</code>.</li>
+<li><strong>After the ship bar, when SQL RIGHT is at least Tier-3 RIGHT on the corpus:</strong></li>
+<li>Tier 3 LLM intent parsing: <code>NLQueryEngine._llm_parse</code>, <code>_build_llm_prompt</code>, <code>_extract_query_intent_from_llm_response</code>, <code>_dba_validate_llm</code> and <code>_retry_with_dba_feedback_llm</code>;</li>
+<li><code>core/autocontext.py</code>, with callers moved to <code>contracts/context.py</code>;</li>
+<li><code>query_plan.generate_chart_spec</code>.</li>
+<li><strong>Keep:</strong> Tier 1/2 and <code>QueryPlan</code>, which are deterministic and fast.</li>
+<li><strong>Docs:</strong> mark <code>docs/vision/UNIFIED_VISION.md</code> superseded by ADR013, and update <code>AS_BUILT_ARCHITECTURE.md</code>'s known-limits section.</li>
+</ul>
+<h3 id="prs">PRs</h3>
+<p>The steel thread sets the order, and only the step being worked on is built. Revised 2026-11-14:</p>
+<ul>
+<li><strong>Step 3</strong> is PR 1 as #107 builds it, plus the alias step and the column-choice hold moved forward from PR 2 (§1.4, §5.1), plus confirmation replay (§6.3). The merge order is in <a href="../../../vision/PURPOSE/#steel-thread-in-order">Purpose, step 3</a>.</li>
+<li><strong>Step 4</strong> is PR 5 in #106's smaller form (§2.1), PR 6 on one table, and the per-answer filter check and step-by-step count (§4.5).</li>
+<li>
+<p><strong>Waiting:</strong> PR 2's review UI and revisions, PR 3 (lineage), PR 9 (charts), §1.5 (ODPS) and packaging. None of them moves the acceptance table now.</p>
+</li>
+<li>
+<p><strong>Contract enriched from documentation and metadata patches; AutoContext built from the contract.</strong> This is the smallest useful PR.</p>
+</li>
+<li>Content:<ul>
+<li>per-table schema objects;</li>
+<li>dictionary entries turned into <code>MetadataPatch(provenance="dictionary")</code>, auto-accepted on exact name match;</li>
+<li>accepted patches and declarations folded in;</li>
+<li><code>contracts/revisions.py</code>;</li>
+<li><code>contracts/context.py::render_context</code> and <code>SafeSampler</code> running on the layer connection, before the sandbox exists;</li>
+<li><code>build_autocontext</code> as an adapter;</li>
+<li>the privacy fix to the context stats;</li>
+<li><code>eval/corpus/{corpus.yaml,fetch.py}</code> and a context benchmark.</li>
+</ul>
+</li>
+<li>The context benchmark measures, per corpus dataset:<ul>
+<li><strong>(a)</strong> upload and render succeed, with no crash;</li>
+<li><strong>(b)</strong> description coverage and <strong>(c)</strong> unit and codebook precision and recall, against the dataset's own data dictionary;</li>
+<li><strong>(d)</strong> zero rendered levels below 11 patients, checked by an oracle;</li>
+<li><strong>(e)</strong> the token budget is respected;</li>
+<li><strong>(f)</strong> golden and hard-question suites don't regress;</li>
+<li><strong>(g)</strong> Tier-3 RIGHT, WRONG, HELD and ERROR on intent-expressible corpus questions, before and after.</li>
+</ul>
+</li>
+<li><strong>Contract review UI and revisions in the ADR011 flow; P4 vocabulary.</strong> <code>SET_CONCEPT</code>, the curated LOINC subset under <code>resources/vocabulary/</code> with a <code>THIRD_PARTY_NOTICES</code> entry, and unit conversion data. (Contract synonyms into <code>_build_alias_index</code> moved to step 3.)</li>
+<li><strong>Lineage P3.</strong> JSONL, the DuckDB index, <code>answer_id</code> and <code>contract_ref</code> on <code>QueryResult</code>, and the methods export, for the intent path first.</li>
+<li><strong>P5 gate on the intent path, and the ODPS product file.</strong> <code>check_plan</code> runs in <code>_finish</code>. The <code>ColumnUse</code> and <code>ViewStats</code> refactor of <code>answer_checks</code>, with behaviour unchanged and the golden suites as proof.</li>
+<li><strong>SQL sandbox, validator, privacy rewrite and suppression, with user-typed SQL only.</strong> Behind a flag, with <code>POST /queries/sql/check</code> and the SQL panel. Includes the adversarial privacy suite and the engine-level escape tests. This is #106, in the scope of §2.1. The per-answer check (§4.5) lands on this path before the flag can be on by default.</li>
+<li><strong>Model-written SQL.</strong> Generation, examples, repair, <code>explain.py</code>, routing fallback, and the confirm flow for SQL holds. With the per-answer filter check and step-by-step count (§4.5), this finishes step 4.</li>
+<li><strong>Statistics tools</strong> (<code>sql/tools.py</code>).</li>
+<li><strong>Follow-ups and conversation state</strong>, plus the full capability benchmark run and the ship decision for 3B and 7–8B.</li>
+<li><strong>Charts</strong> (<code>sql/chart.py</code>, <code>chartView.js</code>).</li>
+<li><strong>Deletions</strong> listed above, and ADR013 marked Accepted.</li>
+<li><strong>Later.</strong> A dataset-version log of shown counts against differencing across questions, at step 6 (§4.4), and <code>GROUPING SETS</code> with explicit overlap lines.</li>
+</ul>
+<h3 id="critical-files-for-implementation">Critical Files for Implementation</h3>
+<ul>
+<li><a href="../../../src/clinical_analytics/contracts/builder.py"><code>contracts/builder.py</code></a></li>
+<li><a href="../../../src/clinical_analytics/core/autocontext.py"><code>core/autocontext.py</code></a></li>
+<li><a href="../../../src/clinical_analytics/core/result_presentation.py"><code>core/result_presentation.py</code></a></li>
+<li><a href="../../../src/clinical_analytics/core/answer_checks.py"><code>core/answer_checks.py</code></a></li>
+<li><a href="../../../src/clinical_analytics/core/query_service.py"><code>core/query_service.py</code></a></li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>
