@@ -142,6 +142,14 @@ describe('isAllowedExtension', () => {
     expect(isAllowedExtension('spss.sav')).toBe(true);
   });
 
+  test('allows .xpt (SAS transport)', () => {
+    expect(isAllowedExtension('DEMO_J.xpt')).toBe(true);
+  });
+
+  test('allows .zip (tables plus documentation)', () => {
+    expect(isAllowedExtension('challenge-2019.ZIP')).toBe(true);
+  });
+
   test('rejects .exe', () => {
     expect(isAllowedExtension('bad.exe')).toBe(false);
   });

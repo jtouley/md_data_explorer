@@ -69,7 +69,7 @@ On Windows without `make`, install with `uv sync --extra dev --group dev` instea
 2. Ask: `compare outcome by diabetes`
 3. Then try `what predicts outcome`.
 
-When you are ready, use **Upload dataset** for your own `.csv`, `.xlsx`, `.xls` or `.sav` file. See [Uploading data](docs/getting-started/uploading-data.md).
+When you are ready, use **Upload dataset** for your own `.csv`, `.xlsx`, `.xls`, `.sav` or `.xpt` file, or a `.zip` of tables and their documentation. See [Uploading data](docs/getting-started/uploading-data.md).
 
 ## Troubleshooting
 

@@ -24,12 +24,18 @@ A first row that is a units sub-header (``years``, ``mg/dL`` above numeric colum
 is kept as unit metadata and is not a patient; the report says that row was removed. Trailing
 lines with no values (``,,,`` written by exporters) are dropped; any other row with no ID and no
 values fails the upload.
+
+Formats: delimited text (``.csv``, ``.tsv``, ``.psv``; ``DELIMITERS``), Excel (``.xlsx`` with
+openpyxl; legacy ``.xls`` BIFF workbooks, recognised by their bytes, with xlrd) and SAS
+transport (``.xpt``). Excel and delimited text are staged as text; SAS transport files carry
+their own types (numbers or text), and only whole-number columns change, to Int64.
 """
 
 from __future__ import annotations
 
 import io
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from typing import Any, Final, Literal
@@ -57,7 +63,14 @@ NoteReason = Literal[
     "int_overflow",
     "missing_tokens",
     "shared_column_type",
+    "from_file_names",
 ]
+
+# Column separator by file extension (``.gz`` stripped first). Text tables in a ZIP use the same.
+DELIMITERS: Final[dict[str, str]] = {".csv": ",", ".tsv": "\t", ".psv": "|"}
+
+# An .xlsx is a ZIP. A workbook that is not one is read as legacy .xls (BIFF, raw or in OLE2).
+_ZIP_MAGIC: Final = b"PK\x03\x04"
 
 # A units-row cell must be one of these (case-insensitive) or a ratio such as "mg/dL" or
 # "x10^9/L" (``_UNIT_RATIO_RE``), unless the file has an ID-named column whose cell is empty.
@@ -456,6 +469,7 @@ def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1) -> StagedT
     not_text = [c for c, t in df.schema.items() if t != pl.String]
     if not_text:
         raise TypeError(f"stage_text_frame needs text columns; got non-text {not_text}")
+    df = _name_blank_headers(df)
 
     units = _units_row(df)
     body = df.slice(1) if units else df
@@ -470,17 +484,76 @@ def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1) -> StagedT
     return StagedTable(data=typed, notes=tuple(notes), units=units or {})
 
 
-def read_csv_typed(file_bytes: bytes) -> StagedTable:
-    """Read CSV bytes as text over the whole file, then stage.
+def _name_blank_headers(df: pl.DataFrame) -> pl.DataFrame:
+    """A blank header (R's ``write.csv`` row-name column, ``""``) becomes ``column_<i>``, as in Excel.
+
+    A column with no name cannot be queried (the query view needs a name for every column).
+    """
+    renames = {c: f"column_{i}" for i, c in enumerate(df.columns) if not c.strip()}
+    taken = set(df.columns) - set(renames)
+    if any(name in taken for name in renames.values()):
+        renames = {c: f"column_{i}_unnamed" for i, c in enumerate(df.columns) if not c.strip()}
+    return df.rename(renames) if renames else df
+
+
+def read_csv_typed(file_bytes: bytes, separator: str = ",") -> StagedTable:
+    """Read delimited text (CSV; ``separator`` for TSV/PSV) as text over the whole file, then stage.
 
     Raises:
-        StagingError: the CSV cannot be parsed, or a row has no ID and no values.
+        StagingError: the file cannot be parsed, or a row has no ID and no values.
     """
     try:
-        text = pl.read_csv(io.BytesIO(file_bytes), infer_schema=False)
+        text = pl.read_csv(io.BytesIO(file_bytes), separator=separator, infer_schema=False)
     except (pl.exceptions.ComputeError, pl.exceptions.NoDataError) as e:
-        raise StagingError(f"The CSV file could not be read: {type(e).__name__}") from e
+        raise StagingError(f"The {_delimited_kind(separator)} file could not be read: {type(e).__name__}") from e
     return stage_text_frame(_drop_trailing_blank_rows(text))
+
+
+def _delimited_kind(separator: str) -> str:
+    return {",": "CSV", "\t": "tab-separated", "|": "pipe-separated"}.get(separator, "text")
+
+
+def read_xport_typed(file_bytes: bytes) -> StagedTable:
+    """Read a SAS transport file (``.xpt``, as NHANES publishes), keeping its own column types.
+
+    SAS stores every number as a float, so a column of whole numbers (codes such as 1/2, IDs,
+    counts) becomes Int64 when every value fits; other numbers stay Float64. Empty text cells
+    become null. Dates SAS formats as dates arrive as dates.
+
+    Raises:
+        StagingError: the file is not a readable SAS transport file.
+    """
+    import pyreadstat
+
+    try:
+        df, _meta = pyreadstat.read_xport(io.BytesIO(file_bytes), output_format="polars")
+    except (pyreadstat.ReadstatError, pyreadstat.PyreadstatError) as e:
+        raise StagingError(f"The SAS transport (.xpt) file could not be read: {type(e).__name__}") from e
+    if not isinstance(df, pl.DataFrame):  # output_format="polars" always gives one
+        raise StagingError("The SAS transport (.xpt) file could not be read as a table")
+    return StagedTable(data=_whole_floats_as_int(df))
+
+
+def _whole_floats_as_int(df: pl.DataFrame) -> pl.DataFrame:
+    """Float columns whose values are all whole and fit Int64 become Int64; blank text is null.
+
+    NaN counts as missing (it is how a reader may store a SAS missing value). A column with any
+    fraction, or a value too large for Int64, stays Float64 so no digit is lost. A column with no
+    value at all (read as type Null) becomes text, as an empty CSV column does.
+    """
+    limit = float(2**53)  # every whole float below this converts to Int64 exactly
+    casts: list[pl.Expr] = []
+    for col, dtype in df.schema.items():
+        if dtype == pl.String:
+            casts.append(_clean(col).alias(col))
+        elif dtype == pl.Null:  # a column with no value at all: text, as a CSV's would be
+            casts.append(pl.col(col).cast(pl.String))
+        elif dtype.is_float():
+            values = df.get_column(col).fill_nan(None).drop_nulls()
+            whole = values.len() > 0 and bool(((values == values.floor()) & (values.abs() < limit)).all())
+            filled = pl.col(col).fill_nan(None)
+            casts.append((filled.cast(pl.Int64) if whole else filled).alias(col))
+    return df.with_columns(casts) if casts else df
 
 
 def _cell_text(value: object) -> str | None:
@@ -576,6 +649,9 @@ def _read_first_sheet(file_bytes: bytes) -> tuple[list[list[object]], ExcelSheet
     Raises:
         StagingError: the workbook cannot be read or has no sheet.
     """
+    if not file_bytes.startswith(_ZIP_MAGIC):
+        return _read_first_xls_sheet(file_bytes)  # .xlsx is a ZIP; anything else may be BIFF
+
     import zipfile
 
     import openpyxl
@@ -600,14 +676,82 @@ def _read_first_sheet(file_bytes: bytes) -> tuple[list[list[object]], ExcelSheet
         wb.close()
 
 
-def _sheet_has_values(sheet: Any) -> bool:
-    """True when any cell of the sheet holds a value (stops at the first one)."""
-    rows = sheet.iter_rows(values_only=True)
+def _read_first_xls_sheet(file_bytes: bytes) -> tuple[list[list[object]], ExcelSheets]:
+    """``_read_first_sheet`` for a legacy .xls workbook (BIFF2-8, raw or in an OLE2 file), via xlrd.
+
+    Cells come back as the values openpyxl gives: numbers, text, booleans, datetimes for cells
+    formatted as dates (``_cell_text`` writes them as ISO text), None for empty cells. An error
+    cell holds its Excel text (``#N/A``, a missing-value marker; ``#DIV/0!``).
+
+    Raises:
+        StagingError: the workbook cannot be read (encrypted, damaged, or not a workbook).
+    """
+    import struct
+
+    import xlrd
+    from xlrd.compdoc import CompDocError
+
+    if not file_bytes:
+        raise StagingError("The Excel (.xls) file could not be read: it is empty")
+    try:
+        # xlrd writes format warnings to a log file (stdout by default): keep them out of output.
+        wb = xlrd.open_workbook(file_contents=file_bytes, on_demand=True, logfile=io.StringIO())
+    except (xlrd.XLRDError, CompDocError, struct.error, IndexError, UnicodeDecodeError, ValueError) as e:
+        raise StagingError(f"The Excel (.xls) file could not be read: {type(e).__name__}") from e
+    try:
+        names = wb.sheet_names()
+        if not names:
+            raise StagingError("The Excel file has no sheets")
+        first = wb.sheet_by_index(0)
+        rows = [[_xls_value(first.cell(r, c), wb.datemode) for c in range(first.ncols)] for r in range(first.nrows)]
+        skipped = tuple(
+            name for i, name in enumerate(names[1:], start=1) if _xls_sheet_has_values(wb.sheet_by_index(i))
+        )
+    except (xlrd.XLRDError, struct.error, IndexError, UnicodeDecodeError, ValueError) as e:
+        raise StagingError(f"The Excel (.xls) file could not be read: {type(e).__name__}") from e
+    finally:
+        wb.release_resources()
+    return rows, ExcelSheets(read=names[0], skipped=skipped, empty=len(names) - 1 - len(skipped))
+
+
+def _xls_sheet_has_values(sheet: Any) -> bool:
+    return any(_xls_value(cell, 0) is not None for row in sheet.get_rows() for cell in row)
+
+
+def _xls_value(cell: Any, datemode: int) -> object:
+    """One xlrd cell as openpyxl would give it (see ``_read_first_xls_sheet``)."""
+    import xlrd
+
+    if cell.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
+        return None
+    if cell.ctype == xlrd.XL_CELL_TEXT:
+        return cell.value if str(cell.value).strip() else None
+    if cell.ctype == xlrd.XL_CELL_DATE:
+        try:
+            return xlrd.xldate.xldate_as_datetime(cell.value, datemode)
+        except (xlrd.xldate.XLDateError, OverflowError, ValueError):
+            return cell.value  # a serial no date can hold: keep the number, never drop it
+    if cell.ctype == xlrd.XL_CELL_BOOLEAN:
+        return bool(cell.value)
+    if cell.ctype == xlrd.XL_CELL_ERROR:
+        return xlrd.error_text_from_code.get(cell.value, "#N/A")
+    if isinstance(cell.value, float) and cell.value.is_integer():
+        return int(cell.value)  # BIFF stores every number as a float; openpyxl gives whole ones as int
+    return cell.value
+
+
+def _rows_have_values(rows: Iterable[Iterable[object]]) -> bool:
+    """True when any cell holds a value (stops at the first one)."""
     return any(cell is not None and str(cell).strip() for row in rows for cell in row)
 
 
+def _sheet_has_values(sheet: Any) -> bool:
+    """True when any cell of the sheet holds a value (stops at the first one)."""
+    return _rows_have_values(sheet.iter_rows(values_only=True))
+
+
 def read_excel_typed(file_bytes: bytes, header_row: int | None = None) -> StagedTable:
-    """Read the first sheet of an .xlsx as text, then stage.
+    """Read the first sheet of an .xlsx or .xls workbook as text, then stage.
 
     Args:
         file_bytes: Workbook bytes.
@@ -692,6 +836,7 @@ _NOTE_TEXT: Final[dict[str, str]] = {
     "shared_column_type": "type changed to match the same column in another table, so the tables join",
     "ambiguous_dates": "kept as text: dates could be day/month or month/day and nothing in the file settles which",
     "not_dates": "kept as text: {n} values are not dates",
+    "from_file_names": "added from the file names: {n} files with the same columns were read as one table",
 }
 
 

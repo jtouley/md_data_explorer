@@ -5,7 +5,8 @@
 
 import { normalizeQuality } from './dataCheckPanel.js';
 
-const ALLOWED_EXTENSIONS = new Set(['.csv', '.xlsx', '.xls', '.sav']);
+// Mirrors ALLOWED_UPLOAD_EXTENSIONS in api/routes/datasets.py.
+const ALLOWED_EXTENSIONS = new Set(['.csv', '.xlsx', '.xls', '.sav', '.xpt', '.zip']);
 
 /**
  * @param {Record<string, unknown>|null|undefined} raw
@@ -88,7 +89,7 @@ export function renderUploadArea(container, handlers) {
 
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.csv,.xlsx,.xls,.sav';
+  input.accept = '.csv,.xlsx,.xls,.sav,.xpt,.zip';
   input.className = 'upload-file-input';
   input.dataset.testid = 'upload-file-input';
   input.addEventListener('change', () => {

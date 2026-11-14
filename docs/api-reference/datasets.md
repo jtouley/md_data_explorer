@@ -23,7 +23,7 @@ The platform supports user-uploaded datasets only. Built-in datasets (COVID-MS, 
 
 Datasets are registered automatically when uploaded via the UI:
 
-1. **Upload** - CSV, Excel, or ZIP file uploaded via Streamlit UI
+1. **Upload** - CSV, Excel (`.xlsx`, `.xls`), SPSS (`.sav`), SAS transport (`.xpt`) or ZIP file sent to `POST /api/datasets/upload`. A ZIP holds tables (`.csv`, `.tsv`, `.psv`, gzipped or not, `.xlsx`, `.xls`, `.xpt`, `.sav`, also inside one nested ZIP) and documentation (`.pdf`, `.md`, `.txt`), which becomes the dataset's doc context. Numbered files with the same columns (one per patient, as PhysioNet ships them) are read as one table with `patient_id` from the file name. Several tables are joined into one cohort when one of them has one row per patient or stay with an ID the others share; otherwise the upload fails and says so.
 2. **Schema Inference** - Automatic detection of patient ID, outcomes, time columns
 3. **Registry** - Dataset registered in `DatasetRegistry` with inferred config
 4. **Semantic Layer** - `SemanticLayer` initialized for NL query support

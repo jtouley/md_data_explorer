@@ -40,8 +40,9 @@ from typing import Any, Final
 import polars as pl
 import structlog
 
-from clinical_analytics.core.schema import DataQualityError
+from clinical_analytics.core.schema import DataQualityError, NoCohortAnchorError
 from clinical_analytics.storage import atomic
+from clinical_analytics.storage.file_sets import TextMember, read_file_set, split_file_sets
 from clinical_analytics.storage.metadata_lock import (
     METADATA_LOCK_TIMEOUT_S,
     FileLockTimeoutError,
@@ -50,6 +51,7 @@ from clinical_analytics.storage.metadata_lock import (
 )
 from clinical_analytics.storage.metadata_lock import update_metadata as _update_metadata
 from clinical_analytics.storage.staging import (
+    DELIMITERS,
     ID_COLUMN_NAMES,
     StagedTable,
     StagingError,
@@ -57,6 +59,7 @@ from clinical_analytics.storage.staging import (
     read_csv_typed,
     read_excel_rows,
     read_excel_typed,
+    read_xport_typed,
     settle_shared_column_types,
 )
 from clinical_analytics.storage.upload_metadata import normalize_upload_metadata
@@ -150,6 +153,19 @@ def _notify_progress(progress_cb: ProgressCallback | None, progress: int, messag
 # but kept here for existing imports
 
 
+@dataclass(frozen=True)
+class DocFile:
+    """A documentation file from an upload (ADR004): its name, its path in the ZIP, its bytes."""
+
+    name: str
+    path: str
+    content: bytes
+
+
+# Upload metadata: tables in a ZIP that were read as documentation instead (see ``ZipRead``).
+ZIP_NOTES_KEY: Final = "zip_notes"
+
+
 def normalize_upload_to_table_list(
     file_bytes: bytes,
     filename: str,
@@ -173,15 +189,16 @@ def normalize_upload_to_table_list(
         - table_metadata: dict with table_count, table_names, etc.
     """
     # Detect upload type from file extension
-    if filename.endswith(".zip"):
+    zip_notes: list[str] = []
+    if filename.lower().endswith(".zip"):
         # Multi-table: extract from ZIP
-        tables = extract_zip_tables(file_bytes)
+        read = read_zip_tables(file_bytes)
+        tables = read.table_list
 
         # Extract documentation files from ZIP (Phase 1: ADR004)
-        from io import BytesIO
-
-        doc_files = extract_documentation_files(BytesIO(file_bytes))
-        logger.info(f"Extracted {len(doc_files)} documentation files from ZIP")
+        doc_files = [*extract_documentation_files(io.BytesIO(file_bytes)), *read.as_docs]
+        zip_notes = list(read.notes)
+        logger.info("zip_documentation_files", files=len(doc_files), tables_read_as_docs=len(read.as_docs))
     else:
         # Single-file: wrap in list (becomes multi-table with 1 table)
         staged = load_single_file_staged(file_bytes, filename)
@@ -199,16 +216,6 @@ def normalize_upload_to_table_list(
 
     # Handle external PDF/documentation files (standalone upload)
     if metadata and "external_pdf_bytes" in metadata:
-        from dataclasses import dataclass
-
-        @dataclass
-        class DocFile:
-            """Documentation file info."""
-
-            name: str
-            path: str
-            content: bytes
-
         # Convert external PDF bytes to DocFile format
         pdf_bytes = metadata["external_pdf_bytes"]
         pdf_filename = metadata.get("external_pdf_filename", "documentation.pdf")
@@ -220,6 +227,7 @@ def normalize_upload_to_table_list(
         "table_count": len(tables),
         "table_names": [t["name"] for t in tables],
         "doc_files": doc_files,  # Phase 1: Store doc files for processing
+        ZIP_NOTES_KEY: zip_notes,
     }
 
     return tables, table_metadata
@@ -241,16 +249,6 @@ def extract_documentation_files(zip_file: Any) -> list[Any]:
         >>> doc_names = [f.name for f in doc_files]
         ['README.md', 'dictionary.txt', 'study_protocol.pdf']
     """
-    from dataclasses import dataclass
-
-    @dataclass
-    class DocFile:
-        """Documentation file info."""
-
-        name: str
-        path: str
-        content: bytes
-
     doc_extensions = {".pdf", ".md", ".txt"}
     doc_files = []
 
@@ -274,82 +272,152 @@ def extract_documentation_files(zip_file: Any) -> list[Any]:
         return []
 
 
+# Table files read from a ZIP (``.gz`` allowed on delimited text). Docs: ``extract_documentation_files``.
+ZIP_TABLE_EXTENSIONS: Final = frozenset({*DELIMITERS, ".xlsx", ".xls", ".xpt", ".sav"})
+
+
+def _zip_member_kind(entry: str) -> tuple[str, str] | None:
+    """(table name, extension) of a table file in a ZIP, or None for anything else.
+
+    ``hosp/admissions.csv.gz`` -> ("admissions", ".csv"). Directories and ``__MACOSX`` are skipped.
+    """
+    if entry.endswith("/") or entry.startswith("__MACOSX"):
+        return None
+    name = Path(entry).name
+    if name.lower().endswith(".gz"):
+        name = name[:-3]
+        if Path(name).suffix.lower() not in DELIMITERS:
+            return None
+    ext = Path(name).suffix.lower()
+    if ext not in ZIP_TABLE_EXTENSIONS:
+        return None
+    return Path(name).stem, ext
+
+
+def _zip_members(z: zipfile.ZipFile, nested: bool) -> list[tuple[str, str, str, bytes]]:
+    """(entry path, table name, extension, bytes) of every table in the ZIP.
+
+    A ZIP inside the ZIP is opened once (UCI ships sepsis_survival that way); a ZIP inside that
+    one is not, so an archive cannot unpack itself without bound.
+
+    Raises:
+        SecurityError: a path climbs out of the archive.
+    """
+    import gzip
+
+    for entry in z.namelist():
+        if ".." in entry or entry.startswith("/"):
+            raise SecurityError(f"Invalid path: {entry}")
+    members: list[tuple[str, str, str, bytes]] = []
+    for entry in z.namelist():
+        if nested and entry.lower().endswith(".zip") and not entry.startswith("__MACOSX"):
+            try:
+                with zipfile.ZipFile(io.BytesIO(z.read(entry))) as inner:
+                    members.extend((f"{entry}/{path}", n, e, b) for path, n, e, b in _zip_members(inner, False))
+            except zipfile.BadZipFile as e:
+                raise UploadError(f"Corrupted ZIP file inside the ZIP: {Path(entry).name}") from e
+            continue
+        kind = _zip_member_kind(entry)
+        if kind is None:
+            continue
+        content = z.read(entry)
+        if entry.lower().endswith(".gz"):
+            content = gzip.decompress(content)
+        members.append((entry, kind[0], kind[1], content))
+    return members
+
+
+@dataclass(frozen=True)
+class ZipRead:
+    """What a ZIP gave: its tables, the text files read as documentation instead, and why."""
+
+    table_list: list[dict[str, Any]]
+    as_docs: tuple[DocFile, ...] = ()
+    notes: tuple[str, ...] = ()
+
+
 def extract_zip_tables(file_bytes: bytes) -> list[dict[str, Any]]:
+    """The tables of a ZIP (``read_zip_tables``), without the files read as documentation."""
+    return read_zip_tables(file_bytes).table_list
+
+
+def read_zip_tables(file_bytes: bytes) -> ZipRead:
     """
     Extract tables from ZIP archive.
+
+    Reads delimited text (``.csv``, ``.tsv``, ``.psv``, each optionally ``.gz``), Excel
+    (``.xlsx``, ``.xls``), SAS transport (``.xpt``) and SPSS (``.sav``) files, also from one ZIP
+    nested inside. Numbered files with the same columns (one per patient, as PhysioNet ships
+    them) are read as one table (``storage.file_sets``).
+
+    A delimited text file that cannot be read as a table (a codebook of several stacked tables
+    with blank lines between them, as UCI's diabetes ZIP has) is kept as documentation when the
+    ZIP has other tables, and a note says so; in a ZIP with one table it fails the upload.
 
     Args:
         file_bytes: ZIP file content
 
     Returns:
-        List of {"name": str, "data": pl.DataFrame, "notes": ..., "units": ...} dicts
+        ``ZipRead``; tables are {"name", "data", "notes", "units", "sheets"} dicts
 
     Raises:
         SecurityError: If path traversal or invalid paths detected
-        UploadError: If no CSV files, corrupted ZIP, or a table that cannot be staged
+        UploadError: If no table files, corrupted ZIP, or a table that cannot be staged
     """
-    import gzip
-    import io
-
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
-            # Security: Check for path traversal
-            for entry in z.namelist():
-                if ".." in entry or entry.startswith("/"):
-                    raise SecurityError(f"Invalid path: {entry}")
-
-            # Get CSV files (including .csv.gz), skip __MACOSX and directories
-            csv_files = [
-                e
-                for e in z.namelist()
-                if (e.endswith(".csv") or e.endswith(".csv.gz"))
-                and not e.startswith("__MACOSX")
-                and not e.endswith("/")  # Skip directory entries
-            ]
-
-            if not csv_files:
-                raise UploadError("No CSV files in ZIP")
-
-            # Check for duplicate table names
-            seen = set()
-            tables: list[dict[str, Any]] = []
-
-            for entry in csv_files:
-                # Extract table name (filename stem)
-                name = Path(entry).stem
-                if name.endswith(".csv"):  # Handle .csv.gz case
-                    name = Path(name).stem
-
-                if name in seen:
-                    raise UploadError(f"Duplicate table name: {name}")
-                seen.add(name)
-
-                # Read file content
-                csv_content = z.read(entry)
-
-                # Handle gzip compression
-                if entry.endswith(".gz"):
-                    csv_content = gzip.decompress(csv_content)
-
-                # Typed over the whole file, column by column (storage.staging); no all-text fallback.
-                try:
-                    staged = read_csv_typed(csv_content)
-                except StagingError as e:
-                    raise UploadError(f"Table '{name}': {e}") from e
-                df = staged.data
-                tables.append({"name": name, "data": df, "notes": staged.notes, "units": staged.units})
-                logger.debug(f"Loaded table '{name}': {df.height:,} rows, {df.width} cols")
-
-            # Tables are typed one by one; a column shared by several (a join key such as ward)
-            # must have one type in all of them before the cohort is built.
-            settled, shared_notes = settle_shared_column_types({t["name"]: t["data"] for t in tables})
-            for table in tables:
-                table["data"] = settled[table["name"]]
-                table["notes"] = (*table["notes"], *(n for name, n in shared_notes if name == table["name"]))
-            return tables
-
+            members = _zip_members(z, nested=True)
     except zipfile.BadZipFile:
         raise UploadError("Corrupted ZIP file")
+    if not members:
+        raise UploadError(
+            "No table files in ZIP (read: " + ", ".join(sorted(ZIP_TABLE_EXTENSIONS)) + ", and .gz of delimited text)"
+        )
+
+    text = [TextMember(entry, content, DELIMITERS[ext]) for entry, _name, ext, content in members if ext in DELIMITERS]
+    file_sets, _singles = split_file_sets(text)
+    in_set = {m.path for fs in file_sets for m in fs.members}
+
+    staged_tables: list[tuple[str, StagedTable]] = []
+    as_docs: list[DocFile] = []
+    notes: list[str] = []
+    try:
+        for fs in file_sets:
+            staged_tables.append((fs.name, read_file_set(fs)))
+    except StagingError as e:
+        raise UploadError(str(e)) from e
+    singles = [(entry, name, ext, content) for entry, name, ext, content in members if entry not in in_set]
+    for entry, name, ext, content in singles:
+        try:
+            staged_tables.append((name, load_single_file_staged(content, f"{name}{ext}")))
+        except StagingError as e:
+            if ext not in DELIMITERS or len(singles) + len(file_sets) < 2:
+                raise UploadError(f"Table '{name}': {e}") from e
+            # Staging messages never quote cell values.
+            as_docs.append(DocFile(name=f"{name}.txt", path=entry, content=content))
+            notes.append(f"{Path(entry).name} was read as documentation, not as a table: {e}")
+            logger.info("zip_table_read_as_documentation", error_type=type(e).__name__)
+    if not staged_tables:
+        raise UploadError("No file in the ZIP could be read as a table")
+
+    seen: set[str] = set()
+    tables: list[dict[str, Any]] = []
+    for name, staged in staged_tables:
+        if name in seen:
+            raise UploadError(f"Duplicate table name: {name}")
+        seen.add(name)
+        tables.append(
+            {"name": name, "data": staged.data, "notes": staged.notes, "units": staged.units, "sheets": staged.sheets}
+        )
+        logger.debug("zip_table_loaded", rows=staged.data.height, columns=staged.data.width)
+
+    # Tables are typed one by one; a column shared by several (a join key such as ward)
+    # must have one type in all of them before the cohort is built.
+    settled, shared_notes = settle_shared_column_types({t["name"]: t["data"] for t in tables})
+    for table in tables:
+        table["data"] = settled[table["name"]]
+        table["notes"] = (*table["notes"], *(n for name, n in shared_notes if name == table["name"]))
+    return ZipRead(table_list=tables, as_docs=tuple(as_docs), notes=tuple(notes))
 
 
 def _detect_excel_header_row(file_bytes: bytes, max_rows_to_check: int = 5) -> int:
@@ -381,21 +449,24 @@ def _detect_excel_header_row(file_bytes: bytes, max_rows_to_check: int = 5) -> i
 
 def load_single_file_staged(file_bytes: bytes, filename: str) -> StagedTable:
     """
-    Load a single file (CSV, Excel, SPSS) as one typed table with its staging notes.
+    Load a single file (CSV/TSV/PSV, Excel, SAS transport, SPSS) as one typed table with its notes.
 
-    CSV and Excel are read as text and typed column by column over the whole file
-    (``storage.staging``). SPSS files carry their own types and are read straight to Polars.
+    Delimited text and Excel are read as text and typed column by column over the whole file
+    (``storage.staging``). SAS transport files keep their own types (whole numbers as Int64);
+    SPSS files carry their own types and are read straight to Polars.
 
     Raises:
         ValueError: Unsupported file type.
         StagingError: The file cannot be read or has a row with no ID and no values.
     """
     file_ext = Path(filename).suffix.lower()
-    if file_ext == ".csv":
-        return read_csv_typed(file_bytes)
+    if file_ext in DELIMITERS:
+        return read_csv_typed(file_bytes, separator=DELIMITERS[file_ext])
     if file_ext in {".xlsx", ".xls"}:
-        # Openpyxl reads .xlsx only; an .xls file fails here with a clear StagingError.
+        # The workbook's bytes decide the reader: openpyxl for .xlsx, calamine for BIFF .xls.
         return read_excel_typed(file_bytes)
+    if file_ext == ".xpt":
+        return read_xport_typed(file_bytes)
     if file_ext == ".sav":
         import pyreadstat
 
@@ -444,7 +515,7 @@ def _safe_store_upload(
     upload_id = str(uuid.uuid4())
     # Sanitize extension: only allow known safe extensions
     original_ext = Path(original_filename).suffix.lower()
-    safe_extensions = {".csv", ".xlsx", ".xls", ".sav", ".zip", ".parquet"}
+    safe_extensions = {".csv", ".xlsx", ".xls", ".sav", ".xpt", ".zip", ".parquet"}
     if original_ext not in safe_extensions:
         original_ext = ".csv"  # Default to CSV if unknown
 
@@ -533,7 +604,7 @@ class UploadSecurityValidator:
     """
 
     # Allowlisted file extensions
-    ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".sav", ".zip"}
+    ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".sav", ".xpt", ".zip"}
 
     # Maximum file size (100MB as per Phase 0 spec)
     MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024  # 100MB
@@ -1009,7 +1080,7 @@ def _cast_id_columns(df: pl.DataFrame) -> pl.DataFrame:
 
 
 # Exceptions whose messages this project writes for the user (never with cell values).
-_USER_MESSAGE_ERRORS: Final = (StagingError, UploadError, SecurityError, DataQualityError)
+_USER_MESSAGE_ERRORS: Final = (StagingError, UploadError, SecurityError, DataQualityError, NoCohortAnchorError)
 
 
 def _upload_failure_reason(e: BaseException) -> str:
@@ -1772,6 +1843,12 @@ class UserDatasetStorage:
             _notify_progress(progress_cb, 20, "Normalizing upload to table list...")
 
             tables, table_metadata = normalize_upload_to_table_list(file_bytes, original_filename, metadata)
+            # A ZIP's documentation (ADR004) becomes the dataset's doc context in save_table_list.
+            if table_metadata["doc_files"]:
+                metadata["doc_files"] = table_metadata["doc_files"]
+            zip_notes: list[str] = table_metadata[ZIP_NOTES_KEY]
+            if zip_notes:
+                metadata[ZIP_NOTES_KEY] = zip_notes
 
             # Mark all existing versions as inactive (the drift check below reads stored metadata)
             if existing_version_history is not None:
@@ -1967,7 +2044,7 @@ class UserDatasetStorage:
             _notify_progress(progress_cb, 100, f"✅ Upload complete! Dataset '{dataset_name}' ready to use.")
 
             # Phase 1: Include duplicate warning in success message (if any)
-            success_message = f"Upload successful: {upload_id}"
+            success_message = " ".join([f"Upload successful: {upload_id}", *zip_notes])
             if duplicate_warning:
                 success_message = f"{duplicate_warning} {success_message}"
 
@@ -2546,7 +2623,7 @@ class UserDatasetStorage:
             logger.info(f"Multi-table upload successful: {len(tables_list)} tables")
             notes = describe_cohort_build((self.get_upload_metadata(upload_id) or {}).get(COHORT_BUILD_KEY))
             message = f"Multi-table upload successful: {len(tables_list)} tables"
-            return True, " ".join([message, *notes]), upload_id
+            return True, " ".join([message, *table_metadata[ZIP_NOTES_KEY], *notes]), upload_id
 
         except (
             UploadError,

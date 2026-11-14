@@ -166,8 +166,8 @@ class TestExtractZipTables:
         with pytest.raises(SecurityError, match="Invalid path"):
             extract_zip_tables(file_bytes)
 
-    def test_extract_zip_rejects_no_csv_files(self):
-        """Test that ZIP with no CSV files raises UploadError."""
+    def test_extract_zip_rejects_no_table_files(self):
+        """Test that ZIP with no table files raises UploadError."""
         # Arrange
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zf:
@@ -176,7 +176,7 @@ class TestExtractZipTables:
         file_bytes = zip_buffer.getvalue()
 
         # Act & Assert
-        with pytest.raises(UploadError, match="No CSV files in ZIP"):
+        with pytest.raises(UploadError, match="No table files in ZIP"):
             extract_zip_tables(file_bytes)
 
     def test_extract_zip_handles_duplicate_table_names(self):

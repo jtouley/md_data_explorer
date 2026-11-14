@@ -13,6 +13,7 @@ import pytest
 from clinical_analytics.core.multi_table_handler import (
     MultiTableHandler,
 )
+from clinical_analytics.core.schema import NoCohortAnchorError
 
 
 class TestTableClassification:
@@ -662,7 +663,7 @@ class TestAnchorSelection:
         handler = MultiTableHandler(tables)
         handler.detect_relationships()
 
-        with pytest.raises(ValueError, match="No dimension tables found"):
+        with pytest.raises(NoCohortAnchorError, match="cannot be joined into one cohort"):
             handler._find_anchor_by_centrality()
 
         handler.close()
@@ -683,7 +684,7 @@ class TestAnchorSelection:
         handler = MultiTableHandler(tables)
         handler.detect_relationships()
 
-        with pytest.raises(ValueError, match="No suitable anchor table found"):
+        with pytest.raises(NoCohortAnchorError, match="cannot be joined into one cohort"):
             handler._find_anchor_by_centrality()
 
         handler.close()
@@ -1719,3 +1720,45 @@ class TestPlanMart:
         assert metadata.parquet_path.is_file(), "Patient-level should be single file"
 
         handler.close()
+
+
+def test_findAnchor_eicuStayKeyWithoutUnderscore_stayTableAnchors():
+    # Arrange: eICU names its stay key patientunitstayid; vitals repeat it per measurement
+    patient = pl.DataFrame(
+        {
+            "patientunitstayid": list(range(1001, 1031)),
+            "uniquepid": [f"U{i // 2}" for i in range(30)],
+            "age": [str(40 + i) for i in range(30)],
+        }
+    )
+    vitals = pl.DataFrame(
+        {"patientunitstayid": [1001 + i % 30 for i in range(120)], "heartrate": [70 + i % 40 for i in range(120)]}
+    )
+
+    # Act
+    with MultiTableHandler({"patient": patient, "vitalPeriodic": vitals}) as handler:
+        handler.detect_relationships()
+        handler.classify_tables()
+        anchor = handler._find_anchor_by_centrality()
+
+    # Assert
+    assert anchor == "patient"
+
+
+def test_findAnchor_oneRowPerPersonTables_anchorsOnTableOfEveryone():
+    # Arrange: NHANES shape; every file one row per SEQN, the lab files cover subsets
+    people = list(range(93700, 93760))
+    tables = {
+        "BIOPRO_J": pl.DataFrame({"SEQN": people[::3], "LBXSATSI": [float(i) for i in range(20)]}),
+        "DEMO_J": pl.DataFrame({"SEQN": people, "RIAGENDR": [1 + i % 2 for i in range(60)]}),
+        "HEPC_J": pl.DataFrame({"SEQN": people[::2], "LBXHCR": [1 + i % 2 for i in range(30)]}),
+    }
+
+    # Act
+    with MultiTableHandler(tables) as handler:
+        handler.detect_relationships()
+        handler.classify_tables()
+        anchor = handler._find_anchor_by_centrality()
+
+    # Assert
+    assert anchor == "DEMO_J"

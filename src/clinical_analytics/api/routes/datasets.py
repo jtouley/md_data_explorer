@@ -445,7 +445,8 @@ class DatasetDeleteResponse(BaseModel):
     deleted_sessions: int = Field(..., description="Sessions (with their messages) deleted")
 
 
-ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".xlsx", ".xls", ".sav"}
+# .zip: tables plus their documentation (ADR004), the multi-table path; .xpt: SAS transport (NHANES).
+ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".xlsx", ".xls", ".sav", ".xpt", ".zip"}
 
 
 @router.post("/datasets/sample", response_model=DatasetUploadResponse)
@@ -488,11 +489,13 @@ def load_sample_dataset() -> DatasetUploadResponse:
 
 @router.post("/datasets/upload", response_model=DatasetUploadResponse)
 async def upload_dataset(
-    file: UploadFile = File(..., description="CSV or Excel file to upload"),
+    file: UploadFile = File(..., description="CSV, Excel, SPSS, SAS transport or ZIP file to upload"),
     dataset_name: str | None = Form(None, description="Optional display name"),
 ) -> DatasetUploadResponse:
-    """Upload a dataset file (CSV, Excel, or SPSS).
+    """Upload a dataset file (CSV, Excel .xlsx/.xls, SPSS .sav, SAS transport .xpt, or ZIP).
 
+    A ZIP holds tables (any of those formats, .tsv/.psv, gzipped text) and their documentation
+    (.pdf, .md, .txt; ADR004); several tables become one cohort (the multi-table path).
     Validates the file extension and size, then delegates to UserDatasetStorage.
 
     Args:
