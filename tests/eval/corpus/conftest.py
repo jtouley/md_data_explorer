@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
+import zipfile
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
@@ -55,6 +57,54 @@ def make_corpus_dataset() -> Callable[..., tuple[CorpusDataset, dict[str, bytes]
             }
         )
         return dataset, urls
+
+    return make
+
+
+def _zip_bytes(members: dict[str, bytes]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, body in members.items():
+            archive.writestr(name, body)
+    return buffer.getvalue()
+
+
+@pytest.fixture
+def make_archive_dataset() -> Callable[..., tuple[CorpusDataset, dict[str, bytes], bytes]]:
+    """Factory: a corpus entry whose table ships inside a ZIP inside a ZIP (as UCI ships some
+    sets), uploaded on its own; the URL -> bytes it serves; and the table's bytes."""
+
+    def make(table: bytes = b"id,sex\n1,female\n", member_sha256: str | None = None, **pkg: Any):
+        archive = _zip_bytes({"inner.zip": _zip_bytes({"table.csv": table, "other.csv": b"x\n"})})
+        url = "https://example.org/archive.zip"
+        dataset = CorpusDataset.model_validate(
+            {
+                "name": "synthetic_archive",
+                "files": [
+                    {
+                        "path": "archive.zip",
+                        "url": url,
+                        "kind": "archive",
+                        "sha256": hashlib.sha256(archive).hexdigest(),
+                    }
+                ],
+                "upload_package": {
+                    "upload": "file",
+                    "contents": [
+                        {
+                            "name": "table.csv",
+                            "from": "archive.zip",
+                            "make": "extract",
+                            "member": "inner.zip!table.csv",
+                            "sha256": member_sha256 or hashlib.sha256(table).hexdigest(),
+                        }
+                    ],
+                    **pkg,
+                },
+                "oracle_input": "table.csv",
+            }
+        )
+        return dataset, {url: archive}, table
 
     return make
 

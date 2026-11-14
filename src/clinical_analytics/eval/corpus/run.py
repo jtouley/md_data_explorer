@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT
 """Acceptance run: one public dataset, uploaded and asked through the real API.
 
-Each run fetches the checked upload ZIP, starts a fresh API process (``python -m
+Each run fetches the checked upload (a ZIP, a CSV or a workbook), starts a fresh API process (``python -m
 clinical_analytics.api.serve``, the installed app's entry point) from an unrelated directory
-with a new temporary ``CLINICAL_ANALYTICS_DATA_HOME`` and HOME, uploads the ZIP through
+with a new temporary ``CLINICAL_ANALYTICS_DATA_HOME`` and HOME, uploads it through
 ``POST /api/datasets/upload``, and asks every question through ``/api/queries``: each in a new
 session, a follow-up in its parent's session. A held question is confirmed once only when its
 YAML says ``confirm: true``. The presented answer is graded by ``eval.corpus.score``.
@@ -42,8 +42,14 @@ import polars as pl
 import structlog
 import yaml
 
-from clinical_analytics.eval.corpus.fetch import CorpusFetchError, default_cache_dir, fetch_dataset, load_corpus
-from clinical_analytics.eval.corpus.score import ApiOutcome, OracleAnswer, Scored, score
+from clinical_analytics.eval.corpus.fetch import (
+    CorpusFetchError,
+    default_cache_dir,
+    fetch_dataset,
+    load_corpus,
+    oracle_input,
+)
+from clinical_analytics.eval.corpus.score import ApiOutcome, OracleAnswer, OracleError, Scored, score
 
 logger = structlog.get_logger()
 
@@ -56,6 +62,12 @@ UNREACHABLE_OLLAMA = "http://127.0.0.1:9"
 HEALTH_TIMEOUT_S = 300.0
 POLL_S = 0.5
 TERMINAL = {"completed", "failed", "awaiting_confirmation"}
+UPLOAD_TYPES = {
+    ".zip": "application/zip",
+    ".csv": "text/csv",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".xls": "application/vnd.ms-excel",
+}
 # Log events (core/nl_query_engine.py) that mean the model tier was asked and did not answer.
 LLM_FAILURE_EVENTS = (
     "llm_parse_exception_fallback_to_stub",
@@ -245,7 +257,7 @@ class Api:
         return self.request("POST", path, json.dumps(payload).encode(), "application/json")
 
     def upload(self, path: Path, name: str) -> str:
-        ctype = "application/zip" if path.suffix == ".zip" else "text/csv"
+        ctype = UPLOAD_TYPES.get(path.suffix.lower(), "application/octet-stream")
         boundary = uuid.uuid4().hex
         body = b"".join(
             [
@@ -478,13 +490,14 @@ def run(
 ) -> RunReport:
     questions = load_questions(dataset)
     corpus = load_corpus()
-    zip_path = fetch_dataset(dataset, cache_dir, seed_dirs, corpus=corpus)
-    csv_name = next(item.path for item in corpus[dataset].files if item.kind == "table")
-    csv_path = zip_path.parent / "files" / csv_name
+    upload_path = fetch_dataset(dataset, cache_dir, seed_dirs, corpus=corpus)
+    truth_path = oracle_input(corpus[dataset], upload_path)
     try:
-        truth: dict[str, OracleAnswer] = load_oracles(dataset).answers(csv_path)
-    except pl.exceptions.PolarsError as error:
-        raise AcceptanceError(f"oracles for {dataset} do not run on {csv_name}: {error}") from error
+        truth: dict[str, OracleAnswer] = load_oracles(dataset).answers(truth_path)
+    except (pl.exceptions.PolarsError, OracleError, OSError) as error:
+        raise AcceptanceError(f"oracles for {dataset} do not run on {truth_path.name}: {error}") from error
+    except ImportError as error:
+        raise AcceptanceError(f"oracles for {dataset} need a reader that is not installed: {error}") from error
     missing = [q["id"] for q in questions if q["id"] not in truth]
     if missing:
         raise AcceptanceError(f"no oracle answer for {missing}")
@@ -503,15 +516,16 @@ def run(
         report.settings["startup_s"] = round(api.wait_healthy(), 1)
         upload_started = time.monotonic()
         try:
-            dataset_id = api.upload(zip_path, dataset)
-            report.settings["upload"] = "zip (table + dictionary)"
+            dataset_id = api.upload(upload_path, dataset)
+            report.settings["upload"] = upload_path.name
         except AcceptanceError as error:
-            if "-> 400" not in str(error):
+            # Recorded, never silent: when the API refuses a ZIP whose oracles read one CSV, that
+            # CSV goes up alone and the app answers without the ZIP's other files. Any other
+            # refusal (a workbook, an .xpt set) ends the run: there is nothing simpler to upload.
+            if "-> 400" not in str(error) or upload_path.suffix != ".zip" or truth_path.suffix != ".csv":
                 raise
-            # Recorded, never silent: the API refused the ZIP, so the table goes up alone and
-            # the app answers without the dictionary.
-            report.settings["upload"] = f"csv only; ZIP rejected: {str(error)[:200]}"
-            dataset_id = api.upload(csv_path, dataset)
+            report.settings["upload"] = f"{truth_path.name} only; {upload_path.name} rejected: {str(error)[:200]}"
+            dataset_id = api.upload(truth_path, dataset)
         report.settings["upload_s"] = round(time.monotonic() - upload_started, 1)
         report.results = ask_all(api, dataset_id, questions, truth, model, timeout_s)
     finally:

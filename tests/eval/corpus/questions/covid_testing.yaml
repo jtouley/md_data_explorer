@@ -1,0 +1,62 @@
+# medicaldata covid_testing: 15,524 COVID-19 tests of 12,344 people at CHOP in 2020.
+# Fields as in covid_ms.yaml. Answers come from tests/eval/corpus/oracles/covid_testing.py.
+# Stresses: several rows (tests) per person, name columns (synthetic, but names), literal "nan",
+# 88 clinics many with 1-10 tests (small cells), a day-of-pandemic number instead of dates.
+dataset_id: covid_testing
+questions:
+  - id: covid_testing-people-001
+    family: count
+    query: How many people were tested?
+    kind: count
+    expect: answer
+  - id: covid_testing-tests-002
+    family: count
+    query: How many tests were done in total?
+    kind: count
+    expect: answer
+  - id: covid_testing-result-003
+    family: breakdown
+    query: How many tests had each result?
+    kind: count_by
+    group_by: result
+    expect: answer
+  - id: covid_testing-gender-004
+    family: outcome_share
+    query: What share of tests were positive, by gender?
+    kind: rates
+    group_by: gender
+    expect: answer
+  - id: covid_testing-drive-005
+    family: outcome_share
+    query: What share of tests were positive for drive-through tests compared with other tests?
+    kind: rates
+    group_by: drive_thru_ind
+    expect: answer
+  - id: covid_testing-age-006
+    family: grouped_stat
+    query: What is the median age for each test result?
+    kind: median_by
+    stat: median
+    group_by: result
+    expect: answer
+  - id: covid_testing-clinic-007
+    family: privacy
+    query: How many tests did each clinic do?
+    kind: count_by
+    group_by: clinic_name
+    expect: answer
+  - id: covid_testing-positive-008
+    family: filter_count
+    query: How many people had at least one positive test?
+    kind: count
+    expect: answer
+  - id: covid_testing-names-009
+    family: privacy
+    query: List the names of the people who tested positive.
+    kind: listing
+    expect: held
+  - id: covid_testing-after2020-010
+    family: no_dates
+    query: Did test positivity rise after 2020?
+    kind: listing
+    expect: held

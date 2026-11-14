@@ -50,3 +50,238 @@ datasets:
         - {name: LICENSE.txt, from: LICENSE.txt, make: copy}
         - {name: data_dictionary.txt, from: data_description.txt, make: copy}
       sha256: a3639ebca2068df992230516e3608924daed23ca2be7532cd978a14e6ecae7ae  # deterministic: sorted, stored, fixed metadata
+
+  # ---------------------------------------------------------------- patient-level sets
+  # Each is uploaded as a clinician would: the table as published (a CSV, a workbook, or a ZIP of
+  # tables), taken out of the publisher's archive where it ships in one (``make: extract``, the
+  # member pinned by its own sha256). ``oracle_input`` is the file the oracles read.
+  - name: hcv_data
+    title: UCI HCV data (Hoffmann et al.)
+    landing_page: https://archive.ics.uci.edu/dataset/571/hcv+data
+    doi: https://doi.org/10.24432/C5D612
+    license:
+      id: CC-BY-4.0
+      url: https://creativecommons.org/licenses/by/4.0/legalcode
+      terms: Attribution required; cite UCI DOI 10.24432/C5D612 and Hoffmann et al.
+    grain: patient (blood donors and hepatitis C patients); the ID column has an empty header
+    rows: 615
+    files:
+      - path: hcv_data.zip
+        url: https://archive.ics.uci.edu/static/public/571/hcv+data.zip
+        kind: archive
+        sha256: 0fafa2c4ae94db98b95f35cd41e9f4cedbd1e105282ab0cd7b5ed3effe5a05d8
+        bytes: 46303
+    upload_package:
+      upload: file
+      contents:
+        - name: hcvdat0.csv
+          from: hcv_data.zip
+          make: extract
+          member: hcvdat0.csv
+          sha256: 1b62c8453b7098b695c549b19cfe070458ce6b909f0e990b6cfce7ab3c44c273
+    oracle_input: hcvdat0.csv
+
+  - name: sepsis_survival
+    title: UCI Sepsis Survival Minimal Clinical Records, primary cohort (Chicco & Jurman 2020)
+    landing_page: https://archive.ics.uci.edu/dataset/827/sepsis+survival+minimal+clinical+records
+    license:
+      id: CC-BY-4.0
+      url: https://creativecommons.org/licenses/by/4.0/legalcode
+      terms: Attribution required; cite UCI and Chicco & Jurman, Sci Rep 2020.
+    # No patient ID: a row is a sepsis episode, and repeat episodes of one person cannot be linked.
+    grain: sepsis episode (no patient ID; episode_number 1-5)
+    rows: 110204
+    files:
+      - path: sepsis_survival.zip
+        url: https://archive.ics.uci.edu/static/public/827/sepsis+survival+minimal+clinical+records.zip
+        kind: archive
+        sha256: f1be6f4aa2b70a66a7efa55242d294e852a19c7b2790b71351d8cf226a570339
+        bytes: 225138
+    upload_package:
+      upload: file
+      contents:
+        # A ZIP inside the ZIP: the user unpacks both and uploads the primary cohort.
+        - name: sepsis_survival_primary_cohort.csv
+          from: sepsis_survival.zip
+          make: extract
+          member: s41598-020-73558-3_sepsis_survival_dataset.zip!s41598-020-73558-3_sepsis_survival_primary_cohort.csv
+          sha256: 6ba4ebd256fa3b5f6c0d42444a3e6b9a4b90d6e493c9efdfedcb2ef7470d4b0f
+    oracle_input: sepsis_survival_primary_cohort.csv
+
+  - name: cgd_infections
+    title: Chronic Granulomatous Disease interferon-gamma trial (R survival::cgd)
+    landing_page: https://vincentarelbundock.github.io/Rdatasets/doc/survival/cgd.html
+    license:
+      id: LGPL-2.0-or-later
+      url: https://cran.r-project.org/web/packages/survival/index.html
+      terms: R survival package data (LGPL >= 2), Rdatasets mirror pinned to commit 1dcc2bf5.
+    grain: infection interval, several rows per patient (id; 128 patients, 203 rows)
+    rows: 203
+    id_column: id
+    files:
+      - path: cgd.csv
+        url: https://raw.githubusercontent.com/vincentarelbundock/Rdatasets/1dcc2bf5f955cc1224a3e1307256e1fe86b68dae/csv/survival/cgd.csv
+        kind: table
+        sha256: 923b9cc7e7a44b5eac6c2e22e74f82a1d60e8c9909905371ef54460787ad9ef0
+        bytes: 18559
+    upload_package:
+      upload: file
+      contents:
+        - {name: cgd.csv, from: cgd.csv, make: copy}
+
+  - name: covid_testing
+    title: COVID-19 testing at CHOP, 2020 (medicaldata R package, covid_testing)
+    landing_page: https://higgi13425.github.io/medicaldata/
+    license:
+      id: MIT
+      url: https://github.com/higgi13425/medicaldata/blob/master/LICENSE
+      terms: Keep the copyright notice; cite Higgins, medicaldata package.
+    # fake_first_name / fake_last_name are synthetic, but must be treated as names.
+    grain: test, several rows per subject (subject_id; 12,344 subjects, 15,524 tests)
+    rows: 15524
+    id_column: subject_id
+    files:
+      - path: covid_testing.csv
+        url: https://raw.githubusercontent.com/vincentarelbundock/Rdatasets/1dcc2bf5f955cc1224a3e1307256e1fe86b68dae/csv/medicaldata/covid_testing.csv
+        kind: table
+        sha256: fc7d7c522749144b2c15c126658401cf653e78d55641b9013ec8f12936303752
+        bytes: 1584563
+    upload_package:
+      upload: file
+      contents:
+        - {name: covid_testing.csv, from: covid_testing.csv, make: copy}
+
+  - name: diabetes_130
+    title: Diabetes 130-US Hospitals for Years 1999-2008 (UCI 296)
+    landing_page: https://archive.ics.uci.edu/dataset/296/diabetes+130-us+hospitals+for+years+1999-2008
+    doi: https://doi.org/10.24432/C5230J
+    license:
+      id: CC-BY-4.0
+      url: https://creativecommons.org/licenses/by/4.0/legalcode
+      terms: Attribution required; cite UCI DOI 10.24432/C5230J and Strack et al. 2014.
+    # '?' is missing; 'None' in A1Cresult / max_glu_serum means "not measured", not missing.
+    grain: encounter (encounter_id), several per patient (patient_nbr; 71,518 patients)
+    rows: 101766
+    id_column: patient_nbr
+    files:
+      - path: diabetes_130.zip
+        url: https://archive.ics.uci.edu/static/public/296/diabetes+130-us+hospitals+for+years+1999-2008.zip
+        kind: archive
+        sha256: f82ac129da2ddd2299391ff6fbae3a6a58b3edcf59ac9d7bd480c00fe453112a
+        bytes: 3170254
+    upload_package:
+      # The publisher's two files: the table and its stacked codebook (IDS_mapping.csv).
+      zip: diabetes_130.zip
+      contents:
+        - name: diabetic_data.csv
+          from: diabetes_130.zip
+          make: extract
+          member: diabetic_data.csv
+          sha256: 0689e7ec031237dc63031b938805c48377748761a3b26acab621567afa24df97
+        - name: IDS_mapping.csv
+          from: diabetes_130.zip
+          make: extract
+          member: IDS_mapping.csv
+          sha256: f1bb82b471cb34649352597572c9b1fb00bd27f77b9f5a22a03dc3eb1039749e
+      sha256: 6769d88182d3c833cad652f076c7dda2ccbc45050b670de8d1ef56c020596ed5
+    oracle_input: diabetic_data.csv
+
+  - name: nhanes_2017_2018
+    title: 'NHANES 2017-2018: demographics, biochemistry, hepatitis C, hepatitis B, body measures'
+    landing_page: https://wwwn.cdc.gov/nchs/nhanes/continuousnhanes/default.aspx?BeginYear=2017
+    license:
+      id: US-Government-Public-Domain
+      url: https://www.cdc.gov/other/agencymaterials.html
+      terms: Public domain (NCHS). Cite NCHS NHANES. No attempt to re-identify respondents.
+    # SAS XPORT tables joined 1:1 on SEQN; coded values (RIAGENDR 1=male 2=female); survey weights.
+    grain: person (SEQN), five tables joined 1:1
+    rows: 9254
+    id_column: SEQN
+    files:
+      - path: DEMO_J.xpt
+        url: https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2017/DataFiles/DEMO_J.xpt
+        kind: table
+        sha256: c0b46e0345ea19404928656277c8b0d10b0cca348a9b2fe4fc3c67e8b7ee73ec
+        bytes: 3412720
+      - path: BIOPRO_J.xpt
+        url: https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2017/DataFiles/BIOPRO_J.xpt
+        kind: table
+        sha256: 5bcd5722c1892883b96a9d7fed0befadabacae313f800fadc0133cd5dd00c4c6
+        bytes: 2106080
+      - path: HEPC_J.xpt
+        url: https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2017/DataFiles/HEPC_J.xpt
+        kind: table
+        sha256: e6914dab57841c25ca6dc4522759d2fd5c6abde0c7e8ba92964e816d1970f91b
+        bytes: 239200
+      - path: HEPBD_J.xpt
+        url: https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2017/DataFiles/HEPBD_J.xpt
+        kind: table
+        sha256: edce210184728cf82f6ffb04e90c4f6dcb4b9fb89a9cf1686c26f6ab03253f50
+        bytes: 298880
+      - path: BMX_J.xpt
+        url: https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2017/DataFiles/BMX_J.xpt
+        kind: table
+        sha256: 8d675e42d8826ac98714b2c3dd4c5138a5e353fb4424f7eff5e6db4a01ce838a
+        bytes: 1466000
+    upload_package:
+      zip: nhanes_2017_2018.zip
+      contents:
+        - {name: DEMO_J.xpt, from: DEMO_J.xpt, make: copy}
+        - {name: BIOPRO_J.xpt, from: BIOPRO_J.xpt, make: copy}
+        - {name: HEPC_J.xpt, from: HEPC_J.xpt, make: copy}
+        - {name: HEPBD_J.xpt, from: HEPBD_J.xpt, make: copy}
+        - {name: BMX_J.xpt, from: BMX_J.xpt, make: copy}
+      sha256: 17d42fc1ed6460c1b56cefba0566c3abf588bfd7b1f6eb3d292845deee0fb74f
+    # The oracles read DEMO_J.xpt and its sibling tables in the same directory.
+    oracle_input: DEMO_J.xpt
+
+  - name: prostate_xls
+    title: Prostate cancer trial (Byar & Green), Vanderbilt Biostatistics .xls
+    landing_page: https://hbiostat.org/data/
+    license:
+      id: Vanderbilt-hbiostat-permission
+      url: https://hbiostat.org/data/
+      terms: >-
+        Permission granted to anyone; reference the original paper and note "Data obtained from
+        http://hbiostat.org/data courtesy of the Vanderbilt University Department of Biostatistics."
+    # Legacy BIFF .xls with no CODEPAGE record; status is free text naming the cause of death.
+    grain: patient (patno)
+    rows: 502
+    id_column: patno
+    files:
+      - path: prostate.xls
+        url: https://hbiostat.org/data/repo/prostate.xls
+        kind: table
+        sha256: 432cae82966ce42e7ef2591df90ffda40952386b07af5ac58ffceed82f9a03a0
+        bytes: 186542
+    upload_package:
+      upload: file
+      contents:
+        - {name: prostate.xls, from: prostate.xls, make: copy}
+
+  - name: mesothelioma_xlsx
+    title: Mesothelioma's disease data set (UCI 351)
+    landing_page: https://archive.ics.uci.edu/dataset/351/mesothelioma+s+disease+data+set
+    license:
+      id: CC-BY-4.0
+      url: https://creativecommons.org/licenses/by/4.0/legalcode
+      terms: Attribution required; cite UCI and Er et al. 2012.
+    # Sheet "Data", then codebook sheets. From 'white blood' on, headers sit one column off the
+    # values they describe, so the questions use only the columns before it (and 'class of diagnosis').
+    grain: patient (no ID column)
+    rows: 324
+    files:
+      - path: mesothelioma.zip
+        url: https://archive.ics.uci.edu/static/public/351/mesothelioma+s+disease+data+set.zip
+        kind: archive
+        sha256: e3056f0575d3e37910cc9fe191c723c7e5541456a322c7ff6d32ccbee0847541
+        bytes: 72514
+    upload_package:
+      upload: file
+      contents:
+        - name: Mesothelioma data set.xlsx
+          from: mesothelioma.zip
+          make: extract
+          member: Mesothelioma data set.xlsx
+          sha256: cb3a7b5b9352ff30224f5080769db031339dd78c5a4ffb6860cb2a2a54cba73f
+    oracle_input: Mesothelioma data set.xlsx

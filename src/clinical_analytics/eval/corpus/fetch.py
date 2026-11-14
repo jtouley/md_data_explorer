@@ -1,11 +1,16 @@
 # SPDX-License-Identifier: MIT
-"""Fetch a public corpus dataset into a cache outside the repo and package its upload ZIP.
+"""Fetch a public corpus dataset into a cache outside the repo and package its upload.
 
 Every file is checked against the sha256 pinned in ``corpus.yaml``; a mismatch stops the run.
 A file already in the cache, or in a ``--seed`` directory (a corpus snapshot), is reused when
 its checksum matches, so nothing is downloaded twice. A documentation file taken from a live
 web page (``extract_section``) is stored and checked as the plain text of that one section, not
-as the page bytes, which change with every site-template or view-count update.
+as the page bytes, which change with every site-template or view-count update. A seed file is
+hard-linked into the cache when it can be, so a large snapshot is not stored twice.
+
+The upload is packaged the way a user would upload it: a ZIP of the table and its documents, a
+member taken out of the publisher's archive (``make: extract``, its own sha256 pinned), or one
+file as it is (``upload: file``: a workbook, or a CSV uploaded on its own).
 
     uv run python -m clinical_analytics.eval.corpus.fetch covid_ms [--seed DIR]
 """
@@ -28,7 +33,7 @@ from typing import Literal
 
 import structlog
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 logger = structlog.get_logger()
 
@@ -63,17 +68,43 @@ class CorpusFile(BaseModel):
 
 
 class PackageEntry(BaseModel):
+    """One file of the upload: ``from`` copied as fetched, or (``make: extract``) the archive
+    ``from``'s ``member``, checked against its own pinned ``sha256``. ``a.zip!b.csv`` names
+    ``b.csv`` inside the ZIP ``a.zip`` inside ``from`` (a ZIP in a ZIP, as UCI ships some sets)."""
+
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
     name: str
     source: str = Field(alias="from")
-    make: Literal["copy"] = "copy"
+    make: Literal["copy", "extract"] = "copy"
+    member: str | None = None
+    sha256: str | None = None
+
+    @model_validator(mode="after")
+    def _extract_is_pinned(self) -> PackageEntry:
+        if self.make == "extract" and (self.member is None or self.sha256 is None):
+            raise ValueError(f"{self.name}: make: extract needs a member and its sha256")
+        if self.make == "copy" and self.member is not None:
+            raise ValueError(f"{self.name}: a member is only read with make: extract")
+        return self
 
 
 class UploadPackage(BaseModel):
+    """What the user uploads. ``zip``: the entries in one ZIP (``sha256`` pins the ZIP).
+    ``file``: the one entry as it is (a workbook, or a CSV uploaded on its own)."""
+
     model_config = ConfigDict(extra="forbid")
-    zip: str
+    upload: Literal["zip", "file"] = "zip"
+    zip: str | None = None
     contents: list[PackageEntry]
     sha256: str | None = None
+
+    @model_validator(mode="after")
+    def _shape_matches_upload(self) -> UploadPackage:
+        if self.upload == "file" and (len(self.contents) != 1 or self.zip is not None):
+            raise ValueError("upload: file takes exactly one entry and no zip name")
+        if self.upload == "zip" and self.zip is None:
+            raise ValueError("upload: zip needs a zip name")
+        return self
 
 
 class CorpusDataset(BaseModel):
@@ -81,6 +112,9 @@ class CorpusDataset(BaseModel):
     name: str
     files: list[CorpusFile]
     upload_package: UploadPackage
+    # The file the oracles read, in the dataset's files directory (an extracted member counts).
+    # Default: the first ``kind: table`` file, else the uploaded file itself.
+    oracle_input: str | None = None
 
 
 def load_corpus(path: Path = CORPUS_YAML) -> dict[str, CorpusDataset]:
@@ -112,6 +146,23 @@ def _download(url: str) -> bytes:
         return bytes(response.read())
 
 
+def _from_seed(path: str, sha256: str, dest: Path, seed_dirs: list[Path] | None) -> Path | None:
+    """Place the first seed copy of ``path`` whose sha256 matches at ``dest``; the seed used.
+
+    A hard link when the seed is on the same file system (no second copy of a large file),
+    else a copy."""
+    for seed in seed_dirs or []:
+        candidate = seed / path
+        if candidate.is_file() and sha256_file(candidate) == sha256:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.link(candidate, dest)
+            except OSError:
+                shutil.copyfile(candidate, dest)
+            return seed
+    return None
+
+
 def fetch_file(
     item: CorpusFile, dest_dir: Path, seed_dirs: list[Path] | None = None, download: Downloader = _download
 ) -> Path:
@@ -131,12 +182,10 @@ def fetch_file(
         log.info("corpus_file_cached")
         return dest
     dest_dir.mkdir(parents=True, exist_ok=True)
-    for seed in seed_dirs or []:
-        candidate = seed / item.path
-        if candidate.is_file() and sha256_file(candidate) == item.sha256:
-            shutil.copyfile(candidate, dest)
-            log.info("corpus_file_seeded", seed=str(seed))
-            return dest
+    seeded = _from_seed(item.path, item.sha256, dest, seed_dirs)
+    if seeded is not None:
+        log.info("corpus_file_seeded", seed=str(seeded))
+        return dest
     body = download(item.url)
     if item.extract_section is not None:
         body = html_section_text(body, item.extract_section, item.url).encode("utf-8")
@@ -176,6 +225,42 @@ def html_section_text(page: bytes, section_id: str, source_url: str) -> str:
     return html_to_text(match.group(0), f"{source_url}#{section_id}")
 
 
+def _member_bytes(archive_path: Path, member: str) -> bytes:
+    """The bytes of ``member`` (``a.zip!b.csv`` for a ZIP inside the archive).
+
+    Raises:
+        CorpusFetchError: the archive or a nested ZIP has no such member.
+    """
+    body = archive_path.read_bytes()
+    for part in member.split("!"):
+        try:
+            with zipfile.ZipFile(io.BytesIO(body)) as archive:
+                body = archive.read(part)
+        except (KeyError, zipfile.BadZipFile) as error:
+            raise CorpusFetchError(f"{archive_path.name}: cannot read member {member!r}: {error}") from error
+    return body
+
+
+def entry_bytes(dataset: CorpusDataset, entry: PackageEntry, files_dir: Path) -> bytes:
+    """One package entry's bytes. An extracted member is checked against its pinned sha256 and
+    also written to ``files_dir/<name>``, where the oracles read it.
+
+    Raises:
+        CorpusFetchError: the entry names a file the dataset does not list.
+        ChecksumMismatchError: an extracted member differs from its pinned sha256.
+    """
+    if entry.source not in {item.path for item in dataset.files}:
+        raise CorpusFetchError(f"{dataset.name}: package entry {entry.name} names unknown file {entry.source}")
+    if entry.make == "copy":
+        return (files_dir / entry.source).read_bytes()
+    body = _member_bytes(files_dir / entry.source, entry.member or "")
+    actual = hashlib.sha256(body).hexdigest()
+    if actual != entry.sha256:
+        raise ChecksumMismatchError(f"{entry.source}!{entry.member} has sha256 {actual}, expected {entry.sha256}")
+    (files_dir / entry.name).write_bytes(body)
+    return body
+
+
 def build_zip(dataset: CorpusDataset, files_dir: Path, out: Path) -> Path:
     """Write the upload ZIP: entries sorted by name, stored uncompressed with fixed metadata, so
     its bytes (and sha256) depend only on the checked inputs, not on the platform or zlib.
@@ -183,17 +268,14 @@ def build_zip(dataset: CorpusDataset, files_dir: Path, out: Path) -> Path:
     Raises:
         ChecksumMismatchError: the ZIP does not match ``upload_package.sha256`` when one is pinned.
     """
-    sources = {item.path: item for item in dataset.files}
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED) as archive:
         for entry in sorted(dataset.upload_package.contents, key=lambda e: e.name):
-            if entry.source not in sources:
-                raise CorpusFetchError(f"{dataset.name}: package entry {entry.name} names unknown file {entry.source}")
             info = zipfile.ZipInfo(entry.name, date_time=ZIP_TIMESTAMP)
             info.compress_type = zipfile.ZIP_STORED
             info.create_system = ZIP_CREATE_SYSTEM_UNIX
             info.external_attr = 0o644 << 16
-            archive.writestr(info, (files_dir / entry.source).read_bytes())
+            archive.writestr(info, entry_bytes(dataset, entry, files_dir))
     body = buffer.getvalue()
     pinned = dataset.upload_package.sha256
     actual = hashlib.sha256(body).hexdigest()
@@ -205,6 +287,23 @@ def build_zip(dataset: CorpusDataset, files_dir: Path, out: Path) -> Path:
     return out
 
 
+def build_upload(dataset: CorpusDataset, root: Path) -> Path:
+    """The file to upload, by ``upload_package.upload``: the built ZIP, or the one entry as it is.
+
+    Raises:
+        CorpusFetchError: an entry names a file the dataset does not list, or a missing member.
+        ChecksumMismatchError: the ZIP or an extracted member differs from its pinned sha256.
+    """
+    package, files_dir = dataset.upload_package, root / "files"
+    if package.upload == "file":
+        entry = package.contents[0]
+        out = root / entry.name
+        out.write_bytes(entry_bytes(dataset, entry, files_dir))
+        return out
+    # UploadPackage's validator requires a zip name for upload: zip.
+    return build_zip(dataset, files_dir, root / str(package.zip))
+
+
 def fetch_dataset(
     name: str,
     cache_dir: Path | None = None,
@@ -212,16 +311,24 @@ def fetch_dataset(
     download: Downloader = _download,
     corpus: dict[str, CorpusDataset] | None = None,
 ) -> Path:
-    """Fetch and check every file of ``name``, then build its upload ZIP; returns the ZIP path."""
+    """Fetch and check every file of ``name``, then build its upload; returns the upload's path."""
     datasets = corpus if corpus is not None else load_corpus()
     if name not in datasets:
         raise CorpusFetchError(f"unknown corpus dataset '{name}'; known: {', '.join(sorted(datasets))}")
     dataset = datasets[name]
     root = (cache_dir or default_cache_dir()) / name
-    files_dir = root / "files"
     for item in dataset.files:
-        fetch_file(item, files_dir, seed_dirs, download)
-    return build_zip(dataset, files_dir, root / dataset.upload_package.zip)
+        fetch_file(item, root / "files", seed_dirs, download)
+    return build_upload(dataset, root)
+
+
+def oracle_input(dataset: CorpusDataset, upload: Path) -> Path:
+    """The file the oracles read: ``oracle_input``, else the first table, else the upload."""
+    files_dir = upload.parent / "files"
+    if dataset.oracle_input is not None:
+        return files_dir / dataset.oracle_input
+    table = next((item.path for item in dataset.files if item.kind == "table"), None)
+    return files_dir / table if table is not None else upload
 
 
 def main(argv: list[str] | None = None) -> int:

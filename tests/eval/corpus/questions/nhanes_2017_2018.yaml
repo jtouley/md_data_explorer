@@ -1,0 +1,64 @@
+# NHANES 2017-2018: 9,254 participants; demographics, biochemistry, hepatitis C, hepatitis B and
+# body measures as five SAS XPORT tables joined 1:1 on SEQN, uploaded as one ZIP. Fields as in
+# covid_ms.yaml. Answers come from tests/eval/corpus/oracles/nhanes_2017_2018.py.
+# Stresses: the .xpt format, a five-table upload, coded names and values (RIAGENDR 1/2), lab
+# tables covering only some participants, and survey weights the app does not apply.
+dataset_id: nhanes_2017_2018
+questions:
+  - id: nhanes_2017_2018-total-001
+    family: count
+    query: How many participants are in this survey?
+    kind: count
+    expect: answer
+  - id: nhanes_2017_2018-sex-002
+    family: breakdown
+    query: How many participants are male and how many are female?
+    kind: count_by
+    group_by: RIAGENDR
+    expect: answer
+  - id: nhanes_2017_2018-race-003
+    family: breakdown
+    query: How many participants are in each race and Hispanic origin group?
+    kind: count_by
+    group_by: RIDRETH3
+    expect: answer
+  - id: nhanes_2017_2018-age-004
+    family: grouped_stat
+    query: What is the mean age of male and female participants?
+    kind: mean_by
+    stat: mean
+    group_by: RIAGENDR
+    expect: answer
+  - id: nhanes_2017_2018-crea-005
+    family: filter_count
+    query: How many participants over 65 have a creatinine above 1.5 mg/dL?
+    kind: count
+    expect: answer
+  - id: nhanes_2017_2018-hcvsex-006
+    family: outcome_share
+    query: What share of participants tested positive for hepatitis C RNA, by sex?
+    kind: rates
+    group_by: RIAGENDR
+    expect: answer
+  - id: nhanes_2017_2018-bmi-007
+    family: grouped_stat
+    query: What is the mean BMI of male and female participants?
+    kind: mean_by
+    stat: mean
+    group_by: RIAGENDR
+    expect: answer
+  - id: nhanes_2017_2018-hcv-008
+    family: filter_count
+    query: How many participants tested positive for hepatitis C RNA?
+    kind: count
+    expect: answer
+  - id: nhanes_2017_2018-weighted-009
+    family: survey_design
+    query: What is the survey-weighted prevalence of hepatitis C RNA in the US population, with a 95% CI?
+    kind: listing
+    expect: held
+  - id: nhanes_2017_2018-cycles-010
+    family: no_dates
+    query: How has hepatitis C prevalence changed since earlier survey cycles?
+    kind: listing
+    expect: held

@@ -1,0 +1,60 @@
+# UCI Mesothelioma's disease data set: 324 patients, an .xlsx whose first sheet is the data and
+# whose other sheets are the codebook. Fields as in covid_ms.yaml. Answers come from
+# tests/eval/corpus/oracles/mesothelioma_xlsx.py.
+# Stresses: a workbook uploaded on its own (file name with spaces), 0/1/2 codes with the labels
+# in another sheet, a header row shifted from 'white blood' on (not asked about), cities with
+# 1-10 patients (small cells), no dates.
+dataset_id: mesothelioma_xlsx
+questions:
+  - id: mesothelioma_xlsx-total-001
+    family: count
+    query: How many patients are in this dataset?
+    kind: count
+    expect: answer
+  - id: mesothelioma_xlsx-diagnosis-002
+    family: breakdown
+    query: How many patients are in each class of diagnosis?
+    kind: count_by
+    group_by: class of diagnosis
+    expect: answer
+  - id: mesothelioma_xlsx-asbestos-003
+    family: filter_count
+    query: How many patients had asbestos exposure?
+    kind: count
+    expect: answer
+  - id: mesothelioma_xlsx-city-004
+    family: privacy
+    query: How many patients came from each city?
+    kind: count_by
+    group_by: city
+    expect: answer
+  - id: mesothelioma_xlsx-duration-005
+    family: grouped_stat
+    query: What is the mean duration of asbestos exposure in each class of diagnosis?
+    kind: mean_by
+    stat: mean
+    group_by: class of diagnosis
+    expect: answer
+  - id: mesothelioma_xlsx-age-006
+    family: grouped_stat
+    query: What is the median age by gender?
+    kind: median_by
+    stat: median
+    group_by: gender
+    expect: answer
+  - id: mesothelioma_xlsx-dyspnoea-007
+    family: outcome_share
+    query: What share of patients had dyspnoea, by class of diagnosis?
+    kind: rates
+    group_by: class of diagnosis
+    expect: answer
+  - id: mesothelioma_xlsx-older-008
+    family: filter_count
+    query: How many patients over 65 were diagnosed with mesothelioma?
+    kind: count
+    expect: answer
+  - id: mesothelioma_xlsx-trend-009
+    family: no_dates
+    query: Did mesothelioma cases rise over time?
+    kind: listing
+    expect: held
