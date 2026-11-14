@@ -473,11 +473,14 @@ def read_zip_tables(file_bytes: bytes, budget: ZipExpansionBudget | None = None)
             notes.append(
                 f"{Path(entry).name} was kept as documentation, not read as a table: it is not one table "
                 "(blank rows split it into parts, as in a codebook). To ask questions about it, "
-                "fix it and upload it as its own file."
+                "save each part as its own CSV and upload it."
             )
             logger.info("zip_table_read_as_documentation", error_type=type(e).__name__)
     if not staged_tables:
-        raise UploadError("No file in the ZIP could be read as a table. Check the tables and upload the ZIP again.")
+        raise UploadError(
+            "No file in the ZIP could be read as a table. Each table needs one header row followed by "
+            "rows of data; fix the files and upload the ZIP again."
+        )
 
     seen: set[str] = set()
     tables: list[dict[str, Any]] = []

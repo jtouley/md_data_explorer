@@ -115,7 +115,7 @@ def read_file_set(file_set: FileSet) -> StagedTable:
     try:
         columns = pl.read_csv(io.BytesIO(first.content), separator=separator, n_rows=0).columns
     except (pl.exceptions.ComputeError, pl.exceptions.NoDataError) as e:
-        raise StagingError(f"Files in '{file_set.name}' could not be read: {type(e).__name__}") from e
+        raise StagingError(_unreadable(file_set.name, e)) from e
     id_column = _id_column(file_set.prefix, columns)
     added = [c for c in (id_column, SOURCE_FOLDER_COLUMN) if c in columns]
     if added:
@@ -172,7 +172,7 @@ def _read_members(
             pl.read_csv(io.BytesIO(m.content), separator=separator, infer_schema=False).select(columns) for m in members
         ]
     except (pl.exceptions.ComputeError, pl.exceptions.NoDataError, pl.exceptions.ColumnNotFoundError) as e:
-        raise StagingError(f"Files in '{name}' could not be read: {type(e).__name__}") from e
+        raise StagingError(_unreadable(name, e)) from e
     return pl.concat(frames, how="vertical"), [f.height for f in frames]
 
 
@@ -197,6 +197,13 @@ def _set_name(group: list[TextMember]) -> str:
         while not folder.startswith(shared):
             shared = shared[:-1]
     return shared.rstrip("_- ") or _DEFAULT_SET_NAME
+
+
+def _unreadable(name: str, error: Exception) -> str:
+    return (
+        f"Files in '{name}' could not be read ({type(error).__name__}). "
+        "Check that every file has the same header row, then upload the ZIP again."
+    )
 
 
 def _header_line(content: bytes) -> bytes:
