@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -32,6 +32,7 @@ from open_data_contract_standard.model import OpenDataContractStandard
 from clinical_analytics.analysis.numeric_text import is_numeric_text
 from clinical_analytics.analysis.variable_types import classify_variable, code_labels, short_name
 from clinical_analytics.contracts import config
+from clinical_analytics.contracts.dictionary import ColumnDoc
 from clinical_analytics.contracts.errors import ContractValidationError
 from clinical_analytics.core.metadata_patch import ResolvedColumnMetadata, ResolvedDatasetMetadata
 
@@ -55,6 +56,8 @@ class ContractInputs:
     # Columns the upload names as analysis variables: only their missingness is flagged (L1).
     analysis_columns: tuple[str, ...] = ()
     created_at: datetime | None = None
+    # What the uploaded data dictionary documents, by physical column (``contracts.dictionary``).
+    dictionary: Mapping[str, ColumnDoc] = field(default_factory=dict)
     extra_custom_properties: dict[str, Any] = field(default_factory=dict)
 
 
@@ -334,8 +337,11 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
         "physicalType": str(dtype),
         "businessName": (meta.label if meta and meta.label else short_name(column)),
     }
+    doc = inputs.dictionary.get(column)
     if meta and meta.description:
         prop["description"] = meta.description
+    elif doc and doc.description:
+        prop["description"] = doc.description
     if meta and meta.aliases:
         prop["synonyms"] = [{"synonym": alias} for alias in meta.aliases]
 
@@ -344,6 +350,8 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
         custom.append(_custom("variableKind", classify_variable(series)))
     if meta and meta.unit:
         custom.append(_custom("unit", meta.unit))
+    elif doc and doc.unit:
+        custom.extend([_custom("unit", doc.unit), _custom("unitSource", config.DICTIONARY_SOURCE)])
     if meta and meta.semantic_type:
         custom.append(_custom("clinicalSemanticType", meta.semantic_type.value))
 
@@ -412,10 +420,31 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
         if not (meta and meta.unit):
             custom.append(_custom("assumedUnit", bounds.unit))
 
+    _add_documented_codes(prop, custom, doc, dtype, is_id)
     if custom:
         prop["customProperties"] = custom
     prop["quality"] = quality
     return prop
+
+
+def _add_documented_codes(
+    prop: dict[str, Any], custom: list[dict[str, Any]], doc: ColumnDoc | None, dtype: pl.DataType, is_id: bool
+) -> None:
+    """Dictionary codes the header and accepted patches do not give, appended to ``enum``.
+
+    They describe the column for the model and the reader, and are not checked against the data:
+    a parsed dictionary is a heuristic until someone accepts it (ADR011), so a code it misread
+    must not turn into an "invalid values" finding that holds answers.
+    """
+    if doc is None or not doc.codebook or is_id or dtype == pl.Boolean:
+        return
+    enum: list[dict[str, Any]] = list(prop.get("enum") or [])
+    known = {str(e["value"]) for e in enum}
+    typed = [(_typed_code(code, dtype), label) for code, label in doc.codebook.items() if code not in known]
+    added = [{"value": value, "label": label} for value, label in typed if value is not None]
+    if added:
+        prop["enum"] = enum + added
+        custom.append(_custom(config.DICTIONARY_CODES_PROPERTY, [e["value"] for e in added]))
 
 
 def _granularity(df: pl.DataFrame, id_column: str | None) -> str:

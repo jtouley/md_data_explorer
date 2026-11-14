@@ -2,19 +2,29 @@
 """
 AutoContext Packager for Tier 3 LLM Fallback
 
-Builds bounded, privacy-safe context packs from schema inference,
-documentation, and alias mappings to enable grounded query parsing.
+Builds bounded, privacy-safe context packs to enable grounded query parsing. For an uploaded
+dataset with a data contract, the contract is the only source (``contracts.context``); other
+datasets (built-in YAML configs, uploads from before contracts) are described from schema
+inference, documentation and alias mappings. Neither path carries observed values: no minimum,
+maximum or value counts reach the model.
 """
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 import structlog
 import tiktoken
 from ibis.common.exceptions import IbisError
 
+if TYPE_CHECKING:
+    from clinical_analytics.contracts.context import ContractColumn, ContractContext
+
 logger = structlog.get_logger()
+
+_MIN_DESCRIPTION_TERM = 4
+
+ColumnDtype: TypeAlias = Literal["numeric", "categorical", "datetime", "id", "coded"]
 
 # What SemanticLayer.get_base_view() raises for a config the data cannot satisfy: an outcome
 # without "source_column" (KeyError) or a column the table lacks (IbisTypeError).
@@ -29,10 +39,9 @@ class ColumnContext:
     normalized_name: str
     system_aliases: list[str]
     user_aliases: list[str]
-    dtype: Literal["numeric", "categorical", "datetime", "id", "coded"]
+    dtype: ColumnDtype
     units: str | None = None
     codebook: dict[str, str] | None = None
-    stats: dict[str, Any] | None = None
     description: str | None = None
     is_phi: bool = False
     exclusion_patterns: list[Any] | None = None
@@ -49,6 +58,7 @@ class AutoContext:
     glossary: dict[str, Any]  # Extracted terms, abbreviations, notes
     constraints: dict[str, Any] = field(default_factory=lambda: {"no_row_level_data": True, "max_tokens": 4000})
     relationships: list[Any] | None = None
+    grain: str | None = None  # what one row is, from the contract ("One row per secret_name")
 
 
 def _extract_entity_keys(inferred_schema: Any) -> list[str]:
@@ -298,22 +308,8 @@ def _build_column_contexts(
             if parsed.unit:
                 units = parsed.unit
 
-        # Build lightweight stats (aggregated only, no row-level data)
-        stats: dict[str, Any] | None = None
-        if col_metadata and "metadata" in col_metadata:
-            metadata_info = col_metadata["metadata"]
-            stats_dict: dict[str, Any] = {}
-            # Only include aggregated stats
-            for key in ["min", "max", "mean", "median", "std", "count", "unique_count"]:
-                if key in metadata_info:
-                    stats_dict[key] = metadata_info[key]
-            # Top values should be counts, not raw values
-            if "top_values" in metadata_info:
-                top_vals = metadata_info["top_values"]
-                if isinstance(top_vals, dict):
-                    stats_dict["top_values"] = top_vals  # Already in value -> count format
-            if stats_dict:
-                stats = stats_dict
+        # No stats: min, max and value counts are observed patient values (a level of 1-10
+        # patients among them), and the model needs none of them to read a question.
 
         # Enrich with resolved metadata if available
         user_aliases: list[str] = []
@@ -348,7 +344,6 @@ def _build_column_contexts(
             dtype=dtype,
             units=units,
             codebook=codebook,
-            stats=stats,
             description=description,
             is_phi=is_phi,
             exclusion_patterns=exclusion_patterns,
@@ -401,6 +396,13 @@ def _filter_columns_by_relevance(
                     score += 0.5
                 if re.search(rf"\b{re.escape(term)}\b", alias_lower):
                     score += 1.0
+
+        # Documented names and descriptions (from the contract): whole words of 4+ letters only,
+        # so "the" or "of" do not rank a column.
+        documented = " ".join([*col.user_aliases, col.description or ""]).lower()
+        for term in query_terms_lower:
+            if len(term) >= _MIN_DESCRIPTION_TERM and re.search(rf"\b{re.escape(term)}\b", documented):
+                score += 0.5
 
         scored_columns.append((score, col))
 
@@ -518,6 +520,7 @@ def build_autocontext(
     query_terms: list[str] | None = None,
     max_tokens: int = 4000,
     resolved_metadata: Any = None,
+    contract: "ContractContext | None" = None,
 ) -> AutoContext:
     """
     Build AutoContext pack from schema inference, documentation, and aliases.
@@ -532,10 +535,15 @@ def build_autocontext(
         query_terms: Optional query terms for relevance filtering
         max_tokens: Maximum token budget (default: 4000)
         resolved_metadata: Optional ResolvedDatasetMetadata with enriched column metadata
+        contract: The upload version's data contract; when given it is the only source (the
+            schema, documentation and metadata arguments are not read)
 
     Returns:
         AutoContext pack with schema context (enriched if resolved_metadata provided)
     """
+    if contract is not None:
+        return _autocontext_from_contract(semantic_layer, contract, query_terms, max_tokens)
+
     # Reconstruct inferred_schema if not provided
     if inferred_schema is None:
         inferred_schema = _reconstruct_inferred_schema_from_semantic_layer(semantic_layer)
@@ -578,21 +586,53 @@ def build_autocontext(
     # Step 7: Enforce token budget
     autocontext = _enforce_token_budget(autocontext, max_tokens)
 
-    # Step 8: Privacy validation (assertion check)
-    # Verify no row-level data in stats
-    for col in autocontext.columns:
-        if col.stats:
-            # Stats should only contain aggregated data
-            allowed_keys = {"min", "max", "mean", "median", "std", "count", "unique_count", "top_values"}
-            assert all(key in allowed_keys for key in col.stats.keys()), (
-                f"Column {col.name} stats contains non-aggregated data: {col.stats}"
-            )
-            # top_values should be value -> count mapping, not raw row data
-            if "top_values" in col.stats:
-                top_vals = col.stats["top_values"]
-                if isinstance(top_vals, dict):
-                    assert all(isinstance(v, int | float) for v in top_vals.values()), (
-                        f"Column {col.name} top_values contains non-count data: {top_vals}"
-                    )
-
     return autocontext
+
+
+def _contract_dtype(column: "ContractColumn") -> ColumnDtype:
+    if column.is_key:
+        return "id"
+    if column.codebook:
+        return "coded"
+    if column.logical_type in ("number", "integer"):
+        return "numeric"
+    if column.logical_type in ("date", "timestamp", "time"):
+        return "datetime"
+    return "categorical"
+
+
+def _autocontext_from_contract(
+    semantic_layer: Any, contract: "ContractContext", query_terms: list[str] | None, max_tokens: int
+) -> AutoContext:
+    """AutoContext read only from the version's contract: keys first, then by relevance."""
+    columns = [
+        ColumnContext(
+            name=c.name,
+            normalized_name=_normalize_column_name(c.name),
+            system_aliases=[],
+            user_aliases=list(c.synonyms),
+            dtype=_contract_dtype(c),
+            units=c.unit,
+            codebook=dict(c.codebook) or None,
+            description=c.description,
+            is_phi=c.is_phi,
+            semantic_type=c.semantic_type,
+        )
+        for c in contract.columns
+    ]
+    if query_terms:
+        columns = _filter_columns_by_relevance(columns, query_terms)
+    columns.sort(key=lambda c: c.dtype != "id")  # stable: the identifier first, the rest by relevance
+    autocontext = AutoContext(
+        dataset={
+            "upload_id": contract.upload_id,
+            "dataset_version": contract.dataset_version,
+            "display_name": semantic_layer.config.get("display_name", semantic_layer.dataset_name),
+        },
+        entity_keys=[contract.key] if contract.key else [],
+        columns=columns,
+        glossary={},
+        constraints={"no_row_level_data": True, "max_tokens": max_tokens},
+        grain=contract.grain,
+    )
+    return _enforce_token_budget(autocontext, max_tokens)

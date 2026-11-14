@@ -23,17 +23,87 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from difflib import get_close_matches
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from clinical_analytics.core.config_loader import load_patterns_config
 from clinical_analytics.core.data_home import nl_learning_dir
 from clinical_analytics.core.log_redaction import stable_hash, text_fingerprint
+from clinical_analytics.core.nl_query_config import (
+    SCHEMA_CONTEXT_CODE_LABEL_CHARS,
+    SCHEMA_CONTEXT_DESCRIPTION_CHARS,
+    SCHEMA_CONTEXT_MAX_CODES,
+    SCHEMA_CONTEXT_MAX_TOKENS,
+)
 from clinical_analytics.core.query_plan import CohortStep, FilterSpec, QueryPlan, Statistic
 from clinical_analytics.core.value_index import ColumnValues
 
+if TYPE_CHECKING:
+    from clinical_analytics.contracts.context import ContractContext
+    from clinical_analytics.core.autocontext import AutoContext, ColumnContext
+
 logger = structlog.get_logger()
+
+
+def _clip(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _column_line(col: "ColumnContext") -> str:
+    """One column of the schema context: name, type, unit, description, codes and aliases."""
+    kind = f"{col.dtype}, {col.units}" if col.units else col.dtype
+    line = f"- {col.name} [{kind}]"
+    if col.description:
+        line += f": {_clip(col.description, SCHEMA_CONTEXT_DESCRIPTION_CHARS)}"
+    if col.codebook:
+        codes = list(col.codebook.items())
+        shown = "; ".join(
+            f"{code}={_clip(str(label), SCHEMA_CONTEXT_CODE_LABEL_CHARS)}"
+            for code, label in codes[:SCHEMA_CONTEXT_MAX_CODES]
+        )
+        more = f"; and {len(codes) - SCHEMA_CONTEXT_MAX_CODES} more" if len(codes) > SCHEMA_CONTEXT_MAX_CODES else ""
+        line += f" (codes: {shown}{more})"
+    aliases = [*col.user_aliases, *col.system_aliases][:3]
+    if aliases:
+        line += f" (aliases: {', '.join(aliases)})"
+    return line
+
+
+def _schema_context_lines(autocontext: "AutoContext") -> list[str]:
+    """Column lines in the context's order (keys first, then by relevance) up to the budget."""
+    from clinical_analytics.core.autocontext import _estimate_tokens
+
+    lines: list[str] = []
+    used = 0
+    for col in autocontext.columns:
+        line = _column_line(col)
+        cost = _estimate_tokens(line) + 1
+        if used + cost > SCHEMA_CONTEXT_MAX_TOKENS:
+            break
+        lines.append(line)
+        used += cost
+    if len(lines) < len(autocontext.columns):
+        lines.append(f"- (and {len(autocontext.columns) - len(lines)} less relevant columns)")
+    return lines
+
+
+def _rag_context_from_contract(context: dict[str, Any], contract: "ContractContext") -> dict[str, Any]:
+    """``context`` with its dataset fields (columns, aliases, types) read from the contract only."""
+    numeric = ("number", "integer")
+    types = {
+        c.name: {
+            "type": "datetime" if c.logical_type in ("date", "timestamp") else c.logical_type,
+            "numeric": c.logical_type in numeric,
+        }
+        for c in contract.columns
+    }
+    return {
+        **context,
+        "columns": [c.name for c in contract.columns],
+        "aliases": {synonym: c.name for c in contract.columns for synonym in c.synonyms},
+        "column_types": types,
+    }
 
 
 def _golden_cache_key(config_path: Path) -> tuple[str, str, int, int] | None:
@@ -1814,23 +1884,7 @@ Only use: COUNT, DESCRIBE, COMPARE_GROUPS, FIND_PREDICTORS, CORRELATIONS"""
             entity_keys_str = ", ".join(autocontext.entity_keys[:5])  # Limit to top 5
             if len(autocontext.entity_keys) > 5:
                 entity_keys_str += f" (and {len(autocontext.entity_keys) - 5} more)"
-
-            # Format column catalog (top 10 most relevant)
-            columns_info = []
-            for col in autocontext.columns[:10]:
-                col_info = f"- {col.name}"
-                if col.system_aliases:
-                    col_info += f" (aliases: {', '.join(col.system_aliases[:3])})"
-                if col.dtype:
-                    col_info += f" [type: {col.dtype}]"
-                if col.codebook:
-                    # Show sample codebook entries
-                    sample_codes = list(col.codebook.items())[:3]
-                    codebook_str = ", ".join(f"{k}: {v}" for k, v in sample_codes)
-                    if len(col.codebook) > 3:
-                        codebook_str += f" (and {len(col.codebook) - 3} more)"
-                    col_info += f" (codes: {codebook_str})"
-                columns_info.append(col_info)
+            grain_line = f"\nOne row is: {autocontext.grain}\n" if autocontext.grain else ""
 
             # Format glossary (top 10 terms)
             glossary_items = []
@@ -1842,15 +1896,16 @@ Only use: COUNT, DESCRIBE, COMPARE_GROUPS, FIND_PREDICTORS, CORRELATIONS"""
 === SCHEMA CONTEXT (AutoContext from ADR004) ===
 
 Entity Keys (primary identifiers): {entity_keys_str}
-
-Column Catalog (schema metadata):
-{chr(10).join(columns_info)}
+{grain_line}
+Column Catalog (name [type, unit]: description (codes: value=meaning)):
+{chr(10).join(_schema_context_lines(autocontext))}
 
 Glossary (abbreviations and definitions):
 {chr(10).join(glossary_items) if glossary_items else "None available"}
 
 **Use this schema context to match variables accurately.**
 **Only reference columns/aliases that exist in the schema above.**
+**Filter on a coded column with its code (the value before "="), never its meaning.**
 """
 
         system_prompt = """You are a medical data query parser. Extract structured query intent from natural language.
@@ -2265,6 +2320,24 @@ Fix the errors and return a corrected query intent as JSON.
             logger.warning("retry_with_feedback_error", extra={"error": str(e)})
             return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="retry_error")
 
+    def _contract_context(self) -> "ContractContext | None":
+        """The data contract of the layer's upload version, as the model's context; None for a
+        built-in dataset or an upload from before contracts.
+
+        Raises:
+            ContractError: the saved contract is damaged or unreadable (the model tier then does
+                not run for this question; it is never given an unchecked description instead).
+        """
+        from clinical_analytics.contracts.context import load_contract_context
+
+        path = getattr(self.semantic_layer, "contract_path", None)
+        if not isinstance(path, Path):
+            return None
+        contract = load_contract_context(path)
+        if contract is None:
+            logger.warning("model_context_without_contract", dataset_version=self.semantic_layer.loaded_version)
+        return contract
+
     def _llm_parse(self, query: str, conversation_history: list[dict] | None = None) -> QueryIntent:
         """
         Tier 3: LLM fallback with RAG context from semantic layer.
@@ -2300,15 +2373,17 @@ Fix the errors and return a corrected query intent as JSON.
             # Step 3: Build RAG context
             context = self._build_rag_context(query)
 
-            # Step 3.5: Build AutoContext (ADR004 Phase 3)
-            # Extract doc_context from metadata if available (for uploaded datasets)
+            # Step 3.5: Build AutoContext (ADR004 Phase 3). An upload version with a data contract
+            # is described by its contract alone; other datasets by schema and documentation.
+            from clinical_analytics.core.autocontext import build_autocontext
+
+            contract = self._contract_context()
             doc_context = None
             metadata = self.semantic_layer.config.get("metadata")
-            if metadata and isinstance(metadata, dict):
+            if contract is None and metadata and isinstance(metadata, dict):
                 doc_context = metadata.get("doc_context")
-
-            # Build AutoContext on-demand
-            from clinical_analytics.core.autocontext import build_autocontext
+            if contract is not None:
+                context = _rag_context_from_contract(context, contract)
 
             # Extract query terms for relevance filtering
             query_terms = query.lower().split() if query else None
@@ -2319,6 +2394,7 @@ Fix the errors and return a corrected query intent as JSON.
                 doc_context=doc_context,
                 query_terms=query_terms,
                 max_tokens=4000,
+                contract=contract,
             )
 
             # Step 4: Build structured prompts (with AutoContext)

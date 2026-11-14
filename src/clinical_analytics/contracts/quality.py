@@ -222,7 +222,9 @@ def _compile_range(prop: SchemaProperty, schema: pl.Schema) -> CompiledCheck | N
     if lo is None and hi is None:
         return None
     column = prop.physicalName or prop.name
-    unit = next((c.value for c in prop.customProperties or [] if c.property in ("unit", "assumedUnit")), "")
+    # The bound's own unit when it has one: a documented unit can differ from the bound's.
+    units = {c.property: c.value for c in prop.customProperties or [] if c.property in ("unit", "assumedUnit")}
+    unit = units.get("assumedUnit", units.get("unit", ""))
     base: dict[str, Any] = {
         "id": f"{prop.name}_range",
         "column": column,
