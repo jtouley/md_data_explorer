@@ -121,7 +121,7 @@ def test_uploadDataset_zipWithStackedCodebookCsv_codebookReadAsDocs(test_client:
     # Assert
     assert body["_status_code"] == 200, body
     assert frame.height == 120
-    assert "mapping.csv was read as documentation, not as a table" in body["message"]
+    assert "mapping.csv was kept as documentation, not read as a table" in body["message"]
     assert "discharge_id" in meta["doc_context"]
 
 

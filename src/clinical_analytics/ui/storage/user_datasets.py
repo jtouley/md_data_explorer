@@ -315,7 +315,10 @@ def _zip_members(z: zipfile.ZipFile, nested: bool) -> list[tuple[str, str, str, 
                 with zipfile.ZipFile(io.BytesIO(z.read(entry))) as inner:
                     members.extend((f"{entry}/{path}", n, e, b) for path, n, e, b in _zip_members(inner, False))
             except zipfile.BadZipFile as e:
-                raise UploadError(f"Corrupted ZIP file inside the ZIP: {Path(entry).name}") from e
+                raise UploadError(
+                    f"The ZIP inside this ZIP ({Path(entry).name}) cannot be opened. "
+                    "Unzip it, then upload its files in a new ZIP."
+                ) from e
             continue
         kind = _zip_member_kind(entry)
         if kind is None:
@@ -371,7 +374,9 @@ def read_zip_tables(file_bytes: bytes) -> ZipRead:
         raise UploadError("Corrupted ZIP file")
     if not members:
         raise UploadError(
-            "No table files in ZIP (read: " + ", ".join(sorted(ZIP_TABLE_EXTENSIONS)) + ", and .gz of delimited text)"
+            "No table files in ZIP. Add the data as "
+            + ", ".join(sorted(ZIP_TABLE_EXTENSIONS))
+            + " (or .gz of a .csv, .tsv or .psv) and upload the ZIP again."
         )
 
     text = [TextMember(entry, content, DELIMITERS[ext]) for entry, _name, ext, content in members if ext in DELIMITERS]
@@ -393,12 +398,15 @@ def read_zip_tables(file_bytes: bytes) -> ZipRead:
         except StagingError as e:
             if ext not in DELIMITERS or len(singles) + len(file_sets) < 2:
                 raise UploadError(f"Table '{name}': {e}") from e
-            # Staging messages never quote cell values.
             as_docs.append(DocFile(name=f"{name}.txt", path=entry, content=content))
-            notes.append(f"{Path(entry).name} was read as documentation, not as a table: {e}")
+            notes.append(
+                f"{Path(entry).name} was kept as documentation, not read as a table: it is not one table "
+                "(blank rows split it into parts, as in a codebook). To ask questions about it, "
+                "fix it and upload it as its own file."
+            )
             logger.info("zip_table_read_as_documentation", error_type=type(e).__name__)
     if not staged_tables:
-        raise UploadError("No file in the ZIP could be read as a table")
+        raise UploadError("No file in the ZIP could be read as a table. Check the tables and upload the ZIP again.")
 
     seen: set[str] = set()
     tables: list[dict[str, Any]] = []

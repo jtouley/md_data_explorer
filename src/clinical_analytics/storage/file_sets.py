@@ -119,7 +119,10 @@ def read_file_set(file_set: FileSet) -> StagedTable:
     id_column = _id_column(file_set.prefix, columns)
     added = [c for c in (id_column, SOURCE_FOLDER_COLUMN) if c in columns]
     if added:
-        raise StagingError(f"Files in '{file_set.name}' already have a column named '{added[0]}'")
+        raise StagingError(
+            f"Files in '{file_set.name}' already have a column named '{added[0]}', a name the upload adds "
+            "from the file and folder names. Rename that column in the files and upload again."
+        )
 
     text, rows_per_file = _read_members(file_set.members, columns, separator, file_set.name)
     stems = [m.stem for m in file_set.members]
