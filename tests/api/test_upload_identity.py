@@ -276,7 +276,8 @@ def test_uploadDataset_unreadableFile_400WithPlainMessage(
     assert "Error saving upload" not in detail
 
 
-def _workbook_bytes(rows: list[tuple[object, ...]]) -> bytes:
+def _workbook_bytes(rows: list[tuple[object, ...]], *more: tuple[str, list[tuple[object, ...]]]) -> bytes:
+    """A synthetic workbook: ``rows`` on the first sheet, then each (title, rows) in ``more``."""
     import io
 
     from openpyxl import Workbook
@@ -285,8 +286,71 @@ def _workbook_bytes(rows: list[tuple[object, ...]]) -> bytes:
     workbook = Workbook()
     for row in rows:
         workbook.active.append(row)
+    for title, sheet_rows in more:
+        sheet = workbook.create_sheet(title)
+        for row in sheet_rows:
+            sheet.append(row)
     workbook.save(buffer)
     return buffer.getvalue()
+
+
+def _declared_size(xlsx: bytes, ref: str) -> bytes:
+    """The workbook with its first sheet's <dimension> rewritten, as some exporters write it."""
+    import io
+    import zipfile
+
+    source, out = zipfile.ZipFile(io.BytesIO(xlsx)), io.BytesIO()
+    with zipfile.ZipFile(out, "w") as target:
+        for item in source.infolist():
+            data = source.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                data = re.sub(rb'<dimension ref="[^"]*"', b'<dimension ref="' + ref.encode() + b'"', data)
+            target.writestr(item, data)
+    return out.getvalue()
+
+
+_TITLE = ("Synthetic mortality rates by county, 1980-2014",)
+_RATE_HEADER = ("location_name", "sex", "year", "mx")
+
+
+def _rate_rows(n: int) -> list[tuple[object, ...]]:
+    return [(f"Area {i % 4}", ("Male", "Female")[i % 2], 2000 + i % 6, 100.5 + i) for i in range(n)]
+
+
+def test_uploadDataset_xlsxDeclaresA1Size_readsEveryRowNeverEmpty(test_client: TestClient) -> None:
+    # Arrange: a title in A1 and a sheet that declares itself A1:A1. Read as declared, this is
+    # the title cell alone (refused as no data rows); the sheet's real size is read instead.
+    content = _declared_size(_workbook_bytes([_TITLE, _RATE_HEADER, *_rate_rows(120)]), "A1:A1")
+
+    # Act
+    response = test_client.post(UPLOAD, files={"file": ("declared.xlsx", content, "application/octet-stream")})
+    body = response.json()
+
+    # Assert
+    assert response.status_code == 200, body
+    assert body["status"] == "ready"
+    detail = test_client.get(f"/api/datasets/{body['upload_id']}").json()
+    assert set(_RATE_HEADER) <= set(detail["tables"][0]["columns"])
+    assert detail["tables"][0]["row_count"] == 120
+
+
+def test_uploadDataset_xlsxRepeatedIdsAndSkippedSheet_needsReviewKeepsSheetNote(test_client: TestClient) -> None:
+    # Arrange: the first sheet repeats patient IDs (an error-level check) and a second sheet is not read
+    first = [("patient_id", *_RATE_HEADER), *((f"P{i % 90:03d}", *row) for i, row in enumerate(_rate_rows(120)))]
+    content = _workbook_bytes(first, ("Population", [_RATE_HEADER, *_rate_rows(30)]))
+
+    # Act
+    response = test_client.post(UPLOAD, files={"file": ("visits.xlsx", content, "application/octet-stream")})
+    body = response.json()
+
+    # Assert: both the failed check and the sheet that was not read reach the user
+    assert response.status_code == 200, body
+    assert body["status"] == "needs_review"
+    assert body["failed_checks"] == ["patient_id_no_duplicates"]
+    assert body["sheet_note"] == (
+        "Read 1 of 2 sheets: “Sheet”. Not read: “Population”. "
+        "To use another sheet, save it as its own file and upload it."
+    )
 
 
 @pytest.mark.parametrize(
@@ -315,7 +379,7 @@ def test_uploadDataset_noDataRows_refused400NeverReady(
     assert detail.startswith("No data rows were found in this file")
     assert f"{columns} column" in detail
     assert "Error saving upload" not in detail
-    assert ("save the sheet as CSV" in detail) is filename.endswith(".xlsx")
+    assert ("save that sheet as CSV" in detail) is filename.endswith(".xlsx")
     assert listed == []
 
 

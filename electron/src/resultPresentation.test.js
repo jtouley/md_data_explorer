@@ -1521,3 +1521,14 @@ describe('language model step failed', () => {
     });
   });
 });
+
+describe('upload refused for having no data rows', () => {
+  const detail =
+    'No data rows were found in this file. Only a header row with 1 column was read from the ' +
+    'first sheet. Check that the data is on the first sheet, under its header row. If it is, ' +
+    'open the file, save that sheet as CSV, and upload the CSV.';
+
+  it('shows the API sentence unchanged, so the user sees what to do', () => {
+    expect(plainFailureMessage(`[HTTP 400] ${detail}`, { context: 'upload' })).toBe(detail);
+  });
+});

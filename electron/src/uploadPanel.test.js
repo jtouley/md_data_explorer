@@ -30,6 +30,7 @@ describe('normalizeUploadResponse', () => {
       message: '',
       failed_checks: [],
       quality: null,
+      sheet_note: '',
     });
     expect(normalizeUploadResponse(undefined)).toEqual({
       upload_id: '',
@@ -38,7 +39,38 @@ describe('normalizeUploadResponse', () => {
       message: '',
       failed_checks: [],
       quality: null,
+      sheet_note: '',
     });
+  });
+});
+
+describe('upload sheet note', () => {
+  const note =
+    'Read 1 of 2 sheets: “Deaths”. Not read: “Notes”. To use another sheet, save it as its own file and upload it.';
+
+  test.each([
+    [{ sheet_note: note }, note],
+    [{ sheet_note: `  ${note}  ` }, note],
+    [{ sheet_note: '' }, ''],
+    [{ sheet_note: null }, ''],
+    [{ sheet_note: 3 }, ''],
+    [{}, ''],
+  ])('normalizeUploadResponse keeps only a text sheet note (%#)', (raw, expected) => {
+    expect(normalizeUploadResponse(raw).sheet_note).toBe(expected);
+  });
+
+  test('the sheet note is shown in the status line before the data check', () => {
+    const { sheet_note: sheetNote, quality } = normalizeUploadResponse({
+      sheet_note: note,
+      quality: { status: 'not_run', reason: 'x' },
+    });
+    expect(uploadStatusText('A is ready.', sheetNote, dataCheckStatusNote(quality))).toBe(
+      `A is ready. ${note} Data check could not run.`
+    );
+  });
+
+  test('a one-sheet workbook leaves the headline alone', () => {
+    expect(uploadStatusText('A is ready.', '', null)).toBe('A is ready.');
   });
 });
 
@@ -248,5 +280,34 @@ describe('needs_review uploads', () => {
     expect(
       uploadResultText({ status: 'ready', message: '' }, '', null, 'The sample cohort is ready.')
     ).toBe('The sample cohort is ready.');
+  });
+
+  const sheetNote =
+    'Read 1 of 2 sheets: “Deaths”. Not read: “Notes”. To use another sheet, save it as its own file and upload it.';
+
+  test('a ready upload shows the sheet note before the data check', () => {
+    const result = normalizeUploadResponse({
+      upload_id: 'u_1',
+      status: 'ready',
+      sheet_note: sheetNote,
+      quality: { status: 'not_run', reason: 'x' },
+    });
+    expect(uploadResultText(result, 'deaths', dataCheckStatusNote(result.quality))).toBe(
+      `${readyHeadline('deaths')} ${sheetNote} Data check could not run.`
+    );
+  });
+
+  test('a needs_review upload keeps the failed check and the sheet note', () => {
+    const result = normalizeUploadResponse({ ...review, sheet_note: sheetNote });
+    const text = uploadResultText(result, 'deaths', null);
+    expect(text).toBe(`The cohort “deaths” needs review. ${review.message} ${sheetNote}`);
+    expect(text).not.toMatch(/ready/);
+  });
+
+  test('a needs_review upload from a one-sheet file adds nothing after the check', () => {
+    const result = normalizeUploadResponse({ ...review, sheet_note: '' });
+    expect(uploadResultText(result, 'deaths', null)).toBe(
+      `The cohort “deaths” needs review. ${review.message}`
+    );
   });
 });

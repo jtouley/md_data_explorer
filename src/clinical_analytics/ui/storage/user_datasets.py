@@ -59,6 +59,7 @@ from clinical_analytics.storage.staging import (
     read_excel_typed,
     settle_shared_column_types,
 )
+from clinical_analytics.storage.upload_metadata import normalize_upload_metadata
 from clinical_analytics.ui.config import MULTI_TABLE_ENABLED
 
 logger = structlog.get_logger()
@@ -87,6 +88,7 @@ COHORT_PARQUET_KEY: Final = "cohort_parquet"
 RAW_LANDING_KEY: Final = "raw_landing"
 COLUMN_TYPES_KEY: Final = "column_types"
 COLUMN_UNITS_KEY: Final = "column_units"
+EXCEL_SHEETS_KEY: Final = "excel_sheets"  # Excel: the sheet read and the sheets with data left unread
 COHORT_BUILD_KEY: Final = "cohort_build"  # multi-table: tables left out of the cohort, and why
 LEGACY_UNTYPED_KEY: Final = "legacy_tables_untyped"  # legacy tables kept as old Parquet (no CSV)
 BASE_ACTIVE_VERSION_KEY: Final = "_base_active_version"  # active version when a save started
@@ -184,7 +186,15 @@ def normalize_upload_to_table_list(
         # Single-file: wrap in list (becomes multi-table with 1 table)
         staged = load_single_file_staged(file_bytes, filename)
         table_name = Path(filename).stem  # Use original filename stem
-        tables = [{"name": table_name, "data": staged.data, "notes": staged.notes, "units": staged.units}]
+        tables = [
+            {
+                "name": table_name,
+                "data": staged.data,
+                "notes": staged.notes,
+                "units": staged.units,
+                "sheets": staged.sheets,
+            }
+        ]
         doc_files = []  # No docs for single-file uploads by default
 
     # Handle external PDF/documentation files (standalone upload)
@@ -1012,14 +1022,17 @@ def duplicate_name_message(dataset_name: str) -> str:
 
 def no_data_rows_message(filename: str, columns: int) -> str:
     """Why a file whose header has no rows under it is refused, and what to do (no cell values)."""
-    read = f"a header of {columns} column{'s' if columns != 1 else ''} and no rows under it"
+    width = "1 column" if columns == 1 else f"{columns} columns"
     if Path(filename).suffix.lower() in (".xlsx", ".xls"):
         return (
-            f"No data rows were found in this file: only {read} could be read from its first sheet. "
-            "Check that the data is on the first sheet, below its header. If it is, the workbook may "
-            "declare a wrong size: open it, save the sheet as CSV, and upload the CSV."
+            f"No data rows were found in this file. Only a header row with {width} was read from the "
+            "first sheet. Check that the data is on the first sheet, under its header row. If it is, "
+            "open the file, save that sheet as CSV, and upload the CSV."
         )
-    return f"No data rows were found in this file: only {read} could be read. Add the data rows and upload it again."
+    return (
+        f"No data rows were found in this file. Only a header row with {width} was read. "
+        "Add the data rows under the header row and upload the file again."
+    )
 
 
 def _upload_failure_reason(e: BaseException) -> str:
@@ -1199,6 +1212,7 @@ def save_table_list(
         column_units: dict[str, str] = {}
         for t in tables:
             column_units.update(t.get("units") or {})
+        excel_sheets = next((t["sheets"].as_dict() for t in tables if t.get("sheets") is not None), None)
 
         canonical_tables = {
             t["name"]: {
@@ -1249,6 +1263,7 @@ def save_table_list(
             RAW_LANDING_KEY: str(raw_landing) if raw_landing else None,
             COLUMN_TYPES_KEY: column_types,
             COLUMN_UNITS_KEY: column_units,
+            EXCEL_SHEETS_KEY: excel_sheets,
             COHORT_BUILD_KEY: cohort_build,
             "tables": table_names,
             "table_counts": {t["name"]: t["data"].height for t in tables},
@@ -1484,7 +1499,11 @@ def _convert_legacy_upload(storage: "UserDatasetStorage", upload_id: str, metada
     if untyped:
         log.warning("legacy_tables_untyped", tables=len(untyped))
     log.info("legacy_upload_converted", tables=len(table_paths))
-    return StoredDataset(metadata=updated, cohort_path=cohort_path, table_paths=table_paths)
+    return StoredDataset(
+        metadata=normalize_upload_metadata(updated, upload_id=upload_id),
+        cohort_path=cohort_path,
+        table_paths=table_paths,
+    )
 
 
 class UserDatasetStorage:
@@ -2130,7 +2149,7 @@ class UserDatasetStorage:
 
         with open(metadata_path) as f:
             result = json.load(f)
-            return dict(result) if isinstance(result, dict) else None
+        return normalize_upload_metadata(result, upload_id=upload_id) if isinstance(result, dict) else None
 
     def get_upload_data(self, upload_id: str, lazy: bool = True) -> pl.LazyFrame | None:
         """
@@ -2253,7 +2272,7 @@ class UserDatasetStorage:
         try:
             # Load existing metadata
             with open(metadata_path) as f:
-                metadata = json.load(f)
+                metadata = normalize_upload_metadata(json.load(f), upload_id=upload_id)
 
             # Extract doc_context from PDF
             import tempfile
@@ -2300,23 +2319,21 @@ class UserDatasetStorage:
                     if inferred_schema.dictionary_metadata:
                         # Convert DictionaryMetadata to variable_types format
                         # This is a simplified version - full integration would use to_dataset_config()
-                        if "variable_types" not in metadata:
-                            metadata["variable_types"] = {}
+                        # (normalize_upload_metadata made variable_types a dict of dicts)
+                        variable_types = metadata["variable_types"]
 
                         # Update variable_types with codebooks and descriptions
                         for col_name, codebook in inferred_schema.dictionary_metadata.codebooks.items():
-                            if col_name in metadata["variable_types"]:
-                                if "codebook" not in metadata["variable_types"][col_name]:
-                                    metadata["variable_types"][col_name]["codebook"] = codebook
+                            if col_name in variable_types:
+                                variable_types[col_name].setdefault("codebook", codebook)
 
                         for col_name, description in inferred_schema.dictionary_metadata.column_descriptions.items():
-                            if col_name in metadata["variable_types"]:
-                                if "description" not in metadata["variable_types"][col_name]:
-                                    metadata["variable_types"][col_name]["description"] = description
+                            if col_name in variable_types:
+                                variable_types[col_name].setdefault("description", description)
 
                     logger.info("Re-ran schema inference with doc_context")
 
-            doc_updates = {k: metadata[k] for k in ("doc_context", "variable_types") if k in metadata}
+            doc_updates: dict[str, Any] = {k: metadata[k] for k in ("doc_context", "variable_types") if k in metadata}
 
             def mutate(current: dict[str, Any]) -> bool:
                 current.update(doc_updates)

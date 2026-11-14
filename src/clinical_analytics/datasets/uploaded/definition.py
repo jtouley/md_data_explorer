@@ -26,6 +26,7 @@ from clinical_analytics.datasets.uploaded.patient_id_regeneration import (
     validate_synthetic_id_metadata,
 )
 from clinical_analytics.storage.staging import StagingError
+from clinical_analytics.storage.upload_metadata import normalize_upload_metadata
 from clinical_analytics.ui.storage.user_datasets import StoredDataset, UserDatasetStorage
 
 logger = structlog.get_logger()
@@ -115,8 +116,13 @@ class UploadedDataset(ClinicalDataset):
         self._semantic_initialized = False  # Track lazy init
         self._stored: StoredDataset | None = None
 
-        # Load metadata
-        self.metadata = metadata if metadata is not None else storage.get_upload_metadata(upload_id)
+        # Load metadata. It is external data, normalized at this boundary (the stored file by
+        # get_upload_metadata, the probe's dict here) so its dict and list fields are never None.
+        self.metadata = (
+            normalize_upload_metadata(metadata, upload_id=upload_id)
+            if metadata is not None
+            else storage.get_upload_metadata(upload_id)
+        )
         if not self.metadata:
             raise ValueError(f"Upload {upload_id} not found")
 
@@ -638,7 +644,7 @@ class UploadedDataset(ClinicalDataset):
                 "categorical_variables": inferred_schema.get("categorical_columns", []),
             },
             # Include variable_types metadata for column type detection
-            "variable_types": safe_get(self.metadata, "variable_types"),
+            "variable_types": safe_get(self.metadata, "variable_types", {}),
             # A synthesized patient_id keys rows: answers say "rows", never "patients".
             ROW_KEY_CONFIG_FLAG: patient_id_is_row_key(self.metadata or {}),
         }
@@ -743,7 +749,7 @@ class UploadedDataset(ClinicalDataset):
                 "categorical_variables": categorical_variables,
             },
             # Include variable_types metadata for column type detection
-            "variable_types": metadata_dict.get("variable_types"),
+            "variable_types": metadata_dict.get("variable_types", {}),
             # A synthesized patient_id keys rows: answers say "rows", never "patients".
             ROW_KEY_CONFIG_FLAG: patient_id_is_row_key(metadata_dict),
         }

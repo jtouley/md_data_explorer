@@ -425,6 +425,10 @@ class DatasetUploadResponse(BaseModel):
         default_factory=list,
         description="Multi-table uploads: tables, rows and features left out of the cohort, and why",
     )
+    sheet_note: str = Field(
+        default="",
+        description="Excel uploads: the sheet that was read and the other sheets with data that were not",
+    )
 
 
 def _upload_type_notes(storage: UserDatasetStorage, upload_id: str) -> list[str]:
@@ -437,6 +441,14 @@ def _upload_type_notes(storage: UserDatasetStorage, upload_id: str) -> list[str]
     return describe_column_types(
         metadata.get(COLUMN_TYPES_KEY) or [], metadata.get(COLUMN_UNITS_KEY) or {}, SMALL_CELL_THRESHOLD
     )
+
+
+def _upload_sheet_note(storage: UserDatasetStorage, upload_id: str) -> str:
+    """Which sheet of a workbook was read and which were not, for the user ("" when one sheet)."""
+    from clinical_analytics.storage.staging import describe_sheets
+    from clinical_analytics.ui.storage.user_datasets import EXCEL_SHEETS_KEY
+
+    return describe_sheets((storage.get_upload_metadata(upload_id) or {}).get(EXCEL_SHEETS_KEY))
 
 
 def _upload_cohort_notes(storage: UserDatasetStorage, upload_id: str) -> list[str]:
@@ -506,6 +518,7 @@ def _upload_response(
         quality=quality,
         type_notes=_upload_type_notes(storage, upload_id),
         cohort_notes=_upload_cohort_notes(storage, upload_id),
+        sheet_note=_upload_sheet_note(storage, upload_id),
     )
 
 

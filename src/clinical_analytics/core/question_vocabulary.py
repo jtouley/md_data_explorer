@@ -20,6 +20,8 @@ import re
 from collections.abc import Sequence
 from typing import Literal, TypeAlias
 
+from clinical_analytics.core.query_plan import STATISTIC_WORDS
+
 # Articles, pronouns, auxiliaries, prepositions and politeness: grammar, never a limit.
 FUNCTION_WORDS: frozenset[str] = frozenset(
     {
@@ -44,6 +46,20 @@ SUBJECT_WORDS: frozenset[str] = frozenset(
 LINK_WORDS: frozenset[str] = frozenset({"given", "received", "receiving", "taking", "treated", "use", "uses", "using"})
 
 NO_LIMIT_WORDS: frozenset[str] = FUNCTION_WORDS | SUBJECT_WORDS | LINK_WORDS
+
+# Words that ask for a count or a share ("how many", "number of", "count", "total").
+QUANTITY_WORDS: frozenset[str] = frozenset(
+    {"how", "many", "number", "count", "total", "proportion", "share", "percentage", "percent", "fraction"}
+)
+
+# Words that split the answer into groups ("by sex", "per site", "in each region").
+GROUPING_WORDS: frozenset[str] = frozenset({"by", "each", "per"})
+
+# The question's own grammar: what to compute (QUANTITY_WORDS and the statistic words of
+# query_plan.STATISTIC_WORDS: "average", "mean", "median", ...) and how to split it
+# (GROUPING_WORDS). Such a word is never read as a stored value: "count by sex" must not
+# select location_name = "Count Lake", and "total" must not select sex = "Total".
+QUESTION_FORM_WORDS: frozenset[str] = QUANTITY_WORDS | GROUPING_WORDS | frozenset(STATISTIC_WORDS)
 
 # Words that turn "<value>" into "everyone except <value>" when they stand right before it.
 NEGATION_WORDS: frozenset[str] = frozenset(

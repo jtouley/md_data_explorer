@@ -36,6 +36,20 @@ questions:
     expected_group_by: "treatment"
     notes: "Broken down variant of grouping"
 
+  - id: count_word_with_grouping
+    query: "count by status"
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: "status"
+    notes: "'count' and 'by' are the question's grammar, never a stored value (geography probes cover 'County')"
+
+  - id: count_number_of_per_grouping
+    query: "number of patients per treatment"
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: "treatment"
+    notes: "'number of' and 'per' are the question's grammar, never a stored value"
+
   # DESCRIBE queries
   - id: describe_single_variable
     query: "what is the average age?"

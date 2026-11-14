@@ -1,7 +1,10 @@
-"""Adversarial probe set (103 questions) from the second independent review of PR #60.
+"""Adversarial probe set: 103 questions from the second independent review of PR #60, plus
+geography probes from the aggregate-data triage.
 
-Two datasets: the committed synthetic cohort and a generated frame with other column
-conventions ("Age (years)", "Gender", coded "Smoker 1: Yes 2: No", "LDL mg/dL", "hba1c").
+Three datasets: the committed synthetic cohort, a generated frame with other column
+conventions ("Age (years)", "Gender", coded "Smoker 1: Yes 2: No", "LDL mg/dL", "hba1c"), and
+a synthetic geography frame whose values contain question words ("Las Animas County" and
+"Count Lake" contain "count"; "North Dakota" and "South Dakota" share "dakota").
 Truth is computed here with Polars from each question's plain meaning; None means no single
 correct answer exists, so the question must be held or refused.
 """
@@ -45,6 +48,52 @@ def own_frame(size: int = 500) -> pl.DataFrame:
     )
 
 
+# Synthetic only. "Las Animas County" is the longest county name, so a tie broken by value
+# length would pick it; "Count Lake" has "count" as a whole word.
+GEO_LOCATIONS = ("Colorado", "Las Animas County", "Adams County", "Boulder County", "El Paso County", "Count Lake")
+GEO_STATES = ("New Mexico", "North Dakota", "South Dakota")
+
+
+def geo_frame(size: int = 240) -> pl.DataFrame:
+    """A long-format aggregate-shaped frame: location, state, sex and a rate per row."""
+    return pl.DataFrame(
+        {
+            "patient_id": [f"G{i:04d}" for i in range(size)],
+            "location_name": [GEO_LOCATIONS[i % len(GEO_LOCATIONS)] for i in range(size)],
+            "state": [GEO_STATES[(i // 7) % len(GEO_STATES)] for i in range(size)],
+            "sex": [("Male", "Female")[(i // 18) % 2] for i in range(size)],
+            "mx": [100.0 + (i * 37) % 250 for i in range(size)],
+        }
+    )
+
+
+def geo_probes(geo: pl.DataFrame) -> list[tuple[str, str, Any]]:
+    """Grammar words ("count", "number", "by", "per", "total") never select a value, and a
+    word shared by several values ("county", "dakota") never selects one of them."""
+    loc = c("location_name")
+    return [
+        ("geo", "count by sex", by(geo, True, "sex")),
+        ("geo", "count", cnt(geo)),
+        ("geo", "number of patients by sex", by(geo, True, "sex")),
+        ("geo", "how many patients per sex?", by(geo, True, "sex")),
+        ("geo", "count by state", by(geo, True, "state")),
+        ("geo", "mean mx by sex", by(geo, True, "sex", "mx")),
+        ("geo", "average mx by county", H),
+        ("geo", "count by county", H),
+        ("geo", "how many patients in a county?", H),
+        ("geo", "how many patients in the counties?", H),
+        ("geo", "how many patients in dakota?", H),
+        ("geo", "how many patients in Las Animas County?", cnt(geo, loc == "Las Animas County")),
+        ("geo", "count in las animas county", cnt(geo, loc == "Las Animas County")),
+        ("geo", "average mx by location", by(geo, True, "location_name", "mx")),
+        ("geo", "how many patients in El Paso County?", cnt(geo, loc == "El Paso County")),
+        ("geo", "how many patients in Boulder County by sex?", by(geo, loc == "Boulder County", "sex")),
+        ("geo", "how many patients in count lake?", cnt(geo, loc == "Count Lake")),
+        ("geo", "how many patients in north dakota?", cnt(geo, c("state") == "North Dakota")),
+        ("geo", "average mx in New Mexico", mean(geo, "mx", c("state") == "New Mexico")),
+    ]
+
+
 def cnt(df: pl.DataFrame, e: Any = True) -> int:
     return df.filter(e).height
 
@@ -72,8 +121,13 @@ def rate(df: pl.DataFrame, g: str, cond: pl.Expr) -> dict[str, Any]:
 H = None  # must hold or refuse
 
 
-def probes(coh: pl.DataFrame, own: pl.DataFrame) -> list[tuple[str, str, Any]]:
+def probes(coh: pl.DataFrame, own: pl.DataFrame, geo: pl.DataFrame) -> list[tuple[str, str, Any]]:
     """(dataset, question, truth) for every probe."""
+    return [*_review_probes(coh, own), *geo_probes(geo)]
+
+
+def _review_probes(coh: pl.DataFrame, own: pl.DataFrame) -> list[tuple[str, str, Any]]:
+    """The second review's 103 probes."""
     return [
         ("coh", "how many patients given placebo?", cnt(coh, c("treatment") == "placebo")),
         (

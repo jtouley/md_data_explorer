@@ -15,7 +15,7 @@ const ALLOWED_EXTENSIONS = new Set(['.csv', '.xlsx', '.xls', '.sav']);
 
 /**
  * @param {Record<string, unknown>|null|undefined} raw
- * @returns {{ upload_id: string, dataset_name: string, status: string, message: string, failed_checks: string[], quality: import('./dataCheckPanel.js').DataCheck | null }}
+ * @returns {{ upload_id: string, dataset_name: string, status: string, message: string, failed_checks: string[], quality: import('./dataCheckPanel.js').DataCheck | null, sheet_note: string }}
  */
 export function normalizeUploadResponse(raw) {
   if (!raw || typeof raw !== 'object') {
@@ -26,6 +26,7 @@ export function normalizeUploadResponse(raw) {
       message: '',
       failed_checks: [],
       quality: null,
+      sheet_note: '',
     };
   }
   return {
@@ -37,6 +38,8 @@ export function normalizeUploadResponse(raw) {
       ? raw.failed_checks.filter((id) => typeof id === 'string')
       : [],
     quality: normalizeQuality(raw.quality),
+    // Excel: which sheet was read and which were not. Shown at upload, never dropped.
+    sheet_note: typeof raw.sheet_note === 'string' ? raw.sheet_note.trim() : '',
   };
 }
 
@@ -52,9 +55,10 @@ export function uploadIsUsable(result) {
 }
 
 /**
- * Status line for an upload: "ready" with the data-check note, or, for 'needs_review', the
- * API's sentence naming the failed check and the next step.
- * @param {{ status: string, message: string }} result
+ * Status line for an upload: "ready" with the sheet note and the data-check note, or, for
+ * 'needs_review', the API's sentence naming the failed check and the next step, then the sheet
+ * note. The sheet note (Excel: sheets not read) is shown in both: it is never dropped.
+ * @param {{ status: string, message: string, sheet_note?: string }} result
  * @param {string} name cohort or file name
  * @param {string|null} note from dataCheckStatusNote
  * @param {string} [unnamedHeadline] the ready sentence when there is no name
@@ -63,21 +67,22 @@ export function uploadIsUsable(result) {
 export function uploadResultText(result, name, note, unnamedHeadline = readyHeadline('')) {
   const shown = String(name || '').trim();
   if (result.status !== 'needs_review') {
-    return uploadStatusText(shown ? readyHeadline(shown) : unnamedHeadline, note);
+    return uploadStatusText(shown ? readyHeadline(shown) : unnamedHeadline, result.sheet_note, note);
   }
   const headline = shown ? `The cohort “${shown}” needs review.` : 'The cohort needs review.';
   const detail = result.message.trim() || 'A data check failed. Open the cohort details to see it.';
-  return `${headline} ${detail}`;
+  return uploadStatusText(`${headline} ${detail}`, result.sheet_note);
 }
 
 /**
- * Status line with the data-check sentence appended ("{name} is ready. Data check found …").
+ * Status line with each note appended in order ("{name} is ready. Only the first sheet …
+ * Data check found …"). Empty notes are skipped.
  * @param {string} headline a full sentence
- * @param {string|null} note from dataCheckStatusNote
+ * @param {...(string|null|undefined)} notes full sentences: the sheet note, the data-check note
  * @returns {string}
  */
-export function uploadStatusText(headline, note) {
-  return note ? `${headline} ${note}` : headline;
+export function uploadStatusText(headline, ...notes) {
+  return [headline, ...notes.filter((note) => typeof note === 'string' && note)].join(' ');
 }
 
 /**
