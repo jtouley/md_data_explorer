@@ -72,7 +72,7 @@ Upload a `.zip` that holds the data tables and their documentation, as PhysioNet
 - **A codebook saved as CSV** that cannot be read as one table (several small tables separated by blank rows) is kept as documentation, and the upload message says so.
 - **Several tables** become one cohort, anchored on a table with one row per patient or per stay (`subject_id`, `hadm_id`, `patientunitstayid`, NHANES `SEQN`, ...); the upload lists the tables left out of the cohort and why. If no table has an ID the others share, the upload fails with that reason: upload the table you want as its own file.
 
-The upload limit is 100 MB for the ZIP file itself.
+The upload limit is 100 MB for the ZIP file itself, and 1 GB for everything in it once unpacked. Documentation context is cut at 50,000 characters, in the order the files sit in the ZIP, so put the data dictionary before long files such as a licence or a paper.
 
 ## Manual Schema Override
 

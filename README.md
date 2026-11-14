@@ -89,7 +89,7 @@ The desktop app starts its own backend on `127.0.0.1` (port 8000, or a free port
    | `compare age by outcome` | Mean age was 19.84 higher in outcome=1 than outcome=0 (95% CI 14.54 to 25.13; Welch t-test p<0.001; n=80 patients) |
 
    These answers came out the same with Ollama off and with Ollama running `llama3.2:3b`.
-3. When you're ready, click **Upload a file…** and pick your own `.csv`, `.xlsx`, `.xls` or `.sav` file. See [Uploading data](docs/getting-started/uploading-data.md) for how to lay it out.
+3. When you're ready, click **Upload a file…** and pick your own `.csv`, `.xlsx`, `.xls`, `.sav` or `.xpt` file, or a `.zip` of tables plus their data dictionary or README. See [Uploading data](docs/getting-started/uploading-data.md) for how to lay it out.
 
 If a question uses a word the app can't tie to a column or value, it says which word and asks you to rephrase, rather than answering a different question. Using your column names helps.
 
@@ -97,7 +97,7 @@ If a question uses a word the app can't tie to a column or value, it says which 
 
 The aim is a general-purpose data assistant for clinicians, able to do what commercial natural-language data tools do, but on local models. The plan is in [Purpose and steel thread](docs/vision/PURPOSE.md) and [ADR013](docs/implementation/ADR/ADR013.md). It isn't there yet:
 
-- **One table per upload.** Multi-table ZIP uploads exist in the storage layer but the desktop app rejects them; join tables into one file first.
+- **One cohort per upload.** A ZIP of several tables is joined into one cohort, anchored on the table with one row per patient (or per stay); tables that don't join to it are left out, and the upload says which. If no table has an ID the others share, the upload fails; upload the table you want as its own file.
 - **No charts.** Answers are a sentence plus a table.
 - **No free-form SQL or code.** Questions map to the analyses listed above.
 - **Regression needs the predictors named, and is fragile.** `what predicts outcome` is refused with "No predictors specified for outcome. Name them, e.g. 'do age and treatment predict outcome?'", with Ollama off and with `llama3.2:3b` running. On the sample cohort, the named-predictor phrasings tried so far (`do age and hypertension predict outcome`, `do age and sex predict outcome`) were held, and refused after confirmation.

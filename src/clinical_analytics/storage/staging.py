@@ -715,7 +715,7 @@ def _read_first_xls_sheet(file_bytes: bytes) -> tuple[list[list[object]], ExcelS
 
 
 def _xls_sheet_has_values(sheet: Any) -> bool:
-    return any(_xls_value(cell, 0) is not None for row in sheet.get_rows() for cell in row)
+    return _rows_have_values((_xls_value(cell, 0) for cell in row) for row in sheet.get_rows())
 
 
 def _xls_value(cell: Any, datemode: int) -> object:

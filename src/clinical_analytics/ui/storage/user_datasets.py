@@ -192,11 +192,13 @@ def normalize_upload_to_table_list(
     zip_notes: list[str] = []
     if filename.lower().endswith(".zip"):
         # Multi-table: extract from ZIP
-        read = read_zip_tables(file_bytes)
+        # One expansion budget for the tables and the documentation (zip-bomb guard).
+        budget = ZipExpansionBudget()
+        read = read_zip_tables(file_bytes, budget=budget)
         tables = read.table_list
 
         # Extract documentation files from ZIP (Phase 1: ADR004)
-        doc_files = [*extract_documentation_files(io.BytesIO(file_bytes)), *read.as_docs]
+        doc_files = [*extract_documentation_files(io.BytesIO(file_bytes), budget=budget), *read.as_docs]
         zip_notes = list(read.notes)
         logger.info("zip_documentation_files", files=len(doc_files), tables_read_as_docs=len(read.as_docs))
     else:
@@ -233,12 +235,19 @@ def normalize_upload_to_table_list(
     return tables, table_metadata
 
 
-def extract_documentation_files(zip_file: Any) -> list[Any]:
+def extract_documentation_files(zip_file: Any, budget: "ZipExpansionBudget | None" = None) -> list[Any]:
     """
     Extract documentation files (PDF, Markdown, text) from ZIP archive.
 
+    macOS metadata (``__MACOSX/``, Finder's "Compress") is skipped: its ``._README.txt`` files
+    are binary resource forks, not documentation.
+
     Args:
         zip_file: ZIP file (bytes, BytesIO, or file path)
+        budget: Bytes the archive may still expand to (``ZipExpansionBudget``); a new one if None
+
+    Raises:
+        UploadError: the documents expand past the budget
 
     Returns:
         List of documentation file info objects with .name attribute
@@ -251,18 +260,19 @@ def extract_documentation_files(zip_file: Any) -> list[Any]:
     """
     doc_extensions = {".pdf", ".md", ".txt"}
     doc_files = []
+    budget = budget or ZipExpansionBudget()
 
     try:
         with zipfile.ZipFile(zip_file) as zf:
             for file_info in zf.filelist:
-                # Skip directories
-                if file_info.is_dir():
+                # Skip directories and macOS metadata
+                if file_info.is_dir() or file_info.filename.startswith("__MACOSX"):
                     continue
 
                 # Check if file has documentation extension
                 file_path = Path(file_info.filename)
                 if file_path.suffix.lower() in doc_extensions:
-                    content = zf.read(file_info.filename)
+                    content = budget.read(zf, file_info.filename)
                     doc_files.append(DocFile(name=file_path.name, path=file_info.filename, content=content))
 
         return doc_files
@@ -274,6 +284,61 @@ def extract_documentation_files(zip_file: Any) -> list[Any]:
 
 # Table files read from a ZIP (``.gz`` allowed on delimited text). Docs: ``extract_documentation_files``.
 ZIP_TABLE_EXTENSIONS: Final = frozenset({*DELIMITERS, ".xlsx", ".xls", ".xpt", ".sav"})
+
+# A ZIP upload may expand to at most this many bytes: its tables, documents, gzipped members and
+# a nested ZIP together. The upload itself is capped at 100 MB, but a ZIP of repeated bytes can
+# expand a thousandfold and exhaust memory. The largest corpus upload (eICU demo) expands to ~310 MB.
+MAX_ZIP_EXPANDED_BYTES: Final = 1024**3
+
+
+@dataclass
+class ZipExpansionBudget:
+    """Bytes a ZIP upload may still expand to (zip-bomb guard); every read from it takes from this.
+
+    ``zipfile`` never returns more than an entry's declared size (a lie fails its CRC), so the
+    declared size is charged before the read; a ``.gz`` member is inflated in bounded steps.
+    """
+
+    left: int = MAX_ZIP_EXPANDED_BYTES
+
+    def _take(self, n: int) -> None:
+        if n > self.left:
+            raise UploadError(
+                f"The ZIP expands to more than {MAX_ZIP_EXPANDED_BYTES // 1024**3} GB once unpacked. "
+                "Upload fewer or smaller tables in each ZIP."
+            )
+        self.left -= n
+
+    def read(self, z: zipfile.ZipFile, entry: str) -> bytes:
+        """The entry's bytes, charged at its declared size."""
+        self._take(z.getinfo(entry).file_size)
+        return z.read(entry)
+
+    def gunzip(self, data: bytes, name: str) -> bytes:
+        """``gzip.decompress`` that stops once the output passes the budget.
+
+        Raises:
+            UploadError: not a readable gzip stream, or it expands past the budget.
+        """
+        import zlib
+
+        out = bytearray()
+        try:
+            while data.strip(b"\x00"):  # one gzip member after another; zero padding ends it
+                inflater = zlib.decompressobj(wbits=31)
+                out += inflater.decompress(data, self.left - len(out) + 1)
+                if len(out) > self.left:
+                    self._take(len(out))
+                if not inflater.eof:
+                    raise zlib.error("truncated")
+                data = inflater.unused_data
+        except zlib.error as e:
+            raise UploadError(
+                f"{name} in the ZIP is not a readable .gz file. Compress it again, or add it unzipped, "
+                "and upload the ZIP again."
+            ) from e
+        self._take(len(out))
+        return bytes(out)
 
 
 def _zip_member_kind(entry: str) -> tuple[str, str] | None:
@@ -294,7 +359,7 @@ def _zip_member_kind(entry: str) -> tuple[str, str] | None:
     return Path(name).stem, ext
 
 
-def _zip_members(z: zipfile.ZipFile, nested: bool) -> list[tuple[str, str, str, bytes]]:
+def _zip_members(z: zipfile.ZipFile, nested: bool, budget: ZipExpansionBudget) -> list[tuple[str, str, str, bytes]]:
     """(entry path, table name, extension, bytes) of every table in the ZIP.
 
     A ZIP inside the ZIP is opened once (UCI ships sepsis_survival that way); a ZIP inside that
@@ -302,18 +367,20 @@ def _zip_members(z: zipfile.ZipFile, nested: bool) -> list[tuple[str, str, str, 
 
     Raises:
         SecurityError: a path climbs out of the archive.
+        UploadError: the archive expands past ``budget``, or a ``.gz`` member cannot be read.
     """
-    import gzip
-
     for entry in z.namelist():
         if ".." in entry or entry.startswith("/"):
-            raise SecurityError(f"Invalid path: {entry}")
+            raise SecurityError(
+                f"The ZIP has a file path that points outside it ({entry}). "
+                "Zip the files again from inside their folder and upload the new ZIP."
+            )
     members: list[tuple[str, str, str, bytes]] = []
     for entry in z.namelist():
         if nested and entry.lower().endswith(".zip") and not entry.startswith("__MACOSX"):
             try:
-                with zipfile.ZipFile(io.BytesIO(z.read(entry))) as inner:
-                    members.extend((f"{entry}/{path}", n, e, b) for path, n, e, b in _zip_members(inner, False))
+                with zipfile.ZipFile(io.BytesIO(budget.read(z, entry))) as inner:
+                    members.extend((f"{entry}/{path}", n, e, b) for path, n, e, b in _zip_members(inner, False, budget))
             except zipfile.BadZipFile as e:
                 raise UploadError(
                     f"The ZIP inside this ZIP ({Path(entry).name}) cannot be opened. "
@@ -323,9 +390,9 @@ def _zip_members(z: zipfile.ZipFile, nested: bool) -> list[tuple[str, str, str, 
         kind = _zip_member_kind(entry)
         if kind is None:
             continue
-        content = z.read(entry)
+        content = budget.read(z, entry)
         if entry.lower().endswith(".gz"):
-            content = gzip.decompress(content)
+            content = budget.gunzip(content, Path(entry).name)
         members.append((entry, kind[0], kind[1], content))
     return members
 
@@ -344,7 +411,7 @@ def extract_zip_tables(file_bytes: bytes) -> list[dict[str, Any]]:
     return read_zip_tables(file_bytes).table_list
 
 
-def read_zip_tables(file_bytes: bytes) -> ZipRead:
+def read_zip_tables(file_bytes: bytes, budget: ZipExpansionBudget | None = None) -> ZipRead:
     """
     Extract tables from ZIP archive.
 
@@ -359,19 +426,23 @@ def read_zip_tables(file_bytes: bytes) -> ZipRead:
 
     Args:
         file_bytes: ZIP file content
+        budget: Bytes the archive may still expand to; a new ``ZipExpansionBudget`` if None
 
     Returns:
         ``ZipRead``; tables are {"name", "data", "notes", "units", "sheets"} dicts
 
     Raises:
         SecurityError: If path traversal or invalid paths detected
-        UploadError: If no table files, corrupted ZIP, or a table that cannot be staged
+        UploadError: If no table files, corrupted ZIP, a table that cannot be staged, or the
+            archive expands past the budget
     """
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
-            members = _zip_members(z, nested=True)
-    except zipfile.BadZipFile:
-        raise UploadError("Corrupted ZIP file")
+            members = _zip_members(z, nested=True, budget=budget or ZipExpansionBudget())
+    except zipfile.BadZipFile as e:
+        raise UploadError(
+            "Corrupted ZIP file: it could not be opened. Zip the files again and upload the new ZIP."
+        ) from e
     if not members:
         raise UploadError(
             "No table files in ZIP. Add the data as "
@@ -412,7 +483,10 @@ def read_zip_tables(file_bytes: bytes) -> ZipRead:
     tables: list[dict[str, Any]] = []
     for name, staged in staged_tables:
         if name in seen:
-            raise UploadError(f"Duplicate table name: {name}")
+            raise UploadError(
+                f"Duplicate table name: two files in the ZIP are named {name}. "
+                "Rename one of them and upload the ZIP again."
+            )
         seen.add(name)
         tables.append(
             {"name": name, "data": staged.data, "notes": staged.notes, "units": staged.units, "sheets": staged.sheets}
@@ -471,7 +545,7 @@ def load_single_file_staged(file_bytes: bytes, filename: str) -> StagedTable:
     if file_ext in DELIMITERS:
         return read_csv_typed(file_bytes, separator=DELIMITERS[file_ext])
     if file_ext in {".xlsx", ".xls"}:
-        # The workbook's bytes decide the reader: openpyxl for .xlsx, calamine for BIFF .xls.
+        # The workbook's bytes decide the reader: openpyxl for .xlsx, xlrd for BIFF .xls.
         return read_excel_typed(file_bytes)
     if file_ext == ".xpt":
         return read_xport_typed(file_bytes)
