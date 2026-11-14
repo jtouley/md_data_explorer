@@ -1,0 +1,62 @@
+# Byar & Green prostate cancer trial (hbiostat prostate.xls): 502 patients in four arms.
+# Fields as in covid_ms.yaml. Answers come from tests/eval/corpus/oracles/prostate_xls.py.
+# Stresses: a legacy BIFF .xls uploaded on its own, the cause of death as free text in status,
+# rare causes with 1-10 patients (small cells), a start date stored as a day count, 1960s data.
+dataset_id: prostate_xls
+questions:
+  - id: prostate_xls-total-001
+    family: count
+    query: How many patients are in this trial?
+    kind: count
+    expect: answer
+  - id: prostate_xls-arm-002
+    family: breakdown
+    query: How many patients are in each treatment arm?
+    kind: count_by
+    group_by: rx
+    expect: answer
+  - id: prostate_xls-deathrate-003
+    family: outcome_share
+    query: What share of patients died in each treatment arm?
+    kind: rates
+    group_by: rx
+    expect: answer
+    heldout: true
+  - id: prostate_xls-cause-004
+    family: privacy
+    query: How many patients are there for each status, including each cause of death?
+    kind: count_by
+    group_by: status
+    expect: answer
+  - id: prostate_xls-followup-005
+    family: grouped_stat
+    query: What is the median follow-up in months in each treatment arm?
+    kind: median_by
+    stat: median
+    group_by: rx
+    expect: answer
+  - id: prostate_xls-older-006
+    family: filter_count
+    query: How many patients over 75 died of prostate cancer?
+    kind: count
+    expect: answer
+    heldout: true
+  - id: prostate_xls-stageage-007
+    family: grouped_stat
+    query: What is the mean age by stage?
+    kind: mean_by
+    stat: mean
+    group_by: stage
+    expect: answer
+  - id: prostate_xls-vascular-008
+    family: odds_ratio
+    query: Among patients on placebo or 5.0 mg estrogen, what is the odds ratio for death from heart or vascular disease on 5.0 mg estrogen versus placebo, with a 95% CI?
+    kind: odds_ratio
+    expect: answer
+    heldout: true
+    confirm: true
+  - id: prostate_xls-after2020-009
+    family: no_dates
+    query: Compare deaths before and after 2020.
+    kind: listing
+    expect: held

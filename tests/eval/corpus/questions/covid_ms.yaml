@@ -5,6 +5,7 @@
 #   expect: answer | held   (held: the app must hold or refuse it)
 #   confirm: true            (when held, press confirm once and grade the confirmed answer)
 #   follow_up_of: <id>       (asked in the same session, right after that question)
+#   heldout: true            (held out: reported apart from the dev questions; never tune on it)
 # Answers come from tests/eval/corpus/oracles/covid_ms.py (Polars, written from the
 # dictionary, not from the app's code). Column names are from the PhysioNet data description.
 dataset_id: covid_ms
@@ -26,6 +27,7 @@ questions:
     kind: count_by
     group_by: ms_type2
     expect: answer
+    heldout: true
   - id: covid_ms-hosp-004
     family: breakdown
     query: How many patients were admitted to hospital for COVID-19 versus not admitted?
@@ -38,6 +40,7 @@ questions:
     kind: count_by
     group_by: current_dmt
     expect: answer
+    heldout: true
   - id: covid_ms-filter-006
     family: filter_count
     query: How many women with relapsing-remitting MS had a confirmed COVID-19 case?
@@ -57,6 +60,7 @@ questions:
     stat: median
     group_by: sex
     expect: answer
+    heldout: true
   - id: covid_ms-agerate-009
     family: outcome_share
     query: What percentage of patients in each age group had a confirmed COVID-19 case?
@@ -69,6 +73,7 @@ questions:
     kind: rates
     group_by: sex
     expect: answer
+    heldout: true
   - id: covid_ms-chisq-011
     family: comparison_test
     query: Is a confirmed COVID-19 diagnosis more common in women than in men? Use a chi-square test.
@@ -81,6 +86,7 @@ questions:
     query: What is the odds ratio for hospital admission in patients with comorbidities versus without, with a 95% CI?
     kind: odds_ratio
     expect: answer
+    heldout: true
     confirm: true
   - id: covid_ms-confirmed-013
     family: follow_up
