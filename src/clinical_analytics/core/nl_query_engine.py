@@ -637,6 +637,7 @@ class NLQueryEngine:
 
         # Refinement handling: If LLM returns a stub with low confidence and we have history,
         # try to inherit intent from previous query
+        inherited_from_history = False
         if (
             intent
             and intent.confidence < 0.5
@@ -652,6 +653,7 @@ class NLQueryEngine:
             if previous_intent in ["COUNT", "COMPARE_GROUPS", "FIND_PREDICTORS", "CORRELATIONS"]:
                 intent.intent_type = previous_intent
                 intent.confidence = max(intent.confidence, 0.6)  # Boost confidence for refinements
+                inherited_from_history = True
 
                 # Inherit other relevant fields from previous query
                 if "group_by" in previous and not intent.grouping_variable:
@@ -728,13 +730,10 @@ class NLQueryEngine:
             )
 
         # Post-process: Extract and assign variables if missing (runs in src, not UI)
-        # Skip variable extraction for refinement queries that already inherited variables
-        is_refinement_with_inherited_vars = (
-            intent
-            and intent.confidence >= 0.6  # Refinement-inherited queries have >= 0.6 confidence
-            and conversation_history
-            and len(conversation_history) > 0
-        )
+        # Skip variable extraction only for a refinement that inherited the previous query's
+        # variables above. Any earlier question in the session is not enough: "count by
+        # cause_name" asked second must still group by the column it names.
+        is_refinement_with_inherited_vars = inherited_from_history
 
         if intent and intent.intent_type in ["COMPARE_GROUPS", "FIND_PREDICTORS", "CORRELATIONS"]:
             # Extract variables from query if not already set
