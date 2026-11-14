@@ -37,6 +37,7 @@ from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRE
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 from clinical_analytics.core.plan_values import absent_value_reason, plan_values
 from clinical_analytics.core.query_plan import CohortStepError, QueryPlan
+from clinical_analytics.core.question_vocabulary import join_hyphenated_names
 from clinical_analytics.core.result_presentation import present_analysis
 from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.core.word_accounting import (
@@ -355,6 +356,8 @@ class QueryService:
         """
         # Normalize query (extracted from Ask_Questions.py normalize_query)
         normalized_query = self.conversation_manager.normalize_query(question)
+        # One reading of "COVID-19" for the parse and the gate: the word the column names hold.
+        normalized_query = join_hyphenated_names(normalized_query, list(self.semantic_layer.get_base_view().columns))
 
         # Reject empty queries
         if not normalized_query:
@@ -608,6 +611,8 @@ class QueryService:
                 confidence_threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD,
                 query_text=normalized_query,
                 confirmed=confirmed,
+                context=context,
+                values_for=self._values_with_spellings(mappings),
             )
             result = execution_result if isinstance(execution_result, dict) else {"value": execution_result}
 

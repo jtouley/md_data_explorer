@@ -24,7 +24,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias
 
-from clinical_analytics.analysis.grouping import FOLD_LABELS
+from clinical_analytics.analysis.grouping import FOLD_LABELS, HIDDEN_GROUPS_LABEL
 from clinical_analytics.analysis.variable_types import display_level
 from clinical_analytics.api.services.query_service import UNEXPECTED_FAILURE_MESSAGE
 from clinical_analytics.eval.headless import HIDDEN, TOTAL_COUNT, presented_answer
@@ -145,6 +145,8 @@ def _grade_grouped(question: dict[str, Any], oracle: OracleAnswer, shown: Any) -
         if label not in shown:
             if value is None or _small_group(oracle, key, kind):
                 continue  # no value to show, or folded into "Other"
+            if shown.get(HIDDEN_GROUPS_LABEL) == HIDDEN:
+                continue  # folded with the small groups it would give away, under a label claiming no size
             return "WRONG", f"row '{label}' missing"
         if shown[label] == HIDDEN:
             continue  # hidden: required for a small cell, allowed as a secondary suppression

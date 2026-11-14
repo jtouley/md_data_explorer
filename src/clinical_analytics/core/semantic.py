@@ -15,7 +15,7 @@ import os
 import re
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -2061,6 +2061,8 @@ class SemanticLayer:
         confidence_threshold: float = 0.75,
         query_text: str | None = None,
         confirmed: bool = False,
+        context: Any = None,
+        values_for: Callable[[str], list[Any]] | None = None,
     ) -> dict[str, Any]:
         """
         Execute a QueryPlan with pre-execution gate + warnings (ADR003 + issue #52).
@@ -2073,6 +2075,10 @@ class SemanticLayer:
             confidence_threshold: Minimum confidence for auto-execute (default: 0.75)
             query_text: Optional query text for run_key generation
             confirmed: When True, release a low-confidence hold
+            context: The analysis context (predictors, time, event), so the gap check counts the
+                columns the analysis applies beyond the plan's own
+            values_for: Stored values of a column, so the gap check reads the grouping's values
+                ("male", "female" of sex) as the groups asked for
 
         Returns:
             dict with keys:
@@ -2239,7 +2245,7 @@ class SemanticLayer:
             from clinical_analytics.core.cohort_constraints import unapplied_constraints
 
             gap_columns = list(self.get_base_view().columns)
-            gaps = unapplied_constraints(query_text, plan, gap_columns)
+            gaps = unapplied_constraints(query_text, plan, gap_columns, context=context, values_for=values_for)
             if gaps:
                 # Each word once, in order. A stem ("diabete") is dropped only when an inflection of
                 # it ("diabetes") is listed; unrelated words sharing a prefix ("men", "menopause") stay.
@@ -2538,11 +2544,15 @@ class SemanticLayer:
         elif plan.intent == "DESCRIBE":
             # DESCRIBE requires metric (primary_variable)
             if not plan.metric:
-                return False, "DESCRIBE intent requires metric (primary_variable)"
+                return False, "I couldn't tell which column to analyse; name it as it appears in your data."
         elif plan.intent == "COMPARE_GROUPS":
             # COMPARE_GROUPS requires both metric and group_by
             if not plan.metric or not plan.group_by:
-                return False, "COMPARE_GROUPS intent requires both metric and group_by"
+                return (
+                    False,
+                    "Say which measure to compare and which groups to compare it across, "
+                    "using column names from your data.",
+                )
         # FIND_PREDICTORS and CORRELATIONS have no specific requirements for now
         return True, ""
 

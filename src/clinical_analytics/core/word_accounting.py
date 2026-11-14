@@ -40,7 +40,9 @@ from clinical_analytics.core.question_vocabulary import (
     RANGE_PATTERN,
     SUBJECT_WORDS,
     NegationScope,
+    complement_tail,
     negation_scope,
+    plain_grouping,
     range_ends,
     range_in_order,
 )
@@ -52,7 +54,7 @@ INTENT_WORDS: dict[str, frozenset[str]] = {
     "STAT": frozenset(
         {"average", "avg", "mean", "median", "minimum", "maximum", "min", "max", "std", "standard", "deviation"}
     ),
-    "COMPARE_GROUPS": frozenset({"compare", "comparison", "versus", "vs", "difference"}),
+    "COMPARE_GROUPS": frozenset({"compare", "compared", "comparison", "versus", "vs", "difference"}),
     "CORRELATIONS": frozenset({"correlation", "correlated", "correlate", "relationship", "association"}),
     "FIND_PREDICTORS": frozenset({"predict", "predicts", "predictor", "predictors"}),
     "SURVIVAL": frozenset({"survival"}),
@@ -66,6 +68,8 @@ RATE_WORDS: frozenset[str] = frozenset(
 )
 BY_WORDS: frozenset[str] = frozenset({"by", "each", "per"})
 CUTOFF_WORDS: frozenset[str] = frozenset({"top", "decile", "highest", "oldest"})
+# Verbs that only point at the place named after them ("admitted to hospital", "stayed in the ICU").
+PLACE_VERBS: frozenset[str] = frozenset({"admitted", "stayed"})
 DIRECTION_OPS: dict[str, str] = {
     "over": "gt",
     "above": "gt",
@@ -150,7 +154,7 @@ def _range_markers(match: re.Match[str]) -> str:
 
 def tokenize(question: str) -> list[str]:
     """Lowercase words, numbers and logic placeholders, in order."""
-    text = RANGE_PATTERN.sub(_range_markers, question.lower())
+    text = RANGE_PATTERN.sub(_range_markers, plain_grouping(question.lower()))
     for pattern, replacement in _PHRASES:
         text = re.sub(pattern, replacement, text)
     return re.findall(_TOKEN, text)
@@ -191,6 +195,9 @@ def stem_match(word: str, target: str) -> bool:
         return True
     if word.isdigit() or target.isdigit():
         return False
+    if len(word) >= 3 and target.startswith(word) and target[len(word) :].isdigit():
+        # A name with a number appended to the word ("type" of ms_type2, "covid" of covid19).
+        return True
     shorter = min(len(word), len(target))
     common = 0
     for left, right in zip(word, target, strict=False):
@@ -665,8 +672,10 @@ def _statistic_missing(
         return None
     numeric = {column for column in columns if _is_measure(values_for(column))}
     for at in unused:
-        named = sorted(namer.columns_named(tokens[at]) & numeric)
-        if len(named) == 1:
+        # Only a word naming one column, and that a measure: "covid19" names many yes/no items
+        # beside one coded number, and "average covid19" would be the wrong next step.
+        named = sorted(namer.columns_named(tokens[at]))
+        if len(named) == 1 and named[0] in numeric:
             return f"Say which statistic you want, for example 'average {tokens[at]}' or 'median {tokens[at]}'."
     return None
 
@@ -825,6 +834,24 @@ def _unused_at(
         else:
             used[at] = _logic_used(tokens, at, plan, filters, steps, values_for, namer, context)
 
+    # "admitted to hospital": the verb points at the place the next word names; it is used when
+    # that word names a column the plan reads ("admitted to the ICU" with no ICU column is not).
+    for at, word in enumerate(tokens):
+        if used[at] or word not in PLACE_VERBS:
+            continue
+        place = next(
+            (index for index in range(at + 1, min(at + 4, len(tokens))) if tokens[index] not in FUNCTION_WORDS), None
+        )
+        if place is not None and used[place] and namer.columns_named(tokens[place]) & referenced:
+            used[at] = True
+
+    # "<item> versus not <item>": both sides of one yes/no column, shown as its two groups. Used
+    # only when the plan counts exactly those groups, with no limit a negation could change.
+    tail = complement_tail(tokens)
+    if tail is not None and _complement_grouped(tokens, tail, plan, values_for, namer):
+        for at in range(tail, len(tokens)):
+            used[at] = True
+
     # A word a negation may or may not reach ("hypertension" in "without diabetes and
     # hypertension", "placebo" in "excluding women on placebo") is never used by a limit,
     # whichever way the plan reads it: the words do not say, so the plan holds. Comparisons
@@ -843,6 +870,19 @@ def _unused_at(
             used[at] = False
 
     return [at for at in range(len(tokens)) if not used[at]]
+
+
+def _complement_grouped(
+    tokens: list[str], tail: int, plan: Any, values_for: Callable[[str], list[Any]], namer: _ColumnNamer
+) -> bool:
+    """The plan counts each value of the two-valued column the words before the tail name."""
+    group_by = getattr(plan, "group_by", None)
+    if not group_by or not distribution_planned(plan):
+        return False
+    stored = {value for value in values_for(str(group_by)) if value is not None}
+    if len(stored) != 2 or negation_scope(tokens[:tail]) != "clear":
+        return False
+    return any(group_by in namer.columns_named(word) for word in tokens[:tail])
 
 
 def _governed_word(tokens: list[str], before: int) -> str | None:
@@ -969,7 +1009,7 @@ def _logic_used(
     if word == "__rate__":
         return rate_direction_ok(tokens, at, plan, namer)
     if word in RATE_WORDS:
-        return share_planned(plan)
+        return share_planned(plan) or distribution_planned(plan)
     if word in BY_WORDS:
         return getattr(plan, "group_by", None) in namer.neighbour(tokens, at, 1)
     if word in CUTOFF_WORDS:
@@ -998,8 +1038,23 @@ def share_planned(plan: Any) -> bool:
     A rate with no group is not computed (execution refuses it), so its words stay unused.
     """
     if getattr(plan, "proportion_column", None):
-        return True
+        # One share of everyone: a grouping beside it is not computed, so the words stay unused.
+        return not getattr(plan, "group_by", None)
     return bool(getattr(plan, "rate_column", None) and getattr(plan, "group_by", None))
+
+
+def distribution_planned(plan: Any) -> bool:
+    """The plan counts every group of one column with no other limit: the share of patients in
+    each group ("what share of patients have each MS type") is each count over the stated
+    total. Any limit, proportion or rate makes the share a different number, so it is not."""
+    return (
+        getattr(plan, "intent", None) == "COUNT"
+        and bool(getattr(plan, "group_by", None))
+        and not getattr(plan, "filters", None)
+        and not getattr(plan, "cohort_steps", None)
+        and not getattr(plan, "proportion_column", None)
+        and not getattr(plan, "rate_column", None)
+    )
 
 
 def statistic_planned(word: str, plan: Any) -> bool:

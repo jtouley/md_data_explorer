@@ -237,7 +237,7 @@ def test_execute_query_plan_completeness_gating(mock_semantic_layer_for_executio
     assert result["success"] is False
     assert result["requires_confirmation"] is False
     assert "run_key" not in result
-    assert "metric" in result["failure_reason"]
+    assert "which column to analyse" in result["failure_reason"]
 
 
 def test_execute_query_plan_type_aware_categorical(mock_semantic_layer_for_execution, sample_cohort_with_categorical):

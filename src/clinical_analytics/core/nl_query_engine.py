@@ -73,6 +73,10 @@ def default_learning_dir() -> Path:
     return nl_learning_dir()
 
 
+# A single word names a column on its own only by an exact alias (_fuzzy_match_variable's 0.9).
+SINGLE_WORD_COLUMN_CONFIDENCE: float = 0.9
+
+
 def _stable_hash(s: str) -> str:
     """
     Stable hash for metrics (SHA256, not Python's randomized hash()).
@@ -2716,6 +2720,7 @@ Fix the errors and return a corrected query intent as JSON.
         words = query.lower().split()
         matched_vars = []
         collision_suggestions: dict[str, list[str]] = {}
+        single: dict[str, str | None] = {}
 
         # Try n-grams (3-word, 2-word, 1-word) in order
         for n in [3, 2, 1]:
@@ -2728,6 +2733,10 @@ Fix the errors and return a corrected query intent as JSON.
 
                 # Match phrase (returns canonical_name, confidence, suggestions)
                 matched, conf, suggestions = self._fuzzy_match_variable(phrase)
+                if matched and n > 1 and self._phrase_names_two(words[i : i + n], matched, single):
+                    # "age and sex", "sex predict outcome": a phrase that holds a word naming
+                    # another column on its own is two variables, not one.
+                    matched, suggestions = None, None
 
                 if matched and matched not in matched_vars:
                     matched_vars.append(matched)
@@ -2739,6 +2748,18 @@ Fix the errors and return a corrected query intent as JSON.
                     collision_suggestions[phrase] = suggestions
 
         return matched_vars, collision_suggestions
+
+    def _phrase_names_two(self, words: list[str], matched: str, single: dict[str, str | None]) -> bool:
+        """True when a word of the phrase names a column other than ``matched`` by itself."""
+        for word in words:
+            if word == "_USED_":
+                continue
+            if word not in single:
+                column, conf, _ = self._fuzzy_match_variable(word)
+                single[word] = column if column and conf >= SINGLE_WORD_COLUMN_CONFIDENCE else None
+            if single[word] not in (None, matched):
+                return True
+        return False
 
     def _distinct_values(self, column: str) -> list[Any]:
         """Cached distinct values for cohort matching. Uses the layer's own frame.
@@ -2992,9 +3013,10 @@ Fix the errors and return a corrected query intent as JSON.
         categorical_patterns = [
             r"(?:those|patients|subjects|people)\s+(?:that|who)\s+(?:had|have|were|are)\s+([^,\.\?]+?)(?:\s+(?:and|or|which|what|how|where|when|,|\.|\?)|$)",
             r"(?:patients|subjects|people)\s+with\s+([^,\.\?]+?)(?:\s+(?:and|or|which|what|how|where|when|,|\.|\?)|$)",
-            r"with\s+([^,\.\?]+?)(?:\s+(?:and|or|which|what|how|where|when|,|\.|\?)|$)",
-            r"on\s+([^,\.\?]+?)(?:\s+(?:and|or|which|what|how|where|when|,|\.|\?)|$)",  # "on statins", "on treatment"
-            r"were\s+on\s+([^,\.\?]+?)(?:\s+(?:and|or|which|what|how|where|when|,|\.|\?)|$)",  # "were on statins"
+            # Whole words only: "hypertension predict outcome" holds no "on <value>".
+            r"\bwith\s+([^,\.\?]+?)(?:\s+(?:and|or|which|what|how|where|when|,|\.|\?)|$)",
+            r"\bon\s+([^,\.\?]+?)(?:\s+(?:and|or|which|what|how|where|when|,|\.|\?)|$)",  # "on statins", "on treatment"
+            r"\bwere\s+on\s+([^,\.\?]+?)(?:\s+(?:and|or|which|what|how|where|when|,|\.|\?)|$)",  # "were on statins"
         ]
 
         # Pattern 1b: Exclusion filters - "excluding those not on X" or "excluding X"

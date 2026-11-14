@@ -32,7 +32,7 @@ Truth = Callable[[pl.DataFrame], Any]
 
 @dataclass(frozen=True)
 class Probe:
-    dataset: str  # "coh", "own" or "creat"
+    dataset: str  # "coh", "own", "creat" or "cov"
     query: str
     truth: Truth | None  # None: must hold or refuse
     group_by: str | None = None
@@ -74,6 +74,11 @@ def rate(event: pl.Expr) -> Callable[[pl.DataFrame], float]:
     return lambda rows: rows.filter(event).height / rows.height
 
 
+def yes_no_groups(column: str) -> Truth:
+    """Patients in each group of a yes/no text column, keyed as the layer reads it (True/False)."""
+    return lambda frame: {answer: frame.filter((c(column) == "yes") == answer).height for answer in (True, False)}
+
+
 def creatinine_frame(size_: int = 300) -> pl.DataFrame:
     """Seeded frame where a label digit ("Type 2") and a stored number (Creatinine 2.2) meet."""
     rng = random.Random(11)
@@ -89,7 +94,32 @@ def creatinine_frame(size_: int = 300) -> pl.DataFrame:
     )
 
 
+def covid_frame(size_: int = 400) -> pl.DataFrame:
+    """Seeded registry-shaped frame: many columns share the "covid19" prefix, a column name ends in
+    a digit (ms_type2), and yes/no items are stored as text, as in public MS/COVID registries."""
+    rng = random.Random(19)
+
+    def yes_no(share_yes: float) -> list[str]:
+        return ["yes" if rng.random() < share_yes else "no" for _ in range(size_)]
+
+    return pl.DataFrame(
+        {
+            "patient_id": [f"V{i:04d}" for i in range(size_)],
+            "sex": [rng.choice(["female", "male"]) for _ in range(size_)],
+            "age_in_cat": [rng.choice([1, 2]) for _ in range(size_)],
+            "ms_type2": [rng.choice(["relapsing_remitting", "progressive_MS", "other"]) for _ in range(size_)],
+            "year_onset": [rng.randint(1980, 2019) for _ in range(size_)],
+            "covid19_confirmed_case": yes_no(0.45),
+            "covid19_admission_hospital": yes_no(0.35),
+            "covid19_icu_stay": yes_no(0.3),
+            "covid19_ventilation": yes_no(0.3),
+        }
+    )
+
+
 S = c(STATIN)
+CONFIRMED = c("covid19_confirmed_case") == "yes"
+ADMITTED = c("covid19_admission_hospital") == "yes"
 OWN_STATIN = c("statin")
 READMITTED = c("readmitted") == "yes"
 
@@ -228,6 +258,50 @@ ANSWERABLE: tuple[Probe, ...] = (
 # absence label ("none") read as "not on any", an "or" list, the group of a comparison read from
 # the values it names, or a lone "in each site" grouping. Their true values stay above; each must
 # hold or refuse, never run with another value.
+# Questions read from how they are worded (#104 acceptance holds on COVID-MS): "COVID-19" is the
+# column names' "covid19", "MS type" names ms_type2, "broken down by" is "by", "how many A and
+# how many B" and "A versus not A" are the groups of one column, "admitted to hospital" points at
+# the hospital column, and a share in each group is a rate by group.
+COVID_ANSWERABLE: tuple[Probe, ...] = (
+    Probe("cov", "How many patients are male and how many are female?", by("sex", size), group_by="sex"),
+    Probe("cov", "What share of patients have each MS type?", by("ms_type2", size), group_by="ms_type2"),
+    Probe(
+        "cov",
+        "How many patients were admitted to hospital for COVID-19 versus not admitted?",
+        yes_no_groups("covid19_admission_hospital"),
+        group_by="covid19_admission_hospital",
+    ),
+    Probe(
+        "cov",
+        "How many women with relapsing-remitting MS had a confirmed COVID-19 case?",
+        count((c("sex") == "female") & (c("ms_type2") == "relapsing_remitting") & CONFIRMED),
+    ),
+    Probe(
+        "cov",
+        "What is the mean year of MS onset by MS type?",
+        by("ms_type2", measure("year_onset", "mean")),
+        group_by="ms_type2",
+    ),
+    Probe(
+        "cov",
+        "What percentage of patients in each age group had a confirmed COVID-19 case?",
+        by("age_in_cat", rate(CONFIRMED)),
+        group_by="age_in_cat",
+    ),
+    Probe(
+        "cov",
+        "What share of patients were admitted to hospital, broken down by sex?",
+        by("sex", rate(ADMITTED)),
+        group_by="sex",
+    ),
+    Probe(
+        "cov",
+        "How many patients had a confirmed COVID-19 case, broken down by MS type?",
+        by("ms_type2", size, CONFIRMED),
+        group_by="ms_type2",
+    ),
+)
+
 NARROWED: frozenset[tuple[str, str]] = frozenset(
     {
         ("coh", "compare median ldl between the north and the west"),
@@ -268,6 +342,8 @@ NARROWED: frozenset[tuple[str, str]] = frozenset(
     }
 )
 
+ANSWERABLE += COVID_ANSWERABLE
+
 ANSWERED: tuple[Probe, ...] = tuple(probe for probe in ANSWERABLE if (probe.dataset, probe.query) not in NARROWED)
 HELD_SINCE_NARROWING: tuple[Probe, ...] = tuple(
     probe for probe in ANSWERABLE if (probe.dataset, probe.query) in NARROWED
@@ -297,4 +373,16 @@ HELD: tuple[Probe, ...] = (
     Probe("coh", "how many patients by ldl?", None),
     Probe("coh", "average age by bmi", None),
     Probe("coh", "compare ldl by age", None),
+    # "covid" is the shared prefix of four yes/no columns: it names none of them.
+    Probe("cov", "how many patients had covid?", None),
+    Probe("cov", "how many patients had COVID-19?", None),
+    # "versus not" adds an item the question never named before it, or negates the first item.
+    Probe("cov", "How many patients were admitted to hospital versus not admitted to the ICU?", None),
+    Probe("cov", "how many patients were not admitted to hospital versus admitted?", None),
+    Probe("cov", "How many women were admitted to hospital versus not admitted?", None),
+    # A "how many" clause negated, or a share in each group of a negated item.
+    Probe("cov", "how many patients are female and how many are not female?", None),
+    Probe("cov", "what percentage of patients in each age group were not admitted to hospital?", None),
+    # A share of everyone with a grouping that a proportion would drop.
+    Probe("cov", "what share of women have each MS type?", None),
 )

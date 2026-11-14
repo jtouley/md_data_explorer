@@ -106,7 +106,8 @@ class TestQueryService:
     def test_query_service_ask_returns_validation_issues(self, mock_semantic_layer):
         """Test that ask() returns validation issues when plan is invalid."""
         # Arrange
-        service = QueryService(mock_semantic_layer)
+        layer = mock_semantic_layer()  # the fixture is a factory
+        service = QueryService(layer)
         query = "compare groups"
 
         # Mock NLQueryEngine
@@ -119,8 +120,8 @@ class TestQueryService:
         service.nl_engine._intent_to_plan = MagicMock(return_value=mock_plan)
 
         # Mock validation to return issues
-        mock_semantic_layer._generate_run_key = MagicMock(return_value="test_key")
-        mock_semantic_layer._validate_query_plan = MagicMock(
+        layer._generate_run_key = MagicMock(return_value="test_key")
+        layer._validate_query_plan = MagicMock(
             return_value={
                 "valid": False,
                 "issues": [
@@ -142,7 +143,8 @@ class TestQueryService:
     def test_query_service_ask_handles_parse_failure(self, mock_semantic_layer):
         """Test that ask() handles query parse failure gracefully."""
         # Arrange
-        service = QueryService(mock_semantic_layer)
+        layer = mock_semantic_layer()  # the fixture is a factory
+        service = QueryService(layer)
         query = "invalid query xyz"
 
         # Mock NLQueryEngine to return None (parse failure)

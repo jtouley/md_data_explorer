@@ -21,7 +21,9 @@ from clinical_analytics.core.question_vocabulary import (
     NO_LIMIT_WORDS,
     RANGE_PATTERN,
     NegationScope,
+    complement_tail,
     negation_scope,
+    plain_grouping,
     range_ends,
     range_in_order,
 )
@@ -56,8 +58,15 @@ _COMPARE_SPLIT = re.compile(
 )
 # Trailing "by <group>": that column is the grouping, never a filter on itself.
 _BY_GROUP = re.compile(r"\bby\s+(?P<group>[a-z0-9 :]+?)\s*[?.]?$", re.IGNORECASE)
+# "patients in each age group": a grouping at the end of a share's population.
+_EACH_WITHIN = re.compile(r"\b(?:in\s+)?(?:each|every|per)\s+(?P<group>[a-z0-9 :]+?)\s*$", re.IGNORECASE)
 # "in each site", "per site": the same grouping as "by site".
-_EACH_GROUP = re.compile(r"\b(?:each|per)\s+(?P<group>[a-z0-9 :]+?)\s*[?.]?$", re.IGNORECASE)
+# The group is a name, not a clause: "each age group had a confirmed case" names no group.
+_EACH_GROUP = re.compile(
+    r"\b(?:each|per)\s+(?P<group>(?:(?!(?:had|has|have|were|was|is|are|who|that|with|did|does)\b)[a-z0-9:]+\s*)+?)"
+    r"\s*[?.]?$",
+    re.IGNORECASE,
+)
 # Words that end the measure named after a statistic word and start a limit or a grouping.
 _METRIC_END = re.compile(
     r"\b(?:in|for|who|with|on|among|by|within|of|from|at|over|under|above|below|aged|older|younger|between|"
@@ -240,7 +249,7 @@ def peel_cohort(
 
     value_hits = _value_hits(lowered, columns, values_for)
     name_tokens = set().union(*(_tokens(column) for column in columns)) if columns else set()
-    comparing = re.search(r"\bcompare\b|\bby sex\b|\bby gender\b", lowered) is not None
+    comparing = re.search(r"\bcompared?\b|\bby sex\b|\bby gender\b", lowered) is not None
     # Sex words are the comparison's groups unless it names another grouping column
     # ("compare ldl by treatment in women": women is a limit).
     compare_split = _COMPARE_SPLIT.search(lowered) if comparing else None
@@ -261,10 +270,22 @@ def peel_cohort(
     mentioned = _mentioned(lowered, columns, _tokens(lowered) - consumed)
     bound_columns = {step.column for _phase, step in steps}
     by_group = _BY_GROUP.search(lowered) or _EACH_GROUP.search(lowered)
+    grouping_column = None
     if by_group:
         grouping_column = _best_column(columns, _tokens(by_group.group("group")))
         if grouping_column:
             bound_columns.add(grouping_column)
+    # "percentage of patients in each age group had X": the group is named inside the population.
+    share_group = None
+    if share_split:
+        within = _EACH_WITHIN.search(share_split.group("den"))
+        share_group = _best_column(columns, _tokens(within.group("group"))) if within else None
+        if share_group:
+            bound_columns.add(share_group)
+    # "how many are male and how many are female": one count per value, the column's groups.
+    clause_group = _clause_group(lowered, columns, values_for)
+    if clause_group:
+        bound_columns.add(clause_group)
 
     for column, value, at in value_hits:
         if _scope(lowered, at) != "clear":
@@ -340,6 +361,28 @@ def peel_cohort(
         bound_columns.add(column)
     if len(numerators) == 1:
         proportion_column, proportion_value = numerators[0]
+        named_group = share_group or (grouping_column if by_group else None)
+        if named_group and named_group != proportion_column:
+            # "share of patients admitted, by sex": the share within each group is a rate by
+            # group; a proportion is one number for everyone and would drop the grouping.
+            rate_column, rate_value = proportion_column, proportion_value
+            proportion_column = proportion_value = None
+            share_group = named_group
+    # "admitted to hospital versus not admitted": both values of the one yes/no item said, as
+    # its groups. Only when that item is the question's only limit, and nothing is negated
+    # before the comparison, so no other value is ever read as "everyone else".
+    tail = complement_tail(re.findall(r"[a-z0-9]+", lowered))
+    complement_group = None
+    if tail is not None and counting and not rating and proportion_column is None:
+        eq_steps = [step for _phase, step in steps if step.op == "eq"]
+        if (
+            len(steps) == 1
+            and len(eq_steps) == 1
+            and negation_scope(re.findall(r"[a-z0-9]+", lowered)[:tail]) == "clear"
+            and len({value for value in values_for(eq_steps[0].column) if value is not None}) == 2
+        ):
+            complement_group = eq_steps[0].column
+            steps = []
 
     locked_metric = None
     locked_group = None
@@ -365,9 +408,17 @@ def peel_cohort(
         if group:
             locked_group = group
         force_intent = "COMPARE_GROUPS"
-    elif _EACH_GROUP.search(lowered) and not rating:
+    elif _EACH_GROUP.search(lowered) and not (rating and (proportion_column or numerators or steps)):
+        # "in each site"; with a share word and no other limit, the share of patients in each
+        # group ("what share of patients have each MS type"): the count of each group.
         each = _EACH_GROUP.search(lowered)
         locked_group = _best_column(columns, _tokens(each.group("group"))) if each else None
+    elif share_group and rate_column:
+        locked_group = share_group
+    elif clause_group and not steps and not rating:
+        locked_group = clause_group
+    elif complement_group:
+        locked_group = complement_group
     elif rate_column and rate_at is not None:
         # The groups are what the words before "more likely" name; sex only when they say so.
         if len(rate_groups) == 1:
@@ -398,6 +449,10 @@ def peel_cohort(
     residual = text if not hidden and not dropped else _cleanup(_drop_tokens(visible, dropped))
     if rate_column or proportion_column:
         residual = "how many patients?"
+    elif locked_group and not steps and (rating or locked_group in {clause_group, complement_group}):
+        # A count of each group: the question's other words are the group's own values.
+        residual = "how many patients?"
+        force_intent = "COUNT"
     return PeelResult(
         residual=residual,
         steps=ordered,
@@ -464,6 +519,8 @@ def unapplied_constraints(
     query: str,
     plan: Any,
     columns: list[str] | None = None,
+    context: Any = None,
+    values_for: Callable[[str], list[Any]] | None = None,
 ) -> list[str]:
     """Constraints the question stated that the plan does not carry.
 
@@ -471,11 +528,13 @@ def unapplied_constraints(
     check is a token that appears in exactly one column name, or a cutoff
     operator. There is no list of clinical events.
     """
-    text = " ".join(query.lower().split())
+    from clinical_analytics.core.word_accounting import stem_match
+
+    text = plain_grouping(" ".join(query.lower().split()))
     gaps: list[str] = []
     steps = list(getattr(plan, "cohort_steps", []) or []) if plan is not None else []
-    used = _plan_columns(plan, steps)
-    comparing = re.search(r"\bcompare\b|\bby sex\b|\bby gender\b", text) is not None
+    used = _plan_columns(plan, steps, context)
+    comparing = re.search(r"\bcompared?\b|\bby sex\b|\bby gender\b", text) is not None
 
     over = _OVER.search(text)
     if over and not any(
@@ -507,8 +566,13 @@ def unapplied_constraints(
             if token not in tokens or len(owners_for_token) != 1:
                 continue
             column = owners_for_token[0]
-            if column not in used and token not in _STOP and token not in NO_LIMIT_WORDS:
-                gaps.append(token)
+            if column in used or token in _STOP or token in NO_LIMIT_WORDS:
+                continue
+            if any(stem_match(token, part) for named in used for part in _tokens(str(named))):
+                # "MS type" names ms_type2 (in the plan) even though "type" is spelled out
+                # only in dmt_type_overall: the word is applied.
+                continue
+            gaps.append(token)
     if (
         re.search(r"\bhow many\b", text)
         and not steps
@@ -521,12 +585,49 @@ def unapplied_constraints(
         # Words word accounting treats as carrying no limit ("are there", "patients", "taking")
         # are not gaps: the two checks share one vocabulary. Name the words themselves: the
         # user sees this list.
-        grouping = {"by", "each", "per"} if getattr(plan, "group_by", None) else set()
-        gaps.extend(sorted(tokens - used_tokens - NO_LIMIT_WORDS - grouping))
+        group_by = getattr(plan, "group_by", None)
+        grouping = {"by", "each", "per"} if group_by else set()
+        words = re.findall(r"[a-z0-9]+", text)
+        tail = complement_tail(words) if group_by else None
+        if tail is not None:
+            # "versus not admitted": both groups of the grouping, which the plan shows.
+            grouping |= _tokens(" ".join(words[tail:]))
+        if group_by and values_for is not None:
+            # "how many are male and how many are female" by sex: the groups' own values.
+            for value in values_for(str(group_by)):
+                if value is not None:
+                    grouping |= _tokens(str(value)) | _VALUE_INFLECTIONS.get(str(value).strip().lower(), set())
+        left = tokens - used_tokens - NO_LIMIT_WORDS - grouping
+        gaps.extend(sorted(word for word in left if not any(stem_match(word, part) for part in used_tokens)))
     return gaps
 
 
-def _plan_columns(plan: Any, steps: list[CohortStep]) -> set[str]:
+def _clause_group(text: str, columns: list[str], values_for: Callable[[str], list[Any]]) -> str | None:
+    """The column whose values the "how many" clauses name, one value each, or None.
+
+    "how many patients are male and how many are female" asks for each count: every clause
+    names a different value of sex and nothing else. Any other value, or a clause naming none,
+    leaves it unread.
+    """
+    clauses = [clause for clause in re.split(r"\bhow many\b", text)[1:] if clause.strip()]
+    if len(clauses) < 2:
+        return None
+    named: list[tuple[str, Any]] = []
+    for clause in clauses:
+        hits = _value_hits(clause, columns, values_for)
+        if len(hits) != 1 or _scope(clause, hits[0][2]) != "clear":
+            return None
+        named.append((hits[0][0], hits[0][1]))
+    columns_named = {column for column, _value in named}
+    values = {str(value) for _column, value in named}
+    if len(columns_named) != 1 or len(values) != len(named):
+        return None
+    return next(iter(columns_named))
+
+
+def _plan_columns(plan: Any, steps: list[CohortStep], context: Any = None) -> set[str]:
+    """Columns the plan applies, with the analysis's predictors, time and event (the same set
+    word accounting reads), so "do age and sex predict outcome" applies age and sex."""
     used = {step.column for step in steps}
     if plan is None:
         return used
@@ -534,6 +635,12 @@ def _plan_columns(plan: Any, steps: list[CohortStep]) -> set[str]:
         current = getattr(plan, attr, None)
         if current:
             used.add(str(current))
+    if context is not None:
+        used |= {str(item) for item in getattr(context, "predictor_variables", None) or [] if item}
+        for attr in ("time_variable", "event_variable"):
+            current = getattr(context, attr, None)
+            if current:
+                used.add(str(current))
     return used
 
 
@@ -834,6 +941,12 @@ def _mentioned(text: str, columns: list[str], tokens: set[str]) -> list[tuple[st
     from clinical_analytics.core.word_accounting import stem_match
 
     found: list[tuple[str, int, int, set[str]]] = []
+    # Which distinct column names hold each word: "covid19" in twenty covid19_* columns names
+    # none of them (a duplicate column with the same words, "has_comorbidities.1", is one name).
+    holders: dict[str, set[frozenset[str]]] = {}
+    for column in columns:
+        for part in _tokens(column):
+            holders.setdefault(part, set()).add(frozenset(_tokens(column)))
     for column in columns:
         column_tokens = _tokens(column)
         # Exact words first (the scoring the parser has always used); a stem only when no
@@ -844,6 +957,10 @@ def _mentioned(text: str, columns: list[str], tokens: set[str]) -> list[tuple[st
             words = {word for word in tokens if any(stem_match(word, part) for part in column_tokens)}
             named = {part for part in column_tokens if any(stem_match(word, part) for word in words)}
         if not words:
+            continue
+        if all(len(holders.get(part, ())) > 1 for part in named):
+            # Only words several columns share ("covid" for covid19_ventilation and
+            # covid19_icu_stay): the question has not said which one, so none is bound.
             continue
         score = len(named) * 3 - len(column_tokens - named)
         if score <= 0:

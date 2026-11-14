@@ -496,7 +496,7 @@ def test_executeQueryPlan_unappliedWords_listedOnceEach(
     # Arrange: the gap check reports each word (and a stem of one) more than once
     from clinical_analytics.core import cohort_constraints
 
-    monkeypatch.setattr(cohort_constraints, "unapplied_constraints", lambda *_args: gaps)
+    monkeypatch.setattr(cohort_constraints, "unapplied_constraints", lambda *_args, **_kwargs: gaps)
     layer = make_semantic_layer(data=_LAYER_DATA)
     plan = QueryPlan(intent="COUNT", confidence=0.95)
 

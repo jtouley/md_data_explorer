@@ -90,6 +90,11 @@ class TestScoreCounts:
             pytest.param([("female", 900), ("male", 240), ("unknown", 3)], "WRONG", True, id="extra_small_row"),
             pytest.param([("female", "suppressed"), ("male", 240)], "RIGHT", False, id="secondary_hidden_allowed"),
             pytest.param([("female", "suppressed"), ("male", "suppressed")], "HELD", False, id="all_hidden"),
+            pytest.param([("Other groups (hidden)", "suppressed")], "HELD", False, id="all_folded_no_size"),
+            pytest.param([("female", 900), ("Other groups (hidden)", "suppressed")], "RIGHT", False, id="large_folded"),
+            pytest.param(
+                [("female", 900), ("Other (groups under 11)", "suppressed")], "WRONG", False, id="large_as_small"
+            ),
         ],
     )
     def test_score_groupedCounts_gradesEveryRow(self, make_count_table, rows, expected_grade, expected_leak):

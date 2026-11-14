@@ -7026,7 +7026,7 @@
  },
  "golden|snap_golden|among patients who achieved virologic suppression within 6 months, how many experienced a cardiovascular event, broken down by statin use status, baseline ldl category, and whether they were on a protease inhibitor-containing regimen versus an integrase inhibitor-containing regimen?": {
   "confidence": 0.9,
-  "failure_reason": "I couldn't use the words 'achieved', 'virologic', 'suppression', '6', 'months', 'experienced', 'cardiovascular', 'event', 'broken', 'down', 'by', 'statin', 'status', 'baseline', 'ldl', 'category', 'whether', 'protease', 'inhibitor', 'containing', 'regimen', 'versus', 'integrase', 'inhibitor', 'containing' and 'regimen' in the plan; rephrase them with columns or values from your data.",
+  "failure_reason": "I couldn't use the words 'achieved', 'virologic', 'suppression', '6', 'months', 'experienced', 'cardiovascular', 'event', 'by', 'statin', 'status', 'baseline', 'ldl', 'category', 'whether', 'protease', 'inhibitor', 'containing', 'regimen', 'versus', 'integrase', 'inhibitor', 'containing' and 'regimen' in the plan; rephrase them with columns or values from your data.",
   "group_by": null,
   "held": true,
   "intent": "COUNT",
@@ -7412,21 +7412,36 @@
  },
  "golden|snap_golden|how many patients broken down by treatment?": {
   "confidence": 0.9,
-  "failure_reason": "I couldn't match 'broken' and 'down' to a column or value in this dataset; rephrase with a column name from your data, or leave them out.",
+  "failure_reason": null,
   "group_by": "treatment",
-  "held": true,
+  "held": false,
   "intent": "COUNT",
   "issues": [],
   "limits": [],
   "metric": null,
-  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping treatment \u00b7 filters none \u00b7 test count",
+  "plan_line": null,
   "presentation": {
-   "claim": null,
-   "table": null
+   "claim": "100 patients across 2 treatment groups.",
+   "table": {
+    "columns": [
+     "treatment",
+     "count"
+    ],
+    "rows": [
+     {
+      "count": 50,
+      "treatment": "A"
+     },
+     {
+      "count": 50,
+      "treatment": "B"
+     }
+    ]
+   }
   },
   "proportion": null,
   "rate": null,
-  "success": false
+  "success": true
  },
  "golden|snap_golden|how many patients by status?": {
   "confidence": 0.9,
@@ -7762,7 +7777,7 @@
  },
  "golden|snap_golden|what statins were those patients on, broken down by count of patients per statin?": {
   "confidence": 0.9,
-  "failure_reason": "I couldn't use the words 'broken', 'down' and 'by' in the plan; rephrase them with columns or values from your data.",
+  "failure_reason": "I couldn't use the word 'by' in the plan; rephrase it with a column or value from your data.",
   "group_by": "statin",
   "held": true,
   "intent": "COUNT",
@@ -12272,6 +12287,478 @@
   ],
   "metric": null,
   "plan_line": "DESCRIBE \u00b7 outcome none \u00b7 grouping none \u00b7 filters none \u00b7 limits in order 1) sex = F \u00b7 test descriptive statistics",
+  "presentation": {
+   "claim": null,
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": false
+ },
+ "over_holding|snap_cov|How many patients are male and how many are female?": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "sex",
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "400 patients across 2 sex groups.",
+   "table": {
+    "columns": [
+     "sex",
+     "count"
+    ],
+    "rows": [
+     {
+      "count": 192,
+      "sex": "female"
+     },
+     {
+      "count": 208,
+      "sex": "male"
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "over_holding|snap_cov|How many patients had a confirmed COVID-19 case, broken down by MS type?": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "ms_type2",
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [
+   [
+    "eq",
+    "covid19_confirmed_case",
+    true
+   ]
+  ],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "178 patients across 3 ms_type2 groups.",
+   "table": {
+    "columns": [
+     "ms_type2",
+     "count"
+    ],
+    "rows": [
+     {
+      "count": 55,
+      "ms_type2": "other"
+     },
+     {
+      "count": 72,
+      "ms_type2": "progressive_MS"
+     },
+     {
+      "count": 51,
+      "ms_type2": "relapsing_remitting"
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "over_holding|snap_cov|How many patients were admitted to hospital for COVID-19 versus not admitted?": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "covid19_admission_hospital",
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "400 patients across 2 covid19_admission_hospital groups.",
+   "table": {
+    "columns": [
+     "covid19_admission_hospital",
+     "count"
+    ],
+    "rows": [
+     {
+      "count": 226,
+      "covid19_admission_hospital": "covid19_admission_hospital=False"
+     },
+     {
+      "count": 174,
+      "covid19_admission_hospital": "covid19_admission_hospital=True"
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "over_holding|snap_cov|How many patients were admitted to hospital versus not admitted to the ICU?": {
+  "confidence": 0.9,
+  "failure_reason": "I couldn't use the words 'versus', 'not', 'admitted' and 'icu' in the plan; rephrase them with columns or values from your data.",
+  "group_by": null,
+  "held": true,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [
+   [
+    "eq",
+    "covid19_admission_hospital",
+    true
+   ]
+  ],
+  "metric": null,
+  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping none \u00b7 filters none \u00b7 limits in order 1) covid19_admission_hospital = True \u00b7 test count",
+  "presentation": {
+   "claim": null,
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": false
+ },
+ "over_holding|snap_cov|How many women were admitted to hospital versus not admitted?": {
+  "confidence": 0.9,
+  "failure_reason": "I couldn't use the words 'versus', 'not' and 'admitted' in the plan; rephrase them with columns or values from your data.",
+  "group_by": null,
+  "held": true,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [
+   [
+    "eq",
+    "covid19_admission_hospital",
+    true
+   ],
+   [
+    "eq",
+    "sex",
+    "female"
+   ]
+  ],
+  "metric": null,
+  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping none \u00b7 filters none \u00b7 limits in order 1) sex = female; 2) covid19_admission_hospital = True \u00b7 test count",
+  "presentation": {
+   "claim": null,
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": false
+ },
+ "over_holding|snap_cov|How many women with relapsing-remitting MS had a confirmed COVID-19 case?": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": null,
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [
+   [
+    "eq",
+    "covid19_confirmed_case",
+    true
+   ],
+   [
+    "eq",
+    "ms_type2",
+    "relapsing_remitting"
+   ],
+   [
+    "eq",
+    "sex",
+    "female"
+   ]
+  ],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "Total count: 21 patients.",
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "over_holding|snap_cov|What is the mean year of MS onset by MS type?": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "ms_type2",
+  "held": false,
+  "intent": "DESCRIBE",
+  "issues": [],
+  "limits": [],
+  "metric": "year_onset",
+  "plan_line": null,
+  "presentation": {
+   "claim": "Mean year_onset by ms_type2: other 1998.08, progressive_MS 1999.23, relapsing_remitting 2000.80 (n=400 patients). Unadjusted.",
+   "table": {
+    "columns": [
+     "ms_type2",
+     "mean year_onset",
+     "n"
+    ],
+    "rows": [
+     {
+      "mean year_onset": 1998.0846,
+      "ms_type2": "other",
+      "n": 130
+     },
+     {
+      "mean year_onset": 1999.2318,
+      "ms_type2": "progressive_MS",
+      "n": 151
+     },
+     {
+      "mean year_onset": 2000.7983,
+      "ms_type2": "relapsing_remitting",
+      "n": 119
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "over_holding|snap_cov|What percentage of patients in each age group had a confirmed COVID-19 case?": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "age_in_cat",
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "covid19_confirmed_case=True by age_in_cat: age_in_cat=1 43.1%, age_in_cat=2 45.8% (n=400 patients). Unadjusted.",
+   "table": {
+    "columns": [
+     "age_in_cat",
+     "rate",
+     "n"
+    ],
+    "rows": [
+     {
+      "age_in_cat": "age_in_cat=1",
+      "n": 188,
+      "rate": 0.4309
+     },
+     {
+      "age_in_cat": "age_in_cat=2",
+      "n": 212,
+      "rate": 0.4575
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": [
+   "covid19_confirmed_case",
+   true
+  ],
+  "success": true
+ },
+ "over_holding|snap_cov|What share of patients have each MS type?": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "ms_type2",
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "400 patients across 3 ms_type2 groups.",
+   "table": {
+    "columns": [
+     "ms_type2",
+     "count"
+    ],
+    "rows": [
+     {
+      "count": 130,
+      "ms_type2": "other"
+     },
+     {
+      "count": 151,
+      "ms_type2": "progressive_MS"
+     },
+     {
+      "count": 119,
+      "ms_type2": "relapsing_remitting"
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "over_holding|snap_cov|What share of patients were admitted to hospital, broken down by sex?": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "sex",
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "covid19_admission_hospital=True by sex: female 43.2%, male 43.8% (n=400 patients). Unadjusted.",
+   "table": {
+    "columns": [
+     "sex",
+     "rate",
+     "n"
+    ],
+    "rows": [
+     {
+      "n": 192,
+      "rate": 0.4323,
+      "sex": "female"
+     },
+     {
+      "n": 208,
+      "rate": 0.4375,
+      "sex": "male"
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": [
+   "covid19_admission_hospital",
+   true
+  ],
+  "success": true
+ },
+ "over_holding|snap_cov|how many patients are female and how many are not female?": {
+  "confidence": 0.9,
+  "failure_reason": "I couldn't use the word 'not' in the plan; rephrase it with a column or value from your data.",
+  "group_by": null,
+  "held": true,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [
+   [
+    "eq",
+    "sex",
+    "female"
+   ]
+  ],
+  "metric": null,
+  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping none \u00b7 filters none \u00b7 limits in order 1) sex = female \u00b7 test count",
+  "presentation": {
+   "claim": null,
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": false
+ },
+ "over_holding|snap_cov|how many patients had COVID-19?": {
+  "confidence": 0.9,
+  "failure_reason": "I couldn't use the word 'covid19' in the plan; rephrase it with a column or value from your data.",
+  "group_by": null,
+  "held": true,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping none \u00b7 filters none \u00b7 test count",
+  "presentation": {
+   "claim": null,
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": false
+ },
+ "over_holding|snap_cov|how many patients had covid?": {
+  "confidence": 0.9,
+  "failure_reason": "I couldn't use the word 'covid' in the plan; rephrase it with a column or value from your data.",
+  "group_by": null,
+  "held": true,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping none \u00b7 filters none \u00b7 test count",
+  "presentation": {
+   "claim": null,
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": false
+ },
+ "over_holding|snap_cov|how many patients were not admitted to hospital versus admitted?": {
+  "confidence": 0.9,
+  "failure_reason": "I couldn't use the words 'not', 'admitted', 'hospital', 'versus' and 'admitted' in the plan; rephrase them with columns or values from your data.",
+  "group_by": null,
+  "held": true,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping none \u00b7 filters none \u00b7 test count",
+  "presentation": {
+   "claim": null,
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": false
+ },
+ "over_holding|snap_cov|what percentage of patients in each age group were not admitted to hospital?": {
+  "confidence": 0.3,
+  "failure_reason": "I couldn't use the words 'percentage', 'each', 'age', 'not', 'admitted' and 'hospital' in the plan; rephrase them with columns or values from your data.",
+  "group_by": null,
+  "held": true,
+  "intent": "DESCRIBE",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": "DESCRIBE \u00b7 outcome none \u00b7 grouping none \u00b7 filters none \u00b7 test descriptive statistics",
+  "presentation": {
+   "claim": null,
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": false
+ },
+ "over_holding|snap_cov|what share of women have each MS type?": {
+  "confidence": 0.3,
+  "failure_reason": "I couldn't use the words 'share', 'each', 'ms' and 'type' in the plan; rephrase them with columns or values from your data.",
+  "group_by": null,
+  "held": true,
+  "intent": "DESCRIBE",
+  "issues": [],
+  "limits": [
+   [
+    "eq",
+    "sex",
+    "female"
+   ]
+  ],
+  "metric": null,
+  "plan_line": "DESCRIBE \u00b7 outcome none \u00b7 grouping none \u00b7 filters none \u00b7 limits in order 1) sex = female \u00b7 test descriptive statistics",
   "presentation": {
    "claim": null,
    "table": null
