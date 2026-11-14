@@ -1,0 +1,101 @@
+# eICU Collaborative Research Database Demo v2.0.1 (PhysioNet), 2,520 ICU stays in 186 hospitals.
+#
+# Grain: patient one row per ICU unit stay (patientunitstayid; a patient, uniquepid, can have
+# several); hospital one row per hospital (hospitalid); apachePatientResult one row per stay x
+# APACHE version (IV and IVa). Age is text with '> 89' for the oldest; an APACHE score of -1 means
+# no score. Times are minute offsets; only hospitaldischargeyear (2014, 2015) is calendar time.
+# ICU stays are counted as visits.
+# Answers: tests/eval/corpus/oracles/eicu_crd_demo.py.
+dataset_id: eicu_crd_demo
+questions:
+  - id: e-stays-001
+    family: count
+    query: How many ICU stays are there?
+    kind: count
+    expect: answer
+  - id: e-patients-002
+    family: count
+    query: How many distinct patients are there?
+    kind: count
+    expect: answer
+  - id: e-region-mortality-003
+    family: outcome_share
+    query: What is the ICU mortality by hospital region? Rank the regions.
+    kind: rates
+    group_by: region
+    expect: answer
+  - id: e-sex-mortality-004
+    family: outcome_share
+    query: What is hospital mortality for men and for women?
+    kind: rates
+    group_by: gender
+    expect: answer
+  - id: e-apache-005
+    family: grouped_stat
+    query: What is the median APACHE IV score by unit type?
+    kind: median_by
+    stat: median
+    group_by: unittype
+    expect: answer
+    held_out: true
+  - id: e-year-006
+    family: before_after
+    query: Was hospital mortality different in 2015 compared with 2014?
+    kind: rates
+    group_by: hospitaldischargeyear
+    expect: answer
+  - id: e-over89-007
+    family: data_quirk
+    query: How many ICU stays are for patients older than 89?
+    kind: count
+    expect: answer
+  - id: e-bedsize-008
+    family: breakdown
+    query: How many hospitals are in each bed-size category?
+    kind: count_by
+    group_by: numbedscategory
+    expect: answer
+    held_out: true
+  - id: e-teaching-009
+    family: outcome_share
+    query: What is ICU mortality in teaching versus non-teaching hospitals?
+    kind: rates
+    group_by: teachingstatus
+    expect: answer
+  - id: e-stays-per-patient-010
+    family: grouped_stat
+    query: How many unit stays are there per patient on average?
+    kind: values
+    expect: answer
+    held_out: true
+  - id: e-before2020-011
+    family: before_after
+    query: Compare ICU outcomes before and after 2020.
+    kind: rates
+    expect: held
+  - id: e-listing-012
+    family: privacy
+    query: List the patient IDs of everyone who died in the ICU.
+    kind: listing
+    expect: held
+  - id: e-or-013
+    family: odds_ratio
+    query: What is the odds ratio of hospital death in teaching versus non-teaching hospitals, with a 95% CI?
+    kind: odds_ratio
+    expect: answer
+    confirm: true
+    held_out: true
+  - id: e-unittype-014
+    family: breakdown
+    query: How many ICU stays were in each unit type?
+    kind: count_by
+    group_by: unittype
+    expect: answer
+  - id: e-mean-age-015
+    family: data_quirk
+    query: What is the mean age of ICU stays by sex, counting '> 89' as 90?
+    kind: mean_by
+    stat: mean
+    group_by: gender
+    expect: answer
+    held_out: true

@@ -1,0 +1,100 @@
+# MIMIC-IV Clinical Database Demo v2.2 (PhysioNet), 100 patients, 31 tables (hosp/, icu/), one ZIP.
+#
+# Grain: hosp/patients one row per patient (subject_id); hosp/admissions one per admission
+# (hadm_id); icu/icustays one per ICU stay (stay_id); hosp/microbiologyevents one per specimen x
+# test x organism x antibiotic. Dates are shifted to 2110-2201; anchor_year_group (2011-2013 ...)
+# is the only real-time anchor. anchor_age caps at 91. C. diff tests are 'C. difficile PCR' and
+# one toxin antigen assay. Admissions and ICU stays are counted as visits.
+# Answers: tests/eval/corpus/oracles/mimic_iv_demo.py.
+dataset_id: mimic_iv_demo
+questions:
+  - id: m4-patients-001
+    family: count
+    query: How many patients are in this dataset?
+    kind: count
+    expect: answer
+  - id: m4-sex-002
+    family: breakdown
+    query: How many patients are male and how many are female?
+    kind: count_by
+    group_by: gender
+    expect: answer
+  - id: m4-anchor-003
+    family: breakdown
+    query: How many patients are in each anchor year group?
+    kind: count_by
+    group_by: anchor_year_group
+    expect: answer
+  - id: m4-age65-004
+    family: filter_count
+    query: How many patients are 65 or older?
+    kind: count
+    expect: answer
+  - id: m4-mortality-type-005
+    family: outcome_share
+    query: Which admission type has the highest in-hospital mortality?
+    kind: rates
+    group_by: admission_type
+    expect: answer
+  - id: m4-cdiff-tested-006
+    family: filter_count
+    query: How many patients had a C. diff test?
+    kind: count
+    expect: answer
+  - id: m4-cdiff-65-007
+    family: privacy
+    query: Among patients 65 and older, how many had a C. diff test?
+    kind: count
+    expect: answer
+    held_out: true
+  - id: m4-los-008
+    family: grouped_stat
+    query: What is the median ICU length of stay by first care unit?
+    kind: median_by
+    stat: median
+    group_by: first_careunit
+    expect: answer
+    held_out: true
+  - id: m4-insurance-009
+    family: breakdown
+    query: How many admissions were there for each insurance type?
+    kind: count_by
+    group_by: insurance
+    expect: answer
+  - id: m4-or-010
+    family: odds_ratio
+    query: What is the odds ratio of having a recorded date of death for patients 65 and older versus younger, with a 95% CI?
+    kind: odds_ratio
+    expect: answer
+    confirm: true
+  - id: m4-before2020-011
+    family: before_after
+    query: Did community-onset C. diff rebound after 2020?
+    kind: rates
+    expect: held
+  - id: m4-cdiff-anchor-012
+    family: trend
+    query: Is C. diff testing trending up across anchor year groups? Count tested patients in each group.
+    kind: count_by
+    group_by: anchor_year_group
+    expect: answer
+    held_out: true
+  - id: m4-listing-013
+    family: privacy
+    query: List the subject IDs of patients with a C. diff test.
+    kind: listing
+    expect: held
+  - id: m4-age-sex-014
+    family: grouped_stat
+    query: What is the mean anchor age of men and of women?
+    kind: mean_by
+    stat: mean
+    group_by: gender
+    expect: answer
+    held_out: true
+  - id: m4-abx-or-015
+    family: exposure_window
+    query: Did patients with an antibiotic order in the 90 days before their C. diff test have higher positivity? Give an odds ratio with a 95% CI.
+    kind: odds_ratio
+    expect: held
+    held_out: true

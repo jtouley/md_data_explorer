@@ -17,6 +17,10 @@ Written from the publishers' data dictionaries, not from the app's code.
 
 from __future__ import annotations
 
+import gzip
+import io
+import math
+import zipfile
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import NamedTuple, TypeAlias
@@ -249,3 +253,145 @@ def answers(tables: Tables, oracles: Mapping[str, Oracle]) -> dict[str, OracleAn
         except OracleError as error:
             result[question_id] = OracleAnswer(None, query.unit, oracle_error=str(error))
     return result
+
+
+# ---------------------------------------------------------------------------- multi-table, patient level
+#
+# The multi-table demos (MIMIC, eICU) are patient-level: the answers are counts and statistics over
+# patients, admissions or ICU stays, and every cell carries the number of units behind it so the
+# scorer can require cells of 1-10 to be hidden. ``unit`` names what is counted ("patients",
+# "visits"); an admission or an ICU stay is a visit.
+
+Z_95 = 1.959963984540054
+
+
+def read_archive(archive: Path, members: Mapping[str, str]) -> dict[str, pl.LazyFrame]:
+    """Tables read as text from members of a checked archive (``.csv`` or ``.csv.gz``)."""
+    tables: dict[str, pl.LazyFrame] = {}
+    with zipfile.ZipFile(archive) as handle:
+        for name, member in members.items():
+            raw = handle.read(member)
+            if member.endswith(".gz"):
+                raw = gzip.decompress(raw)
+            tables[name] = pl.read_csv(io.BytesIO(raw), infer_schema=False).lazy()
+    return tables
+
+
+def present(*columns: str) -> pl.Expr:
+    """True where every column holds a value (not null, not blank)."""
+    return pl.all_horizontal(pl.col(c).is_not_null() & (pl.col(c).str.strip_chars() != "") for c in columns)
+
+
+FrameFn: TypeAlias = Callable[[Tables], pl.LazyFrame]
+
+
+def count(frame: FrameFn, unit: str, distinct: str | None = None) -> Oracle:
+    """How many rows (or distinct ``distinct`` values) the frame holds (``count``)."""
+
+    def build(tables: Tables) -> Query:
+        def finish(df: pl.DataFrame) -> OracleAnswer:
+            n = int(df.item())
+            return OracleAnswer(n, unit, {("total",): n})
+
+        reducer = pl.col(distinct).n_unique() if distinct else pl.len()
+        return Query(unit, frame(tables).select(reducer), finish)
+
+    return build
+
+
+def count_by(frame: FrameFn, group: str, unit: str, distinct: str | None = None) -> Oracle:
+    """{group: rows or distinct units} over rows with the group recorded (``count_by``)."""
+
+    def build(tables: Tables) -> Query:
+        def finish(df: pl.DataFrame) -> OracleAnswer:
+            value = {str(row[group]): int(row["n"]) for row in df.iter_rows(named=True)}
+            return OracleAnswer(value, unit, {(key,): n for key, n in value.items()})
+
+        reducer = pl.col(distinct).n_unique() if distinct else pl.len()
+        query = frame(tables).filter(present(group)).group_by(group).agg(reducer.alias("n"))
+        return Query(unit, query, finish)
+
+    return build
+
+
+def rates(frame: FrameFn, group: str, event: pl.Expr, recorded: pl.Expr) -> Oracle:
+    """{group: share of rows with ``event``} over rows where the outcome is ``recorded`` (``rates``)."""
+
+    def build(tables: Tables) -> Query:
+        def finish(df: pl.DataFrame) -> OracleAnswer:
+            cells: dict[tuple[str, ...], int] = {}
+            value: dict[str, float] = {}
+            for row in df.iter_rows(named=True):
+                key, n, events = str(row[group]), int(row["n"]), int(row["events"])
+                value[key] = events / n
+                cells |= {(key,): n, (key, "events"): events, (key, "non_events"): n - events}
+            return OracleAnswer(value, "proportion", cells)
+
+        query = (
+            frame(tables)
+            .filter(present(group) & recorded)
+            .group_by(group)
+            .agg(pl.len().alias("n"), event.sum().alias("events"))
+        )
+        return Query("proportion", query, finish)
+
+    return build
+
+
+def stat_by(frame: FrameFn, stat: str, metric: pl.Expr, group: str, name: str) -> Oracle:
+    """{group: mean or median of ``metric``} over rows with a value (``mean_by`` / ``median_by``)."""
+    unit = f"{stat} {name}"
+
+    def build(tables: Tables) -> Query:
+        def finish(df: pl.DataFrame) -> OracleAnswer:
+            rows = list(df.iter_rows(named=True))
+            value = {str(r[group]): None if r["value"] is None else float(r["value"]) for r in rows}
+            return OracleAnswer(value, unit, {(str(r[group]),): int(r["n"]) for r in rows})
+
+        reducer = metric.median() if stat == "median" else metric.mean()
+        query = (
+            frame(tables)
+            .filter(present(group))
+            .group_by(group)
+            .agg(reducer.alias("value"), metric.is_not_null().sum().alias("n"))
+        )
+        return Query(unit, query, finish)
+
+    return build
+
+
+def odds_ratio(frame: FrameFn, exposed: pl.Expr, event: pl.Expr, recorded: pl.Expr) -> Oracle:
+    """Sample odds ratio and Woolf (Wald) 95% CI over rows where exposure and outcome are recorded
+    (``recorded``); equal to an unadjusted logistic regression. A zero cell: undefined."""
+
+    def build(tables: Tables) -> Query:
+        def finish(df: pl.DataFrame) -> OracleAnswer:
+            table = {(bool(r["exposed"]), bool(r["event"])): int(r["n"]) for r in df.iter_rows(named=True)}
+            a, b = table.get((True, True), 0), table.get((True, False), 0)
+            c, d = table.get((False, True), 0), table.get((False, False), 0)
+            cells: dict[tuple[str, ...], int] = {
+                ("exposed", "events"): a,
+                ("exposed", "non_events"): b,
+                ("unexposed", "events"): c,
+                ("unexposed", "non_events"): d,
+            }
+            if 0 in (a, b, c, d):
+                return OracleAnswer(None, "odds ratio", cells, undefined="a cell of the 2x2 table is zero")
+            log_or = math.log((a * d) / (b * c))
+            se = math.sqrt(1 / a + 1 / b + 1 / c + 1 / d)
+            value = {
+                "or": math.exp(log_or),
+                "ci_low": math.exp(log_or - Z_95 * se),
+                "ci_high": math.exp(log_or + Z_95 * se),
+            }
+            return OracleAnswer(value, "odds ratio", cells)
+
+        query = (
+            frame(tables)
+            .filter(recorded)
+            .group_by(exposed.alias("exposed"), event.alias("event"))
+            .agg(pl.len().alias("n"))
+        )
+        return Query("odds ratio", query, finish)
+
+    return build

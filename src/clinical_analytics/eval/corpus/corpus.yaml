@@ -226,3 +226,100 @@ datasets:
         - {name: TB_burden_countries.csv, from: TB_burden_countries.csv, make: copy}
         - {name: TB_burden_age_sex.csv, from: TB_burden_age_sex.csv, make: copy}
         - {name: TB_data_dictionary.txt, from: TB_data_dictionary.csv, make: copy}
+
+  # ---- Multi-table demos (patient level), uploaded as one ZIP of tables plus documentation, the
+  # way a user would: the published archive's tables and LICENSE.txt are repackaged (make:
+  # extract); its SHA256SUMS.txt is left out (the app would read it as a document). The project
+  # page text is the corpus snapshot's plain-text rendering of the live page (view counts change),
+  # so it is reused from the snapshot (--seed) and never re-downloaded to the same bytes.
+  - name: mimic_iii_demo
+    title: MIMIC-III Clinical Database Demo v1.4
+    landing_page: https://physionet.org/content/mimiciii-demo/1.4/
+    license:
+      id: ODbL-1.0
+      url: https://opendatacommons.org/licenses/odbl/1-0/
+      text_url: https://physionet.org/files/mimiciii-demo/1.4/LICENSE.txt
+      terms: 'ODbL v1.0: attribute (Johnson et al., MIMIC-III; PhysioNet), share-alike for derived databases. Open access demo, no credentialing (full MIMIC-III requires it).'
+    grain: 'multi-table: patient (PATIENTS) / admission (ADMISSIONS, hadm_id) / ICU stay (ICUSTAYS) / event rows'
+    rows: {PATIENTS: 100, ADMISSIONS: 129, ICUSTAYS: 136, MICROBIOLOGYEVENTS: 2003, PRESCRIPTIONS: 10398, LABEVENTS: 76074, CHARTEVENTS: 758355}
+    id_column: subject_id (patient), hadm_id (admission), icustay_id (ICU stay); every table also has row_id
+    files:
+      - path: mimic-iii-clinical-database-demo-1.4.zip
+        url: https://physionet.org/static/published-projects/mimiciii-demo/mimic-iii-clinical-database-demo-1.4.zip
+        kind: archive
+        sha256: f7f973de40324e84377226fe54d472e137f5351ba31563e4cef13bc6716b9012
+        bytes: 11350216
+      - path: physionet_project_page.txt
+        url: https://physionet.org/content/mimiciii-demo/1.4/
+        kind: documentation
+        note: the ZIP has no README; this is a plain-text rendering of the official project page
+        sha256: 295d66026de53ce93fccdb6b6d50d74a920f58a1b8947f8c9f54148d560e5d19
+        bytes: 14615
+    dictionary_url: https://physionet.org/content/mimiciii-demo/1.4/
+    upload_package:
+      zip: mimic_iii_demo.zip
+      sha256: 149868434bed209e431627453584db9f73a4aa672b03c0664c7474239ec34cc1  # deterministic: sorted, stored, fixed metadata
+      contents:
+        - {from: mimic-iii-clinical-database-demo-1.4.zip, make: extract, member: 'mimic-iii-clinical-database-demo-1.4/*.csv', strip: mimic-iii-clinical-database-demo-1.4/}
+        - {from: mimic-iii-clinical-database-demo-1.4.zip, make: extract, member: mimic-iii-clinical-database-demo-1.4/LICENSE.txt, strip: mimic-iii-clinical-database-demo-1.4/}
+        - {name: physionet_project_page.txt, from: physionet_project_page.txt, make: copy}
+
+  - name: mimic_iv_demo
+    title: MIMIC-IV Clinical Database Demo v2.2
+    landing_page: https://physionet.org/content/mimic-iv-demo/2.2/
+    license:
+      id: ODbL-1.0
+      url: https://opendatacommons.org/licenses/odbl/1-0/
+      text_url: https://physionet.org/files/mimic-iv-demo/2.2/LICENSE.txt
+      terms: 'ODbL v1.0: attribute (Johnson et al., MIMIC-IV demo; PhysioNet), share-alike for derived databases. Open access, no credentialing.'
+    grain: 'multi-table: patient / admission / event'
+    rows: {patients: 100, admissions: 275, microbiologyevents: 2899, prescriptions: 18087, labevents: 107727, chartevents: 668862, icustays: 140}
+    id_column: subject_id, hadm_id, stay_id; micro_specimen_id, pharmacy_id, poe_id
+    files:
+      - path: mimic-iv-clinical-database-demo-2.2.zip
+        url: https://physionet.org/static/published-projects/mimic-iv-demo/mimic-iv-clinical-database-demo-2.2.zip
+        kind: archive
+        sha256: 97301a03820e8f41af211cf3462ddc19aefe75bbed05f11753859affaafeb8ec
+        bytes: 16189661
+    dictionary_url: https://physionet.org/content/mimic-iv-demo/2.2/
+    upload_package:
+      zip: mimic_iv_demo.zip
+      sha256: 1180f2d4266afba437a16137998863d2bcc5970d38d274b56449874b5b9ed5e4  # deterministic: sorted, stored, fixed metadata
+      contents:
+        - {from: mimic-iv-clinical-database-demo-2.2.zip, make: extract, member: 'mimic-iv-clinical-database-demo-2.2/hosp/*.csv.gz', strip: mimic-iv-clinical-database-demo-2.2/}
+        - {from: mimic-iv-clinical-database-demo-2.2.zip, make: extract, member: 'mimic-iv-clinical-database-demo-2.2/icu/*.csv.gz', strip: mimic-iv-clinical-database-demo-2.2/}
+        - {from: mimic-iv-clinical-database-demo-2.2.zip, make: extract, member: mimic-iv-clinical-database-demo-2.2/README.txt, strip: mimic-iv-clinical-database-demo-2.2/}
+        - {from: mimic-iv-clinical-database-demo-2.2.zip, make: extract, member: mimic-iv-clinical-database-demo-2.2/LICENSE.txt, strip: mimic-iv-clinical-database-demo-2.2/}
+
+  - name: eicu_crd_demo
+    title: eICU Collaborative Research Database Demo v2.0.1
+    landing_page: https://physionet.org/content/eicu-crd-demo/2.0.1/
+    license:
+      id: ODbL-1.0
+      url: https://opendatacommons.org/licenses/odbl/1-0/
+      text_url: https://physionet.org/files/eicu-crd-demo/2.0.1/LICENSE.txt
+      terms: 'ODbL v1.0: attribute (Pollard et al., eICU-CRD; PhysioNet), share-alike. Open access, no credentialing.'
+    grain: 'multi-table: ICU unit stay (patientunitstayid); patient (uniquepid, 1,841 unique); hospital (hospitalid, 186)'
+    rows: {patient: 2520, hospital: 186, lab: 434660, medication: 75604, microLab: 342, diagnosis: 24978, vitalPeriodic: 1634960}
+    id_column: patientunitstayid (stay), patienthealthsystemstayid, uniquepid (patient), hospitalid
+    missing_tokens: [blank, "'> 89' in age (98 rows)"]
+    files:
+      - path: eicu-collaborative-research-database-demo-2.0.1.zip
+        url: https://physionet.org/static/published-projects/eicu-crd-demo/eicu-collaborative-research-database-demo-2.0.1.zip
+        kind: archive
+        sha256: 8e33a1094945d6ba07cf613b15b2fe4d98f6b3324601d026e80d445bd5b8b865
+        bytes: 136773541
+      - path: physionet_project_page.txt
+        url: https://physionet.org/content/eicu-crd-demo/2.0.1/
+        kind: documentation
+        sha256: 0e8fb445dcf937c9c55fed02de1684cb852a334494a257d6a14fd9f53ee41e5c
+        bytes: 14941
+    dictionary_url: https://physionet.org/content/eicu-crd-demo/2.0.1/
+    upload_package:
+      zip: eicu_crd_demo.zip
+      sha256: 630e93724b1f72405a62d80425091a44be26984bf1e5106a3fc7a95d8f5e4643  # deterministic: sorted, stored, fixed metadata
+      # The archive's 82 MB SQLite copy is left out: it would take the ZIP over the 100 MB upload cap.
+      contents:
+        - {from: eicu-collaborative-research-database-demo-2.0.1.zip, make: extract, member: 'eicu-collaborative-research-database-demo-2.0.1/*.csv.gz', strip: eicu-collaborative-research-database-demo-2.0.1/}
+        - {from: eicu-collaborative-research-database-demo-2.0.1.zip, make: extract, member: eicu-collaborative-research-database-demo-2.0.1/LICENSE.txt, strip: eicu-collaborative-research-database-demo-2.0.1/}
+        - {name: physionet_project_page.txt, from: physionet_project_page.txt, make: copy}

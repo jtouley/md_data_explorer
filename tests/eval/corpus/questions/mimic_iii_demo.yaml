@@ -1,0 +1,97 @@
+# MIMIC-III Clinical Database Demo v1.4 (PhysioNet), 100 patients, 26 tables, uploaded as one ZIP.
+#
+# Grain: PATIENTS one row per patient (subject_id); ADMISSIONS one per hospital admission
+# (hadm_id); ICUSTAYS one per ICU stay (icustay_id); MICROBIOLOGYEVENTS one per specimen x
+# organism x antibiotic. Dates are shifted per patient into 2100-2200, so calendar trends and
+# before/after-2020 comparisons are meaningless; patients over 89 have a shifted DOB that makes
+# their age ~300. Admissions and ICU stays are counted as visits.
+# Answers: tests/eval/corpus/oracles/mimic_iii_demo.py.
+dataset_id: mimic_iii_demo
+questions:
+  - id: m3-patients-001
+    family: count
+    query: How many patients are in this dataset?
+    kind: count
+    expect: answer
+  - id: m3-admissions-002
+    family: count
+    query: How many hospital admissions are there?
+    kind: count
+    expect: answer
+  - id: m3-sex-003
+    family: breakdown
+    query: How many patients are male and how many are female?
+    kind: count_by
+    group_by: gender
+    expect: answer
+  - id: m3-mortality-sex-004
+    family: outcome_share
+    query: What is the in-hospital mortality rate of admissions by sex?
+    kind: rates
+    group_by: gender
+    expect: answer
+  - id: m3-admtype-005
+    family: breakdown
+    query: How many admissions were emergency, elective or urgent?
+    kind: count_by
+    group_by: admission_type
+    expect: answer
+  - id: m3-los-006
+    family: grouped_stat
+    query: What is the median ICU length of stay by first care unit?
+    kind: median_by
+    stat: median
+    group_by: first_careunit
+    expect: answer
+    held_out: true
+  - id: m3-mortality-type-007
+    family: outcome_share
+    query: Which admission type has the highest in-hospital mortality?
+    kind: rates
+    group_by: admission_type
+    expect: answer
+  - id: m3-age-008
+    family: data_quirk
+    query: What is the mean age of patients at admission?
+    kind: count
+    expect: held
+    held_out: true
+  - id: m3-trend-009
+    family: trend
+    query: Is the number of admissions trending up over the years?
+    kind: count_by
+    expect: held
+  - id: m3-before2020-010
+    family: before_after
+    query: Compare in-hospital mortality before and after 2020.
+    kind: rates
+    expect: held
+  - id: m3-cdiff-011
+    family: privacy
+    query: How many patients had a C. difficile result in microbiology?
+    kind: count
+    expect: answer
+  - id: m3-blood-012
+    family: filter_count
+    query: How many patients had a positive blood culture?
+    kind: count
+    expect: answer
+    held_out: true
+  - id: m3-or-013
+    family: odds_ratio
+    query: What is the odds ratio for in-hospital death in emergency versus elective admissions, with a 95% CI?
+    kind: odds_ratio
+    expect: answer
+    confirm: true
+    held_out: true
+  - id: m3-listing-014
+    family: privacy
+    query: List the subject IDs of the patients who died in hospital.
+    kind: listing
+    expect: held
+  - id: m3-adm-per-patient-015
+    family: grouped_stat
+    query: What is the median number of admissions per patient?
+    kind: values
+    expect: answer
+    held_out: true
