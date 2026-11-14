@@ -8,6 +8,9 @@ with a new temporary ``CLINICAL_ANALYTICS_DATA_HOME`` and HOME, uploads the ZIP 
 session, a follow-up in its parent's session. A held question is confirmed once only when its
 YAML says ``confirm: true``. The presented answer is graded by ``eval.corpus.score``.
 
+A question marked ``held_out: true`` is reported apart from the rest: nobody tunes the app on it,
+so its grades say whether a change generalises beyond the questions it was made for.
+
 Results (JSON and a markdown table) go to a directory outside the repo; the table is printed.
 Only aggregates are written: the claim and table the app presents, never rows.
 
@@ -138,6 +141,7 @@ class QuestionResult:
     latency_s: float
     confirmed: bool
     expect: Expect = "answer"
+    held_out: bool = False
     claim: str | None = None
     table: dict[str, Any] | None = None
 
@@ -152,11 +156,13 @@ class RunReport:
     settings: dict[str, Any]
     results: list[QuestionResult] = field(default_factory=list)
 
-    def counts(self) -> dict[str, int]:
+    def counts(self, held_out: bool | None = None) -> dict[str, int]:
+        """Grades over every question, or only the held-out (True) or tuned-on (False) ones."""
+        results = [r for r in self.results if held_out is None or r.held_out is held_out]
         tally = {grade: 0 for grade in ("RIGHT", "WRONG", "HELD", "ERROR")}
-        for result in self.results:
+        for result in results:
             tally[result.grade] += 1
-        tally["LEAK"] = sum(result.leak for result in self.results)
+        tally["LEAK"] = sum(result.leak for result in results)
         return tally
 
     def rates(self) -> Rates:
@@ -185,7 +191,8 @@ def load_questions(dataset: str) -> list[dict[str, Any]]:
     path = QUESTIONS_DIR / f"{dataset}.yaml"
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        questions = [{"dataset_id": raw["dataset_id"], **item} for item in raw["questions"]]
+        shared = {"dataset_id": raw["dataset_id"], **({"grain": raw["grain"]} if "grain" in raw else {})}
+        questions = [{**shared, **item} for item in raw["questions"]]
     except (OSError, yaml.YAMLError, KeyError, TypeError) as error:
         raise AcceptanceError(f"questions for {dataset} could not be read from {path}: {error!r}") from error
     seen: set[str] = set()
@@ -561,6 +568,7 @@ def ask_all(
             latency_s=round(asked.latency_s, 2),
             confirmed=asked.confirmed,
             expect=_expect(question),
+            held_out=bool(question.get("held_out", False)),
             claim=presentation.get("claim"),
             table=presentation.get("table"),
         )
@@ -584,12 +592,15 @@ def run(
     questions = load_questions(dataset)
     corpus = load_corpus()
     zip_path = fetch_dataset(dataset, cache_dir, seed_dirs, corpus=corpus)
-    csv_path = table_path(corpus[dataset], cache_dir)
-    csv_name = csv_path.name
+    files_dir = zip_path.parent / "files"
+    tables = [item.path for item in corpus[dataset].files if item.kind in ("table", "archive")]
+    # One table: the oracles read that file. Several, or an archive of tables: the files' directory.
+    single = len(tables) == 1 and tables[0].endswith(".csv")
+    oracle_input = files_dir / tables[0] if single else files_dir
     try:
-        truth: dict[str, OracleAnswer] = load_oracles(dataset).answers(csv_path)
+        truth: dict[str, OracleAnswer] = load_oracles(dataset).answers(oracle_input)
     except pl.exceptions.PolarsError as error:
-        raise AcceptanceError(f"oracles for {dataset} do not run on {csv_name}: {error}") from error
+        raise AcceptanceError(f"oracles for {dataset} do not run on {oracle_input.name}: {error}") from error
     missing = [q["id"] for q in questions if q["id"] not in truth]
     if missing:
         raise AcceptanceError(f"no oracle answer for {missing}")
@@ -611,12 +622,12 @@ def run(
             dataset_id = api.upload(zip_path, dataset)
             report.settings["upload"] = "zip (table + dictionary)"
         except AcceptanceError as error:
-            if "-> 400" not in str(error):
+            if "-> 400" not in str(error) or oracle_input.is_dir():
                 raise
             # Recorded, never silent: the API refused the ZIP, so the table goes up alone and
-            # the app answers without the dictionary.
+            # the app answers without the dictionary. (A multi-table set has no such fallback.)
             report.settings["upload"] = f"csv only; ZIP rejected: {str(error)[:200]}"
-            dataset_id = api.upload(csv_path, dataset)
+            dataset_id = api.upload(oracle_input, dataset)
         report.settings["upload_s"] = round(time.monotonic() - upload_started, 1)
         report.results = ask_all(api, dataset_id, questions, truth, model, timeout_s)
     finally:
@@ -651,6 +662,8 @@ def public_reason(reason: str) -> str:
 
 def markdown(report: RunReport) -> str:
     counts = report.counts()
+    held_out = report.counts(held_out=True)
+    tuned = report.counts(held_out=False)
     latencies = [result.latency_s for result in report.results]
     median = statistics.median(latencies) if latencies else 0.0
     llm_ran = sum(result.llm == "ran" for result in report.results)
@@ -666,13 +679,17 @@ def markdown(report: RunReport) -> str:
         " · ".join(f"{name} {n}" for name, n in counts.items())
         + f" · median latency {median:.1f}s · LLM tier ran on {llm_ran}/{len(report.results)}",
         "",
-        "| id | grade | leak | tier | LLM | latency s | reason |",
-        "|---|---|---|---|---|---|---|",
+        "Tuned-on: " + " · ".join(f"{name} {n}" for name, n in tuned.items()),
+        "Held out: " + " · ".join(f"{name} {n}" for name, n in held_out.items()),
+        "",
+        "| id | split | grade | leak | tier | LLM | latency s | reason |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for result in report.results:
         reason = public_reason(result.reason).replace("|", "\\|").replace("\n", " ")[:180]
+        split = "held out" if result.held_out else "tuned"
         lines.append(
-            f"| {result.id} | {result.grade} | {'LEAK' if result.leak else ''} | {result.tier or '-'} | "
+            f"| {result.id} | {split} | {result.grade} | {'LEAK' if result.leak else ''} | {result.tier or '-'} | "
             f"{result.llm} | {result.latency_s:.1f} | {reason} |"
         )
     return "\n".join(lines) + "\n"
@@ -683,7 +700,12 @@ def write_results(report: RunReport, results_dir: Path) -> Path:
     model = re.sub(r"[^\w.-]", "_", report.model)
     out = results_dir / f"{stamp}-{report.dataset}-{model}-{report.label}"
     out.mkdir(parents=True, exist_ok=True)
-    payload = {**asdict(report), "counts": report.counts()}
+    payload = {
+        **asdict(report),
+        "counts": report.counts(),
+        "counts_tuned": report.counts(held_out=False),
+        "counts_held_out": report.counts(held_out=True),
+    }
     (out / "results.json").write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
     (out / "results.md").write_text(markdown(report), encoding="utf-8")
     return out

@@ -1,0 +1,102 @@
+# NCHS Provisional COVID-19 Deaths by Sex and Age (data.cdc.gov 9bhg-hcku), data as of 2023-09-27.
+#
+# Grain: one row per Group x Year x Month x State x Sex x Age Group (verified unique). Three grains
+# are stacked ("By Total", "By Year", "By Month"); "All Sexes" sits beside Male and Female, "All
+# Ages" and summary bands (0-17, 18-29, 50-64) beside the detailed ones, "United States" beside the
+# states, and "New York City" beside New York. A blank count is a count of 1-9 suppressed by NCHS,
+# not a zero. There is no population denominator and no CI.
+# Answers: tests/eval/corpus/oracles/cdc_provisional_covid_deaths_sex_age.py.
+dataset_id: cdc_provisional_covid_deaths_sex_age
+grain: aggregate
+questions:
+  - id: pcd-flu-year-001
+    family: trend
+    query: How many influenza deaths were there in the US each year from 2020 on?
+    kind: value_by
+    group_by: Year
+    expect: answer
+  - id: pcd-age-2022-002
+    family: by_age_sex
+    query: Break down 2022 COVID-19 deaths in the United States by age group.
+    kind: value_by
+    group_by: Age Group
+    expect: answer
+  - id: pcd-sex-2022-003
+    family: by_age_sex
+    query: How many COVID-19 deaths were there in men and in women in the US in 2022?
+    kind: value_by
+    group_by: Sex
+    expect: answer
+  - id: pcd-sex-2021-004
+    family: follow_up
+    query: Now just for 2021.
+    kind: value_by
+    group_by: Sex
+    follow_up_of: pcd-sex-2022-003
+    expect: answer
+    held_out: true
+  - id: pcd-rank-65-005
+    family: rank_places
+    query: Which ten states had the most pneumonia deaths among people 65 and older in 2021?
+    kind: value_by
+    group_by: State
+    top: 10
+    expect: answer
+  - id: pcd-share-age-006
+    family: share
+    query: What proportion of all deaths in the US in 2020 were from COVID-19, by age group?
+    kind: value_by
+    group_by: Age Group
+    expect: answer
+    held_out: true
+  - id: pcd-ratio-007
+    family: by_age_sex
+    query: What is the male-to-female ratio of COVID-19 deaths in each age group, over the whole period?
+    kind: value_by
+    group_by: Age Group
+    expect: answer
+  - id: pcd-month-2022-008
+    family: trend
+    query: Show monthly influenza deaths in the US for 2022.
+    kind: value_by
+    group_by: Month
+    expect: answer
+  - id: pcd-85-share-009
+    family: share
+    query: What share of deaths in adults 85 and over involved pneumonia, influenza or COVID-19, by year?
+    kind: value_by
+    group_by: Year
+    expect: answer
+    held_out: true
+  - id: pcd-total-010
+    family: pooling_trap
+    query: How many COVID-19 deaths were recorded in the United States over the whole period?
+    kind: values
+    expect: answer
+  - id: pcd-suppressed-011
+    family: suppression
+    query: For Wyoming, how many COVID-19 death counts are suppressed (left blank)?
+    kind: values
+    expect: answer
+    held_out: true
+  - id: pcd-howsure-012
+    family: how_sure
+    query: How sure is the influenza death count for Wyoming in 2021? Give a confidence interval.
+    kind: values
+    expect: held
+  - id: pcd-per100k-013
+    family: rank_places
+    query: Rank the states by COVID-19 deaths per 100,000 people.
+    kind: values
+    expect: held
+    held_out: true
+  - id: pcd-pooled-014
+    family: pooled_overlap
+    query: Add up all the COVID-19 deaths in the file to get the overall total.
+    kind: values
+    expect: held
+  - id: pcd-before2020-015
+    family: before_after
+    query: Did pneumonia deaths go back to their pre-2020 levels?
+    kind: values
+    expect: held
