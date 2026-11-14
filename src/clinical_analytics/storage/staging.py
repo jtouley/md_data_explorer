@@ -422,6 +422,72 @@ def _reject_empty_rows(df: pl.DataFrame, first_row_number: int) -> None:
 # --- entry points ---------------------------------------------------------------------------
 
 
+# "401.63 (390.33, 412.62)": an estimate and its interval packed in one cell (IHME Excel tables).
+_NUM = r"(-?\d[\d,]*\.?\d*)"
+PACKED_INTERVAL = rf"^\s*{_NUM}\s*\(\s*{_NUM}\s*(?:,|to|–|—|;)\s*{_NUM}\s*\)\s*$"
+_YEAR_IN_HEADER = re.compile(r"(?<!\d)(1[89]\d\d|20\d\d|2100)(?!\d)")
+MIN_YEAR_COLUMNS = 3  # a table with years as columns has at least this many
+
+
+def _packed(df: pl.DataFrame, col: str) -> bool:
+    """Every non-empty cell of a text column is a value with its interval in brackets."""
+    cleaned = df.select(_clean_tokens(col).alias(col)).get_column(col).drop_nulls()
+    return cleaned.len() > 0 and bool(cleaned.str.contains(PACKED_INTERVAL).all())
+
+
+def _header_year(col: str) -> tuple[str, int] | None:
+    """(header without its year, the year) when the header names exactly one year."""
+    years = _YEAR_IN_HEADER.findall(col)
+    if len(years) != 1:
+        return None
+    stem = re.sub(r"[\s,;:*()\-–]+$", "", _YEAR_IN_HEADER.sub("", col)).strip(" ,;:*()-–")
+    return stem, int(years[0])
+
+
+def _years_to_rows(df: pl.DataFrame) -> pl.DataFrame:
+    """Unpivot packed estimate columns that are one per year ("Mortality Rate, 1980*") into rows:
+    the other columns, then ``year`` and one value column per header stem (several stems: a
+    ``measure`` column and ``value``). Returns ``df`` unchanged when there are not enough."""
+    by_year = {c: found for c in df.columns if (found := _header_year(c)) is not None and _packed(df, c)}
+    if len(by_year) < MIN_YEAR_COLUMNS:
+        return df
+    ids = [c for c in df.columns if c not in by_year]
+    stems = sorted({stem for stem, _year in by_year.values()})
+    value = stems[0] if len(stems) == 1 and stems[0] else "value"
+    long = df.unpivot(on=list(by_year), index=ids, variable_name="__column", value_name=value)
+    mapping = pl.DataFrame(
+        {
+            "__column": list(by_year),
+            "measure": [stem for stem, _ in by_year.values()],
+            "year": [str(year) for _, year in by_year.values()],
+        }
+    )
+    long = long.join(mapping, on="__column", how="left").drop("__column")
+    keep = [*ids, *(["measure"] if len(stems) > 1 else []), "year", value]
+    logger.info("staging_years_unpivoted", year_columns=len(by_year), measures=len(stems))
+    return long.select(keep)
+
+
+def unpack_intervals(df: pl.DataFrame) -> pl.DataFrame:
+    """Text frame with packed "value (lower, upper)" cells split into three columns (``x``,
+    ``x lower``, ``x upper``), after any years laid out as columns are turned into rows. Only a
+    column whose every non-empty cell is packed is split; others are left as they are."""
+    df = _years_to_rows(df)
+    packed = [c for c in df.columns if df.schema[c] == pl.String and _packed(df, c)]
+    if not packed:
+        return df
+    parts: list[pl.Expr] = []
+    for col in packed:
+        groups = _clean_tokens(col).str.extract_groups(PACKED_INTERVAL)
+        for index, name in enumerate((col, f"{col} lower", f"{col} upper"), start=1):
+            parts.append(groups.struct.field(str(index)).str.replace_all(",", "").alias(name))
+    order: list[str] = []
+    for col in df.columns:
+        order += [col, f"{col} lower", f"{col} upper"] if col in packed else [col]
+    logger.info("staging_intervals_unpacked", columns=len(packed))
+    return df.with_columns(parts).select(order)
+
+
 def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1) -> StagedTable:
     """Type an all-text frame (one row per data line). ``header_row_number``: the header's file row.
 
@@ -437,7 +503,7 @@ def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1) -> StagedT
     body = df.slice(1) if units else df
     first_data_row = header_row_number + (2 if units else 1)
     _reject_empty_rows(body, first_data_row)
-    typed, notes = _type_columns(body)
+    typed, notes = _type_columns(unpack_intervals(body))
     log = logger.bind(rows=typed.height, columns=typed.width)
     for note in notes:
         log.info("staging_column_note", column_index=df.columns.index(note.column), reason=note.reason)

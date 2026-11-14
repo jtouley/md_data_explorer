@@ -7,6 +7,7 @@ They never block an upload.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Final, Literal, TypeAlias
 
@@ -290,3 +291,216 @@ PLAUSIBILITY_RANGES: Final[tuple[PlausibilityRange, ...]] = (
 
 # Numeric columns with no configured range are marked so in the contract, never silently passed.
 NO_RANGE_KNOWN: Final = "no range known"
+
+
+# ---------------------------------------------------------------------------- aggregate-data mode
+# ADR014: files whose rows are estimates (location x year x sex x age x cause x measure), not
+# patients. Detection (core/estimates.py) only adds checks; the relaxations below need the upload
+# to carry POPULATION_ESTIMATES_STATEMENT, which the person ticks at upload.
+
+# What the person declares at upload; stored per dataset (declarations.json) and in the contract.
+POPULATION_ESTIMATES_LABEL: Final = "Public population estimates – no patient-level data"
+POPULATION_ESTIMATES_STATEMENT: Final = (
+    "Every row is a published estimate for a place, period or group (for example a rate per 100,000 "
+    "with its interval), and no row describes a single patient."
+)
+POPULATION_ESTIMATES_PRIVACY_CLASS: Final = "public_aggregate"
+
+# Bound columns paired with a value column by name: <value><low suffix> and <value><high suffix>
+# (normalised: lowercase, runs of other characters as "_"). WHO TB: e_inc_100k_lo / _hi.
+ESTIMATE_BOUND_SUFFIXES: Final[tuple[tuple[str, str], ...]] = (
+    ("_lo", "_hi"),
+    ("_lower", "_upper"),
+    ("_low", "_high"),
+    ("_lci", "_uci"),
+    ("_lcl", "_ucl"),
+    ("_cilower", "_ciupper"),
+    ("_lower_ci", "_upper_ci"),
+    ("_lb", "_ub"),
+)
+# Standalone bound pairs beside one value column named in ESTIMATE_VALUE_NAMES (GBD: val, lower,
+# upper; IHME county files: mx, lower, upper; CDC CDI: datavalue, low/highconfidencelimit).
+ESTIMATE_STANDALONE_BOUNDS: Final[tuple[tuple[str, str], ...]] = (
+    ("lower", "upper"),
+    ("lo", "hi"),
+    ("lowconfidencelimit", "highconfidencelimit"),
+    ("low_confidence_limit", "high_confidence_limit"),
+    ("lower_ci", "upper_ci"),
+    ("low_ci", "high_ci"),
+    ("lci", "uci"),
+    ("lower_bound", "upper_bound"),
+)
+ESTIMATE_VALUE_NAMES: Final[tuple[str, ...]] = (
+    "val",
+    "best",
+    "mx",
+    "value",
+    "mean",
+    "estimate",
+    "point_estimate",
+    "datavalue",
+    "data_value",
+    "rate",
+)
+# A numeric column named for a rate, ratio or percent is an estimate even without bounds.
+ESTIMATE_RATE_NAME: Final = re.compile(
+    r"(^|_)(rate|rates|ratio|sir|pct|percent|percentage|prevalence|incidence|proportion|coverage|mx|"
+    r"per_?\d+k?|\d+k)($|_)"
+)
+# A value column named for a count: values of 1-10 stay hidden even on a declared dataset.
+ESTIMATE_COUNT_NAME: Final = re.compile(r"(^|_)(deaths?|count|counts|cases|number|num|n|notified|events)($|_)")
+# Integer columns that key rows rather than measure (year, codes, FIPS); other integers are values.
+ESTIMATE_KEY_NAME: Final = re.compile(
+    r"year|season|(^|_)(yr|id|code|fips|iso|iso\d|numeric|week|month|level)($|_)"
+    r"|(location|question|response|topic|cause|measure|metric|age|sex|type|category)id$"
+)
+# Level names that are the total of the other levels in their column (compared case-insensitively).
+ESTIMATE_TOTAL_LEVELS: Final = frozenset(
+    {
+        "both",
+        "both sexes",
+        "all sexes",
+        "all",
+        "all ages",
+        "all age groups",
+        "all races",
+        "all races/ethnicities",
+        "all races and ethnicities",
+        "total",
+        "overall",
+        "all causes",
+        "entire network",
+        "united states",
+        "us",
+        "u.s.",
+        "usa",
+        "national",
+        "global",
+        "world",
+    }
+)
+# A level naming a county-like part of a state: the other levels in that column are its totals.
+ESTIMATE_SUBAREA_NAME: Final = re.compile(r"\b(county|parish|borough|census area|municipality)\s*$", re.IGNORECASE)
+ESTIMATE_MAX_LISTED_LEVELS: Final = 5000  # levels read to find totals; a key with more lists none
+ESTIMATE_LEVELS_IN_HOLD: Final = 6
+
+ESTIMATE_PATIENT_TEST_REFUSAL: Final = (
+    "Each row of this file is an estimate for a group, not a patient, so patient-level tests (models, "
+    "survival curves, correlations) don't apply. Ask for the estimates themselves, for example by year or "
+    "by location."
+)
+ESTIMATE_SHARE_REFUSAL: Final = (
+    "Each row of this file is an estimate, not a patient, so a share of rows is not a share of people. "
+    "Ask for the value column that holds the percent or rate."
+)
+ESTIMATE_KEY_NOT_VALUE: Final = (
+    "{column} is one of the columns that identify each estimate ({key}), not a value. Ask about a value "
+    "column instead, by {column}."
+)
+ESTIMATE_WHICH_VALUE: Final = "Name the value column you want, for example {values}."
+ESTIMATE_GROUP_NOT_KEY: Final = (
+    "{column} does not identify the estimates ({key}), so a breakdown by it would mix several estimates "
+    "in each group. Ask by one of those columns instead."
+)
+ESTIMATE_NO_ROWS: Final = "No estimate matches the question's limits. Check the place, year and group you named."
+ESTIMATE_OPEN_REFUSAL: Final = (
+    "This file holds estimates, {key}. The question doesn't fix {open}. Averaging across those rows would "
+    "mix overlapping groups and unweighted rates. Name one value for each of {name}, or ask for a "
+    "breakdown by one of them."
+)
+ESTIMATE_OPEN_HOLD: Final = (
+    "This file holds estimates, {key}. The question doesn't fix {open}. Confirm to use {totals} and save "
+    "that choice for this dataset, or name another value."
+)
+ESTIMATE_UNDECLARED_REFUSAL: Final = (
+    "This file looks like population estimates: each row is a value for a group, not a patient. It "
+    "wasn't marked '" + POPULATION_ESTIMATES_LABEL + "' at upload, so each row is treated as one person "
+    "and the small-cell rule hides it. If the file holds only published estimates, upload it again with "
+    "that box ticked."
+)
+ESTIMATE_TOTAL_LEFT_OUT: Final = "{levels} is the total of the other {column} values, so it is left out."
+ESTIMATE_SAVED_CHOICE_NOTE: Final = "Uses {column} = {level}, the choice saved for this dataset."
+ESTIMATE_SMALL_COUNT_NOTE: Final = "Counts from 1 to 10 are hidden."
+ESTIMATE_NO_BOUNDS_NOTE: Final = "This file gives no intervals for these values."
+ESTIMATE_DUPLICATE_ROWS: Final = (
+    "More than one row matches a group of this answer, so it isn't shown. Name a value for every column "
+    "that identifies the estimates."
+)
+# GX equivalent: expect_column_pair_values_a_to_be_greater_than_b (or_equal=True) for value/lower and
+# upper/value, checked per shown row at answer time rather than as an upload-time suite.
+ESTIMATE_BAD_INTERVAL_NOTE: Final = (
+    "The file's interval doesn't contain the estimate for {groups}, so no interval is shown there."
+)
+ESTIMATE_NO_TEST_NOTE: Final = "Estimates are compared by their intervals; no significance test is run on them."
+# Words an estimate question uses for the file's own structure, not for a column or value: removed
+# before word accounting on an estimate table (core/estimates.py ``grounded_words``; compared after
+# lowercasing and dropping a plural "s").
+ESTIMATE_QUESTION_WORDS: Final = frozenset(
+    {
+        "rate",
+        "mortality",
+        "death",
+        "incidence",
+        "prevalence",
+        "estimate",
+        "estimated",
+        "value",
+        "per",
+        "100000",
+        "100",
+        "000",
+        "how",
+        "did",
+        "change",
+        "changed",
+        "trend",
+        "over",
+        "time",
+        "year",
+        "yearly",
+        "annual",
+        "each",
+        "from",
+        "to",
+        "between",
+        "and",
+        "compare",
+        "compared",
+        "versu",
+        "vs",
+        "which",
+        "highest",
+        "lowest",
+        "rank",
+        "top",
+        "county",
+        "countie",
+        "both",
+        "sexe",
+        "sex",
+        "for",
+        "in",
+        "the",
+        "of",
+        "what",
+        "wa",
+        "is",
+        "had",
+        "by",
+        "interval",
+        "overlap",
+        "uncertainty",
+        "bound",
+        "ci",
+        "confidence",
+        "do",
+        "their",
+        "with",
+        "it",
+        "show",
+        "give",
+        "me",
+        "a",
+        "an",
+    }
+)

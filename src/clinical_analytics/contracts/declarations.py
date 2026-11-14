@@ -64,6 +64,26 @@ class LevelMapping(BaseModel):
     dataset_version: str | None = None
 
 
+class PopulationEstimatesDeclaration(BaseModel):
+    """The person declared at upload that the dataset holds public population estimates and no
+    patient-level data (ADR014). Per dataset, not per version: it describes what the file is."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    statement: str
+
+
+class DimensionChoice(BaseModel):
+    """The level of a key dimension the person chose for questions that leave it open (ADR014):
+    "sex = Both" once confirmed is used, and named, in every later answer on that version."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    column: str
+    value: str | int | float
+    dataset_version: str | None = None
+
+
 class Declarations(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -71,6 +91,8 @@ class Declarations(BaseModel):
     # after a re-upload stores its own version's grain and never replaces the current version's.
     grains: tuple[GrainDeclaration, ...] = ()
     levels: tuple[LevelMapping, ...] = ()
+    population_estimates: PopulationEstimatesDeclaration | None = None
+    choices: tuple[DimensionChoice, ...] = ()
 
     @model_validator(mode="before")
     @classmethod
@@ -109,10 +131,30 @@ class Declarations(BaseModel):
         """The level mappings confirmed on ``dataset_version`` (others belong to other data)."""
         return tuple(m for m in self.levels if m.dataset_version == dataset_version)
 
+    def with_population_estimates(self, declaration: PopulationEstimatesDeclaration) -> Declarations:
+        return self.model_copy(update={"population_estimates": declaration})
+
+    def with_choice(self, choice: DimensionChoice) -> Declarations:
+        """These declarations with ``choice`` as its column's choice on its version."""
+        kept = tuple(
+            c for c in self.choices if not (c.column == choice.column and c.dataset_version == choice.dataset_version)
+        )
+        return self.model_copy(update={"choices": (*kept, choice)})
+
+    def choices_for(self, dataset_version: str | None) -> dict[str, str | int | float]:
+        """column -> chosen level, for the choices made on ``dataset_version``."""
+        return {c.column: c.value for c in self.choices if c.dataset_version == dataset_version}
+
     def for_version(self, dataset_version: str | None) -> Declarations:
-        """Only what was confirmed on ``dataset_version``: all a question on that version reads."""
+        """Only what was confirmed on ``dataset_version``: all a question on that version reads
+        (plus the dataset-wide population-estimates declaration)."""
         grain = self.grain_for(dataset_version)
-        return Declarations(grains=() if grain is None else (grain,), levels=self.levels_for(dataset_version))
+        return Declarations(
+            grains=() if grain is None else (grain,),
+            levels=self.levels_for(dataset_version),
+            population_estimates=self.population_estimates,
+            choices=tuple(c for c in self.choices if c.dataset_version == dataset_version),
+        )
 
 
 class DeclarationStore(Protocol):

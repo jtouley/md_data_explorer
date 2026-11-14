@@ -1151,7 +1151,15 @@ def _hidden_total_claim(analysis: Mapping[str, Any], total: Any) -> str:
     return f"Total count: {suppress_count(total)}{unit}."
 
 
+def _present_estimates(analysis: Mapping[str, Any]) -> Presentation:
+    """Estimate answers (core/estimates.py) carry their claim and table, built from the file's
+    estimate rows; counts of 1-10 are already hidden there."""
+    table = analysis.get("table")
+    return {"claim": analysis.get("claim"), "table": table if isinstance(table, dict) else None}  # type: ignore[typeddict-item]
+
+
 _PRESENTERS = {
+    "estimates": _present_estimates,
     "comparison": _present_comparison,
     "predictor": _present_predictor,
     "relationship": _present_relationship,

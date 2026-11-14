@@ -1029,6 +1029,63 @@ def mock_semantic_layer():
 
 
 @pytest.fixture
+def make_estimate_frame():
+    """
+    Factory fixture for synthetic population-estimate tables shaped like IHME county files
+    (ADR014): a state row plus its counties x causes x years x sexes, rate ``mx`` with ``lower``
+    and ``upper`` bounds, and ID columns that repeat the labels. Values are made up.
+
+    Usage:
+        def test_example(make_estimate_frame):
+            frame = make_estimate_frame(counties=25, years=(2014,))
+    """
+
+    def _make(
+        counties: int = 3,
+        years: tuple[int, ...] = (2010, 2014),
+        causes: tuple[str, ...] = ("Cardiovascular diseases", "Ischemic heart disease"),
+        sexes: tuple[str, ...] = ("Both", "Male", "Female"),
+        state: str = "Colorado",
+        half_width: float = 0.03,
+    ) -> pl.DataFrame:
+        places = [(state, 8)] + [(f"Place{i:02d} County", 8000 + i) for i in range(1, counties + 1)]
+        sex_factor = {"Both": 1.0, "Male": 1.15, "Female": 0.87}
+        rows = []
+        for place_index, (place, fips) in enumerate(places):
+            for cause_index, cause in enumerate(causes):
+                for year in years:
+                    for sex_index, sex in enumerate(sexes):
+                        value = round(
+                            400.0
+                            / (cause_index + 1)
+                            * (1 + 0.05 * place_index)
+                            * sex_factor.get(sex, 1.0)
+                            * (1 - 0.01 * (year - years[0])),
+                            2,
+                        )
+                        half = round(value * half_width, 2)
+                        rows.append(
+                            {
+                                "location_id": fips,
+                                "location_name": place,
+                                "FIPS": fips,
+                                "cause_id": 400 + cause_index,
+                                "cause_name": cause,
+                                "sex_id": sex_index + 1,
+                                "sex": sex,
+                                "year_id": year,
+                                "metric": "Rate",
+                                "mx": value,
+                                "lower": round(value - half, 2),
+                                "upper": round(value + half, 2),
+                            }
+                        )
+        return pl.DataFrame(rows)
+
+    return _make
+
+
+@pytest.fixture
 def make_semantic_layer(tmp_path):
     """
     Factory fixture for creating SemanticLayer instances.
