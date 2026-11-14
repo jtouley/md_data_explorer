@@ -37,7 +37,6 @@ class TestColumnContext:
             dtype="coded",
             units=None,
             codebook={"1": "Biktarvy", "2": "Symtuza"},
-            stats={"min": 1, "max": 3, "unique_count": 3},
         )
 
         # Assert: Verify all fields exist and are correct type
@@ -48,7 +47,6 @@ class TestColumnContext:
         assert column_context.dtype in ("numeric", "categorical", "datetime", "id", "coded")
         assert column_context.units is None or isinstance(column_context.units, str)
         assert column_context.codebook is None or isinstance(column_context.codebook, dict)
-        assert column_context.stats is None or isinstance(column_context.stats, dict)
 
     def test_column_context_optional_fields_default_to_none(self):
         """Test that optional fields default to None."""
@@ -64,7 +62,7 @@ class TestColumnContext:
         # Assert: Optional fields should default to None
         assert column_context.units is None
         assert column_context.codebook is None
-        assert column_context.stats is None
+        assert not hasattr(column_context, "stats")  # observed values never reach the model
 
 
 class TestAutoContext:
@@ -251,43 +249,24 @@ class TestBuildAutoContext:
         # With 1000 token budget, should truncate to ~80 columns
         assert len(autocontext.columns) < 100
 
-    def test_build_autocontext_no_row_level_data(self, mock_semantic_layer):
-        """Test that build_autocontext() contains no row-level data (privacy validation)."""
-        # Arrange
-        mock_sl = mock_semantic_layer(columns={"patient_id": "patient_id", "age": "age"})
+    def test_build_autocontext_metadataWithMinMaxTopValues_carriesNoObservedValues(self, mock_semantic_layer):
+        """min, max and value counts in the column metadata never reach the model's context."""
+        # Arrange: column metadata as uploads store it, with observed statistics
+        mock_sl = mock_semantic_layer(columns={"patient_id": "patient_id", "smoker": "smoker"})
+        observed = {"min": 0, "max": 1, "top_values": {"rare_level": 3, "common_level": 400}}
+        mock_sl.get_column_metadata.return_value = {"type": "categorical", "metadata": observed}
 
         from clinical_analytics.core.schema_inference import InferredSchema
 
-        inferred_schema = InferredSchema(
-            patient_id_column="patient_id",
-            continuous_columns=["age"],
-        )
+        inferred_schema = InferredSchema(patient_id_column="patient_id", categorical_columns=["smoker"])
 
-        # Act: Build AutoContext
-        autocontext = build_autocontext(
-            semantic_layer=mock_sl,
-            inferred_schema=inferred_schema,
-            doc_context=None,
-            query_terms=None,
-            max_tokens=4000,
-        )
+        # Act
+        autocontext = build_autocontext(semantic_layer=mock_sl, inferred_schema=inferred_schema, max_tokens=4000)
 
-        # Assert: No row-level data in AutoContext
-        # Check constraints
+        # Assert
         assert autocontext.constraints["no_row_level_data"] is True
-
-        # Check columns - stats should only contain aggregated data (min/max/mean, not individual values)
-        for col in autocontext.columns:
-            if col.stats:
-                # Stats should only have aggregated keys, not row-level data
-                allowed_keys = {"min", "max", "mean", "median", "std", "count", "unique_count", "top_values"}
-                assert all(key in allowed_keys for key in col.stats.keys())
-                # top_values should be counts, not raw values
-                if "top_values" in col.stats:
-                    top_vals = col.stats["top_values"]
-                    if isinstance(top_vals, dict):
-                        # Should be value -> count mapping, not raw row data
-                        assert all(isinstance(v, int | float) for v in top_vals.values())
+        assert "rare_level" not in repr(autocontext)
+        assert all(not hasattr(col, "stats") for col in autocontext.columns)
 
 
 class TestEstimateTokens:

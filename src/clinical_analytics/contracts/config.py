@@ -188,6 +188,31 @@ class UnitBounds:
 UNIT_HINTS: Final[tuple[str, ...]] = ("mmoll", "mmol", "mgdl", "mgl", "meql", "meq", "gdl", "gl", "umoll", "µmoll")
 WIDE_BOUND_NOTE: Final = "unit unknown, wide bound"
 
+# Where a documented field came from when it is the upload's data dictionary (``unitSource``), and
+# the codes of ``enum`` the dictionary added: there only when every value the column holds is one
+# of its codes (``builder.documented_enum``).
+DICTIONARY_SOURCE: Final = "dictionary"
+DICTIONARY_CODES_PROPERTY: Final = "dictionaryCodes"
+# Contract-level marks: the builder read the upload's dictionary and checked its codes (a contract
+# written before has neither, ``contracts.context``), and the terms the dictionary defines.
+DICTIONARY_READ_PROPERTY: Final = "dictionaryRead"
+GLOSSARY_PROPERTY: Final = "glossary"
+# The model's view of a contract (``contracts.context``, ``core.nl_query_engine``): one mapping
+# from a property's logicalType to how the prompt names it, so no two readers disagree.
+NUMERIC_LOGICAL_TYPES: Final[frozenset[str]] = frozenset({"number", "integer"})
+DATETIME_LOGICAL_TYPES: Final[frozenset[str]] = frozenset({"date", "timestamp", "time"})
+
+# Units a data dictionary names in parentheses ("weight (kg) at baseline"), compared lower-cased.
+# A closed list: "(yes/no)" or "(optional)" is not a unit.
+DICTIONARY_UNITS: Final[frozenset[str]] = frozenset(
+    {
+        *("kg", "g", "mg", "µg", "ug", "lb", "lbs", "cm", "mm", "m", "in", "ml", "l", "dl"),
+        *("years", "year", "yrs", "yr", "months", "weeks", "days", "hours", "hrs", "minutes", "min", "seconds"),
+        *("mg/dl", "g/dl", "g/l", "mg/l", "mmol/l", "µmol/l", "umol/l", "meq/l", "u/l", "iu/l", "ng/ml", "pg/ml"),
+        *("mmhg", "bpm", "°c", "°f", "kg/m2", "kg/m²", "cells/mm3", "cells/µl", "cells/ul", "%", "percent"),
+    }
+)
+
 
 PLAUSIBILITY_RANGES: Final[tuple[PlausibilityRange, ...]] = (
     PlausibilityRange(
