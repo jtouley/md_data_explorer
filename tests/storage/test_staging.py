@@ -14,8 +14,10 @@ from polars.testing import assert_frame_equal
 from clinical_analytics.contracts.config import MISSING_VALUE_TOKENS
 from clinical_analytics.storage.staging import (
     ID_COLUMN_NAMES,
+    ExcelSheets,
     StagingError,
     describe_column_types,
+    describe_sheets,
     read_csv_typed,
     read_excel_typed,
     settle_shared_column_types,
@@ -564,3 +566,221 @@ def test_settleSharedColumnTypes_sameTypes_unchanged():
     # Assert
     assert notes == []
     assert_frame_equal(settled["a"], frames["a"])
+
+
+def _with_declared_dimension(xlsx: bytes, ref: str) -> bytes:
+    """The workbook with its first sheet's <dimension> rewritten (as some exporters write it)."""
+    import re
+    import zipfile
+
+    src, out = zipfile.ZipFile(io.BytesIO(xlsx)), io.BytesIO()
+    with zipfile.ZipFile(out, "w") as dst:
+        for item in src.infolist():
+            data = src.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                data = re.sub(rb'<dimension ref="[^"]*"', b'<dimension ref="' + ref.encode() + b'"', data)
+            dst.writestr(item, data)
+    return out.getvalue()
+
+
+@pytest.mark.parametrize("declared", ["A1:A1", "A1:B2", "A1:C4"])  # C4: true size, a no-regression case
+def test_read_excel_typed_wrongDeclaredDimension_readsEveryColumn(declared):
+    # Arrange: a title row above the header, and a sheet that declares itself smaller than it is
+    rows = [
+        ("Cardiovascular diseases", None, None),
+        ("Location", "FIPS", "Rate"),
+        ("Colorado", 8, 209.5),
+        ("Adams County, Colorado", 8001, 203.1),
+    ]
+    xlsx = _with_declared_dimension(_xlsx(rows), declared)
+
+    # Act
+    staged = read_excel_typed(xlsx)
+
+    # Assert: the header row is found and no column is cut off
+    expected = pl.DataFrame(
+        {"Location": ["Colorado", "Adams County, Colorado"], "FIPS": [8, 8001], "Rate": [209.5, 203.1]}
+    )
+    assert_frame_equal(staged.data, expected, check_dtypes=False)
+
+
+# --- workbooks: title rows above the header, and sheets that are not read -------------------
+
+_HEADER = ("location_name", "sex", "year", "mx")
+
+
+def _geo_rows(n: int = 24) -> list[tuple[object, ...]]:
+    return [(f"Area {i % 4}", ("Male", "Female")[i % 2], 2000 + i % 6, 100.5 + i) for i in range(n)]
+
+
+def _workbook(sheets: dict[str, list[tuple[object, ...]]]) -> bytes:
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    for title, rows in sheets.items():
+        ws = wb.create_sheet(title)
+        for row in rows:
+            ws.append(list(row))
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+@pytest.mark.parametrize(
+    "above",
+    [
+        pytest.param([("Synthetic mortality rates, 2000-2005",)], id="title_in_A1"),
+        pytest.param([("Synthetic mortality rates",), ()], id="title_then_blank"),
+        pytest.param([("Synthetic mortality rates",), ("Source: generated",), ()], id="two_titles_then_blank"),
+        pytest.param([], id="no_title"),
+    ],
+)
+def test_readExcelTyped_titleRowsAboveHeader_readsHeaderAndEveryRow(above: list[tuple[object, ...]]) -> None:
+    # Arrange
+    data = _xlsx([*above, _HEADER, *_geo_rows()])
+
+    # Act
+    staged = read_excel_typed(data)
+
+    # Assert
+    assert staged.data.columns == list(_HEADER)
+    assert staged.data.height == 24
+    assert staged.data.schema["mx"] == pl.Float64
+    assert staged.sheets == ExcelSheets(read="Sheet", skipped=())
+
+
+@pytest.mark.parametrize(
+    ("sheets", "expected"),
+    [
+        pytest.param({"Deaths": [_HEADER, *_geo_rows()]}, ExcelSheets("Deaths"), id="one_sheet"),
+        pytest.param(
+            {"Deaths": [_HEADER, *_geo_rows()], "Population": [_HEADER, *_geo_rows(6)], "Notes": [("Generated",)]},
+            ExcelSheets("Deaths", ("Population", "Notes")),
+            id="three_sheets_with_data",
+        ),
+        pytest.param(
+            {"Deaths": [_HEADER, *_geo_rows()], "Sheet2": [], "Sheet3": [(None, "  ")]},
+            ExcelSheets("Deaths", empty=2),
+            id="empty_sheets_notNamed",
+        ),
+    ],
+)
+def test_readExcelTyped_workbookSheets_readsFirstAndNamesSkipped(
+    sheets: dict[str, list[tuple[object, ...]]], expected: ExcelSheets
+) -> None:
+    # Arrange
+    data = _workbook(sheets)
+
+    # Act
+    staged = read_excel_typed(data)
+
+    # Assert
+    assert staged.sheets == expected
+    assert staged.data.columns == list(_HEADER)
+    assert staged.data.height == 24
+
+
+_READ_DEATHS = "Read 1 of {total} sheets: “Deaths”. Not read: {names}. "
+_ANOTHER = "To use another sheet, save it as its own file and upload it."
+
+
+@pytest.mark.parametrize(
+    ("sheets", "expected"),
+    [
+        pytest.param(None, "", id="not_excel"),
+        pytest.param({}, "", id="empty"),
+        pytest.param({"read": "Deaths", "skipped": []}, "", id="one_sheet"),
+        pytest.param({"read": "Deaths", "skipped": [], "empty": 2}, "", id="only_empty_others"),
+        pytest.param({"read": "Deaths", "skipped": "Notes"}, "", id="malformed_skipped"),
+        pytest.param({"read": "Deaths", "skipped": [], "footnote_rows": True}, "", id="malformed_footnotes"),
+        pytest.param(
+            {"read": "Deaths", "skipped": ["Notes"]},
+            _READ_DEATHS.format(total=2, names="“Notes”") + _ANOTHER,
+            id="one_skipped",
+        ),
+        pytest.param(
+            {"read": "Deaths", "skipped": ["Population", "Notes"], "empty": 0},
+            _READ_DEATHS.format(total=3, names="“Population” and “Notes”") + _ANOTHER,
+            id="two_skipped",
+        ),
+        pytest.param(
+            {"read": "Deaths", "skipped": ["A", "B"], "empty": 1},
+            _READ_DEATHS.format(total=4, names="“A”, “B” and 1 empty sheet") + _ANOTHER,
+            id="skipped_and_one_empty",
+        ),
+        pytest.param(
+            {"read": "Deaths", "skipped": ["A"], "empty": 3},
+            _READ_DEATHS.format(total=5, names="“A” and 3 empty sheets") + _ANOTHER,
+            id="skipped_and_empties",
+        ),
+        pytest.param(
+            {"read": "Deaths", "skipped": [], "footnote_rows": 1},
+            "1 row below the data, after a blank row, was read as a note, not a patient, and is not in the data.",
+            id="one_footnote",
+        ),
+        pytest.param(
+            {"read": "Deaths", "skipped": ["Notes"], "footnote_rows": 2},
+            _READ_DEATHS.format(total=2, names="“Notes”")
+            + _ANOTHER
+            + " 2 rows below the data, after a blank row, were read as notes, not patients, and are not in the data.",
+            id="skipped_and_footnotes",
+        ),
+    ],
+)
+def test_describeSheets_workbook_saysWhatWasReadAndLeftOut(sheets: dict[str, object] | None, expected: str) -> None:
+    # Arrange: sheets above, as stored in upload metadata
+
+    # Act
+    note = describe_sheets(sheets)
+
+    # Assert
+    assert note == expected
+
+
+_FOOTNOTE = ("Source: synthetic rates generated for tests.",)
+
+
+@pytest.mark.parametrize(
+    ("tail", "footnote_rows"),
+    [
+        pytest.param([(), _FOOTNOTE], 1, id="blank_then_footnote"),
+        pytest.param([(), _FOOTNOTE, ("Rates per 100,000 people.",)], 2, id="blank_then_two_footnotes"),
+        pytest.param([(), _FOOTNOTE, (), ("Generated 2026.",), ()], 2, id="footnotes_between_blanks"),
+        pytest.param([(), ()], 0, id="trailing_blanks_only"),
+        pytest.param([], 0, id="no_tail"),
+    ],
+)
+def test_readExcelTyped_footnoteBelowBlankRow_isDroppedAndCounted(
+    tail: list[tuple[object, ...]], footnote_rows: int
+) -> None:
+    # Arrange: the real workbook's shape, a blank row then a source note under the data
+    data = _xlsx([_HEADER, *_geo_rows(), *tail])
+
+    # Act
+    staged = read_excel_typed(data)
+
+    # Assert
+    assert staged.data.height == 24
+    assert staged.sheets is not None
+    assert staged.sheets.footnote_rows == footnote_rows
+
+
+def test_readExcelTyped_blankRowInsideData_failsLoudly() -> None:
+    # Arrange: a blank row with data below it is never skipped as a footnote gap
+    data = _xlsx([_HEADER, *_geo_rows(), (), ("Area 9", "Male", 2001, 5.5)])
+
+    # Act / Assert
+    with pytest.raises(StagingError, match="empty line"):
+        read_excel_typed(data)
+
+
+def test_readExcelTyped_noteWithoutBlankRowAbove_staysData() -> None:
+    # Arrange: a one-cell row right under the data (no blank row) is data, not a footnote
+    data = _xlsx([_HEADER, *_geo_rows(), _FOOTNOTE])
+
+    # Act
+    staged = read_excel_typed(data)
+
+    # Assert
+    assert staged.data.height == 25
+    assert staged.sheets is not None
+    assert staged.sheets.footnote_rows == 0

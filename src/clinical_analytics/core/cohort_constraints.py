@@ -17,8 +17,11 @@ from typing import Any
 from clinical_analytics.core.column_parser import parse_column_name
 from clinical_analytics.core.query_plan import STATISTIC_WORDS, CohortStep, Statistic
 from clinical_analytics.core.question_vocabulary import (
+    GROUPING_WORDS,
     NEGATION_CUES,
     NO_LIMIT_WORDS,
+    QUANTITY_WORDS,
+    QUESTION_FORM_WORDS,
     RANGE_PATTERN,
     NegationScope,
     negation_scope,
@@ -521,7 +524,7 @@ def unapplied_constraints(
         # Words word accounting treats as carrying no limit ("are there", "patients", "taking")
         # are not gaps: the two checks share one vocabulary. Name the words themselves: the
         # user sees this list.
-        grouping = {"by", "each", "per"} if getattr(plan, "group_by", None) else set()
+        grouping = GROUPING_WORDS if getattr(plan, "group_by", None) else frozenset()
         gaps.extend(sorted(tokens - used_tokens - NO_LIMIT_WORDS - grouping))
     return gaps
 
@@ -554,12 +557,16 @@ def _value_hits(
 ) -> list[tuple[str, Any, int]]:
     """(column, value, position) of each stored value the question names, one value per column."""
     hits: list[tuple[str, Any, int]] = []
-    tokens = _tokens(text, digits=True)
+    # The question's grammar ("count", "number", "by", "per", "average") never names a value:
+    # "count by sex" is not location_name = "Count Lake".
+    tokens = _tokens(text, digits=True) - QUESTION_FORM_WORDS
     words = frozenset(re.findall(r"[a-z0-9]+", text))
     for column in columns:
-        # Rank (exact word, inflection, prefix), then specificity (more words of the value
-        # named: "North East" over "North"). Two values tied on both is ambiguous: bind
-        # neither, so the unbound word holds the plan. Never decide by value order.
+        # Rank (exact word, inflection, shared stem), then specificity: how many words of the
+        # value the question names ("North East" over "North" for "north east"). Never the
+        # value's own length: "county" names one word of "Las Animas County" and of "Adams
+        # County" alike, so they tie. Two values tied on both is ambiguous: bind neither, so
+        # the unbound word holds the plan. Never decide by value order.
         found_values: list[tuple[int, int, int, Any]] = []
         # Only the labels the question could name are tried (_LabelIndex); each is then
         # checked by _label_at exactly as if every label were tried.
@@ -567,7 +574,7 @@ def _value_hits(
             found = _label_at(text, tokens, label.text, label.pattern())
             if found is None:
                 continue
-            found_values.append((found[0], -len(label.tokens), found[1], label.value))
+            found_values.append((found[0], -_named_words(tokens, label.tokens), found[1], label.value))
         if not found_values:
             continue
         found_values.sort(key=lambda item: (item[0], item[1]))
@@ -609,7 +616,7 @@ class _LabelIndex:
     ``candidates`` returns, in label order, every label _label_at could find in a question
     (a superset): a phrase whose words all occur; a label with a token among the question's
     tokens (rank 0); an inflected label (rank 1); a label with a token that a question token
-    of four or more letters starts or stem-matches (rank 2).
+    of four or more letters stem-matches (rank 2).
     """
 
     def __init__(self, column: str, stored: list[Any]) -> None:
@@ -652,7 +659,7 @@ class _LabelIndex:
         for token in tokens:
             found.update(self._by_token.get(token, ()))
             if len(token) >= 4 and not token.isdigit():
-                for part in {*self._parts.starting_with(token), *self._parts.matches(token)}:
+                for part in self._parts.matches(token):
                     found.update(self._by_token[part])
         return [self.labels[at] for at in sorted(found)]
 
@@ -673,14 +680,13 @@ def _label_at(
 ) -> tuple[int, int] | None:
     """(rank, position) of a stored value named in the question, or None.
 
-    Rank 0 is every word of the value, 1 an English inflection, 2 a word that starts a
-    word of the value ("diabet" for "diabetes") or shares its stem ("northern" for "North").
-    A word inside another word does not count: "male" is inside "female" and must never
-    select it. A value with a one-letter or number word ("drug A", "Type 2") is named only
-    by those words in that order: "on a drug" does not name "drug A".
+    Rank 0 is every word of the value, 1 an English inflection, 2 a whole word of the value
+    or a word that shares its stem ("diabetic" for "diabetes", "counties" for "County"). A
+    word is matched whole, never by prefix: "count" does not name "County", nor "northern"
+    "North" (see _names_word). A word inside another word does not count: "male" is inside
+    "female" and must never select it. A value with a one-letter or number word ("drug A",
+    "Type 2") is named only by those words in that order: "on a drug" does not name "drug A".
     """
-    from clinical_analytics.core.word_accounting import stem_match
-
     words = re.findall(r"[a-z0-9]+", label)
     if len(words) > 1 and any(len(word) == 1 or word.isdigit() for word in words):
         phrase = (phrase_pattern or _phrase_pattern(words)).search(text)
@@ -692,16 +698,36 @@ def _label_at(
     shared = inflections & tokens
     if shared:
         return 1, min(_word_at(text, word) for word in shared)
-    prefixed = [
+    named = [
         token
         for token in tokens
-        if len(token) >= 4
-        and not token.isdigit()
-        and any(part.startswith(token) or stem_match(token, part) for part in label_tokens)
+        if len(token) >= 4 and not token.isdigit() and any(_names_word(token, part) for part in label_tokens)
     ]
-    if prefixed:
-        return 2, min(_word_at(text, token) for token in prefixed)
+    if named:
+        return 2, min(_word_at(text, token) for token in named)
     return None
+
+
+def _names_word(word: str, part: str) -> bool:
+    """True when the question word ``word`` names the value word ``part`` as a whole word.
+
+    The same word or its plural ("statins", "statin"), or a shared stem where both words go
+    on past it ("diabetic", "diabetes"; "counties", "county"). Never a prefix: "count" is the
+    start of "county" and "north" the start of "northern", but a word that is only the start
+    of another is a different word.
+    """
+    from clinical_analytics.core.word_accounting import stem_match
+
+    if word.rstrip("s") == part.rstrip("s"):
+        return True
+    if word.startswith(part) or part.startswith(word):
+        return False
+    return stem_match(word, part)
+
+
+def _named_words(tokens: set[str], label_tokens: frozenset[str]) -> int:
+    """How many words of a value the question names (whole words, see _names_word)."""
+    return sum(1 for part in label_tokens if any(_names_word(token, part) for token in tokens))
 
 
 def _word_at(text: str, word: str) -> int:
@@ -732,12 +758,6 @@ def _binary_polarity(
     return no if scope == "negated" else yes
 
 
-# Words that may stand right before a yes/no column without changing what it means.
-_PLAIN_LEAD = frozenset(
-    {"how", "many", "number", "count", "total", "proportion", "share", "percentage", "percent", "fraction"}
-)
-
-
 def _qualified(text: str, at: int, columns: list[str], values_for: Callable[[str], list[Any]]) -> bool:
     """True when a word qualifies the column word, so it is not bound as yes/no.
 
@@ -754,7 +774,7 @@ def _qualified(text: str, at: int, columns: list[str], values_for: Callable[[str
     if not before:
         return False
     word = before[-1]
-    if word in NO_LIMIT_WORDS or word in _PLAIN_LEAD or word.isdigit() or word in NEGATION_CUES:
+    if word in NO_LIMIT_WORDS or word in QUANTITY_WORDS or word.isdigit() or word in NEGATION_CUES:
         return False
     if any(_tokens(word) & _tokens(column) for column in columns):
         return False
