@@ -1,0 +1,52 @@
+# Public datasets the acceptance harness (`make accept`) uploads through the real upload path.
+# Field names follow the corpus manifest (name, files[].path/url/sha256/bytes/kind, license,
+# upload_package). Files are fetched into a cache outside the repo and checked by sha256; no
+# data is ever committed (scripts/check_no_data_files.py).
+datasets:
+  - name: covid_ms
+    title: COVID-19 and Multiple Sclerosis Global Data Sharing Initiative (GDSI) open dataset v1.0.1
+    landing_page: https://physionet.org/content/patient-level-data-covid-ms/1.0.1/
+    doi: https://doi.org/10.13026/77ta-1866
+    license:
+      id: CC-BY-4.0
+      url: https://creativecommons.org/licenses/by/4.0/legalcode
+      text_url: https://physionet.org/files/patient-level-data-covid-ms/1.0.1/LICENSE.txt
+      terms: Attribution required; cite Khan et al. (PhysioNet 2024) and Goldberger et al. (2000). No DUA.
+    grain: patient (one row per person with MS reporting COVID-19)
+    rows: 1141
+    id_column: secret_name
+    files:
+      - path: GDSI_OpenDataset_Final.csv
+        url: https://physionet.org/files/patient-level-data-covid-ms/1.0.1/GDSI_OpenDataset_Final.csv?download
+        kind: table
+        sha256: 8aafa48e4f5a4db9d1a15924317dce94745ea56b59e9b7cc7be2bfc4ecb97498
+        bytes: 226488
+      - path: README.txt
+        url: https://physionet.org/files/patient-level-data-covid-ms/1.0.1/README.txt?download
+        kind: documentation
+        sha256: a59bce57e26f71ad7be502faaa935b6d115dfc0725512e1c982749bf2195f0e8
+        bytes: 1499
+      - path: LICENSE.txt
+        url: https://physionet.org/files/patient-level-data-covid-ms/1.0.1/LICENSE.txt?download
+        kind: license
+        sha256: 9a78e7f22742dde9f66ae235ec793ba2212019dc4d0ced75c4da09ced0b35fb2
+        bytes: 14842
+      # PhysioNet publishes no dictionary file: the variable descriptions are the "Data
+      # Description" section of the project page. The live page is not a stable artifact (view
+      # counts, "Cited by", site template), so only that section's plain text is kept and pinned.
+      - path: data_description.txt
+        url: https://physionet.org/content/patient-level-data-covid-ms/1.0.1/
+        kind: dictionary
+        extract_section: description
+        sha256: 68abce896b33058d9112a180e1a9e23dd9825ec9f5f95143e6f67a2380d77a41
+        bytes: 13808
+    dictionary_url: https://physionet.org/content/patient-level-data-covid-ms/1.0.1/
+    upload_package:
+      zip: covid_ms.zip
+      # archive name -> source file path (copied as fetched and checked)
+      contents:
+        - {name: GDSI_OpenDataset_Final.csv, from: GDSI_OpenDataset_Final.csv, make: copy}
+        - {name: README.txt, from: README.txt, make: copy}
+        - {name: LICENSE.txt, from: LICENSE.txt, make: copy}
+        - {name: data_dictionary.txt, from: data_description.txt, make: copy}
+      sha256: a3639ebca2068df992230516e3608924daed23ca2be7532cd978a14e6ecae7ae  # deterministic: sorted, stored, fixed metadata

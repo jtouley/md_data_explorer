@@ -8,15 +8,14 @@ Assumes you have done the [Installation](installation.md) steps.
    ./scripts/run_app.sh
    ```
 
-   On Windows (or if you prefer two terminals), start the API and then the desktop app:
+   On any OS, including Windows, start the desktop app; it starts its own backend:
 
    ```bash
-   uv run python -m clinical_analytics.api.serve --port 8000
-   cd electron && npm start        # second terminal
+   cd electron && npm start
    ```
 
-2. In the desktop app, click **Load sample**. This loads the bundled synthetic sample cohort (`src/clinical_analytics/resources/demo/sample_cohort.csv`; no real patients).
-3. Ask `compare outcome by diabetes`, then `what predicts outcome`.
-4. To use your own data, click **Upload dataset**. See [Uploading data](uploading-data.md).
+2. In the desktop app, click **Use the sample cohort**. This loads the bundled synthetic sample cohort (`src/clinical_analytics/resources/demo/sample_cohort.csv`; no real patients).
+3. Ask `compare outcome by diabetes`, then `compare age by outcome`.
+4. To use your own data, click **Upload a file…**. See [Uploading data](uploading-data.md).
 
 Patient counts from 1 to 10 are shown as `<11` in answers.
