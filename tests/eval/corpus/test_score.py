@@ -5,13 +5,9 @@ Synthetic answers only; the numbers below are made up.
 
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
 from typing import Any
 
-import polars as pl
 import pytest
-from polars.testing import assert_frame_equal
 
 from clinical_analytics.api.services.query_service import UNEXPECTED_FAILURE_MESSAGE
 from clinical_analytics.eval.corpus.run import _server_note, parse_tiers
@@ -300,23 +296,74 @@ class TestServerNote:
         assert ("exited with code" in note) is expected_flagged
 
 
-class TestOracleReading:
-    def test_scan_codedTextColumns_keptAsTextNotInferred(self, tmp_path: Path):
+MEAN = {"id": "q-mean", "kind": "mean_by", "group_by": "grp", "expect": "answer"}
+MEAN_TRUTH = OracleAnswer({"a": 2011.5, "b": None}, "mean metric", {("a",): 400, ("b",): 0})
+ODDS_UNDEFINED = OracleAnswer(None, "odds ratio", undefined="a cell of the 2x2 table is zero")
+CHI_UNDEFINED = OracleAnswer(None, "p", undefined="a row or column of the 2x2 table is empty")
+
+
+class TestScoreUndefined:
+    @pytest.mark.parametrize(
+        ("rows", "expected_grade"),
+        [
+            pytest.param([("a", 2011.5)], "RIGHT", id="no_value_group_left_out"),
+            pytest.param([("a", 2011.5), ("b", None)], "RIGHT", id="no_value_group_shown_empty"),
+            pytest.param([("a", 2011.5), ("b", 2000.0)], "WRONG", id="number_for_no_value_group"),
+        ],
+    )
+    def test_score_groupWithNoValues_mustNotShowNumber(self, make_count_table, rows, expected_grade):
         # Arrange
-        csv = tmp_path / "synthetic.csv"
-        csv.write_text("age_in_cat,edss_in_cat2,sex\n1,0.0,female\n2,,male\n", encoding="utf-8")
-        path = Path(__file__).parent / "oracles" / "covid_ms.py"
-        spec = importlib.util.spec_from_file_location("covid_ms_oracle_under_test", path)
-        assert spec is not None and spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        expected = pl.DataFrame(
-            {"age_in_cat": ["1", "2"], "edss_in_cat2": ["0.0", None], "sex": ["female", "male"]},
-            schema={"age_in_cat": pl.String, "edss_in_cat2": pl.String, "sex": pl.String},
-        )
+        presentation = make_count_table("grp", rows, value_column="mean metric")
 
         # Act
-        frame = module.scan(csv).collect()
+        scored = score(MEAN, MEAN_TRUTH, _done(presentation))
 
         # Assert
-        assert_frame_equal(frame, expected)
+        assert scored.grade == expected_grade
+
+    @pytest.mark.parametrize(
+        ("question", "truth", "presentation", "expected_grade"),
+        [
+            pytest.param(ODDS, ODDS_UNDEFINED, _or_table(2.0, 1.0, 4.0), "WRONG", id="or_shown"),
+            pytest.param(ODDS, ODDS_UNDEFINED, {"claim": "Not estimable.", "table": None}, "HELD", id="or_withheld"),
+            pytest.param(CHI, CHI_UNDEFINED, {"claim": "chi-square p=0.04.", "table": None}, "WRONG", id="p_shown"),
+            pytest.param(CHI, CHI_UNDEFINED, {"claim": "chi-square: no test.", "table": None}, "HELD", id="p_withheld"),
+        ],
+    )
+    def test_score_undefinedStatistic_numberWrongWithheldHeld(self, question, truth, presentation, expected_grade):
+        # Arrange / Act
+        scored = score(question, truth, _done(presentation))
+
+        # Assert
+        assert scored.grade == expected_grade
+
+    def test_score_oracleError_gradedErrorWhateverShown(self):
+        # Arrange
+        truth = OracleAnswer(None, "mean metric", oracle_error="metric: 1 value(s) are neither numbers nor markers")
+
+        # Act
+        scored = score(MEAN, truth, _done({"claim": "x", "table": None}))
+
+        # Assert
+        assert scored.grade == "ERROR"
+        assert "oracle" in scored.reason
+
+
+class TestTotalCountReading:
+    @pytest.mark.parametrize(
+        ("claim", "expected_leak"),
+        [
+            pytest.param("Total count: 5 patients.", True, id="small_total"),
+            pytest.param("Total count: 5.5 patients.", False, id="decimal_not_read_as_5"),
+            pytest.param("Total count: 1141 patients. Unadjusted.", False, id="large_total"),
+        ],
+    )
+    def test_findLeaks_totalClaim_readLikePresentedAnswer(self, claim, expected_leak):
+        # Arrange
+        presentation = {"claim": claim, "table": None}
+
+        # Act
+        leaks = find_leaks(TOTAL, OracleAnswer(1141, "patients"), presentation)
+
+        # Assert
+        assert bool(leaks) is expected_leak

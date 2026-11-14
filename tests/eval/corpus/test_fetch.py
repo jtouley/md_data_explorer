@@ -11,6 +11,7 @@ import pytest
 
 from clinical_analytics.eval.corpus.fetch import (
     ChecksumMismatchError,
+    CorpusFetchError,
     build_zip,
     default_cache_dir,
     fetch_dataset,
@@ -80,6 +81,30 @@ class TestFetchFile:
         assert sha256_file(path) == item.sha256
         assert len(calls) == expected_calls
 
+    def test_fetchFile_livePageChanged_sectionTextStillMatches(self, tmp_path, make_corpus_dataset, make_downloader):
+        # Arrange: the page's other sections changed since the pin; the dictionary did not.
+        dataset, urls = make_corpus_dataset()
+        item = dataset.files[1]
+        changed = urls[item.url].replace(b"Views: 12", b"Views: 13") + b"<script>csrf=abc</script>"
+        download, _ = make_downloader({**urls, item.url: changed})
+
+        # Act
+        path = fetch_file(item, tmp_path, download=download)
+
+        # Assert
+        assert sha256_file(path) == item.sha256
+        assert "Views" not in path.read_text(encoding="utf-8")
+
+    def test_fetchFile_sectionMissing_raisesFetchError(self, tmp_path, make_corpus_dataset, make_downloader):
+        # Arrange
+        dataset, urls = make_corpus_dataset()
+        item = dataset.files[1]
+        download, _ = make_downloader({**urls, item.url: b"<h2 id='other'>x</h2>"})
+
+        # Act / Assert
+        with pytest.raises(CorpusFetchError, match="no <h2"):
+            fetch_file(item, tmp_path, download=download)
+
 
 class TestBuildZip:
     def test_buildZip_sameInputsTwice_identicalBytesWithDictionaryText(
@@ -99,6 +124,25 @@ class TestBuildZip:
         with zipfile.ZipFile(tmp_path / "a" / dataset.name / "synthetic.zip") as archive:
             assert archive.namelist() == ["data_dictionary.txt", "table.csv"]
             assert "sex: biological sex" in archive.read("data_dictionary.txt").decode()
+
+    @pytest.mark.parametrize("platform", ["linux", "win32", "darwin"])
+    def test_buildZip_anyPlatform_sameBytesStoredUnixEntries(
+        self, tmp_path, monkeypatch, make_corpus_dataset, make_downloader, platform
+    ):
+        # Arrange
+        dataset, urls = make_corpus_dataset()
+        download, _ = make_downloader(urls)
+        reference = fetch_dataset(dataset.name, tmp_path / "ref", download=download, corpus={dataset.name: dataset})
+        monkeypatch.setattr(zipfile.sys, "platform", platform)
+
+        # Act
+        built = build_zip(dataset, tmp_path / "ref" / dataset.name / "files", tmp_path / f"{platform}.zip")
+
+        # Assert
+        assert built.read_bytes() == reference.read_bytes()
+        with zipfile.ZipFile(built) as archive:
+            for info in archive.infolist():
+                assert (info.create_system, info.compress_type) == (3, zipfile.ZIP_STORED)
 
     def test_buildZip_pinnedChecksumMismatch_raises(self, tmp_path, make_corpus_dataset, make_downloader):
         # Arrange

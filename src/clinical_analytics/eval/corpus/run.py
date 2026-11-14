@@ -38,10 +38,11 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import polars as pl
 import structlog
 import yaml
 
-from clinical_analytics.eval.corpus.fetch import default_cache_dir, fetch_dataset, load_corpus
+from clinical_analytics.eval.corpus.fetch import CorpusFetchError, default_cache_dir, fetch_dataset, load_corpus
 from clinical_analytics.eval.corpus.score import ApiOutcome, OracleAnswer, Scored, score
 
 logger = structlog.get_logger()
@@ -203,6 +204,9 @@ class Api:
             stderr=subprocess.STDOUT,
         )
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        # A query still running after its question timed out (the API has no cancel). Until it
+        # ends, its log lines would be read as the next question's.
+        self.pending: str | None = None
 
     def wait_healthy(self) -> float:
         started = time.monotonic()
@@ -253,10 +257,7 @@ class Api:
             ]
         )
         response = self.request("POST", "/api/datasets/upload", body, f"multipart/form-data; boundary={boundary}", 900)
-        upload_id = response.get("upload_id")
-        if not upload_id:
-            raise AcceptanceError(f"upload returned no upload_id (keys: {sorted(response)})")
-        return str(upload_id)
+        return required_field(response, "upload_id", "POST /api/datasets/upload")
 
     def log_offset(self) -> int:
         self._log.flush()
@@ -276,6 +277,15 @@ class Api:
             self.proc.kill()
             self.proc.wait()
         self._log.close()
+
+
+def required_field(response: dict[str, Any], name: str, request: str) -> str:
+    """``response[name]`` as a non-empty string; AcceptanceError (graded, never a traceback) when
+    the API answered 200 with a body that lacks it."""
+    value = response.get(name)
+    if not isinstance(value, str) or not value:
+        raise AcceptanceError(f"{request} returned no {name} (keys: {sorted(response)})")
+    return value
 
 
 # ---------------------------------------------------------------------------- asking
@@ -298,15 +308,24 @@ def _poll(api: Api, query_id: str, deadline: float) -> dict[str, Any] | None:
     return None
 
 
+def _submit(api: Api, payload: dict[str, Any]) -> str:
+    return required_field(api.post_json("/api/queries", payload), "query_id", "POST /api/queries")
+
+
 def ask(api: Api, dataset_id: str, session_id: str, question: dict[str, Any], timeout_s: float) -> Asked:
-    """Submit one question (and, when held and ``confirm: true``, its confirmation)."""
+    """Submit one question (and, when held and ``confirm: true``, its confirmation).
+
+    On a timeout the query is waited for up to another ``timeout_s`` (the API cannot cancel
+    it), so its log lines stay with this question; if it is still running, ``api.pending``
+    holds it and the next question waits for it first."""
     offset = api.log_offset()
     started = time.monotonic()
     deadline = started + timeout_s
     payload: dict[str, Any] = {"session_id": session_id, "dataset_id": dataset_id, "query_text": question["query"]}
     confirmed = False
     try:
-        result = _poll(api, api.post_json("/api/queries", payload)["query_id"], deadline)
+        query_id = _submit(api, payload)
+        result = _poll(api, query_id, deadline)
         if result is not None and result["status"] == "awaiting_confirmation" and question.get("confirm"):
             confirmed = True
             payload |= {
@@ -314,13 +333,18 @@ def ask(api: Api, dataset_id: str, session_id: str, question: dict[str, Any], ti
                 "confirm_plan_hash": result.get("plan_hash"),
                 "confirm_plan_line": result.get("plan_line"),
             }
-            result = _poll(api, api.post_json("/api/queries", payload)["query_id"], deadline)
+            query_id = _submit(api, payload)
+            result = _poll(api, query_id, deadline)
+        latency = time.monotonic() - started
+        if result is None:
+            error = f"no answer in {timeout_s:.0f}s"
+            if _poll(api, query_id, time.monotonic() + timeout_s) is None:
+                api.pending = query_id
+                error += f"; still running {timeout_s:.0f}s later"
+            return Asked(ApiOutcome("timeout", error=error), latency, confirmed, api.log_since(offset))
     except AcceptanceError as error:
         outcome = ApiOutcome("error", error=str(error))
         return Asked(outcome, time.monotonic() - started, confirmed, api.log_since(offset))
-    latency = time.monotonic() - started
-    if result is None:
-        return Asked(ApiOutcome("timeout", error=f"no answer in {timeout_s:.0f}s"), latency, confirmed, "")
     data = result.get("result_data") or {}
     outcome = ApiOutcome(
         status=result["status"],
@@ -371,6 +395,75 @@ def _git_head(checkout: Path) -> str:
     return out.stdout.strip()
 
 
+def _asked(api: Api, dataset_id: str, question: dict[str, Any], sessions: dict[str, str], timeout_s: float) -> Asked:
+    """Ask one question in its session; every failure to get that far is an ERROR outcome."""
+
+    def failed(error: str) -> Asked:
+        return Asked(ApiOutcome("error", error=error), 0.0, False, "")
+
+    parent = question.get("follow_up_of")
+    if parent is not None and parent not in sessions:
+        return failed(f"session: parent question {parent} has no session (its own session could not be created)")
+    try:
+        if api.pending is not None:
+            if _poll(api, api.pending, time.monotonic() + timeout_s) is None:
+                return failed(
+                    f"server still running timed-out query {api.pending}; its log would be read as this one's"
+                )
+            api.pending = None
+        session_id = (
+            sessions[parent]
+            if parent is not None
+            else required_field(
+                api.post_json("/api/sessions", {"dataset_id": dataset_id}), "session_id", "POST /api/sessions"
+            )
+        )
+    except AcceptanceError as error:
+        return failed(f"session: {error}")
+    sessions[question["id"]] = session_id
+    return ask(api, dataset_id, session_id, question, timeout_s)
+
+
+def ask_all(
+    api: Api,
+    dataset_id: str,
+    questions: list[dict[str, Any]],
+    truth: dict[str, OracleAnswer],
+    model: str,
+    timeout_s: float,
+) -> list[QuestionResult]:
+    """Ask and grade every question in order; one question's failure never stops the rest."""
+    sessions: dict[str, str] = {}
+    results: list[QuestionResult] = []
+    for question in questions:
+        asked = _asked(api, dataset_id, question, sessions, timeout_s)
+        tier, llm_called, llm = parse_tiers(asked.log, model)
+        outcome = asked.outcome
+        if llm.startswith("fell back") and outcome.status == "completed":
+            outcome = ApiOutcome(**{**asdict(outcome), "silent_fallback": llm})
+        scored: Scored = score(question, truth[question["id"]], outcome)
+        presentation = outcome.presentation or {}
+        result = QuestionResult(
+            id=question["id"],
+            family=question.get("family", ""),
+            query=question["query"],
+            grade=scored.grade,
+            leak=scored.leak,
+            reason=scored.reason,
+            status=outcome.status,
+            tier=tier,
+            llm_called=llm_called,
+            llm=llm,
+            latency_s=round(asked.latency_s, 2),
+            confirmed=asked.confirmed,
+            claim=presentation.get("claim"),
+            table=presentation.get("table"),
+        )
+        results.append(result)
+        logger.info("accept_question", id=result.id, grade=result.grade, leak=result.leak, latency_s=result.latency_s)
+    return results
+
+
 def run(
     dataset: str,
     model: str,
@@ -388,7 +481,10 @@ def run(
     zip_path = fetch_dataset(dataset, cache_dir, seed_dirs, corpus=corpus)
     csv_name = next(item.path for item in corpus[dataset].files if item.kind == "table")
     csv_path = zip_path.parent / "files" / csv_name
-    truth: dict[str, OracleAnswer] = load_oracles(dataset).answers(csv_path)
+    try:
+        truth: dict[str, OracleAnswer] = load_oracles(dataset).answers(csv_path)
+    except pl.exceptions.PolarsError as error:
+        raise AcceptanceError(f"oracles for {dataset} do not run on {csv_name}: {error}") from error
     missing = [q["id"] for q in questions if q["id"] not in truth]
     if missing:
         raise AcceptanceError(f"no oracle answer for {missing}")
@@ -417,46 +513,7 @@ def run(
             report.settings["upload"] = f"csv only; ZIP rejected: {str(error)[:200]}"
             dataset_id = api.upload(csv_path, dataset)
         report.settings["upload_s"] = round(time.monotonic() - upload_started, 1)
-        sessions: dict[str, str] = {}
-        for question in questions:
-            parent = question.get("follow_up_of")
-            try:
-                session_id = (
-                    sessions[parent]
-                    if parent
-                    else api.post_json("/api/sessions", {"dataset_id": dataset_id})["session_id"]
-                )
-            except AcceptanceError as error:  # graded ERROR; the run goes on to the next question
-                asked = Asked(ApiOutcome("error", error=f"session: {error}"), 0.0, False, "")
-            else:
-                sessions[question["id"]] = session_id
-                asked = ask(api, dataset_id, session_id, question, timeout_s)
-            tier, llm_called, llm = parse_tiers(asked.log, model)
-            outcome = asked.outcome
-            if llm.startswith("fell back") and outcome.status == "completed":
-                outcome = ApiOutcome(**{**asdict(outcome), "silent_fallback": llm})
-            scored: Scored = score(question, truth[question["id"]], outcome)
-            presentation = outcome.presentation or {}
-            result = QuestionResult(
-                id=question["id"],
-                family=question.get("family", ""),
-                query=question["query"],
-                grade=scored.grade,
-                leak=scored.leak,
-                reason=scored.reason,
-                status=outcome.status,
-                tier=tier,
-                llm_called=llm_called,
-                llm=llm,
-                latency_s=round(asked.latency_s, 2),
-                confirmed=asked.confirmed,
-                claim=presentation.get("claim"),
-                table=presentation.get("table"),
-            )
-            report.results.append(result)
-            logger.info(
-                "accept_question", id=result.id, grade=result.grade, leak=result.leak, latency_s=result.latency_s
-            )
+        report.results = ask_all(api, dataset_id, questions, truth, model, timeout_s)
     finally:
         api.stop()
         report.settings["server_exit_code"] = api.proc.returncode
@@ -538,7 +595,7 @@ def main(argv: list[str] | None = None) -> int:
             app_src=args.app_src.resolve() if args.app_src else None,
             keep_work=args.keep_work,
         )
-    except AcceptanceError as error:
+    except (AcceptanceError, CorpusFetchError) as error:
         print(f"acceptance run failed: {error}", file=sys.stderr)
         return 2
     out = write_results(report, results_dir)

@@ -10,7 +10,12 @@ odds-ratio and p-value read-outs, and the RIGHT / WRONG / HELD / ERROR grades.
 - WRONG: a shown value differs, a row is missing or unexpected, the unit or grain is wrong, a
   question that must be held is answered, or a LEAK (also flagged).
 - HELD: held or refused (reason recorded), or every value withheld.
-- ERROR: an exception, a timeout, or a silent fallback of the language-model tier.
+- ERROR: an exception, a timeout, or a silent fallback of the language-model tier; also a
+  question whose oracle could not compute a trustworthy answer (``OracleAnswer.oracle_error``).
+
+A statistic that does not exist on the data (an odds ratio with a zero cell, a mean over a group
+with no values) is ``OracleAnswer.undefined`` or a ``None`` group value: showing a number for it
+is WRONG, withholding it is HELD.
 """
 
 from __future__ import annotations
@@ -22,7 +27,7 @@ from typing import Any, Literal, TypeAlias
 from clinical_analytics.analysis.grouping import FOLD_LABELS
 from clinical_analytics.analysis.variable_types import display_level
 from clinical_analytics.api.services.query_service import UNEXPECTED_FAILURE_MESSAGE
-from clinical_analytics.eval.headless import HIDDEN, presented_answer
+from clinical_analytics.eval.headless import HIDDEN, TOTAL_COUNT, presented_answer
 
 Grade: TypeAlias = Literal["RIGHT", "WRONG", "HELD", "ERROR"]
 Status: TypeAlias = Literal["completed", "failed", "awaiting_confirmation", "timeout", "error"]
@@ -33,20 +38,26 @@ CellKey: TypeAlias = tuple[str, ...]
 SMALL_MIN, SMALL_MAX = 1, 10  # a count of 1-10 patients must never be shown
 _REL_TOL = 1e-4
 _ROUNDING_TOL = 5e-5  # half a unit of the 4th decimal the presented table keeps
-_TOTAL = re.compile(r"^Total count: (\S+?)(?: (patients|visits))?\.")
 _COUNT_COLUMNS = {"count", "n"}
 _VALUE_COLUMN = {"count_by": "count", "rates": "rate", "mean_by": "mean", "median_by": "median"}
 
 
+class OracleError(ValueError):
+    """The data does not support a trustworthy oracle answer (e.g. a non-numeric metric value)."""
+
+
 @dataclass(frozen=True)
 class OracleAnswer:
-    """The true answer: ``value`` (int, float, {group: value}, {"or","ci_low","ci_high"},
+    """The true answer: ``value`` (int, float, {group: value or None}, {"or","ci_low","ci_high"},
     {"pearson","yates"} p-values, or None for a question that must be held), its unit, and
-    the patients behind each cell."""
+    the patients behind each cell. ``undefined`` says why the statistic does not exist on this
+    data; ``oracle_error`` why no trustworthy answer could be computed (graded ERROR)."""
 
     value: Any
     unit: str
     cell_patients: dict[CellKey, int] = field(default_factory=dict)
+    undefined: str | None = None
+    oracle_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -96,7 +107,7 @@ def find_leaks(question: dict[str, Any], oracle: OracleAnswer, presentation: dic
     if not presentation:
         return []
     leaks: list[str] = []
-    match = _TOTAL.match(presentation.get("claim") or "")
+    match = TOTAL_COUNT.match(presentation.get("claim") or "")
     if match and match.group(1).isdigit() and is_small(int(match.group(1))):
         leaks.append(f"total count {match.group(1)} shown")
     table = presentation.get("table") or {}
@@ -132,11 +143,15 @@ def _grade_grouped(question: dict[str, Any], oracle: OracleAnswer, shown: Any) -
     matched = 0
     for label, (key, value) in expected.items():
         if label not in shown:
-            if _small_group(oracle, key, kind) or is_small(oracle.cell_patients.get((key,))):
-                continue  # folded into "Other"
+            if value is None or _small_group(oracle, key, kind):
+                continue  # no value to show, or folded into "Other"
             return "WRONG", f"row '{label}' missing"
         if shown[label] == HIDDEN:
             continue  # hidden: required for a small cell, allowed as a secondary suppression
+        if value is None:
+            if shown[label] is None:
+                continue
+            return "WRONG", f"'{label}': shown {shown[label]}, but no patient in it has a value"
         if not _close(value, shown[label]):
             return "WRONG", f"'{label}': shown {shown[label]}, expected {value}"
         matched += 1
@@ -153,8 +168,12 @@ def _grade_grouped(question: dict[str, Any], oracle: OracleAnswer, shown: Any) -
 def _grade_odds_ratio(oracle: OracleAnswer, presentation: dict[str, Any]) -> tuple[Grade, str]:
     table = presentation.get("table") or {}
     columns, rows = list(table.get("columns") or []), list(table.get("rows") or [])
+    claim = presentation.get("claim") or ""
+    if oracle.undefined is not None:
+        if "odds ratio" in columns and rows:
+            return "WRONG", f"odds ratio shown, but {oracle.undefined}"
+        return "HELD", f"no odds ratio shown ({oracle.undefined}): {claim[:160]}"
     if "odds ratio" not in columns:
-        claim = presentation.get("claim") or ""
         return "HELD" if not rows else "WRONG", f"no odds ratio shown: {claim[:160]}"
     if len(rows) != 1:
         return "WRONG", f"{len(rows)} model terms shown, expected one exposure"
@@ -176,6 +195,8 @@ def _grade_p_value(question: dict[str, Any], oracle: OracleAnswer, claim: str) -
     match = _P.search(claim)
     if not match:
         return "HELD", f"no p-value shown: {claim[:160]}"
+    if oracle.undefined is not None:
+        return "WRONG", f"p{match.group(1)}{match.group(2)} shown, but {oracle.undefined}"
     op, shown = match.group(1), float(match.group(2))
     decimals = len(match.group(2).split(".")[1])
     for name, p in oracle.value.items():
@@ -193,6 +214,8 @@ def score(question: dict[str, Any], oracle: OracleAnswer, outcome: ApiOutcome) -
     expect = question.get("expect", "answer")
     if outcome.status in ("timeout", "error"):
         return Scored("ERROR", False, outcome.error or outcome.status)
+    if oracle.oracle_error is not None:
+        return Scored("ERROR", False, f"no trustworthy oracle answer: {oracle.oracle_error}")
     if outcome.status == "failed" and UNEXPECTED_FAILURE_MESSAGE in (outcome.error or ""):
         return Scored("ERROR", False, f"exception: {outcome.error}")
     if outcome.status in ("failed", "awaiting_confirmation"):
@@ -221,7 +244,7 @@ def _grade_value(question: dict[str, Any], oracle: OracleAnswer, presentation: d
         return _grade_p_value(question, oracle, claim)
     shown = presented_answer(presentation)
     if kind == "count":
-        match = _TOTAL.match(claim)
+        match = TOTAL_COUNT.match(claim)
         if match and match.group(2) and match.group(2) != oracle.unit:
             return "WRONG", f"grain: counted {match.group(2)}, expected {oracle.unit}"
         if shown == HIDDEN:

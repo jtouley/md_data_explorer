@@ -3,7 +3,9 @@
 
 Every file is checked against the sha256 pinned in ``corpus.yaml``; a mismatch stops the run.
 A file already in the cache, or in a ``--seed`` directory (a corpus snapshot), is reused when
-its checksum matches, so nothing is downloaded twice.
+its checksum matches, so nothing is downloaded twice. A documentation file taken from a live
+web page (``extract_section``) is stored and checked as the plain text of that one section, not
+as the page bytes, which change with every site-template or view-count update.
 
     uv run python -m clinical_analytics.eval.corpus.fetch covid_ms [--seed DIR]
 """
@@ -33,8 +35,11 @@ logger = structlog.get_logger()
 CORPUS_YAML = Path(__file__).with_name("corpus.yaml")
 CACHE_ENV = "MDDE_BENCH_CACHE"
 DOWNLOAD_TIMEOUT_S = 120
-# Fixed entry time so the same inputs always give the same ZIP bytes.
+# Fixed entry metadata so the same inputs give the same ZIP bytes on every platform: a fixed
+# time, Unix as the creating system (zipfile writes 0 on Windows, 3 elsewhere), and no
+# compression (DEFLATE output differs between zlib and zlib-ng builds of CPython).
 ZIP_TIMESTAMP = (2026, 1, 1, 0, 0, 0)
+ZIP_CREATE_SYSTEM_UNIX = 3
 
 Downloader = Callable[[str], bytes]
 
@@ -53,13 +58,15 @@ class CorpusFile(BaseModel):
     url: str
     kind: str
     sha256: str
+    # The id of an HTML <h2> section: the file is that section's plain text, and sha256 pins it.
+    extract_section: str | None = None
 
 
 class PackageEntry(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
     name: str
     source: str = Field(alias="from")
-    make: Literal["copy", "html_to_text"]
+    make: Literal["copy"] = "copy"
 
 
 class UploadPackage(BaseModel):
@@ -131,6 +138,8 @@ def fetch_file(
             log.info("corpus_file_seeded", seed=str(seed))
             return dest
     body = download(item.url)
+    if item.extract_section is not None:
+        body = html_section_text(body, item.extract_section, item.url).encode("utf-8")
     actual = hashlib.sha256(body).hexdigest()
     if actual != item.sha256:
         raise ChecksumMismatchError(f"{item.url} returned sha256 {actual}, expected {item.sha256}")
@@ -151,26 +160,40 @@ def html_to_text(page: str, source_url: str) -> str:
     return f"Source: {source_url}\n(Plain-text rendering of the official project page.)\n\n{text}\n"
 
 
+def html_section_text(page: bytes, section_id: str, source_url: str) -> str:
+    """Plain text of one ``<h2 id=section_id>`` section of an HTML page, up to the next <h2>.
+
+    Raises:
+        CorpusFetchError: the page is not UTF-8 or has no such section.
+    """
+    try:
+        markup = page.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise CorpusFetchError(f"{source_url} is not UTF-8 text: {error}") from error
+    match = re.search(rf'(?is)<h2[^>]*\bid="{re.escape(section_id)}"[^>]*>.*?(?=<h2\b|$)', markup)
+    if match is None:
+        raise CorpusFetchError(f'{source_url} has no <h2 id="{section_id}"> section')
+    return html_to_text(match.group(0), f"{source_url}#{section_id}")
+
+
 def build_zip(dataset: CorpusDataset, files_dir: Path, out: Path) -> Path:
-    """Write the upload ZIP: entries sorted by name with fixed timestamps, so its bytes (and
-    sha256) depend only on the checked inputs.
+    """Write the upload ZIP: entries sorted by name, stored uncompressed with fixed metadata, so
+    its bytes (and sha256) depend only on the checked inputs, not on the platform or zlib.
 
     Raises:
         ChecksumMismatchError: the ZIP does not match ``upload_package.sha256`` when one is pinned.
     """
     sources = {item.path: item for item in dataset.files}
     buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED) as archive:
         for entry in sorted(dataset.upload_package.contents, key=lambda e: e.name):
             if entry.source not in sources:
                 raise CorpusFetchError(f"{dataset.name}: package entry {entry.name} names unknown file {entry.source}")
-            raw = (files_dir / entry.source).read_bytes()
-            if entry.make == "html_to_text":
-                raw = html_to_text(raw.decode("utf-8"), sources[entry.source].url).encode("utf-8")
             info = zipfile.ZipInfo(entry.name, date_time=ZIP_TIMESTAMP)
-            info.compress_type = zipfile.ZIP_DEFLATED
+            info.compress_type = zipfile.ZIP_STORED
+            info.create_system = ZIP_CREATE_SYSTEM_UNIX
             info.external_attr = 0o644 << 16
-            archive.writestr(info, raw, compresslevel=6)
+            archive.writestr(info, (files_dir / entry.source).read_bytes())
     body = buffer.getvalue()
     pinned = dataset.upload_package.sha256
     actual = hashlib.sha256(body).hexdigest()

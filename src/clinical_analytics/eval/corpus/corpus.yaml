@@ -32,19 +32,21 @@ datasets:
         sha256: 9a78e7f22742dde9f66ae235ec793ba2212019dc4d0ced75c4da09ced0b35fb2
         bytes: 14842
       # PhysioNet publishes no dictionary file: the variable descriptions are the "Data
-      # Description" section of the project page. The page is static (same sha256 on repeat
-      # fetches) and is shipped in the ZIP as plain text, as the app reads .txt docs.
-      - path: project_page.html
+      # Description" section of the project page. The live page is not a stable artifact (view
+      # counts, "Cited by", site template), so only that section's plain text is kept and pinned.
+      - path: data_description.txt
         url: https://physionet.org/content/patient-level-data-covid-ms/1.0.1/
         kind: dictionary
-        sha256: 3e78cef7bc68900418c847984620474c09ab99af649d619b6e69b57f48124e1a
+        extract_section: description
+        sha256: 68abce896b33058d9112a180e1a9e23dd9825ec9f5f95143e6f67a2380d77a41
+        bytes: 13808
     dictionary_url: https://physionet.org/content/patient-level-data-covid-ms/1.0.1/
     upload_package:
       zip: covid_ms.zip
-      # archive name -> source file path, plus how it is made (copy, or html_to_text)
+      # archive name -> source file path (copied as fetched and checked)
       contents:
         - {name: GDSI_OpenDataset_Final.csv, from: GDSI_OpenDataset_Final.csv, make: copy}
         - {name: README.txt, from: README.txt, make: copy}
         - {name: LICENSE.txt, from: LICENSE.txt, make: copy}
-        - {name: data_dictionary.txt, from: project_page.html, make: html_to_text}
-      sha256: 43afff0bfa0df5e46ab7b28bd88a78d0ce345b516e576aa03930dfc644779a1d  # deterministic: sorted, fixed timestamps
+        - {name: data_dictionary.txt, from: data_description.txt, make: copy}
+      sha256: a3639ebca2068df992230516e3608924daed23ca2be7532cd978a14e6ecae7ae  # deterministic: sorted, stored, fixed metadata
