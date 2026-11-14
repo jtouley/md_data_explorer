@@ -8,28 +8,35 @@
 - `make` on macOS/Linux
 - Optional: [Ollama](https://ollama.com/download), a local LLM used for questions the pattern matcher cannot handle
 
-Setup needs internet access: it downloads Python and Node packages, `make fetch-embedding-model` fetches the `all-MiniLM-L6-v2` ONNX embedding model (pinned, SHA-256 checked; bundled with the app, never downloaded at runtime), and the first run downloads an Ollama model (`llama3.1:8b`, fallback `llama3.2:3b`). After that the app runs locally.
+Setup needs internet access: it downloads Python and Node packages, the `all-MiniLM-L6-v2` ONNX embedding model (`make install-dev` fetches it; pinned, SHA-256 checked; bundled with the app, never downloaded at runtime) and, if you use Ollama, a model (the app prefers `llama3.1:8b` and falls back to `llama3.2:3b`). After that the app runs locally.
 
 ## Install from source
 
 ```bash
 git clone https://github.com/jtouley/md_data_explorer.git
 cd md_data_explorer
-make install-dev                 # uv sync --extra dev --group dev
+make install-dev                 # uv sync --extra dev --group dev, then fetch the embedding model
 cd electron && npm ci && cd ..
 ```
 
-On Windows without `make`, run `uv sync --extra dev --group dev` instead of `make install-dev`.
+On Windows without `make`, run these two commands instead of `make install-dev`. The second matters: without the embedding model the backend refuses to start.
+
+```powershell
+uv sync --extra dev --group dev
+uv run python scripts/fetch_embedding_model.py
+```
 
 ## Run
 
 | Platform | How |
 |----------|-----|
+| Any OS, including Windows | `cd electron && npm start`. The desktop app starts its own backend on `127.0.0.1` (port 8000, or a free port if 8000 is taken) with a fresh API token, and stops it when you quit. Start Ollama yourself if you want it: `ollama serve`, then `ollama pull llama3.1:8b` once. |
 | macOS | `./scripts/run_app.sh` starts Ollama (installing it with Homebrew if missing), the API and the desktop app |
 | Linux | Install Ollama yourself from <https://ollama.com/download> (the script will not), then `./scripts/run_app.sh` |
-| Windows, or any OS by hand | Terminal 1: `uv run python -m clinical_analytics.api.serve --port 8000`. Terminal 2: `cd electron && npm start`. Start Ollama with `ollama serve` and `ollama pull llama3.1:8b`. |
 
-`make run` (macOS/Linux) starts the API with auto-reload and, if Ollama is running, pulls a missing model. The desktop window needs the API at `http://127.0.0.1:8000/health` to respond.
+`./scripts/run_app.sh` uses port 8000 and stops if another program already holds it. If Ollama has no models, it downloads `llama3.2:3b`; run `ollama pull llama3.1:8b` for the app's preferred model.
+
+For development, `make run` (macOS/Linux) starts the API on `http://127.0.0.1:8000` with auto-reload and **no authentication** (never use it with real patient data) and, if Ollama is running, pulls a missing model. To point the desktop app at it: `cd electron && CLINICAL_ANALYTICS_EXTERNAL_BACKEND=1 CLINICAL_ANALYTICS_DEV_NO_AUTH=1 npm start`. Started on its own, `uv run python -m clinical_analytics.api.serve` refuses to start without `CLINICAL_ANALYTICS_API_TOKEN` or `CLINICAL_ANALYTICS_DEV_NO_AUTH=1`.
 
 ## Where your data lives
 
@@ -53,10 +60,10 @@ This is local software, not a compliance certification.
 
 ### Port already in use
 
-Stop the other process on port 8000. The desktop app only talks to `127.0.0.1:8000`; for API-only use you can pick another port:
+`cd electron && npm start` picks a free port by itself. `./scripts/run_app.sh` and `make run` use port 8000: stop the other process first. For an API-only development server on another port (no authentication, never with real patient data):
 
 ```bash
-uv run python -m clinical_analytics.api.serve --port 8001
+CLINICAL_ANALYTICS_DEV_NO_AUTH=1 uv run python -m clinical_analytics.api.serve --port 8001
 ```
 
 ### Missing dependencies
@@ -65,4 +72,4 @@ If you see import errors, run `make install-dev` again (or `uv sync --extra dev 
 
 ### Questions are not understood
 
-Check `http://127.0.0.1:8000/health`: `ollama_reachable` and `ollama_default_model_available` should be `true`. Without Ollama, simpler questions still work.
+Check the backend's `/health` (for example `http://127.0.0.1:8000/health`): `ollama_reachable` and `ollama_default_model_available` should be `true`. Without Ollama, simpler questions still work.
