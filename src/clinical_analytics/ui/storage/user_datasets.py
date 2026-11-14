@@ -1010,6 +1010,18 @@ def duplicate_name_message(dataset_name: str) -> str:
     )
 
 
+def no_data_rows_message(filename: str, columns: int) -> str:
+    """Why a file whose header has no rows under it is refused, and what to do (no cell values)."""
+    read = f"a header of {columns} column{'s' if columns != 1 else ''} and no rows under it"
+    if Path(filename).suffix.lower() in (".xlsx", ".xls"):
+        return (
+            f"No data rows were found in this file: only {read} could be read from its first sheet. "
+            "Check that the data is on the first sheet, below its header. If it is, the workbook may "
+            "declare a wrong size: open it, save the sheet as CSV, and upload the CSV."
+        )
+    return f"No data rows were found in this file: only {read} could be read. Add the data rows and upload it again."
+
+
 def _upload_failure_reason(e: BaseException) -> str:
     """A reason for the user that never quotes cell values.
 
@@ -1766,6 +1778,10 @@ class UserDatasetStorage:
             _notify_progress(progress_cb, 20, "Normalizing upload to table list...")
 
             tables, table_metadata = normalize_upload_to_table_list(file_bytes, original_filename, metadata)
+            # A file with a header and no data rows answers nothing: refuse it before an ID is
+            # added, so a row number on zero rows never makes it look "ready".
+            if all(t["data"].height == 0 for t in tables):
+                raise StagingError(no_data_rows_message(original_filename, tables[0]["data"].width if tables else 0))
 
             # Mark all existing versions as inactive (the drift check below reads stored metadata)
             if existing_version_history is not None:

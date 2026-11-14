@@ -276,6 +276,49 @@ def test_uploadDataset_unreadableFile_400WithPlainMessage(
     assert "Error saving upload" not in detail
 
 
+def _workbook_bytes(rows: list[tuple[object, ...]]) -> bytes:
+    import io
+
+    from openpyxl import Workbook
+
+    buffer = io.BytesIO()
+    workbook = Workbook()
+    for row in rows:
+        workbook.active.append(row)
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("filename", "rows", "columns"),
+    [
+        # What a workbook that declares its size as A1:A1 reads as: the title cell, nothing else.
+        pytest.param("titled.xlsx", [("Synthetic mortality rates by county, 1980-2014",)], 1, id="title_cell_only"),
+        pytest.param("header.xlsx", [("Synthetic rates", None), ("location_name", "mx")], 2, id="title_and_header"),
+        pytest.param("header.csv", None, 100, id="csv_header_only"),  # 100 names: over the 1 KB minimum
+    ],
+)
+def test_uploadDataset_noDataRows_refused400NeverReady(
+    test_client: TestClient, filename: str, rows: list[tuple[object, ...]] | None, columns: int
+) -> None:
+    # Arrange
+    header = ",".join(f"measurement_{i:03d}" for i in range(columns)) + "\n"
+    content = header.encode() if rows is None else _workbook_bytes(rows)
+
+    # Act
+    response = test_client.post(UPLOAD, files={"file": (filename, content, "application/octet-stream")})
+    listed = test_client.get("/api/datasets").json()["datasets"]
+
+    # Assert: before, a row number on zero rows passed for an ID and the upload was "ready"
+    assert response.status_code == 400, response.text
+    detail = response.json()["detail"]
+    assert detail.startswith("No data rows were found in this file")
+    assert f"{columns} column" in detail
+    assert "Error saving upload" not in detail
+    assert ("save the sheet as CSV" in detail) is filename.endswith(".xlsx")
+    assert listed == []
+
+
 def test_question_modelStepRaises_refusedWithVisibleReason(
     upload: Callable[..., Any],
     make_population_estimates: Callable[..., pl.DataFrame],

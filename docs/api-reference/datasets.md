@@ -36,7 +36,7 @@ See [Dataset Registry](../architecture/dataset-registry.md) for details.
 
 - **200, `status: "ready"`** - stored, and every error-level data check passed.
 - **200, `status: "needs_review"`** - stored and queryable, but an error-level data check failed (for example `patient_id_no_duplicates`). `failed_checks` lists the check ids and `message` names each failed check and what to do next.
-- **400** - the file cannot be read as a table (for example an Excel file with no header row), with a plain message.
+- **400** - the file cannot be read as a table (for example an Excel file with no header row), or it has a header and no data rows, with a plain message. An upload with no data rows is never stored.
 - **409** - a dataset with this name already exists. Upload under another name (`dataset_name`), or delete the existing dataset first. The route has no overwrite option.
 - **400** - the extension or size is not accepted.
 
