@@ -16,7 +16,7 @@ golden question suite (slow tests included).
 | `unequal_groups.csv` | 45 | n=5 vs n=40 with unequal variances: Welch, not pooled | `test_compare_unequalVarianceSmallGroup_usesWelchNotPooled` |
 | `sparse_cells.csv` | 20 | 2x2 table with expected counts below 5: Fisher's exact test, small-cell suppression | `test_compare_sparse2x2_*`, `TestGoldenPresentation` |
 | `separation.csv` | 60 | A predictor that perfectly separates the outcome: logistic regression must refuse | `test_predict_perfectSeparation_refusesWithReason` |
-| `../../../src/clinical_analytics/resources/demo/sample_cohort.csv` | 80 | The app's "Load sample" cohort; 2x2 chi-square of outcome by hypertension. Two planted exceptions (P011, P020) keep the outcome from being a deterministic function of age and diabetes | `test_compare_demoOutcomeByHypertension_matchesContingencyReference` |
+| `../../../src/clinical_analytics/resources/demo/sample_cohort.csv` | 80 | The app's "Use the sample cohort" cohort; 2x2 chi-square of outcome by hypertension. Two planted exceptions (P011, P020) keep the outcome from being a deterministic function of age and diabetes | `test_compare_demoOutcomeByHypertension_matchesContingencyReference` |
 
 Tests are in `tests/analysis/test_golden_statistics.py` (load with the `load_synthetic_dataset`
 fixture from `tests/conftest.py`) and `tests/scripts/test_make_synthetic_data.py`. The NL golden

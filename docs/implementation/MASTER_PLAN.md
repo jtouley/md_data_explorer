@@ -7,6 +7,8 @@ last_updated: 2026-03-28
 
 # Master plan (single consolidated roadmap)
 
+> **Current direction:** the product's purpose and the ordered steel thread are in [Purpose and steel thread](../vision/PURPOSE.md). This page records the plans and the Electron cutover that came before it.
+
 This document **replaces scattered “which plan are we on?” answers**. It inventories every major plan/spec, assigns **one primary execution track**, and lists **parallel / deferred** work without merging incompatible scope.
 
 ## What we are implementing (primary track)
