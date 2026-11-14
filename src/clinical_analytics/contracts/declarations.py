@@ -59,6 +59,8 @@ class GrainDeclaration(BaseModel):
     def _grain_is_consistent(self) -> GrainDeclaration:
         if self.grain == "visit" and not self.key:
             raise ValueError("a visit grain names the patient key")
+        if self.key is not None and not self.key.strip():
+            raise ValueError("a grain's key is a column name or None, never blank")
         if self.grain == "patient" and self.rows != self.patients:
             raise ValueError("a patient grain has one patient per row (rows == patients)")
         return self

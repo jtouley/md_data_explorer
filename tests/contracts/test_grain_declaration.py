@@ -17,6 +17,7 @@ from clinical_analytics.core.answer_checks import Grain, declared_visits
         ({"grain": "visit", "key": None, "rows": 20, "patients": 10}, "names the patient key"),
         ({"grain": "visit", "key": "", "rows": 20, "patients": 10}, "names the patient key"),
         ({"grain": "patient", "key": None, "rows": 20, "patients": 19}, "rows == patients"),
+        ({"grain": "patient", "key": " ", "rows": 20, "patients": 20}, "never blank"),
         ({"grain": "row", "key": "patient_id", "rows": 1, "patients": 1}, "grain"),
         ({"grain": "patient", "key": None, "rows": -1, "patients": -1}, "greater than or equal"),
     ],

@@ -674,6 +674,7 @@ def test_privacy_phiInGroupBy_refusedUnlessCoarsenedStraightFromTheColumn(
         ("year(CAST(dob_text AS DATE))", 50),
         ("month(date_trunc('month', dob))", 12),
         ("year(dob) * 100 + month(dob)", 300),
+        ("year(TRY_CAST(zip_text AS DATE))", 1),  # a zip is not a date: one "(no value)" group
     ],
 )
 def test_privacy_phiCoarsenedToYearQuarterOrMonth_answered(
@@ -689,6 +690,8 @@ def test_privacy_phiCoarsenedToYearQuarterOrMonth_answered(
         return
     answer = ask_sql(sql, phi_catalog)
     assert answer.rows
+    if groups == 1:
+        assert [str(row["g"]) for row in answer.rows] == [NO_VALUE_LABEL]
     assert all(
         str(row["g"]) in FOLD_LABELS or row["n"] == SECONDARY_SUPPRESSED or row["n"] >= 11 for row in answer.rows
     )
