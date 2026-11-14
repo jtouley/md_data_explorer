@@ -714,14 +714,14 @@ _ANOTHER = "To use another sheet, save it as its own file and upload it."
         ),
         pytest.param(
             {"read": "Deaths", "skipped": [], "footnote_rows": 1},
-            "1 row below the data, after a blank row, was read as a note, not a patient, and is not in the data.",
+            "1 row below the data, after a blank row, was read as a note and left out of the data.",
             id="one_footnote",
         ),
         pytest.param(
             {"read": "Deaths", "skipped": ["Notes"], "footnote_rows": 2},
             _READ_DEATHS.format(total=2, names="“Notes”")
             + _ANOTHER
-            + " 2 rows below the data, after a blank row, were read as notes, not patients, and are not in the data.",
+            + " 2 rows below the data, after a blank row, were read as notes and left out of the data.",
             id="skipped_and_footnotes",
         ),
     ],

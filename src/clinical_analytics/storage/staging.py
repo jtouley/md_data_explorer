@@ -179,7 +179,7 @@ class ExcelSheets:
 
     ``skipped`` names the other sheets that hold data; ``empty`` counts the other sheets with no
     values. ``footnote_rows`` counts the rows below the data, after a blank row, that were read
-    as notes ("Source: ..."), not patients.
+    as notes ("Source: ..."), not data.
     """
 
     read: str
@@ -719,13 +719,10 @@ def describe_sheets(sheets: dict[str, object] | None) -> str:
             "To use another sheet, save it as its own file and upload it."
         )
     if footnotes == 1:
-        lines.append(
-            "1 row below the data, after a blank row, was read as a note, not a patient, and is not in the data."
-        )
+        lines.append("1 row below the data, after a blank row, was read as a note and left out of the data.")
     elif footnotes > 1:
         lines.append(
-            f"{footnotes} rows below the data, after a blank row, were read as notes, not patients, "
-            "and are not in the data."
+            f"{footnotes} rows below the data, after a blank row, were read as notes and left out of the data."
         )
     return " ".join(lines)
 
