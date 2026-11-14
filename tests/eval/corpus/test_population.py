@@ -120,6 +120,21 @@ class TestOracleKit:
         # Assert
         assert error in str(answer.oracle_error)
 
+    @pytest.mark.parametrize(
+        "oracle",
+        [
+            pytest.param(kit.lookup_by("t", "sex", "rate", pl.col("place") == "Atlantis"), id="lookup_by"),
+            pytest.param(kit.lookup_ci_by("t", "sex", ("rate", "low", "high"), pl.lit(False)), id="lookup_ci_by"),
+            pytest.param(kit.derived_by("t", "sex", kit.number("rate").max(), pl.lit(False)), id="derived_by"),
+        ],
+    )
+    def test_populationOracle_filterMatchesNothing_oracleErrorNotEmptyAnswer(self, oracle):
+        # Act
+        answer = _answer(oracle)
+
+        # Assert
+        assert "matches no rows" in str(answer.oracle_error)
+
     def test_held_anyData_valueNoneWithReason(self):
         # Act
         answer = _answer(kit.held("t", "rows overlap"))

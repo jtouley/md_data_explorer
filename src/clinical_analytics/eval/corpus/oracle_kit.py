@@ -68,7 +68,12 @@ def unreadable(column: str) -> pl.Expr:
 
 
 def _check_grain(df: pl.DataFrame, what: str) -> None:
-    if df.height and int(df["rows"].max()) != 1:  # type: ignore[arg-type]
+    """The expectations every lookup's input must meet: at least one row (a filter that matches
+    nothing is an oracle bug, not an empty answer), one row per answer cell (compound key unique),
+    and every value a number or a missing-value marker."""
+    if df.height == 0:
+        raise OracleError(f"{what}: the filter matches no rows")
+    if int(df["rows"].max()) != 1:  # type: ignore[arg-type]
         worst = int(df["rows"].max())  # type: ignore[arg-type]
         raise OracleError(f"{what}: {worst} rows for one answer cell; the filter does not reach the table's grain")
     if "bad" in df.columns and int(df["bad"].sum()):
@@ -169,7 +174,9 @@ def derived_by(
 
     def build(tables: Tables) -> Query:
         def finish(df: pl.DataFrame) -> OracleAnswer:
-            if rows is not None and df.height and set(df["rows"].to_list()) != {rows}:
+            if df.height == 0:
+                raise OracleError(f"{group}: the filter matches no rows")
+            if rows is not None and set(df["rows"].to_list()) != {rows}:
                 raise OracleError(f"{group}: groups have {sorted(set(df['rows'].to_list()))} rows, expected {rows}")
             if unique_by is not None and df.height and (df["rows"] != df["distinct"]).any():
                 raise OracleError(f"{group}: a group has two rows for one {unique_by}; the filter misses a dimension")
