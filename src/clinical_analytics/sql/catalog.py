@@ -19,6 +19,7 @@ from sqlglot import exp
 
 from clinical_analytics.contracts.config import UNIFIED_OBJECT_NAME
 from clinical_analytics.contracts.declarations import LevelMapping
+from clinical_analytics.contracts.quality import is_id_property, is_restricted_property
 from clinical_analytics.sql.errors import SqlRefusedError
 from clinical_analytics.sql.render import render
 
@@ -92,6 +93,13 @@ class SqlCatalog:
         if unified is None or not unified.properties:
             raise SqlRefusedError("This dataset's data contract lists no columns, so SQL cannot be checked against it.")
         columns = tuple(_spec(p) for p in unified.properties)
+        folded = [c.name.casefold() for c in columns]
+        if len(set(folded)) < len(folded):
+            # DuckDB names are case-insensitive: it reads the second of "Age" and "age" as
+            # "age_1", so one contract column would silently show the other's values.
+            raise SqlRefusedError(
+                "This dataset has columns whose names differ only in capitalisation, so SQL cannot tell them apart."
+            )
         names = {c.name for c in columns}
         return cls(columns=columns, parquet_path=parquet_path, levels=tuple(m for m in levels if m.column in names))
 
@@ -100,10 +108,10 @@ def _spec(prop: SchemaProperty) -> ColumnSpec:
     name = prop.physicalName or prop.name
     if not name:
         raise SqlRefusedError("This dataset's data contract has a column without a name.")
-    tags = set(prop.tags or [])
+    # The same rules as the quality report's, so the two never disagree on what is an ID or PHI.
     return ColumnSpec(
         name=name,
         logical_type=str(prop.logicalType or "string"),
-        is_id=bool(prop.criticalDataElement),
-        phi="phi" in tags,
+        is_id=is_id_property(prop),
+        phi=is_restricted_property(prop),
     )

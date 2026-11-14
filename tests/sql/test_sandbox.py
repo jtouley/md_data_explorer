@@ -6,11 +6,15 @@ from collections.abc import Callable
 from pathlib import Path
 
 import duckdb
+import polars as pl
 import pytest
+from open_data_contract_standard.model import OpenDataContractStandard
 
+from clinical_analytics.contracts.config import UNIFIED_OBJECT_NAME
 from clinical_analytics.sql.catalog import SqlCatalog
 from clinical_analytics.sql.errors import SqlRefusedError
 from clinical_analytics.sql.sandbox import TIMED_OUT, SandboxConnection
+from tests.sql.conftest import synthetic_cohort
 
 
 @pytest.fixture
@@ -138,3 +142,47 @@ def test_sandbox_viewHasContractColumnsOnly(make_sql_catalog: Callable[..., SqlC
     # Assert
     assert "ldl" not in columns
     assert "sex" in columns
+
+
+def test_catalog_columnsDifferingOnlyInCase_refused(make_sql_catalog: Callable[..., SqlCatalog]) -> None:
+    # Arrange: DuckDB would read "age" as "age_1" and bind the view's "age" to "Age"
+    df = pl.DataFrame({"patient_id": ["P1", "P2"], "Age": [40, 50], "age": [41, 51]})
+
+    # Act / Assert
+    with pytest.raises(SqlRefusedError, match="capitalisation"):
+        make_sql_catalog(df)
+
+
+@pytest.mark.parametrize(
+    ("column", "marks", "expected_id", "expected_phi"),
+    [
+        ("ward", {"classification": "restricted", "tags": None}, False, True),
+        ("ward", {"classification": None, "tags": ["phi"]}, False, True),
+        ("ward", {"classification": None, "tags": None}, False, False),
+        ("patient_id", {"criticalDataElement": False, "required": False, "primaryKey": True}, True, True),
+    ],
+)
+def test_catalog_idAndPhiMarks_matchQualityReportRules(
+    tmp_path: Path,
+    make_contract: Callable[..., OpenDataContractStandard],
+    column: str,
+    marks: dict[str, object],
+    expected_id: bool,
+    expected_phi: bool,
+) -> None:
+    # Arrange: a contract whose column carries only one of the marks the quality report honours
+    df = synthetic_cohort()
+    path = tmp_path / "cohort.parquet"
+    df.write_parquet(path)
+    contract = make_contract(df)
+    unified = next(o for o in contract.schema_ or [] if o.name == UNIFIED_OBJECT_NAME)
+    prop = next(p for p in unified.properties or [] if p.name == column)
+    for field, value in marks.items():
+        setattr(prop, field, value)
+
+    # Act
+    spec = SqlCatalog.from_contract(contract, path).column(column)
+
+    # Assert
+    assert spec is not None
+    assert (spec.is_id, spec.phi) == (expected_id, expected_phi)
