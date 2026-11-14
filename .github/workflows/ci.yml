@@ -5,6 +5,11 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main]
+  # Nightly: acceptance with a local model (acceptance-model). The other jobs run too.
+  schedule:
+    - cron: "23 9 * * *"
+  # Manual run (Actions tab, write access): same jobs as the nightly. Takes no inputs.
+  workflow_dispatch:
 
 # Read-only token for every job; no job here writes to the repository. A job that needs more
 # gets its own `permissions:` block, which replaces this one for that job (list contents: read
@@ -199,3 +204,118 @@ jobs:
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # Real public data through the real upload API, from a fresh app (docs/vision/PURPOSE.md).
+  # Downloads: physionet.org (COVID-MS, CC-BY-4.0), each file pinned by sha256 in corpus.yaml.
+  acceptance:
+    name: Acceptance on COVID-MS, no model
+    runs-on: ubuntu-latest
+    needs: quality
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up the app and the corpus cache
+        uses: ./.github/actions/acceptance-setup
+
+      # Fails on any WRONG, LEAK or ERROR, and when answered right falls below the committed
+      # baseline (one aggregate count). The table goes to the job summary and an artifact.
+      - name: Ask the COVID-MS questions and check the gate
+        run: >-
+          make accept DATASET=covid_ms MODEL=none
+          ACCEPT_ARGS="--label ci --fail-on WRONG,LEAK,ERROR
+          --baseline tests/eval/corpus/baselines/covid_ms.none.json
+          --results-dir $RUNNER_TEMP/accept-results --summary $GITHUB_STEP_SUMMARY"
+
+      - name: Upload the results table
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: acceptance-covid_ms-none
+          # The markdown table only (grades, tiers, latencies, reasons), not results.json.
+          path: ${{ runner.temp }}/accept-results/*/results.md
+          if-no-files-found: error
+          retention-days: 30
+
+  corpus-load:
+    # Uploads each dataset in ACCEPT_LOAD_DATASETS (Makefile) into its own fresh app and checks
+    # status, rows and columns against corpus.yaml. Adding a dataset is a change to that one line.
+    name: Corpus upload check
+    runs-on: ubuntu-latest
+    needs: quality
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up the app and the corpus cache
+        uses: ./.github/actions/acceptance-setup
+
+      - name: Upload each corpus dataset and check the load
+        run: make accept-load ACCEPT_ARGS="--summary $GITHUB_STEP_SUMMARY"
+
+  acceptance-model:
+    # Nightly and manual runs only. Ollama runs from an image pinned by digest (no install
+    # script), listening on loopback only. The model's manifest digest is checked before any
+    # question is asked.
+    name: Acceptance on COVID-MS, llama3.2:3b (nightly)
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    needs: quality
+    timeout-minutes: 150
+    env:
+      # ollama/ollama:0.40.13, multi-arch index digest. Change the digest and this version together.
+      OLLAMA_IMAGE: ollama/ollama@sha256:b2f0122c476bc9fe7ce679d8bb4bd555351e25e2554eefb156f61cb0a89cf429
+      OLLAMA_MODEL: llama3.2:3b
+      # sha256 of the model's manifest on registry.ollama.ai (`ollama list` shows a80c4f17acd5).
+      OLLAMA_MODEL_DIGEST: a80c4f17acd55265feec403c7aef86be0c25983ab279d83f3bcd3abbcb5b8b72
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up the app and the corpus cache
+        uses: ./.github/actions/acceptance-setup
+
+      - name: Start Ollama
+        run: |
+          docker run --detach --name ollama --publish 127.0.0.1:11434:11434 "$OLLAMA_IMAGE"
+          for _ in $(seq 1 60); do
+            curl --silent --fail http://127.0.0.1:11434/api/version && exit 0
+            sleep 2
+          done
+          echo "::error::Ollama did not answer on 127.0.0.1:11434 within 120 seconds. Its log follows; check that the image digest still exists."
+          docker logs ollama
+          exit 1
+
+      - name: Pull the model and check its digest
+        run: |
+          curl --silent --show-error --fail --max-time 1800 http://127.0.0.1:11434/api/pull \
+            --data "{\"model\": \"$OLLAMA_MODEL\", \"stream\": false}"
+          actual=$(curl --silent --show-error --fail http://127.0.0.1:11434/api/tags \
+            | jq --raw-output --arg m "$OLLAMA_MODEL" '.models[] | select(.name == $m) | .digest')
+          if [ "$actual" != "$OLLAMA_MODEL_DIGEST" ]; then
+            echo "::error::$OLLAMA_MODEL has digest '$actual', expected $OLLAMA_MODEL_DIGEST. The tag now points at a different model: run it locally first, then update OLLAMA_MODEL_DIGEST."
+            exit 1
+          fi
+
+      # Fails on any WRONG or LEAK. An ERROR (a timeout, or a silent fall back from the model) is
+      # in the table but does not fail the nightly. The table shows the tier that answered each
+      # question, whether the model ran, and the latency.
+      - name: Ask the COVID-MS questions with the model and check the gate
+        run: >-
+          make accept DATASET=covid_ms MODEL="$OLLAMA_MODEL" ACCEPT_TIMEOUT=360
+          ACCEPT_ARGS="--label nightly --fail-on WRONG,LEAK --llm-timeout 180
+          --results-dir $RUNNER_TEMP/accept-results --summary $GITHUB_STEP_SUMMARY"
+
+      - name: Upload the results table
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: acceptance-covid_ms-llama3.2-3b
+          path: ${{ runner.temp }}/accept-results/*/results.md
+          if-no-files-found: error
+          retention-days: 30

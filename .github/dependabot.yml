@@ -3,8 +3,9 @@
 version: 2
 updates:
   # Actions are pinned to full commit SHAs with the tag in a comment; Dependabot bumps both.
+  # "/" covers .github/workflows only: each local composite action is listed by its directory.
   - package-ecosystem: "github-actions"
-    directory: "/"
+    directories: ["/", "/.github/actions/acceptance-setup"]
     schedule:
       interval: "weekly"
     groups:

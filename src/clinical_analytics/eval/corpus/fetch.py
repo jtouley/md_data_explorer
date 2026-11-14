@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import sys
+import urllib.error
 import urllib.request
 import zipfile
 from collections.abc import Callable
@@ -81,6 +82,12 @@ class CorpusDataset(BaseModel):
     name: str
     files: list[CorpusFile]
     upload_package: UploadPackage
+    # What an upload check (``run --load-only``) expects once the dataset is uploaded: the row and
+    # column counts of the loaded table, and which file goes up ("zip": the upload package,
+    # "table": the table file alone, for an app that does not read the package's format yet).
+    rows: int | None = None
+    columns: int | None = None
+    load_upload: Literal["zip", "table"] = "zip"
 
 
 def load_corpus(path: Path = CORPUS_YAML) -> dict[str, CorpusDataset]:
@@ -108,8 +115,14 @@ def _download(url: str) -> bytes:
     if not url.startswith("https://"):
         raise CorpusFetchError(f"refusing a non-HTTPS corpus URL: {url}")
     request = urllib.request.Request(url, headers={"User-Agent": "mdde-bench-fetch"})
-    with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_S) as response:  # noqa: S310 - https only
-        return bytes(response.read())
+    try:
+        with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_S) as response:  # noqa: S310 - https only
+            return bytes(response.read())
+    except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+        # Named here, so a host that is down or blocked reads as that, not as an app regression.
+        raise CorpusFetchError(
+            f"could not download {url}: {error}. Check that the host is reachable from this machine, then retry."
+        ) from error
 
 
 def fetch_file(

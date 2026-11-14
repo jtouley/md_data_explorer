@@ -1,7 +1,9 @@
 # Public datasets the acceptance harness (`make accept`) uploads through the real upload path.
 # Field names follow the corpus manifest (name, files[].path/url/sha256/bytes/kind, license,
 # upload_package). Files are fetched into a cache outside the repo and checked by sha256; no
-# data is ever committed (scripts/check_no_data_files.py).
+# data is ever committed (scripts/check_no_data_files.py). `rows`, `columns` and `load_upload`
+# are what the CI upload check (`make accept-load`) expects; the datasets it uploads are listed in
+# ACCEPT_LOAD_DATASETS in the Makefile.
 datasets:
   - name: covid_ms
     title: COVID-19 and Multiple Sclerosis Global Data Sharing Initiative (GDSI) open dataset v1.0.1
@@ -14,6 +16,10 @@ datasets:
       terms: Attribution required; cite Khan et al. (PhysioNet 2024) and Goldberger et al. (2000). No DUA.
     grain: patient (one row per person with MS reporting COVID-19)
     rows: 1141
+    columns: 47
+    # The upload API on main reads .csv/.xlsx/.xls/.sav, not .zip: the upload check uploads the
+    # table alone. Set to zip once the app reads upload packages (feat/corpus-formats).
+    load_upload: table
     id_column: secret_name
     files:
       - path: GDSI_OpenDataset_Final.csv

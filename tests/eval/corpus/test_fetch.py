@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import re
+import urllib.error
+import urllib.request
 import zipfile
 from pathlib import Path
 
 import pytest
 
+from clinical_analytics.eval.corpus import fetch as fetch_module
 from clinical_analytics.eval.corpus.fetch import (
     ChecksumMismatchError,
     CorpusFetchError,
@@ -203,3 +206,22 @@ class TestShippedCorpus:
         # Assert
         assert cache.parts[-len(expected_parts) :] == expected_parts
         assert not cache.resolve().is_relative_to(REPO_ROOT)
+
+
+class TestDownloadErrors:
+    @pytest.mark.parametrize(
+        "error",
+        [urllib.error.URLError("name resolution failed"), TimeoutError("timed out"), ConnectionResetError("reset")],
+    )
+    def test_download_networkFailure_raisesFetchErrorNamingUrl(
+        self, monkeypatch: pytest.MonkeyPatch, error: Exception
+    ) -> None:
+        # Arrange
+        def fail(*_args: object, **_kwargs: object) -> None:
+            raise error
+
+        monkeypatch.setattr(urllib.request, "urlopen", fail)
+
+        # Act / Assert
+        with pytest.raises(CorpusFetchError, match="could not download https://example.org/x.csv"):
+            fetch_module._download("https://example.org/x.csv")
