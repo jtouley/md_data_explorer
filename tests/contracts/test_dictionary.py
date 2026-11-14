@@ -15,6 +15,7 @@ from clinical_analytics.contracts.dictionary import (
     documented_unit,
     inline_codebook,
     read_dictionary,
+    read_glossary,
     strip_statistics,
 )
 from clinical_analytics.contracts.quality import RANGE_METRIC, compile_contract, run_quality
@@ -75,6 +76,9 @@ def _custom(prop: dict) -> dict:
         ("Weight at baseline. 4 patients had no scale.", "Weight at baseline."),
         ("Cohort of n = 7 sites. Weight at baseline.", "Weight at baseline."),
         ("1141 people took part.", "1141 people took part."),  # a total, not a small count
+        ("“Yes” (<1%) if so.", "“Yes” if so."),  # a share, whatever its comparison
+        ("Under 1% of patients had it. Measured once.", "Measured once."),  # "of patients": a share
+        ("Yes (n = 4) if so.", "Yes if so."),
         ("", ""),
     ],
 )
@@ -87,6 +91,25 @@ def test_stripStatistics_sharesAndSmallCounts_removed(text: str, expected: str):
 
 
 @pytest.mark.parametrize(
+    "text",
+    [
+        "EF category (0 = EF < 40%, 1 = EF >= 40%)",
+        "Glycated haemoglobin; target HbA1c below 7% for most adults. Measured at baseline.",
+        "Prediabetes is HbA1c 5.7–6.4%.",
+        "Body fat between 25% and 30%.",
+        "SpO2 ≥ 94% on room air.",
+        "Ejection fraction at most 35%.",
+    ],
+)
+def test_stripStatistics_clinicalThreshold_kept(text: str):
+    # Arrange / Act
+    result = strip_statistics(text)
+
+    # Assert
+    assert result == text
+
+
+@pytest.mark.parametrize(
     ("text", "expected"),
     [
         (
@@ -94,6 +117,7 @@ def test_stripStatistics_sharesAndSmallCounts_removed(text: str, expected: str):
             {"0": "placebo", "1": "low dose", "2": "high dose"},
         ),
         ("hemophilia (0=no, 1=yes)", {"0": "no", "1": "yes"}),
+        ("EF category (0 = EF < 40%, 1 = EF >= 40%)", {"0": "EF < 40%", "1": "EF >= 40%"}),
         ("one code only (1=yes)", {}),
         ("no codes at all", {}),
     ],
@@ -147,6 +171,57 @@ def test_readDictionary_anyText_neverHoldsAPercentage():
 
 
 @pytest.mark.parametrize(
+    ("doc_text", "expected"),
+    [
+        # a numbered codebook does not go on with another variable's entry
+        (
+            "sex: Patient sex\n1: male\n2: female\nethnicity: Self-reported ethnicity\n1: hispanic\n2: other",
+            {"1": "male", "2": "female"},
+        ),
+        # an entry heading numbered codes of its own ends a codebook of words
+        (
+            "sex: Patient sex\nmale: assigned male\nfemale: assigned female\nrace: Race\n1: white\n2: other",
+            {"male": "assigned male", "female": "assigned female"},
+        ),
+        # an entry heading quoted codes ends it too
+        ("sex: Patient sex\n1: male\n2: female\nsmoking: Smoking\n“ever”: smoked", {"1": "male", "2": "female"}),
+        # a codebook of capital letters does not go on with a lower-case entry
+        (
+            "sex: Patient sex\nM: male\nF: female\nsmoking: Smoking status\nN: never\nC: current",
+            {"M": "male", "F": "female"},
+        ),
+        # an entry heading capital-letter codes ends a codebook of words
+        (
+            "sex: Patient sex\nmale: assigned male\nfemale: assigned female\nsmoking: Smoking\nN: never\nC: current",
+            {"male": "assigned male", "female": "assigned female"},
+        ),
+        # words all through stay one codebook
+        (
+            "sex: Patient sex\nmale: assigned male\nfemale: assigned female\nunknown: not recorded",
+            {"male": "assigned male", "female": "assigned female", "unknown": "not recorded"},
+        ),
+    ],
+)
+def test_readDictionary_entryOfAnotherVariable_endsTheCodebook(doc_text: str, expected: dict[str, str]):
+    # Arrange / Act
+    docs = read_dictionary(doc_text, ["sex", "age"])
+
+    # Assert
+    assert docs["sex"].codebook == expected
+
+
+def test_readGlossary_definitions_statisticsStripped():
+    # Arrange
+    text = "EDSS: Expanded Disability Status Scale\nICU: Intensive care unit (0.35%)\nRR: (4.2%)"
+
+    # Act
+    glossary = read_glossary(text)
+
+    # Assert
+    assert glossary == {"EDSS": "Expanded Disability Status Scale", "ICU": "Intensive care unit"}
+
+
+@pytest.mark.parametrize(
     ("doc_text", "columns"),
     [(None, COLUMNS), ("", COLUMNS), (DICTIONARY, []), (DICTIONARY, ["Age band (years)"])],
 )
@@ -158,10 +233,10 @@ def test_readDictionary_nothingMatchesExactly_returnsEmpty(doc_text: str | None,
     assert docs == {}
 
 
-def test_buildContract_dictionaryDocs_inContractButNotChecked(make_contract):
+def test_buildContract_dictionaryDocs_inContractWithoutAFinding(make_contract):
     # Arrange
     df = pl.DataFrame(
-        {"patient_id": ["a", "b"], "age_band": [0, 7], "weight": [70.5, 81.0], "arm": [0, 1], "flag": [True, False]}
+        {"patient_id": ["a", "b"], "age_band": [0, 1], "weight": [70.5, 81.0], "arm": [0, 1], "flag": [True, False]}
     )
     docs = read_dictionary(DICTIONARY, df.columns) | {"flag": ColumnDoc(codebook={"1": "yes", "0": "no"})}
 
@@ -177,11 +252,87 @@ def test_buildContract_dictionaryDocs_inContractButNotChecked(make_contract):
         {"value": 1, "label": "if the age is 40 or more"},
     ]
     assert _custom(props["age_band"])[config.DICTIONARY_CODES_PROPERTY] == [0, 1]
-    assert not any(q["metric"] == "invalidValues" for q in props["age_band"]["quality"])  # code 7: no finding
+    assert not any(q["metric"] == "invalidValues" for q in props["age_band"]["quality"])
     assert _custom(props["weight"])["unit"] == "kg"
     assert _custom(props["weight"])["unitSource"] == config.DICTIONARY_SOURCE
     assert "enum" not in props["flag"]  # a boolean column takes no codes
     assert report.failed == 0
+
+
+@pytest.mark.parametrize(
+    ("values", "dtype"),
+    [
+        (["Yes", "No"], pl.String),  # documented "0=no, 1=yes"; the column holds the words
+        ([0, 7], pl.Int64),  # 7 is not documented
+        ([None, None], pl.Int64),  # nothing to check the codes against
+    ],
+)
+def test_buildContract_dictionaryCodesTheDataDoesNotUse_leftOut(make_contract, values: list, dtype: pl.DataType):
+    # Arrange
+    df = pl.DataFrame({"patient_id": ["a", "b"], "smoker": pl.Series(values, dtype=dtype)})
+    docs = {"smoker": ColumnDoc(description="Ever smoked at baseline", codebook={"0": "no", "1": "yes"})}
+
+    # Act
+    contract = make_contract(df, dictionary=docs)
+
+    # Assert
+    smoker = _props(contract)["smoker"]
+    assert "enum" not in smoker
+    assert config.DICTIONARY_CODES_PROPERTY not in _custom(smoker)
+    assert smoker["description"] == "Ever smoked at baseline"  # the description still holds
+
+
+@pytest.mark.parametrize("lowest", [0, 1])
+def test_buildContract_columnCodedOnlyByDictionary_noRangeCheck(make_contract, lowest: int):
+    # Arrange: "glucose" has a plausibility range, but this column holds category codes
+    df = pl.DataFrame({"patient_id": [f"p{i}" for i in range(20)], "glucose": [lowest, lowest + 1] * 10})
+    docs = {"glucose": ColumnDoc(codebook={str(lowest): "normal", str(lowest + 1): "high"})}
+
+    # Act
+    contract = make_contract(df, dictionary=docs)
+    report = run_quality(df.lazy(), contract)
+
+    # Assert
+    glucose = _props(contract)["glucose"]
+    assert [e["value"] for e in glucose["enum"]] == [lowest, lowest + 1]
+    assert "logicalTypeOptions" not in glucose
+    assert "assumedUnit" not in _custom(glucose)
+    assert not any(c.metric == RANGE_METRIC for c in compile_contract(contract, df.schema))
+    assert report.failed == 0
+
+
+def test_buildContract_headerCodeWrittenAsFloatInDictionary_oneEnumEntry(make_contract):
+    # Arrange: the header codes 1 and 2; the dictionary writes them "1.0" and "2.0", and adds 3
+    column = "Smoker 1: never 2: former"
+    df = pl.DataFrame({"patient_id": ["a", "b", "c"], column: [1.0, 2.0, 3.0]})
+    docs = {column: ColumnDoc(codebook={"1.0": "yes", "2.0": "no", "3": "current"})}
+
+    # Act
+    contract = make_contract(df, dictionary=docs)
+
+    # Assert
+    prop = _props(contract)[column]
+    assert prop["enum"] == [
+        {"value": 1, "label": "never"},
+        {"value": 2, "label": "former"},
+        {"value": 3, "label": "current"},
+    ]
+    assert _custom(prop)[config.DICTIONARY_CODES_PROPERTY] == [3]
+    check = next(q for q in prop["quality"] if q["metric"] == "invalidValues")
+    assert check["arguments"]["validValues"] == [1, 2, 3]
+
+
+def test_buildContract_glossaryAndDictionaryRead_onTheContract(make_contract):
+    # Arrange
+    df = pl.DataFrame({"patient_id": ["a", "b"]})
+
+    # Act
+    contract = make_contract(df, glossary={"EDSS": "Expanded Disability Status Scale"})
+
+    # Assert
+    custom = {c.property: c.value for c in contract.customProperties or []}
+    assert custom[config.GLOSSARY_PROPERTY] == {"EDSS": "Expanded Disability Status Scale"}
+    assert custom[config.DICTIONARY_READ_PROPERTY] is True
 
 
 def test_buildContract_acceptedPatchAndDictionary_patchWins(make_contract):

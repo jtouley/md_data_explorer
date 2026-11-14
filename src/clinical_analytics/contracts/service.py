@@ -12,7 +12,7 @@ import structlog
 from open_data_contract_standard.model import OpenDataContractStandard
 
 from clinical_analytics.contracts.builder import ContractInputs, build_contract
-from clinical_analytics.contracts.dictionary import ColumnDoc, read_dictionary
+from clinical_analytics.contracts.dictionary import ColumnDoc, read_dictionary, read_glossary
 from clinical_analytics.contracts.errors import ContractDamagedError, ContractError, ContractValidationError
 from clinical_analytics.contracts.quality import QualityNotRun, QualityReport, run_quality
 from clinical_analytics.contracts.store import contract_path, read_contract, write_contract, write_report
@@ -94,7 +94,7 @@ def renamed_id_source(metadata: dict[str, Any]) -> str | None:
     return str(sources[0]) if isinstance(sources, list) and len(sources) == 1 else None
 
 
-def _documented_columns(metadata: dict[str, Any], columns: list[str]) -> dict[str, ColumnDoc]:
+def documented_columns(metadata: dict[str, Any], columns: list[str]) -> dict[str, ColumnDoc]:
     """What the upload's data dictionary documents per stored column; the identifier the upload
     renamed to ``patient_id`` keeps the entry the dictionary wrote under its uploaded name."""
     doc_context = metadata.get("doc_context")
@@ -106,6 +106,12 @@ def _documented_columns(metadata: dict[str, Any], columns: list[str]) -> dict[st
     if source and source in docs and source not in columns and "patient_id" in columns:
         docs.setdefault("patient_id", docs[source])
     return {column: doc for column, doc in docs.items() if column in columns}
+
+
+def documented_glossary(metadata: dict[str, Any]) -> dict[str, str]:
+    """The terms the upload's data dictionary defines (``dictionary.read_glossary``)."""
+    doc_context = metadata.get("doc_context")
+    return read_glossary(doc_context) if isinstance(doc_context, str) else {}
 
 
 def read_saved_contract(path: Path) -> OpenDataContractStandard:
@@ -198,7 +204,8 @@ def check_upload(
             source_file_sha256=metadata.get("source_file_sha256"),
             resolved=_resolve(df, patches) if accepted else None,
             accepted_patch_ids=accepted,
-            dictionary=_documented_columns(metadata, df.columns),
+            dictionary=documented_columns(metadata, df.columns),
+            glossary=documented_glossary(metadata),
         )
         contract = build_contract(df, inputs)
         if not write_contract(data_dir, upload_id, dataset_version, contract):

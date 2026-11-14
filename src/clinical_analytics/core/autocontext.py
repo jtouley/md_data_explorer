@@ -59,6 +59,10 @@ class AutoContext:
     constraints: dict[str, Any] = field(default_factory=lambda: {"no_row_level_data": True, "max_tokens": 4000})
     relationships: list[Any] | None = None
     grain: str | None = None  # what one row is, from the contract ("One row per secret_name")
+    # Every code in a codebook is one the data uses: true for a contract's codebooks (header and
+    # accepted codes are checked by its quality rules, dictionary codes before they are written),
+    # never for codes read from documentation alone.
+    codes_checked: bool = False
 
 
 def _extract_entity_keys(inferred_schema: Any) -> list[str]:
@@ -594,10 +598,9 @@ def _contract_dtype(column: "ContractColumn") -> ColumnDtype:
         return "id"
     if column.codebook:
         return "coded"
-    if column.logical_type in ("number", "integer"):
-        return "numeric"
-    if column.logical_type in ("date", "timestamp", "time"):
-        return "datetime"
+    category = column.type_category  # the mapping the type rules use too (contracts.context)
+    if category in ("numeric", "datetime"):
+        return category
     return "categorical"
 
 
@@ -631,8 +634,9 @@ def _autocontext_from_contract(
         },
         entity_keys=[contract.key] if contract.key else [],
         columns=columns,
-        glossary={},
+        glossary=dict(contract.glossary),
         constraints={"no_row_level_data": True, "max_tokens": max_tokens},
         grain=contract.grain,
+        codes_checked=True,
     )
     return _enforce_token_budget(autocontext, max_tokens)

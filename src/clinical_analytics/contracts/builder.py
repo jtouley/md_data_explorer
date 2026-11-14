@@ -58,6 +58,8 @@ class ContractInputs:
     created_at: datetime | None = None
     # What the uploaded data dictionary documents, by physical column (``contracts.dictionary``).
     dictionary: Mapping[str, ColumnDoc] = field(default_factory=dict)
+    # Terms the dictionary defines ("EDSS: Expanded Disability Status Scale"), statistics stripped.
+    glossary: Mapping[str, str] = field(default_factory=dict)
     extra_custom_properties: dict[str, Any] = field(default_factory=dict)
 
 
@@ -211,7 +213,7 @@ def unique_names(columns: Iterable[str]) -> dict[str, str]:
     return names
 
 
-def _typed_code(code: str, dtype: pl.DataType) -> int | float | str | None:
+def typed_code(code: str, dtype: pl.DataType) -> int | float | str | None:
     """A codebook key typed like the column, or None when it cannot be (e.g. 'n/a' on Int64)."""
     if not dtype.is_numeric():
         return code
@@ -380,18 +382,24 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
         prop["tags"] = ["phi"]
 
     codebook = column_codebook(column, meta)
-    typed = [(_typed_code(code, dtype), label) for code, label in codebook.items()]
+    typed = [(typed_code(code, dtype), label) for code, label in codebook.items()]
     enum = [{"value": value, "label": label} for value, label in typed if value is not None]
-    if enum and not is_id and dtype != pl.Boolean:
-        prop["enum"] = enum
+    # Dictionary codes join the codebook before anything reads it ("a coded column gets no range
+    # check" below), and only when the data holds no value outside them (``documented_enum``).
+    added = documented_enum(doc.codebook, series, enum) if doc and not is_id and dtype != pl.Boolean else []
+    if added:
+        custom.append(_custom(config.DICTIONARY_CODES_PROPERTY, [e["value"] for e in added]))
+    if (enum or added) and not is_id and dtype != pl.Boolean:
+        prop["enum"] = enum + added
         if not any(cp["property"] == "variableKind" for cp in custom):
             custom.append(_custom("variableKind", "categorical"))
+    if enum and not is_id and dtype != pl.Boolean:
         quality.append(
             {
                 "id": f"{name}_invalid",
                 "type": "library",
                 "metric": "invalidValues",
-                "arguments": {"validValues": [e["value"] for e in enum]},
+                "arguments": {"validValues": [e["value"] for e in enum + added]},
                 "mustBe": 0,
                 "dimension": "conformity",
                 "severity": config.SEVERITY_CODEBOOK,
@@ -420,31 +428,35 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
         if not (meta and meta.unit):
             custom.append(_custom("assumedUnit", bounds.unit))
 
-    _add_documented_codes(prop, custom, doc, dtype, is_id)
     if custom:
         prop["customProperties"] = custom
     prop["quality"] = quality
     return prop
 
 
-def _add_documented_codes(
-    prop: dict[str, Any], custom: list[dict[str, Any]], doc: ColumnDoc | None, dtype: pl.DataType, is_id: bool
-) -> None:
-    """Dictionary codes the header and accepted patches do not give, appended to ``enum``.
+def documented_enum(codebook: Mapping[str, str], series: pl.Series, enum: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The data dictionary's codes ``enum`` lacks, typed like ``series``, to append to it; none
+    unless every value ``series`` holds is a code of ``enum`` or of the dictionary.
 
-    They describe the column for the model and the reader, and are not checked against the data:
-    a parsed dictionary is a heuristic until someone accepts it (ADR011), so a code it misread
-    must not turn into an "invalid values" finding that holds answers.
+    A parsed dictionary is a heuristic (ADR011): its codes can belong to another column, or
+    describe a coding the data does not use ("0=no, 1=yes" over a column holding "Yes"/"No").
+    The model filters on a code, so a code the data does not use returns no rows without an error.
+    Checking the whole set, never a code alone, keeps the contract from saying which codes occur
+    (a code of 1–10 patients among them). Codes are compared typed, so "1.0" is the header's 1.
     """
-    if doc is None or not doc.codebook or is_id or dtype == pl.Boolean:
-        return
-    enum: list[dict[str, Any]] = list(prop.get("enum") or [])
-    known = {str(e["value"]) for e in enum}
-    typed = [(_typed_code(code, dtype), label) for code, label in doc.codebook.items() if code not in known]
-    added = [{"value": value, "label": label} for value, label in typed if value is not None]
-    if added:
-        prop["enum"] = enum + added
-        custom.append(_custom(config.DICTIONARY_CODES_PROPERTY, [e["value"] for e in added]))
+    known = {e["value"] for e in enum}
+    added: dict[Any, str] = {}
+    for code, label in codebook.items():
+        value = typed_code(code, series.dtype)
+        if value is not None and value not in known and value not in added:
+            added[value] = label
+    if not added:
+        return []
+    observed = series.drop_nulls().unique()
+    allowed = known | set(added)
+    if observed.len() == 0 or observed.len() > len(allowed) or not all(v in allowed for v in observed.to_list()):
+        return []
+    return [{"value": value, "label": label} for value, label in added.items()]
 
 
 def _granularity(df: pl.DataFrame, id_column: str | None) -> str:
@@ -480,7 +492,12 @@ def build_contract(df: pl.DataFrame, inputs: ContractInputs) -> OpenDataContract
         _custom("metadataPatchIds", list(inputs.accepted_patch_ids)),
         _custom("minCellSize", config.MIN_CELL_SIZE),
         _custom("generator", config.GENERATOR),
+        # This builder read the dictionary and checked its codes against the data: a contract
+        # without the mark predates that, and its reader reads the upload's dictionary instead.
+        _custom(config.DICTIONARY_READ_PROPERTY, True),
     ]
+    if inputs.glossary:
+        custom.append(_custom(config.GLOSSARY_PROPERTY, dict(inputs.glossary)))
     if inputs.source_file_sha256:
         custom.append(_custom("sourceFileSha256", inputs.source_file_sha256))
     custom.extend(_custom(k, v) for k, v in inputs.extra_custom_properties.items())

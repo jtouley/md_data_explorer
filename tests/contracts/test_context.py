@@ -122,3 +122,38 @@ def test_loadContractContext_damagedFile_raisesDamaged(tmp_path: Path, text: str
     # Act / Assert
     with pytest.raises(ContractDamagedError):
         load_contract_context(path)
+
+
+def test_contextFromContract_contractFromBeforeCodesWereChecked_dictionaryCodesLeftOut(make_contract, documented_frame):
+    # Arrange: a contract written before the builder checked dictionary codes (no mark)
+    from clinical_analytics.contracts import config
+
+    contract = make_contract(documented_frame, dictionary=DOCS)
+    contract.customProperties = [
+        c for c in contract.customProperties or [] if c.property != config.DICTIONARY_READ_PROPERTY
+    ]
+
+    # Act
+    context = context_from_contract(contract)
+
+    # Assert
+    by_name = {c.name: c for c in context.columns}
+    assert context.dictionary_read is False
+    assert by_name["age_band"].codebook == {}
+    assert by_name["age_band"].description == "Age in categories."
+
+
+def test_withDictionary_contractReadItsDictionary_unchanged(make_contract, documented_frame):
+    # Arrange
+    from clinical_analytics.contracts.context import with_dictionary
+
+    context = context_from_contract(make_contract(documented_frame))
+
+    def no_values(column: str) -> pl.Series:
+        raise AssertionError("the data is not read for a contract that read its dictionary")
+
+    # Act
+    result = with_dictionary(context, DOCS, {"EDSS": "scale"}, no_values)
+
+    # Assert
+    assert result is context

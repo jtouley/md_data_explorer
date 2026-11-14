@@ -31,6 +31,7 @@ from clinical_analytics.core.config_loader import load_patterns_config
 from clinical_analytics.core.data_home import nl_learning_dir
 from clinical_analytics.core.log_redaction import stable_hash, text_fingerprint
 from clinical_analytics.core.nl_query_config import (
+    SCHEMA_CONTEXT_ALIAS_MAX_TOKENS,
     SCHEMA_CONTEXT_CODE_LABEL_CHARS,
     SCHEMA_CONTEXT_DESCRIPTION_CHARS,
     SCHEMA_CONTEXT_MAX_CODES,
@@ -40,6 +41,8 @@ from clinical_analytics.core.query_plan import CohortStep, FilterSpec, QueryPlan
 from clinical_analytics.core.value_index import ColumnValues
 
 if TYPE_CHECKING:
+    import polars as pl
+
     from clinical_analytics.contracts.context import ContractContext
     from clinical_analytics.core.autocontext import AutoContext, ColumnContext
 
@@ -88,21 +91,65 @@ def _schema_context_lines(autocontext: "AutoContext") -> list[str]:
     return lines
 
 
-def _rag_context_from_contract(context: dict[str, Any], contract: "ContractContext") -> dict[str, Any]:
-    """``context`` with its dataset fields (columns, aliases, types) read from the contract only."""
-    numeric = ("number", "integer")
-    types = {
+def _contract_column_types(contract: "ContractContext") -> dict[str, dict[str, Any]]:
+    """Per column, its type as the model is told it (``contracts.context.type_category``, the one
+    mapping the catalog and the type rules share) and its codes."""
+    return {
         c.name: {
-            "type": "datetime" if c.logical_type in ("date", "timestamp") else c.logical_type,
-            "numeric": c.logical_type in numeric,
+            "type": c.type_category,
+            "numeric": c.type_category == "numeric",
+            "coded": bool(c.codebook),
+            "labels": dict(c.codebook),
         }
         for c in contract.columns
     }
+
+
+_WORD = re.compile(r"[a-z0-9]+")
+
+
+def _words(text: str) -> tuple[str, ...]:
+    return tuple(_WORD.findall(text.lower()))
+
+
+def _contract_aliases(contract: "ContractContext", alias_index: dict[str, str], query: str) -> dict[str, str]:
+    """Names for the contract's columns: its own synonyms, then the layer's alias index (aliases
+    users added after upload and derived names; names only, never a value) for columns the
+    contract has, those sharing a word with ``query`` first, within
+    ``SCHEMA_CONTEXT_ALIAS_MAX_TOKENS``. An alias that only respells its column's name is left
+    out: the column list already names it."""
+    from clinical_analytics.core.autocontext import _estimate_tokens
+
+    names = {c.name for c in contract.columns}
+    aliases = {synonym: c.name for c in contract.columns for synonym in c.synonyms}
+    terms = set(_words(query))
+    candidates = [
+        (alias, column)
+        for alias, column in alias_index.items()
+        if column in names and alias not in aliases and _words(alias) != _words(column)
+    ]
+    candidates.sort(key=lambda pair: -len(terms & set(_words(pair[0]))))  # stable: index order otherwise
+    used = _estimate_tokens(str(aliases))
+    for alias, column in candidates:
+        cost = _estimate_tokens(f"'{alias}': '{column}', ")
+        if used + cost > SCHEMA_CONTEXT_ALIAS_MAX_TOKENS:
+            break
+        aliases[alias] = column
+        used += cost
+    return aliases
+
+
+def _rag_context_from_contract(
+    contract: "ContractContext", alias_index: dict[str, str], examples: list[str], query: str
+) -> dict[str, Any]:
+    """The RAG context of an upload version with a contract: its columns, names and types read
+    from the contract, with no semantic-layer column metadata."""
     return {
-        **context,
         "columns": [c.name for c in contract.columns],
-        "aliases": {synonym: c.name for c in contract.columns for synonym in c.synonyms},
-        "column_types": types,
+        "aliases": _contract_aliases(contract, alias_index, query),
+        "column_types": _contract_column_types(contract),
+        "examples": examples,
+        "query": query,
     }
 
 
@@ -270,6 +317,9 @@ class NLQueryEngine:
         self._golden_embeddings = None
         self._golden_examples = None
         self._golden_config_path = None
+        # The layer version's contract context, read once per (contract path, version): a
+        # contract is immutable per version (``_contract_context``).
+        self._contract_cache: tuple[tuple[str, str | None], ContractContext | None] | None = None
 
         # Build query templates from metadata
         self._build_query_templates()
@@ -1649,6 +1699,17 @@ class NLQueryEngine:
         Returns:
             Dict with columns, aliases, examples, column_types, and query
         """
+        # RAG: Load golden questions as corpus; find the top 3 most similar examples
+        relevant_examples = self._find_similar_examples(query, self._load_golden_questions_rag(), top_k=3)
+
+        # An upload version with a contract: columns, names and types come from it alone, for
+        # the parse and for the validation and retry calls alike.
+        contract = self._contract_context()
+        if contract is not None:
+            return _rag_context_from_contract(
+                contract, self.semantic_layer.get_column_alias_index(), relevant_examples, query
+            )
+
         # Extract columns from semantic layer base view
         base_view = self.semantic_layer.get_base_view()
         columns = list(base_view.columns)
@@ -1680,12 +1741,6 @@ class NLQueryEngine:
             column_count=len(columns),
             type_info_count=len(column_types),
         )
-
-        # RAG: Load golden questions as corpus
-        golden_examples = self._load_golden_questions_rag()
-
-        # Find top 3 most similar examples
-        relevant_examples = self._find_similar_examples(query, golden_examples, top_k=3)
 
         return {
             "columns": columns,
@@ -1885,6 +1940,13 @@ Only use: COUNT, DESCRIBE, COMPARE_GROUPS, FIND_PREDICTORS, CORRELATIONS"""
             if len(autocontext.entity_keys) > 5:
                 entity_keys_str += f" (and {len(autocontext.entity_keys) - 5} more)"
             grain_line = f"\nOne row is: {autocontext.grain}\n" if autocontext.grain else ""
+            # Only codes the data is known to use: a documented code it does not use ("1" over a
+            # column of "Yes"/"No") would filter to no rows, without an error.
+            code_rule = (
+                '**Filter on a coded column with its code (the value before "="), never its meaning.**\n'
+                if autocontext.codes_checked
+                else ""
+            )
 
             # Format glossary (top 10 terms)
             glossary_items = []
@@ -1905,8 +1967,7 @@ Glossary (abbreviations and definitions):
 
 **Use this schema context to match variables accurately.**
 **Only reference columns/aliases that exist in the schema above.**
-**Filter on a coded column with its code (the value before "="), never its meaning.**
-"""
+{code_rule}"""
 
         system_prompt = """You are a medical data query parser. Extract structured query intent from natural language.
 
@@ -2322,21 +2383,53 @@ Fix the errors and return a corrected query intent as JSON.
 
     def _contract_context(self) -> "ContractContext | None":
         """The data contract of the layer's upload version, as the model's context; None for a
-        built-in dataset or an upload from before contracts.
+        built-in dataset or an upload from before contracts. Read once per contract path and
+        version (a contract is immutable per version).
 
         Raises:
             ContractError: the saved contract is damaged or unreadable (the model tier then does
                 not run for this question; it is never given an unchecked description instead).
         """
-        from clinical_analytics.contracts.context import load_contract_context
-
         path = getattr(self.semantic_layer, "contract_path", None)
         if not isinstance(path, Path):
             return None
+        key = (str(path), getattr(self.semantic_layer, "loaded_version", None))
+        cached = self._contract_cache
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        contract = self._read_contract_context(path)
+        self._contract_cache = (key, contract)
+        return contract
+
+    def _read_contract_context(self, path: Path) -> "ContractContext | None":
+        """``_contract_context`` uncached. A contract written before the builder read dictionaries
+        gets the upload's dictionary read in by the builder's rules (``contracts.context.
+        with_dictionary``), so such an upload keeps the descriptions, codes and glossary it had."""
+        from clinical_analytics.contracts.context import load_contract_context, with_dictionary
+        from clinical_analytics.contracts.service import documented_columns, documented_glossary
+
+        version = getattr(self.semantic_layer, "loaded_version", None)
         contract = load_contract_context(path)
         if contract is None:
-            logger.warning("model_context_without_contract", dataset_version=self.semantic_layer.loaded_version)
-        return contract
+            logger.warning("model_context_without_contract", dataset_version=version)
+            return None
+        if contract.dictionary_read:
+            return contract
+        metadata = self.semantic_layer.config.get("metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        docs = documented_columns(metadata, [c.name for c in contract.columns])
+        logger.info("contract_context_dictionary_read", dataset_version=version, documented_columns=len(docs))
+        return with_dictionary(contract, docs, documented_glossary(metadata), self._stored_values)
+
+    def _stored_values(self, column: str) -> "pl.Series":
+        """The distinct values ``column`` holds (nulls included), or none when the layer's view
+        lacks it; only checked against a dictionary's codes, never shown to the model."""
+        import polars as pl
+
+        if column not in self.semantic_layer.get_base_view().columns:
+            return pl.Series(column, [], dtype=pl.String)
+        values: pl.Series = self.semantic_layer.base_value_counts(column)[0]
+        return values
 
     def _llm_parse(self, query: str, conversation_history: list[dict] | None = None) -> QueryIntent:
         """
@@ -2382,8 +2475,6 @@ Fix the errors and return a corrected query intent as JSON.
             metadata = self.semantic_layer.config.get("metadata")
             if contract is None and metadata and isinstance(metadata, dict):
                 doc_context = metadata.get("doc_context")
-            if contract is not None:
-                context = _rag_context_from_contract(context, contract)
 
             # Extract query terms for relevance filtering
             query_terms = query.lower().split() if query else None

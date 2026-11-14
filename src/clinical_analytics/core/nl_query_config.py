@@ -277,3 +277,8 @@ SCHEMA_CONTEXT_MAX_TOKENS: int = 1600
 SCHEMA_CONTEXT_DESCRIPTION_CHARS: int = 160
 SCHEMA_CONTEXT_MAX_CODES: int = 12
 SCHEMA_CONTEXT_CODE_LABEL_CHARS: int = 60
+# The Aliases section of an upload with a contract: at most this many tokens of the layer's alias
+# index (the contract's synonyms always fit first), aliases that share a word with the question
+# first. An alias that only respells its column's name ("icu stay" for icu_stay) is left out: the
+# column list already names it. The whole index of a 48-column upload is about 1,500 tokens.
+SCHEMA_CONTEXT_ALIAS_MAX_TOKENS: int = 400
