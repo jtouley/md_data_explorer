@@ -3,9 +3,14 @@
 Thanks for helping. Clinical Analytics runs on clinicians' own machines with their patients'
 data, so two rules come before everything else:
 
-1. **Synthetic data only.** Never commit, attach, paste or screenshot real patient data, in code,
-   tests, issues, pull requests or logs. Use the synthetic kit (below) or the app's **Use the sample
-   cohort** button.
+1. **Synthetic data only, with one exception.** Never commit, attach, paste or screenshot real
+   patient data, in code, tests, issues, pull requests or logs. Use the synthetic kit (below) or the
+   app's **Use the sample cohort** button. The only exception is acceptance testing on public,
+   openly licensed, de-identified datasets: fetched at test time from their public source, checked
+   against a pinned checksum, used under their licence, never committed, and never shown row by
+   row. Aggregate results (counts, statistics, grades) may appear in logs, issues and pull
+   requests. Everything else, unit tests included, uses synthetic data. See
+   [Purpose and steel thread](docs/vision/PURPOSE.md#real-data).
 2. **No small counts, no data leaving the machine.** Patient counts from 1 to 10 must never be
    shown or be recoverable, and nothing may send data to a non-loopback host. A change that weakens
    either is a security issue: report it as [SECURITY.md](SECURITY.md) describes, not in a public

@@ -13,9 +13,13 @@ Report privately through GitHub Security Advisories:
    (the repository's **Security** tab, then **Report a vulnerability**).
 2. Describe the issue, the steps to reproduce it and the impact.
 3. Use synthetic data only. **Never attach real patient data**, screenshots of it, or files
-   derived from it. The synthetic kit in `tests/fixtures/synthetic/` and the app's **Load sample**
-   cohort are enough to reproduce almost anything; if they are not, describe the shape of the data
-   (column types, group sizes) instead.
+   derived from it. The synthetic kit in `tests/fixtures/synthetic/` and the app's **Use the sample
+   cohort** button are enough to reproduce almost anything; if they are not, describe the shape of
+   the data (column types, group sizes) instead. The only exception is acceptance testing on
+   public, openly licensed, de-identified datasets: fetched at test time from their public source,
+   checked against a pinned checksum, used under their licence, never committed, and never shown
+   row by row. Aggregate results (counts, statistics, grades) may appear in logs, issues and pull
+   requests. Everything else, unit tests included, uses synthetic data.
 
 Do not open a public issue, pull request or discussion for a vulnerability. If the
 **Report a vulnerability** button is not available, open a public issue that says only that you

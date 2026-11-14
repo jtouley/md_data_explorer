@@ -2,32 +2,14 @@
 
 ## Purpose and steel thread (read first, every session)
 
-**Purpose.** This is a local data analyst for anyone in medicine (medical students, residents, fellows, attendings, any specialty) who has a dataset and a question.
-- **Any question:** they ask in their own words, about anything a capable data tool such as TextQL could answer.
-- **Right answer, shown method:** they get the right answer with the method shown, from a local model (Ollama).
-- **Privacy:** data never leaves the machine, and no count of 1–10 patients is ever shown.
-- **Any data:** public datasets, registry exports, and hospital extracts with their dictionaries.
-
-Use cases such as the ID-fellow research guide are examples, not the scope. Don't narrow the product to one specialty, one workflow or a fixed list of question types.
-
-**"Works" means one thing:** right answers on real public datasets, through the real upload API, with the local model running, from a fresh app state. Passing unit tests, a green CI or a safe hold are not "works".
-
-**Steel thread, in order.** Do the first unfinished step. Work that does not move it waits.
-1. The model tier runs on uploaded datasets (#101).
-2. Acceptance harness on COVID-MS (GDSI, PhysioNet): `make accept DATASET=covid_ms MODEL=...` reuses `eval/headless.py` and the presented-answer graders. It reports RIGHT, WRONG, HELD, ERROR and LEAK per question, giving the baseline.
-3. The data contract becomes the model's only context: dictionary, codebooks, units, grain, keys.
-4. A governed SQL path, single table: the model writes SQL, it is checked against the contract, small cells are suppressed on the output, and the SQL is shown.
-5. Statistics as tools: the model picks the test, and the existing core computes it.
-6. MVP. Widen to the corpus (Sepsis 2019, MIMIC demos, population sets with ranges, patient-level sets across specialties) and compare local Ollama with a hosted stand-in. The bar: 0 WRONG, 0 LEAK.
-
-The design reference is [ADR013](../docs/implementation/ADR/ADR013.md). Take from it only what the current step needs.
+The purpose, what "works" means, the ordered steel thread, the merge gate and the real-data rule live in [docs/vision/PURPOSE.md](../docs/vision/PURPOSE.md). Read it first. Do the first unfinished step; work that does not move it waits.
 
 **Rules that stop wasted work:**
-- **Check before building.** Before writing code or briefing an agent, search the repo for what already does the job (`eval/`, `contracts/`, `analysis/`, `core/`) and the open PRs. Extend what exists. A brief must name what exists and say to reuse it.
+- **Check before building.** Before writing code or briefing an agent, search the repo for what already does the job (`eval/`, `contracts/`, `analysis/`, `core/`, `tests/eval/`) and the open PRs. Extend what exists. A brief must name what exists and say to reuse it.
 - **One change on the thread at a time:** one PR, one independent review, one fix round. A second review only when the fix changes privacy, security or concurrency logic.
-- **A change merges only if it moves the acceptance table,** or fixes a WRONG, LEAK or ERROR the table shows. Hardening for cases the corpus doesn't hit waits.
+- **A change merges only if it moves the acceptance table,** or fixes a WRONG, LEAK or ERROR the table shows. Hardening for cases the corpus doesn't hit waits. **Exception:** fixes for privacy, security or data loss merge on their own merits, whether or not the corpus triggers the issue.
 - **Report status as the latest acceptance table,** not as a list of PRs.
-- **Real data:** public, openly licensed datasets only. They are fetched and checksummed at test time, never committed, and never printed row by row. Unit tests use synthetic data.
+- **Real data:** synthetic data is the rule. The only exception is acceptance testing on public, openly licensed, de-identified datasets: fetched at test time from their public source, checked against a pinned checksum, used under their licence, never committed, and never shown row by row. Aggregate results (counts, statistics, grades) may appear in logs, issues and pull requests. Everything else, unit tests included, uses synthetic data.
 
 ## Behavior
 

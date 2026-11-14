@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         **Do not include real patient data**, screenshots of it, column values or file excerpts.
-        Reproduce with the **Load sample** cohort or describe the data's shape (column types, group sizes).
+        Reproduce with the **Use the sample cohort** button or describe the data's shape (column types, group sizes).
         If the bug shows a small count (1-10) or sends data off the machine, stop and follow
         [SECURITY.md](https://github.com/jtouley/md_data_explorer/blob/main/SECURITY.md) instead.
   - type: textarea
@@ -22,7 +22,7 @@ body:
       label: Steps to reproduce
       description: The question you asked, the dataset shape, and the exact steps.
       placeholder: |
-        1. Load sample
+        1. Use the sample cohort
         2. Ask "compare outcome by diabetes"
         3. ...
     validations:

@@ -13,7 +13,7 @@ App:  outcome=1 was 43% in diabetes=0 and 100% in diabetes=1; the difference was
 ## What it does
 
 - **Reads your file and works out its shape.** It detects patient IDs, outcomes and variable types, and runs data-quality checks on every upload (missing IDs, duplicates, out-of-range values).
-- **Picks the analysis for you.** Counts, descriptive statistics, group comparisons (chi-square, t-test), logistic regression, correlations and Kaplan–Meier survival.
+- **Picks the analysis for you.** Counts, descriptive statistics, group comparisons (chi-square, t-test), correlations and Kaplan–Meier survival. Logistic regression needs you to name the predictors (`do age and hypertension predict outcome`); it does not choose them for you.
 - **Shows its working.** Every answer comes with the plan it ran (outcome, grouping, filters, test). When it isn't sure what you meant, it shows the plan and asks before running it, rather than guessing.
 - **Protects small groups.** Counts of 1 to 10 patients are shown as `<11`, including where they could be worked out from other numbers.
 - **Keeps a conversation.** Past questions are saved in a sidebar, and follow-up questions use what you asked before.
@@ -34,7 +34,7 @@ The app runs locally after setup. It is **not a compliance certification**: whet
   Uploads, the analytics database, chat sessions and prompt-learning files go under `<data folder>/data/`. Set `CLINICAL_ANALYTICS_DATA_HOME` to use another folder, or `DATABASE_URL` to keep chat sessions in a different database (default: SQLite at `<data folder>/data/clinical_analytics.db`).
 - **Encrypt the disk.** The app does not encrypt data at rest. Turn on FileVault (macOS), BitLocker (Windows) or full-disk encryption (Linux).
 - **The language model is local.** Questions the built-in matcher cannot handle go to Ollama at `OLLAMA_BASE_URL` (default `http://localhost:11434`). Prompts can include column names, category labels and summary results. **Do not point `OLLAMA_BASE_URL` at a remote host**: that would send them off your machine.
-- **The API only accepts this launch.** The backend listens on `127.0.0.1` only, and the desktop app gives it a fresh random token every time it starts, so other programs on the machine cannot read your data through it.
+- **Other users and other machines can't reach it.** The backend listens on `127.0.0.1` only and needs a fresh random token for each launch, and the data folder is readable only by your account. Programs running as you still can read your data, and `make run-api` (development only) turns the token off.
 - **Setup needs the internet; daily use does not.** Installing downloads Python and Node packages and the `all-MiniLM-L6-v2` embedding model (pinned revision, SHA-256 checked). Ollama models are a one-time download.
 
 More detail: [Local data security](docs/security/LOCAL_DATA_SECURITY.md) and the [threat model](docs/security/THREAT_MODEL.md).
@@ -95,12 +95,12 @@ If a question uses a word the app can't tie to a column or value, it says which 
 
 ## What it doesn't do (yet)
 
-The aim is a general-purpose data assistant for clinicians, able to do what commercial natural-language data tools do, but on local models. The plan is in [Purpose and steel thread](.claude/CLAUDE.md#purpose-and-steel-thread-read-first-every-session) and [ADR013](docs/implementation/ADR/ADR013.md). It isn't there yet:
+The aim is a general-purpose data assistant for clinicians, able to do what commercial natural-language data tools do, but on local models. The plan is in [Purpose and steel thread](docs/vision/PURPOSE.md) and [ADR013](docs/implementation/ADR/ADR013.md). It isn't there yet:
 
 - **One table per upload.** Multi-table ZIP uploads exist in the storage layer but the desktop app rejects them; join tables into one file first.
 - **No charts.** Answers are a sentence plus a table.
 - **No free-form SQL or code.** Questions map to the analyses listed above.
-- **Phrasing matters for some analyses.** In testing, with Ollama off and with `llama3.2:3b` running, `what predicts outcome` was refused with "No predictors specified for outcome. Name them, e.g. 'do age and treatment predict outcome?'".
+- **Regression needs the predictors named, and is fragile.** `what predicts outcome` is refused with "No predictors specified for outcome. Name them, e.g. 'do age and treatment predict outcome?'", with Ollama off and with `llama3.2:3b` running. On the sample cohort, the named-predictor phrasings tried so far (`do age and hypertension predict outcome`, `do age and sex predict outcome`) were held, and refused after confirmation.
 
 ## Troubleshooting
 
