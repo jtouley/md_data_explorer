@@ -50,3 +50,179 @@ datasets:
         - {name: LICENSE.txt, from: LICENSE.txt, make: copy}
         - {name: data_dictionary.txt, from: data_description.txt, make: copy}
       sha256: a3639ebca2068df992230516e3608924daed23ca2be7532cd978a14e6ecae7ae  # deterministic: sorted, stored, fixed metadata
+
+  # ---- Population (aggregate) datasets. Each row is a published estimate for a place x period
+  # x stratum, not a patient. All are republished by their source (living: true): a checksum
+  # mismatch means the source was refreshed; re-snapshot and re-baseline the answers. The corpus
+  # manifest records no dictionary file for the CDC and CMS sets; their column descriptions are on
+  # the landing page (dictionary_url).
+  - name: cdc_leading_causes_death
+    title: 'NCHS - Leading Causes of Death: United States (1999-2017)'
+    landing_page: https://data.cdc.gov/NCHS/NCHS-Leading-Causes-of-Death-United-States/bi63-dtpu
+    license:
+      id: US-Government-Public-Domain
+      url: https://www.usa.gov/government-works
+      terms: 'Public domain (U.S. Government work). Cite NCHS. Note: the old dataset id bi63-vtsv now returns 404; use bi63-dtpu.'
+    grain: 'aggregate: state x year x cause'
+    rows: 10868
+    id_column: composite key (Year, State, Cause Name)
+    living: true
+    files:
+      - path: leading_causes_of_death.csv
+        url: https://data.cdc.gov/api/views/bi63-dtpu/rows.csv?accessType=DOWNLOAD
+        kind: table
+        sha256: 1971e6664c76457a5c32e4c86aa103ba404b7be5d17ddb6e6dfc0075479c85d9
+        bytes: 842709
+    dictionary_url: https://data.cdc.gov/NCHS/NCHS-Leading-Causes-of-Death-United-States/bi63-dtpu
+    upload_package:
+      zip: cdc_leading_causes_death.zip
+      sha256: 02f40c459187de1045487282bbc00e6da3b275c3151d9a366ef31fbdfbe6ed56  # deterministic: sorted, stored, fixed metadata
+      contents:
+        - {name: leading_causes_of_death.csv, from: leading_causes_of_death.csv, make: copy}
+
+  - name: cdc_provisional_covid_deaths_sex_age
+    title: Provisional COVID-19 Deaths by Sex and Age (NCHS)
+    landing_page: https://data.cdc.gov/NCHS/Provisional-COVID-19-Deaths-by-Sex-and-Age/9bhg-hcku
+    license:
+      id: US-Government-Public-Domain
+      url: https://www.usa.gov/government-works
+      terms: Public domain (U.S. Government work). Cite NCHS. Provisional counts.
+    grain: 'aggregate: state x time period (year / month / total) x sex x age group'
+    rows: 137700
+    id_column: composite key (Group, Year, Month, State, Sex, Age Group)
+    missing_tokens: ['blank = suppressed count 1-9 (Footnote explains)']
+    living: true
+    files:
+      - path: provisional_covid_deaths_sex_age.csv
+        url: https://data.cdc.gov/api/views/9bhg-hcku/rows.csv?accessType=DOWNLOAD
+        kind: table
+        sha256: 8e78f4f2cc62fcdaad220f7f00ab86c0192030450632e276efa76fd8749d7aef
+        bytes: 24787720
+    dictionary_url: https://data.cdc.gov/NCHS/Provisional-COVID-19-Deaths-by-Sex-and-Age/9bhg-hcku
+    upload_package:
+      zip: cdc_provisional_covid_deaths_sex_age.zip
+      sha256: 70dee79c0c5bab4e7e989e14df5a87df49e6586eacd8bc34ffc52ca77074d077  # deterministic: sorted, stored, fixed metadata
+      contents:
+        - {name: provisional_covid_deaths_sex_age.csv, from: provisional_covid_deaths_sex_age.csv, make: copy}
+
+  - name: cdc_respnet_rates
+    title: RESP-NET Rates and Clinical Data (COVID-NET, FluSurv-NET, RSV-NET)
+    landing_page: https://data.cdc.gov/Public-Health-Surveillance/RESP-NET-Rates-and-Clinical-Data/kvib-3txy
+    license:
+      id: US-Government-Public-Domain
+      url: https://www.usa.gov/government-works
+      terms: "Public domain (U.S. Government work). Cite CDC RESP-NET. Updated weekly: checksum WILL drift; harness should treat mismatch as 'refreshed' not 'corrupt' and re-snapshot."
+    grain: 'aggregate: network x season x week x site x age x sex x race'
+    rows: 125988
+    id_column: composite key
+    missing_tokens: ['blank (Rate Type null for some rows)']
+    living: true
+    files:
+      - path: respnet_rates.csv
+        url: https://data.cdc.gov/api/views/kvib-3txy/rows.csv?accessType=DOWNLOAD
+        kind: table
+        sha256: 6ea38d27ec598497609240ff4c19c40b33e007f245695964f9f559912fe68a1d
+        bytes: 15196988
+    dictionary_url: https://data.cdc.gov/Public-Health-Surveillance/RESP-NET-Rates-and-Clinical-Data/kvib-3txy
+    upload_package:
+      zip: cdc_respnet_rates.zip
+      sha256: 37cf5821725b92c0f21ae982c9b1397849216e9fa8cc4462b1ab51c154be7870  # deterministic: sorted, stored, fixed metadata
+      contents:
+        - {name: respnet_rates.csv, from: respnet_rates.csv, make: copy}
+
+  - name: cdc_chronic_disease_indicators_immunization
+    title: U.S. Chronic Disease Indicators (CDI) - Immunization topic subset
+    landing_page: https://data.cdc.gov/Chronic-Disease-Indicators/U-S-Chronic-Disease-Indicators/hksd-2xuw
+    license:
+      id: ODbL-1.0
+      url: http://opendatacommons.org/licenses/odbl/1.0/
+      terms: 'data.cdc.gov metadata lists ODbL 1.0 for this dataset (not public domain): attribute CDC, share-alike for derived databases.'
+    grain: 'aggregate: state x year x stratification (sex / age / race) x indicator'
+    rows: 23925
+    id_column: composite key (yearstart, locationabbr, questionid, datavaluetypeid, stratificationid1)
+    missing_tokens: ["blank with footnote symbol '*' or '****' (suppressed / insufficient sample)"]
+    living: true
+    files:
+      - path: cdi_immunization.csv
+        url: https://data.cdc.gov/resource/hksd-2xuw.csv?$where=topic%3D%27Immunization%27&$order=%3Aid&$limit=100000
+        kind: table
+        note: Deterministic SoQL subset (topic='Immunization', ordered by :id) of a 398,793-row dataset.
+        sha256: cc9523d3a5b4adb8af63a1f6a4cb676676d316e02bec96972ec736826a9676db
+        bytes: 7619300
+    dictionary_url: https://data.cdc.gov/Chronic-Disease-Indicators/U-S-Chronic-Disease-Indicators/hksd-2xuw
+    upload_package:
+      zip: cdc_chronic_disease_indicators_immunization.zip
+      sha256: 6acffe2112c3f5f4cab57b91c48b32766f8b7ccc646937970a707081747e7fa9  # deterministic: sorted, stored, fixed metadata
+      contents:
+        - {name: cdi_immunization.csv, from: cdi_immunization.csv, make: copy}
+
+  - name: cms_hai_hospital
+    title: CMS Hospital Compare - Healthcare Associated Infections (Hospital and State), NHSN-derived
+    landing_page: https://data.cms.gov/provider-data/dataset/77hc-ibv8
+    license:
+      id: US-Government-Public-Domain
+      url: https://data.cms.gov/sites/default/files/2022-08/API%20FAQ%20v1_0.pdf
+      terms: U.S. Government work, public domain per CMS API FAQ; no DUA for Provider Data Catalog public files. CMS name may not imply endorsement.
+    grain: 'aggregate: facility x measure (long format), single reporting period 2025-01-01 to 2025-12-31'
+    rows: {hospital: 172332, state: 1008}
+    id_column: Facility ID (CCN) + Measure ID
+    missing_tokens: ["'Not Available' (78,690 Score cells)", blank Footnote]
+    living: true
+    files:
+      - path: Healthcare_Associated_Infections-Hospital.csv
+        url: https://data.cms.gov/provider-data/sites/default/files/resources/43825e12dc0c923df9ba5cbdf473c9d5_1792599610/Healthcare_Associated_Infections-Hospital.csv
+        kind: table
+        note: Resource URL changes on each quarterly refresh; resolve the current one from https://data.cms.gov/provider-data/api/1/metastore/schemas/dataset/items/77hc-ibv8 (distribution[0].downloadURL).
+        sha256: 586b831541f567106c438c7f72cb312786282a55fe8a98559e8d990fa8144001
+        bytes: 38533341
+      - path: Healthcare_Associated_Infections-State.csv
+        url: https://data.cms.gov/provider-data/sites/default/files/resources/27986ce2f1193d3fcad7fa1bddc93c3b_1792599620/Healthcare_Associated_Infections-State.csv
+        kind: table
+        note: metastore id k2ze-bqvw
+        sha256: 97433a18652a22e2b7390880b8f732f5e9c1ba8fcfb9fb2259bf69bced017cd2
+        bytes: 101387
+    dictionary_url: https://data.cms.gov/provider-data/dataset/77hc-ibv8
+    upload_package:
+      zip: cms_hai_hospital.zip
+      sha256: e30e728d07949eda65d89ad4bc0fff25e953fc5404af88955fe5e22aa6a85002  # deterministic: sorted, stored, fixed metadata
+      contents:
+        - {name: Healthcare_Associated_Infections-Hospital.csv, from: Healthcare_Associated_Infections-Hospital.csv, make: copy}
+        - {name: Healthcare_Associated_Infections-State.csv, from: Healthcare_Associated_Infections-State.csv, make: copy}
+
+  - name: who_tb_burden
+    title: WHO Global Tuberculosis Programme - TB burden estimates (country x year; age x sex)
+    landing_page: https://www.who.int/teams/global-tuberculosis-programme/data
+    license:
+      id: WHO-Data-Terms
+      url: https://www.who.int/about/policies/publishing/data-policy/terms-and-conditions
+      terms: "Royalty-free right to use, reproduce, download and distribute for public-health purposes; must attribute 'WHO, title of dataset, year, date of access' plus reporting countries; no alteration beyond minimal reformatting without WHO permission; no sale; no de-anonymisation."
+    grain: 'aggregate: country x year (2000-2024); age_sex: country x age group x sex x risk factor for the latest year only'
+    rows: {countries: 5347, age_sex: 9031}
+    id_column: iso3 + year
+    missing_tokens: ["'NA'", blank]
+    living: true
+    files:
+      - path: TB_burden_countries.csv
+        url: https://extranet.who.int/tme/generateCSV.asp?ds=estimates
+        kind: table
+        sha256: 6849d50d91579eaefa5833aa46d19d34e68dd6408a3768875991013f05586c30
+        bytes: 1053778
+      - path: TB_burden_age_sex.csv
+        url: https://extranet.who.int/tme/generateCSV.asp?ds=estimates_age_sex
+        kind: table
+        sha256: fe1c3728bbad5d256d128f29dd12f656dbdda62d8fbfc6d864914bbed6c1fab4
+        bytes: 694167
+      - path: TB_data_dictionary.csv
+        url: https://extranet.who.int/tme/generateCSV.asp?ds=dictionary
+        kind: documentation
+        sha256: 2b0aecd442bffabf2f313d2eaa478ffaea48d09fe78670a136a1956c042011bf
+        bytes: 108122
+    dictionary_url: https://extranet.who.int/tme/generateCSV.asp?ds=dictionary
+    upload_package:
+      zip: who_tb_burden.zip
+      sha256: b1e06f1fd6e12bcb3bd5ab3c3866e4254f9935d7335cc97ef986663fefffba29  # deterministic: sorted, stored, fixed metadata
+      # The dictionary goes in as .txt (same bytes): a .csv in the ZIP would be read as a third table.
+      contents:
+        - {name: TB_burden_countries.csv, from: TB_burden_countries.csv, make: copy}
+        - {name: TB_burden_age_sex.csv, from: TB_burden_age_sex.csv, make: copy}
+        - {name: TB_data_dictionary.txt, from: TB_data_dictionary.csv, make: copy}

@@ -1,0 +1,107 @@
+# NCHS Leading Causes of Death, United States 1999-2017 (data.cdc.gov bi63-dtpu).
+#
+# Grain: one row per Year x State x Cause Name (verified unique). "United States" is a row next
+# to the 50 states and DC, and "All causes" a row next to the ten causes: summing across either
+# double counts. Deaths and the age-adjusted rate per 100,000 are published values with no CI.
+# Every answer is a lookup of published rows (tests/eval/corpus/oracles/cdc_leading_causes_death.py).
+#
+# Fields as in covid_ms.yaml, plus (eval/corpus/score.py): kinds value_by / values / ci_by,
+# top: N and order: asc|desc for rankings, and held_out: true for questions nobody tunes on.
+dataset_id: cdc_leading_causes_death
+grain: aggregate
+questions:
+  - id: lcd-trend-001
+    family: trend
+    query: How has the age-adjusted influenza and pneumonia death rate changed in the US from 1999 to 2017?
+    kind: value_by
+    group_by: Year
+    expect: answer
+  - id: lcd-trend-alz-002
+    family: follow_up
+    query: Now show the same for Alzheimer's disease.
+    kind: value_by
+    group_by: Year
+    follow_up_of: lcd-trend-001
+    expect: answer
+  - id: lcd-deaths-year-003
+    family: trend
+    query: How many influenza and pneumonia deaths were there in the United States each year?
+    kind: value_by
+    group_by: Year
+    expect: answer
+    held_out: true
+  - id: lcd-rank-states-004
+    family: rank_places
+    query: Which ten states had the highest age-adjusted influenza and pneumonia death rate in 2017?
+    kind: value_by
+    group_by: State
+    top: 10
+    expect: answer
+  - id: lcd-rank-lowest-005
+    family: rank_places
+    query: Which five states had the lowest age-adjusted heart disease death rate in 2017?
+    kind: value_by
+    group_by: State
+    top: 5
+    order: asc
+    expect: answer
+    held_out: true
+  - id: lcd-rank-causes-006
+    family: rank_causes
+    query: Rank the causes of death by number of deaths in California in 2010.
+    kind: value_by
+    group_by: Cause Name
+    expect: answer
+  - id: lcd-share-007
+    family: share
+    query: What share of all US deaths in 2017 were from influenza and pneumonia?
+    kind: values
+    expect: answer
+  - id: lcd-total-008
+    family: pooling_trap
+    query: How many people died in the United States in 2017?
+    kind: values
+    expect: answer
+  - id: lcd-vs-national-009
+    family: rank_places
+    query: Was Texas above or below the national age-adjusted influenza and pneumonia death rate in 2017?
+    kind: value_by
+    group_by: State
+    expect: answer
+    held_out: true
+  - id: lcd-peak-010
+    family: trend
+    query: In which year did the US age-adjusted kidney disease death rate peak?
+    kind: value_by
+    group_by: Year
+    top: 1
+    expect: answer
+    held_out: true
+  - id: lcd-change-011
+    family: trend
+    query: Which cause had the largest rise in the US age-adjusted death rate between 1999 and 2017?
+    kind: value_by
+    group_by: Cause Name
+    top: 1
+    expect: answer
+  - id: lcd-sex-012
+    family: by_age_sex
+    query: Break down influenza and pneumonia deaths by sex.
+    kind: values
+    expect: held
+  - id: lcd-howsure-013
+    family: how_sure
+    query: How sure is the 2017 US influenza and pneumonia death rate? Give a 95% confidence interval.
+    kind: values
+    expect: held
+    held_out: true
+  - id: lcd-pooled-014
+    family: pooled_overlap
+    query: Add up the deaths in every row for 2017 to get the total number of deaths that year.
+    kind: values
+    expect: held
+  - id: lcd-after2020-015
+    family: before_after
+    query: Did influenza and pneumonia deaths change after 2020?
+    kind: values
+    expect: held

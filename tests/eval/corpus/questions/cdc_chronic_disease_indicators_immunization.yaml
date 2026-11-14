@@ -1,0 +1,103 @@
+# U.S. Chronic Disease Indicators, Immunization topic (data.cdc.gov hksd-2xuw, SoQL subset), BRFSS 2019-2023.
+#
+# Grain: one row per yearstart x locationabbr x questionid x datavaluetypeid x stratificationid1
+# (verified unique). Each row is a published prevalence (%) with its 95% CI (lowconfidencelimit,
+# highconfidencelimit). Crude and age-adjusted prevalence share the datavalue column; "Overall"
+# sits beside the sex, age and race strata; "United States" beside the states and territories.
+# A suppressed estimate is blank with a footnote symbol. Plain "coverage" means crude prevalence.
+# Answers: tests/eval/corpus/oracles/cdc_chronic_disease_indicators_immunization.py.
+dataset_id: cdc_chronic_disease_indicators_immunization
+grain: aggregate
+questions:
+  - id: cdi-trend-001
+    family: trend
+    query: What was influenza vaccination coverage among adults nationally each year from 2019 to 2023?
+    kind: value_by
+    group_by: yearstart
+    expect: answer
+  - id: cdi-65-002
+    family: follow_up
+    query: Now only for adults 65 and older.
+    kind: value_by
+    group_by: yearstart
+    follow_up_of: cdi-trend-001
+    expect: answer
+  - id: cdi-howsure-003
+    family: how_sure
+    query: What was national adult influenza vaccination coverage in 2023, and how sure is that number?
+    kind: values
+    expect: answer
+  - id: cdi-rank-004
+    family: rank_places
+    query: Which ten states had the highest pneumococcal vaccination coverage among adults 65 and older in 2023?
+    kind: value_by
+    group_by: locationdesc
+    top: 10
+    expect: answer
+  - id: cdi-rank-ci-005
+    family: how_sure
+    query: Give their 95% confidence intervals.
+    kind: ci_by
+    group_by: locationdesc
+    top: 10
+    follow_up_of: cdi-rank-004
+    expect: answer
+    held_out: true
+  - id: cdi-sex-006
+    family: by_age_sex
+    query: Break down adult influenza vaccination by sex nationally in 2023, with 95% confidence intervals.
+    kind: ci_by
+    group_by: stratification1
+    expect: answer
+  - id: cdi-age-007
+    family: by_age_sex
+    query: Break down adult influenza vaccination by age group nationally in 2023.
+    kind: value_by
+    group_by: stratification1
+    expect: answer
+  - id: cdi-race-008
+    family: how_sure
+    query: Which race or ethnicity group had the lowest adult influenza vaccination coverage nationally in 2023, and how sure is that?
+    kind: ci_by
+    group_by: stratification1
+    top: 1
+    order: asc
+    expect: answer
+    held_out: true
+  - id: cdi-before-after-009
+    family: before_after
+    query: Did national adult influenza vaccination coverage in 2021 differ from 2019? Give 95% confidence intervals.
+    kind: ci_by
+    group_by: yearstart
+    expect: answer
+  - id: cdi-crude-adj-010
+    family: data_shape
+    query: Compare crude and age-adjusted adult influenza vaccination for California in 2023.
+    kind: value_by
+    group_by: datavaluetype
+    expect: answer
+  - id: cdi-suppressed-011
+    family: suppression
+    query: How many estimates in the file are suppressed because the sample was too small or too unreliable?
+    kind: values
+    expect: answer
+    held_out: true
+  - id: cdi-texas-012
+    family: trend
+    query: Give the trend in pneumococcal vaccination among adults 65 and older in Texas from 2019 to 2023, with 95% confidence intervals.
+    kind: ci_by
+    group_by: yearstart
+    expect: answer
+    held_out: true
+  - id: cdi-pooled-013
+    family: pooled_overlap
+    query: Average all the 2023 influenza vaccination values in the file to get the national coverage.
+    kind: values
+    expect: held
+  - id: cdi-below-national-014
+    family: how_sure
+    query: Which states had a 2023 adult influenza vaccination estimate whose 95% confidence interval lies entirely below the national estimate?
+    kind: value_by
+    group_by: locationdesc
+    expect: answer
+    held_out: true

@@ -1,0 +1,100 @@
+# WHO Global TB Programme burden estimates: country x year (2000-2024) and age x sex (2024), with dictionary.
+#
+# Grain: countries file one row per iso3 x year; age-sex file one row per iso3 x age_group x sex x
+# risk_factor (both verified unique). Every estimate has _lo and _hi uncertainty bounds. The
+# age-sex file stacks "all" ages beside bands, overlapping bands (15plus beside 15-24), sex "a"
+# beside f and m, and risk factors beside "all". Namibia's iso2 is the text "NA". There is no
+# global or regional row: a regional rate is countries' cases over their population, and bounds
+# cannot be added up.
+# Answers: tests/eval/corpus/oracles/who_tb_burden.py.
+dataset_id: who_tb_burden
+grain: aggregate
+questions:
+  - id: tb-global-001
+    family: trend
+    query: How has the global TB incidence rate per 100,000 changed since 2000?
+    kind: value_by
+    group_by: year
+    expect: answer
+  - id: tb-region-002
+    family: rank_places
+    query: What was the TB incidence rate per 100,000 in each WHO region in 2024?
+    kind: value_by
+    group_by: g_whoregion
+    expect: answer
+  - id: tb-top10-003
+    family: rank_places
+    query: Rank the 10 countries with the highest TB incidence rate in 2024, with their uncertainty intervals.
+    kind: ci_by
+    group_by: country
+    top: 10
+    expect: answer
+  - id: tb-ind-idn-004
+    family: how_sure
+    query: Is India's 2024 TB incidence rate really different from Indonesia's, given the uncertainty bounds?
+    kind: ci_by
+    group_by: country
+    expect: answer
+  - id: tb-mort-005
+    family: follow_up
+    query: And their TB mortality rates, with bounds?
+    kind: ci_by
+    group_by: country
+    follow_up_of: tb-ind-idn-004
+    expect: answer
+    held_out: true
+  - id: tb-zaf-sex-006
+    family: by_age_sex
+    query: Break down estimated TB incidence by sex for South Africa in 2024.
+    kind: value_by
+    group_by: sex
+    expect: answer
+  - id: tb-zaf-age-007
+    family: by_age_sex
+    query: Break down estimated TB incidence by age group for South Africa in 2024.
+    kind: value_by
+    group_by: age_group
+    expect: answer
+    held_out: true
+  - id: tb-pooled-008
+    family: pooled_overlap
+    query: What is South Africa's total TB incidence if you add up all of its rows in the age and sex table?
+    kind: values
+    expect: held
+  - id: tb-india-notif-009
+    family: before_after
+    query: Did India's TB notification rate drop in 2020 compared with 2019?
+    kind: value_by
+    group_by: year
+    expect: answer
+  - id: tb-nigeria-cfr-010
+    family: how_sure
+    query: What is the trend in Nigeria's TB case fatality ratio, with its uncertainty?
+    kind: ci_by
+    group_by: year
+    expect: answer
+    held_out: true
+  - id: tb-namibia-011
+    family: data_shape
+    query: What was Namibia's TB incidence rate per 100,000 in 2024?
+    kind: values
+    expect: answer
+  - id: tb-hiv-afr-012
+    family: share
+    query: What share of TB incidence in the African region in 2024 was among people living with HIV?
+    kind: values
+    expect: answer
+    held_out: true
+  - id: tb-global-howsure-013
+    family: how_sure
+    query: How sure is the 2024 global TB incidence estimate? Give its uncertainty interval.
+    kind: values
+    expect: held
+  - id: tb-mf-ratio-014
+    family: by_age_sex
+    query: Rank the ten countries with the highest male-to-female ratio of TB incidence in adults 15 and older in 2024.
+    kind: value_by
+    group_by: country
+    top: 10
+    expect: answer
+    held_out: true

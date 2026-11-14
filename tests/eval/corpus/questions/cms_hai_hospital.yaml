@@ -1,0 +1,94 @@
+# CMS Provider Data: Healthcare-Associated Infections, hospital (77hc-ibv8) and state (k2ze-bqvw) files, 2025.
+#
+# Grain: hospital file one row per Facility ID x Measure ID; state file one row per State x
+# Measure ID (both verified unique). Long format: a C. diff SIR (HAI_6_SIR), its CI bounds
+# (HAI_6_CILOWER, HAI_6_CIUPPER), observed and predicted cases and patient days are separate rows
+# of one Score column, with "Not Available" for no value. One reporting period, facility level only.
+# Answers: tests/eval/corpus/oracles/cms_hai_hospital.py.
+dataset_id: cms_hai_hospital
+grain: aggregate
+questions:
+  - id: hai-rank-states-001
+    family: rank_places
+    query: Rank the top ten states by C. diff standardized infection ratio using the state file.
+    kind: value_by
+    group_by: State
+    top: 10
+    expect: answer
+  - id: hai-rank-ci-002
+    family: how_sure
+    query: Now give their 95% confidence intervals.
+    kind: ci_by
+    group_by: State
+    top: 10
+    follow_up_of: hai-rank-states-001
+    expect: answer
+    held_out: true
+  - id: hai-above1-003
+    family: how_sure
+    query: How many hospitals have a C. diff SIR whose 95% confidence interval lies entirely above 1?
+    kind: values
+    expect: answer
+  - id: hai-na-004
+    family: suppression
+    query: How many hospitals have no C. diff SIR (Not Available)?
+    kind: values
+    expect: answer
+  - id: hai-median-005
+    family: distribution
+    query: What is the median C. diff SIR across hospitals, and the interquartile range?
+    kind: values
+    expect: answer
+    held_out: true
+  - id: hai-benchmark-006
+    family: breakdown
+    query: How many hospitals are better than, no different from, or worse than the national benchmark for C. diff?
+    kind: value_by
+    group_by: Compared to National
+    expect: answer
+  - id: hai-ri-007
+    family: how_sure
+    query: What are the C. diff SIRs, with 95% confidence intervals, for hospitals in Rhode Island?
+    kind: ci_by
+    group_by: Facility Name
+    expect: answer
+  - id: hai-pooled-sir-008
+    family: rank_places
+    query: Pool observed and predicted C. diff cases by state to get a state SIR, and rank the top ten states.
+    kind: value_by
+    group_by: State
+    top: 10
+    expect: answer
+  - id: hai-corr-009
+    family: compare
+    query: Across hospitals, how correlated are the C. diff and CLABSI SIRs?
+    kind: values
+    expect: answer
+    held_out: true
+  - id: hai-age-010
+    family: by_age_sex
+    query: Break down the C. diff SIR by patient age or sex.
+    kind: values
+    expect: held
+  - id: hai-trend-011
+    family: trend
+    query: Show the trend in C. diff SIR over the last five years.
+    kind: values
+    expect: held
+    held_out: true
+  - id: hai-pooled-012
+    family: pooled_overlap
+    query: Average the Score of all the C. diff rows to get the typical hospital's C. diff SIR.
+    kind: values
+    expect: held
+  - id: hai-ri-state-013
+    family: how_sure
+    query: What is Rhode Island's state C. diff SIR, and how sure is that number?
+    kind: values
+    expect: answer
+    held_out: true
+  - id: hai-before2020-014
+    family: before_after
+    query: Has the C. diff SIR improved since before 2020?
+    kind: values
+    expect: held

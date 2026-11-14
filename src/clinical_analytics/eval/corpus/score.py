@@ -16,6 +16,19 @@ odds-ratio and p-value read-outs, and the RIGHT / WRONG / HELD / ERROR grades.
 A statistic that does not exist on the data (an odds ratio with a zero cell, a mean over a group
 with no values) is ``OracleAnswer.undefined`` or a ``None`` group value: showing a number for it
 is WRONG, withholding it is HELD.
+
+Population (aggregate) datasets, whose rows are already estimates for a place, year or stratum,
+add three kinds, graded on the numbers shown whatever the app calls its value column:
+
+- ``value_by``: one value per group ({label: number or None}). With ``top: N`` the oracle holds the
+  N highest (``order: asc``: lowest); rows ranked below them may be shown, any other row is WRONG.
+- ``values``: named numbers ({"estimate": x, ...}) that must all be shown, in the claim or a table
+  of at most two rows. A proportion may be shown as a percent.
+- ``ci_by``: per group {"estimate", "ci_low", "ci_high"}; each row must show all three.
+
+A question whose rows are not patients (``grain: aggregate`` in the question file) is never
+checked for small patient counts: a count of 1-10 there is a count of rows or of events that the
+publisher already suppressed below its own threshold.
 """
 
 from __future__ import annotations
@@ -40,6 +53,10 @@ _REL_TOL = 1e-4
 _ROUNDING_TOL = 5e-5  # half a unit of the 4th decimal the presented table keeps
 _COUNT_COLUMNS = {"count", "n"}
 _VALUE_COLUMN = {"count_by": "count", "rates": "rate", "mean_by": "mean", "median_by": "median"}
+# A number as a reader sees it: "1,234", "-0.5", "12". Not part of a word or a date's digits.
+_NUMBER = re.compile(r"(?<![\w.])-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|(?<![\w.,])-?\d+(?:\.\d+)?")
+AGGREGATE = "aggregate"
+POPULATION_KINDS = frozenset({"value_by", "values", "ci_by"})
 
 
 class OracleError(ValueError):
@@ -104,7 +121,7 @@ def _small_group(oracle: OracleAnswer, key: str, kind: str) -> bool:
 def find_leaks(question: dict[str, Any], oracle: OracleAnswer, presentation: dict[str, Any] | None) -> list[str]:
     """Every shown count of 1-10 patients, label of a group of 1-10 patients, or rate whose
     events or non-events are 1-10 (rate and n give both counts)."""
-    if not presentation:
+    if not presentation or question.get("grain") == AGGREGATE:
         return []
     leaks: list[str] = []
     match = TOTAL_COUNT.match(presentation.get("claim") or "")
@@ -205,6 +222,92 @@ def _grade_p_value(question: dict[str, Any], oracle: OracleAnswer, claim: str) -
     return "WRONG", f"p{op}{shown} shown, expected {oracle.value}"
 
 
+def _numbers(value: Any) -> list[float]:
+    """Every number a reader sees in one cell or one sentence."""
+    if isinstance(value, bool) or value is None:
+        return []
+    if isinstance(value, int | float):
+        return [float(value)]
+    return [float(found.replace(",", "")) for found in _NUMBER.findall(str(value))]
+
+
+def _shown_rows(presentation: dict[str, Any]) -> dict[str, list[float]]:
+    """{row label: the numbers in its other cells}, for a table whose first column labels rows."""
+    table = presentation.get("table") or {}
+    columns = list(table.get("columns") or [])
+    if not columns:
+        return {}
+    return {
+        str(row.get(columns[0])): [n for column in columns[1:] for n in _numbers(row.get(column))]
+        for row in table.get("rows") or []
+    }
+
+
+def _matches(expected: float, shown: list[float], percent_ok: bool) -> bool:
+    candidates = (expected, expected * 100) if percent_ok else (expected,)
+    return any(_close(float(c), n) for c in candidates for n in shown)
+
+
+def _ranked_below(question: dict[str, Any], expected: dict[str, Any], shown: list[float]) -> bool:
+    """A row ranked below every expected row of a top-N question: showing it is allowed."""
+    tops = [float(v["estimate"] if isinstance(v, dict) else v) for v in expected.values() if v is not None]
+    if "top" not in question or not shown or not tops:
+        return False
+    return shown[0] <= min(tops) if question.get("order", "desc") == "desc" else shown[0] >= max(tops)
+
+
+def _grade_values(oracle: OracleAnswer, presentation: dict[str, Any]) -> tuple[Grade, str]:
+    rows = _shown_rows(presentation)
+    if len(rows) > 2:
+        return "WRONG", f"{len(rows)} rows shown, expected one answer"
+    shown = _numbers(presentation.get("claim")) + [n for numbers in rows.values() for n in numbers]
+    if not shown:
+        return "HELD", f"no number shown: {str(presentation.get('claim'))[:160]}"
+    percent_ok = oracle.unit == "proportion"
+    missing = [name for name, value in oracle.value.items() if not _matches(value, shown, percent_ok)]
+    if missing:
+        return "WRONG", f"not shown: {missing} (expected {oracle.value}, shown {shown[:6]})"
+    return "RIGHT", f"{len(oracle.value)} value(s) match"
+
+
+def _grade_population(
+    question: dict[str, Any], oracle: OracleAnswer, presentation: dict[str, Any]
+) -> tuple[Grade, str]:
+    """``value_by``, ``ci_by`` and ``values``: the numbers shown against the source rows'."""
+    if question["kind"] == "values":
+        return _grade_values(oracle, presentation)
+    rows = _shown_rows(presentation)
+    if not rows:
+        return "HELD", f"no table shown: {str(presentation.get('claim'))[:160]}"
+    percent_ok = oracle.unit == "proportion"
+    group_by = question.get("group_by")
+    expected = {_label(group_by, key): value for key, value in oracle.value.items()}
+    matched = 0
+    for label, value in expected.items():
+        if label not in rows:
+            if value is None:
+                continue
+            return "WRONG", f"row '{label}' missing"
+        shown = rows[label]
+        if value is None:
+            if shown:
+                return "WRONG", f"'{label}': shown {shown[:3]}, but the source has no value for it"
+            continue
+        parts = value if isinstance(value, dict) else {"value": value}
+        absent = [name for name, number in parts.items() if not _matches(number, shown, percent_ok)]
+        if absent:
+            return "WRONG", f"'{label}': {absent} not shown (shown {shown[:4]}, expected {parts})"
+        matched += 1
+    extra = sorted(
+        label for label in rows if label not in expected and not _ranked_below(question, expected, rows[label])
+    )
+    if extra:
+        return "WRONG", f"unexpected rows {extra[:6]}"
+    if matched == 0:
+        return "HELD", "every value withheld"
+    return "RIGHT", f"{matched} value(s) match"
+
+
 def _kind_of(value: Any) -> str:
     return "nothing" if value is None else type(value).__name__
 
@@ -242,6 +345,8 @@ def _grade_value(question: dict[str, Any], oracle: OracleAnswer, presentation: d
         return _grade_odds_ratio(oracle, presentation)
     if kind == "p_value":
         return _grade_p_value(question, oracle, claim)
+    if kind in POPULATION_KINDS:
+        return _grade_population(question, oracle, presentation)
     shown = presented_answer(presentation)
     if kind == "count":
         match = TOTAL_COUNT.match(claim)

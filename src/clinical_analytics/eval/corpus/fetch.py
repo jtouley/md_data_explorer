@@ -23,12 +23,13 @@ import sys
 import urllib.request
 import zipfile
 from collections.abc import Callable
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Literal
 
 import structlog
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 logger = structlog.get_logger()
 
@@ -63,10 +64,27 @@ class CorpusFile(BaseModel):
 
 
 class PackageEntry(BaseModel):
+    """One upload-ZIP entry, or (``make: extract``) every member of an archive matching ``member``.
+
+    ``copy`` stores the checked file ``from`` as ``name``. ``extract`` stores each member of the
+    checked archive ``from`` that matches the glob ``member``, named by its path with ``strip``
+    removed: a published multi-table ZIP repackaged the way a user would upload it.
+    """
+
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
-    name: str
+    name: str | None = None
     source: str = Field(alias="from")
-    make: Literal["copy"] = "copy"
+    make: Literal["copy", "extract"] = "copy"
+    member: str | None = None
+    strip: str = ""
+
+    @model_validator(mode="after")
+    def _shape(self) -> PackageEntry:
+        if self.make == "copy" and (self.name is None or self.member is not None):
+            raise ValueError(f"copy entry from {self.source} needs a name and no member")
+        if self.make == "extract" and (self.member is None or self.name is not None):
+            raise ValueError(f"extract entry from {self.source} needs a member glob and no name")
+        return self
 
 
 class UploadPackage(BaseModel):
@@ -176,6 +194,45 @@ def html_section_text(page: bytes, section_id: str, source_url: str) -> str:
     return html_to_text(match.group(0), f"{source_url}#{section_id}")
 
 
+def package_members(dataset: CorpusDataset, files_dir: Path) -> list[tuple[str, Callable[[], bytes]]]:
+    """(archive name, reader) for every upload-ZIP entry, sorted by name.
+
+    Raises:
+        CorpusFetchError: an entry names an unknown file, an extract glob matches nothing, or two
+            entries would share a name.
+    """
+    sources = {item.path for item in dataset.files}
+    members: dict[str, Callable[[], bytes]] = {}
+
+    def add(name: str, reader: Callable[[], bytes]) -> None:
+        if name in members:
+            raise CorpusFetchError(f"{dataset.name}: two upload entries are named {name}")
+        members[name] = reader
+
+    for entry in dataset.upload_package.contents:
+        if entry.source not in sources:
+            raise CorpusFetchError(f"{dataset.name}: package entry {entry.name} names unknown file {entry.source}")
+        path = files_dir / entry.source
+        if entry.make == "copy":
+            add(str(entry.name), path.read_bytes)
+            continue
+        with zipfile.ZipFile(path) as archive:
+            matched = sorted(n for n in archive.namelist() if not n.endswith("/") and fnmatchcase(n, str(entry.member)))
+        if not matched:
+            raise CorpusFetchError(f"{dataset.name}: no member of {entry.source} matches {entry.member}")
+        for member in matched:
+            add(member.removeprefix(entry.strip), _member_reader(path, member))
+    return sorted(members.items())
+
+
+def _member_reader(archive: Path, member: str) -> Callable[[], bytes]:
+    def read() -> bytes:
+        with zipfile.ZipFile(archive) as handle:
+            return handle.read(member)
+
+    return read
+
+
 def build_zip(dataset: CorpusDataset, files_dir: Path, out: Path) -> Path:
     """Write the upload ZIP: entries sorted by name, stored uncompressed with fixed metadata, so
     its bytes (and sha256) depend only on the checked inputs, not on the platform or zlib.
@@ -183,17 +240,14 @@ def build_zip(dataset: CorpusDataset, files_dir: Path, out: Path) -> Path:
     Raises:
         ChecksumMismatchError: the ZIP does not match ``upload_package.sha256`` when one is pinned.
     """
-    sources = {item.path: item for item in dataset.files}
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED) as archive:
-        for entry in sorted(dataset.upload_package.contents, key=lambda e: e.name):
-            if entry.source not in sources:
-                raise CorpusFetchError(f"{dataset.name}: package entry {entry.name} names unknown file {entry.source}")
-            info = zipfile.ZipInfo(entry.name, date_time=ZIP_TIMESTAMP)
+        for name, read in package_members(dataset, files_dir):
+            info = zipfile.ZipInfo(name, date_time=ZIP_TIMESTAMP)
             info.compress_type = zipfile.ZIP_STORED
             info.create_system = ZIP_CREATE_SYSTEM_UNIX
             info.external_attr = 0o644 << 16
-            archive.writestr(info, (files_dir / entry.source).read_bytes())
+            archive.writestr(info, read())
     body = buffer.getvalue()
     pinned = dataset.upload_package.sha256
     actual = hashlib.sha256(body).hexdigest()
