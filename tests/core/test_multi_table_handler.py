@@ -398,14 +398,13 @@ class TestPerformanceOptimizations:
 
         handler.close()
 
-    def test_classification_uses_sampled_helpers_only(self, monkeypatch):
+    def test_classification_grainUniqueness_isExactOverWholeTable(self):
         """
-        Performance guardrail: Enforce that classification uses _sample_df() and never
-        touches df[...] for uniqueness on original frame.
-
-        This test tracks calls to our own _sample_df() helper to verify sampling is used.
+        Grain uniqueness is decided on the whole table, not a sample: a sample cannot prove a
+        key is unique (see the dbt review, finding H2). The 1M-row timing test below keeps the
+        exact check within the performance budget.
         """
-        # Arrange: Create large DataFrame
+        # Arrange: 100k rows, 1000 patients
         n = 100_000
         large_df = (
             pl.select(idx=pl.int_range(0, n))
@@ -418,26 +417,13 @@ class TestPerformanceOptimizations:
             .drop("idx")
         )
 
-        # Track calls to _sample_df()
-        sample_df_calls = []
-        original_sample_df = MultiTableHandler._sample_df
-
-        def tracked_sample_df(self, df, n=10_000):
-            sample_df_calls.append((df.height, n))
-            return original_sample_df(self, df, n)
-
-        monkeypatch.setattr(MultiTableHandler, "_sample_df", tracked_sample_df)
-
         # Act
         handler = MultiTableHandler({"large": large_df})
-        handler.classify_tables()
+        classification = handler.classify_tables()["large"]
 
-        # Assert: _sample_df() was called (proving we're using sampling)
-        assert len(sample_df_calls) > 0, "Classification should use _sample_df() for all uniqueness checks"
-
-        # Verify all samples are bounded
-        for df_height, sample_size in sample_df_calls:
-            assert sample_size <= 10_000, f"Sample size {sample_size} exceeds bound (df_height={df_height})"
+        # Assert
+        assert classification.cardinality_ratio == 100.0
+        assert classification.is_unique_on_grain is False
 
         handler.close()
 

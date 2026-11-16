@@ -92,6 +92,7 @@ nav:
       - Testing: development/testing.md
       - Packaging: development/packaging.md
   - Specifications:
+      - Purpose and steel thread: vision/PURPOSE.md
       - Master plan (roadmap): implementation/MASTER_PLAN.md
       - Electron cutover (omnibus): specs/omnibus_electron_streamlit_cutover.md
       - Question-Driven Analysis: specs/question-driven-analysis.md

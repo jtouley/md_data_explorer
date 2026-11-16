@@ -363,22 +363,137 @@ describe('port selection', () => {
 });
 
 describe('startup failure messages', () => {
-  test('a folder that cannot be created names the folder and does not say reinstall', () => {
+  test('a folder that cannot be created: names the folder, only the OS error in the details', () => {
     // Act
-    const { message } = startupFailureMessage({
+    const { message, details } = startupFailureMessage({
       reason: 'folder',
       folder: '/Users/dr/Library/Application Support/Clinical Analytics/backend',
-      detail: 'EACCES',
+      detail: 'EACCES: permission denied',
     });
 
     // Assert
     expect(message).toBe(
-      'Clinical Analytics could not create its working folder ' +
-        '"/Users/dr/Library/Application Support/Clinical Analytics/backend" (EACCES). ' +
-        'Check that this folder, and the folders around it, can be written by your user ' +
-        'account and that the disk is not full, then start Clinical Analytics again.'
+      'Clinical Analytics couldn’t create its working folder ' +
+        '“/Users/dr/Library/Application Support/Clinical Analytics/backend”. Check that your user ' +
+        'account can write to it and that the disk isn’t full, then start Clinical Analytics again.'
     );
-    expect(message).not.toMatch(/reinstall/i);
+    expect(message).not.toMatch(/reinstall|EACCES/i);
+    expect(details).toBe('EACCES: permission denied');
+  });
+
+  test.each([
+    [
+      'The data folder /Users/dr/.clinical-analytics is owned by another user account, which could ' +
+        "read the data in it. Use a folder you own: set CLINICAL_ANALYTICS_HOME or fix the folder's owner.",
+    ],
+    [
+      'DuckDB v1.1.0 cannot open the data store (written by a newer DuckDB, or damaged) (IOException) ' +
+        'A copy taken just before the check is kept at: /Users/dr/.clinical-analytics/analytics.duckdb.bak. ' +
+        'The check normally leaves the store as it was, so start the app version you used before. Copy ' +
+        'it back over analytics.duckdb only if that version cannot open the store either. Then delete ' +
+        'the copy: it holds patient data.',
+    ],
+    [
+      'A deleted dataset is still in the data store (analytics.duckdb.compact is present) and the store ' +
+        'rewrite failed (OSError). Free disk space or fix the permissions of the data folder and start ' +
+        'again; if the store still cannot be opened, quit, move analytics.duckdb and every ' +
+        'analytics.duckdb.* file out of /Users/dr/.clinical-analytics, delete them, and start again.',
+    ],
+  ])('a store-check reason with its recovery steps is shown as written: %s', (reason) => {
+    // Act
+    const { message, details } = startupFailureMessage({
+      reason: 'exited',
+      code: STORE_CHECK_FAILED_EXIT,
+      signal: null,
+      stderrText: `INFO starting\nClinical Analytics cannot start: ${reason}\n`,
+    });
+
+    // Assert
+    expect(message).toBe(reason);
+    expect(message).not.toMatch(/Reinstall/);
+    expect(details).toBe('');
+  });
+
+  test('a store-check reason with a traceback or a log line: only those go to the details', () => {
+    // Arrange
+    const reason =
+      'Could not check the data store before starting (Permission denied). Traceback (most recent call last): x. ' +
+      'ERROR uvicorn.error: boom.';
+
+    // Act
+    const { message, details } = startupFailureMessage({
+      reason: 'exited',
+      code: STORE_CHECK_FAILED_EXIT,
+      signal: null,
+      stderrText: `Clinical Analytics cannot start: ${reason}\n`,
+    });
+
+    // Assert
+    expect(message).toBe('Could not check the data store before starting (Permission denied).');
+    expect(details).toContain('Traceback');
+    expect(details).toContain('ERROR uvicorn.error: boom.');
+  });
+
+  test('an unreadable bundled model keeps its own steps; reinstall is offered there by the server', () => {
+    // Arrange
+    const reason =
+      'The embedding model in /opt/app/models could not be read (Permission denied). Check that ' +
+      "the app's files can be read by your account, or reinstall the app.";
+
+    // Act
+    const { message } = startupFailureMessage({
+      reason: 'exited',
+      code: STORE_CHECK_FAILED_EXIT,
+      signal: null,
+      stderrText: `Clinical Analytics cannot start: ${reason}\n`,
+    });
+
+    // Assert
+    expect(message).toBe(reason);
+  });
+
+  test('a damaged bundled model file: reinstall, the make command only in the details', () => {
+    // Arrange
+    const reason =
+      'The embedding model file model.onnx in /opt/app/models does not match its pinned SHA-256 ' +
+      '(damaged or replaced). Run `make fetch-embedding-model` when building the app again, or reinstall the app.';
+
+    // Act
+    const { message, details } = startupFailureMessage({
+      reason: 'exited',
+      code: STORE_CHECK_FAILED_EXIT,
+      signal: null,
+      stderrText: `Clinical Analytics cannot start: ${reason}\n`,
+    });
+
+    // Assert
+    expect(message).toBe(
+      'A file the analysis engine needs is missing or can’t be read. Reinstall Clinical Analytics.'
+    );
+    expect(details).toBe(reason);
+  });
+
+  test('a serve.py reason with a path or a make command: plain sentence, the line in the details', () => {
+    // Arrange
+    const line =
+      'The embedding model all-MiniLM-L6-v2 is missing from /opt/app/resources/models/all-MiniLM-L6-v2 ' +
+      '(onnx/model.onnx, tokenizer.json). Run `make fetch-embedding-model` when building the app; ' +
+      'the app never downloads it at runtime.';
+
+    // Act
+    const { message, details } = startupFailureMessage({
+      reason: 'exited',
+      code: STORE_CHECK_FAILED_EXIT,
+      signal: null,
+      stderrText: `Clinical Analytics cannot start: ${line}\n`,
+    });
+
+    // Assert
+    expect(message).toBe(
+      'A file the analysis engine needs is missing or can’t be read. Reinstall Clinical Analytics.'
+    );
+    expect(message).not.toMatch(/\/opt|make|`/);
+    expect(details).toContain(line);
   });
 
   test('exit code 2 shows the one-line reason serve.py printed, without repeating the title', () => {
@@ -398,39 +513,50 @@ describe('startup failure messages', () => {
   test.each([
     [
       { reason: 'exited', code: 1, signal: null, stderrText: 'Traceback\nImportError: boom' },
-      /stopped before it was ready \(exit code 1\)\. Start Clinical Analytics again\.[\s\S]*ImportError: boom/,
+      /^The analysis engine stopped before it was ready\. Start Clinical Analytics again\. If this keeps happening, reinstall the app\.$/,
+      /exit code 1[\s\S]*ImportError: boom/,
     ],
     [
       { reason: 'exited', code: 2, signal: null, stderrText: 'usage: serve.py [-h]' },
-      /\(exit code 2\)/,
+      /^The analysis engine stopped before it was ready\./,
+      /exit code 2/,
     ],
     [
       { reason: 'exited', code: null, signal: 'SIGKILL', stderrText: '' },
-      /stopped before it was ready \(signal SIGKILL\)\. Start Clinical Analytics again\. If this keeps happening, reinstall the app\.$/,
+      /^The analysis engine stopped before it was ready\. Start Clinical Analytics again\. If this keeps happening, reinstall the app\.$/,
+      /signal SIGKILL/,
     ],
     [
       { reason: 'timeout', timeoutMs: 60000 },
       /^The analysis engine was not ready after 60 seconds\. Start Clinical Analytics again\.$/,
+      /^$/,
     ],
     [
       { reason: 'untrusted', detail: 'proof' },
       /^Another program is using the port .* Start Clinical Analytics again\. It will choose a free port\.$/,
+      /proof/,
     ],
     [
       { reason: 'spawn', detail: 'spawn /x/python ENOENT' },
-      /could not be started \(spawn \/x\/python ENOENT\)\. Reinstall Clinical Analytics\.$/,
+      /^The analysis engine could not be started\. Reinstall Clinical Analytics\.$/,
+      /spawn \/x\/python ENOENT/,
     ],
-    [{ reason: 'spawn' }, /\(unknown error\)/],
+    [{ reason: 'spawn' }, /^The analysis engine could not be started\./, /unknown error/],
     [
       { reason: 'config', detail: 'VITE_API_URL must be http://127.0.0.1:<port>' },
       /^VITE_API_URL must be/,
+      /^$/,
     ],
     [
       { reason: 'config' },
       /^A startup setting is not valid\. Correct the setting, then start Clinical Analytics again\.$/,
+      /^$/,
     ],
-  ])('%o', (failure, pattern) => {
-    expect(startupFailureMessage(failure).message).toMatch(pattern);
+  ])('%o', (failure, messagePattern, detailsPattern) => {
+    const { message, details } = startupFailureMessage(failure);
+    expect(message).toMatch(messagePattern);
+    expect(details).toMatch(detailsPattern);
+    expect(message).not.toMatch(/signal|exit code|Traceback|ImportError|\/x\/python|Last output/);
   });
 
   test.each([
@@ -1014,9 +1140,10 @@ describe('unexpected exit after startup', () => {
     const text = unexpectedExitMessage(onUnexpectedExit.mock.calls[0][0]);
     expect(text.message).toBe('The analysis engine stopped.');
     expect(text.buttons).toEqual(['Restart engine', 'Quit']);
-    expect(text.detail).toMatch(
-      /^Restart it to keep working\. Your cohorts are still on this computer\.\n\nDetails: signal SIGKILL\.[\s\S]*MemoryError/
+    expect(text.detail).toBe(
+      'Restart it to keep working. Your cohorts are still on this computer.'
     );
+    expect(text.details).toMatch(/signal SIGKILL[\s\S]*MemoryError/);
   });
 
   test.each([

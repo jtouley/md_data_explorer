@@ -111,6 +111,17 @@ describe('renderPatchHistoryTable', () => {
     expect(container.querySelector('.patch-history-empty')).toBeTruthy();
   });
 
+  it('renderPatchHistoryTable_empty_saysCohortNotDataset', () => {
+    // Arrange
+    const container = document.createElement('div');
+
+    // Act
+    renderPatchHistoryTable(container, [], { onRevert: () => {} });
+
+    // Assert
+    expect(container.textContent).toBe('No changes to this cohort yet.');
+  });
+
   it('renders revert for revertable patch and calls handler', () => {
     const container = document.createElement('div');
     let called = null;
@@ -185,7 +196,7 @@ describe('renderPatchHistoryTable', () => {
     expect(rows).toHaveLength(2);
     const headers = container.querySelectorAll('thead th');
     expect(headers).toHaveLength(6);
-    expect(headers[0].textContent).toBe('Column');
+    expect(headers[0].textContent).toBe('Variable');
     expect(headers[3].textContent).toBe('Status');
   });
 

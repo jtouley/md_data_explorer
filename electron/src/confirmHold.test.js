@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { describe, expect, it, vi } from 'vitest';
-import { buildConfirmRequest, submitConfirmation } from './confirmHold.js';
+import { buildConfirmRequest, submitConfirmation, approvedCardNote } from './confirmHold.js';
 
 const HELD = {
   pendingQuery: 'Compare LDL by treatment in older patients',
@@ -50,7 +50,10 @@ describe('buildConfirmRequest', () => {
       { ...HELD, datasetId: 'ds_other' },
       'This plan was for a different cohort. Ask the question again on this one.',
     ],
-    [{ pendingQuery: 'q', planLine: 'p', planHash: 'h' }, 'Choose a cohort, then ask the question again.'],
+    [
+      { pendingQuery: 'q', planLine: 'p', planHash: 'h' },
+      'Choose a cohort, then ask the question again.',
+    ],
   ])('buildConfirmRequest_invalid_case%#_refusesWithMessage', (held, message) => {
     // Arrange
     const context = {
@@ -84,5 +87,23 @@ describe('submitConfirmation', () => {
       'abc123'
     );
     expect(response).toEqual({ query_id: 'q1' });
+  });
+});
+
+describe('approvedCardNote (H4)', () => {
+  it.each([
+    ['completed', 'You approved this plan. The answer is below.'],
+    ['held', 'You approved this plan. The answer is below.'],
+    ['ended', 'You approved this plan. The answer is below.'],
+    ['refused', 'Not run — see below.'],
+    ['error', 'Not run — see below.'],
+    ['stopped', 'You approved this plan, then stopped waiting. Ask again to see an answer.'],
+  ])('approvedCardNote_%s', (outcome, expected) => {
+    // Arrange / Act
+    const note = approvedCardNote(outcome);
+
+    // Assert
+    expect(note).toBe(expected);
+    expect(note).not.toMatch(/it was sent/);
   });
 });

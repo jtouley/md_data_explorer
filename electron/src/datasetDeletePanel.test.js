@@ -19,6 +19,15 @@ function setup() {
 }
 
 describe('renderDatasetDeleteConfirm', () => {
+  test('says cohort, the word the rest of the app uses (M5)', () => {
+    // Arrange / Act
+    const { container } = setup();
+
+    // Assert
+    expect(container.textContent).toContain('for this cohort');
+    expect(container.textContent).not.toMatch(/dataset/i);
+  });
+
   test('shows the dataset name and focuses Cancel, not Delete', () => {
     // Arrange / Act
     const { container, q } = setup();

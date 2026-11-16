@@ -25,7 +25,11 @@
     <!-- Sidebar: cohort, new question, conversations, appearance -->
     <aside id="session-sidebar" class="sidebar" data-testid="session-sidebar" aria-label="Cohort and conversations">
       <div class="sidebar-top">
-        <p class="brand-name">Clinical Analytics</p>
+        <div class="sidebar-head">
+          <h1 class="brand-name">Clinical Analytics</h1>
+          <!-- Narrow windows only: closes the drawer (focus returns to its toggle) -->
+          <button type="button" id="sidebar-close" class="btn-icon sidebar-close" aria-label="Close cohort and conversations" title="Close" data-icon="close" data-testid="sidebar-close"></button>
+        </div>
 
         <div class="cohort">
           <label for="dataset-select" class="cohort-label">Cohort</label>
@@ -65,6 +69,9 @@
           </div>
           <button type="button" id="dataset-meta" class="cohort-meta hidden" data-testid="dataset-meta"></button>
           <p id="dataset-status" class="cohort-status" role="status" aria-live="polite" data-testid="upload-status"></p>
+          <button type="button" id="dataset-status-action" class="btn btn-secondary btn-sm cohort-status-action hidden" data-testid="dataset-status-action">
+            Open cohort details
+          </button>
           <div id="dataset-delete-area" class="dataset-delete-area hidden"></div>
         </div>
 
@@ -105,17 +112,34 @@
 
     <!-- Main: the conversation and the composer, nothing else -->
     <main class="app-main">
+      <!-- Under 700 CSS px the sidebar folds behind this toggle (hidden on wider windows) -->
+      <div class="main-bar">
+        <button
+          type="button"
+          id="sidebar-toggle"
+          class="btn btn-secondary btn-sm sidebar-toggle"
+          aria-controls="session-sidebar"
+          aria-expanded="false"
+          data-testid="sidebar-toggle"
+        >
+          <span class="sidebar-toggle-icon" data-icon="panel" aria-hidden="true"></span>
+          <span>Cohort and conversations</span>
+        </button>
+      </div>
       <div id="offline-banner" class="banner banner--error hidden" role="alert" data-testid="offline-banner">
         <span class="banner-icon" data-icon="alert" aria-hidden="true"></span>
-        <span class="banner-text">Can't reach the analysis engine on this computer.</span>
+        <span class="banner-text">Can’t reach the analysis engine on this computer.</span>
+        <!-- Not dismissible: while the engine is unreachable this is the only way to retry -->
         <button type="button" id="retry-connection" class="btn btn-secondary btn-sm">Try again</button>
       </div>
       <div id="llm-banner" class="banner llm-banner hidden" role="status" aria-live="polite">
         <span class="banner-icon" data-icon="info" aria-hidden="true"></span>
         <span id="llm-banner-text" class="banner-text llm-banner-text"></span>
+        <button type="button" class="btn-icon banner-dismiss" aria-label="Dismiss this message" title="Dismiss" data-icon="close" data-testid="llm-banner-dismiss"></button>
       </div>
 
-      <div id="chat-container" class="chat-container" data-testid="chat-container" tabindex="-1"></div>
+      <h2 id="conversation-title" class="visually-hidden">Conversation</h2>
+      <div id="chat-container" class="chat-container" data-testid="chat-container" tabindex="-1" role="region" aria-labelledby="conversation-title"></div>
 
       <div class="input-area">
         <form id="query-form" class="query-form">
@@ -136,7 +160,7 @@
       <div id="sr-status" class="visually-hidden" role="status" aria-live="polite"></div>
     </main>
 
-    <!-- Cohort details: preview, column suggestions, change history (off the chat column) -->
+    <!-- Cohort details: preview, variable suggestions, change history (off the chat column) -->
     <aside
       id="dataset-panel"
       class="dataset-panel hidden"
@@ -171,9 +195,9 @@
           <ul id="data-check-list" class="data-check-list" data-testid="data-check-list"></ul>
         </section>
 
-        <section id="enrichment-section" class="enrichment-section hidden" aria-label="Column suggestions">
+        <section id="enrichment-section" class="enrichment-section hidden" aria-label="Variable suggestions">
           <div class="panel-section-header">
-            <h3 class="panel-section-title">Column suggestions</h3>
+            <h3 class="panel-section-title">Variable suggestions</h3>
             <button type="button" id="refresh-enrichments" class="btn btn-secondary btn-sm">Refresh</button>
           </div>
           <p id="enrichment-hint" class="panel-hint" data-testid="enrichment-hint"></p>

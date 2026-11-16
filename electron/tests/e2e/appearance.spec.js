@@ -136,6 +136,9 @@ test.describe('Appearance', () => {
       'Waiting for the analysis engine.'
     );
     await expect(page.locator('#connection-status')).toHaveClass(/status-error/);
+    // The banner can't be dismissed: its Try again is the only way to reconnect.
+    await expect(page.getByTestId('offline-banner').locator('.banner-dismiss')).toHaveCount(0);
+    await expect(page.getByTestId('welcome-message')).not.toContainText('sidebar');
 
     // Act
     await page.evaluate(() => window.__bringUp());

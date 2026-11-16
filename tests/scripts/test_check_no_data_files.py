@@ -22,6 +22,10 @@ from scripts import check_no_data_files, git_tracked
         ("data/dictionaries/Codebook v1.0.pdf", True),
         ("tests/fixtures/synthetic/cohort.csv", False),
         ("src/clinical_analytics/core/semantic.py", False),
+        ("tests/eval/corpus/covid_ms.zip", True),
+        ("bench/hourly/p000001.psv", True),
+        ("bench/labevents.csv.gz", True),
+        ("src/clinical_analytics/eval/corpus/corpus.yaml", False),
     ],
     ids=[
         "duckdb_store",
@@ -36,6 +40,10 @@ from scripts import check_no_data_files, git_tracked
         "dictionary_pdf_under_data",
         "synthetic_test_fixture",
         "source_code",
+        "upload_zip",
+        "pipe_separated_table",
+        "gzipped_table",
+        "corpus_manifest",
     ],
 )
 def test_violations_path_flaggedUnlessAllowlisted(path, flagged):

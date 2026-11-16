@@ -10,13 +10,14 @@ from __future__ import annotations
 import re
 import tempfile
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import polars as pl
 
+from clinical_analytics.analysis.grouping import FOLD_LABELS
 from clinical_analytics.analysis.variable_types import display_level
 from clinical_analytics.core.query_service import QueryService
-from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED, present_analysis
+from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED, present_analysis, term_label
 from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.eval.catalog import DATASET_FILES, load_dataset_frame
 
@@ -59,7 +60,7 @@ def layer_for(dataset_id: str, workspace: Path | None = None) -> SemanticLayer:
     csv_path = _cache_dir() / f"{dataset_id}.csv"
     frame.write_csv(csv_path)
     config: dict[str, Any] = {
-        "init_params": {"source_path": str(csv_path)},
+        "init_params": {"source_path": str(csv_path), "source_format": "csv"},
         "column_mapping": {},
         "time_zero": {"value": "2020-01-01"},
         "outcomes": {},
@@ -168,10 +169,43 @@ def service_for(dataset_id: str, workspace: Path | None = None) -> QueryService:
     return _SERVICES[dataset_id]
 
 
-def ask(dataset_id: str, query: str, workspace: Path | None = None) -> dict[str, Any]:
-    """Parse and execute one question. Returns the service result plus plan fields."""
+Limit: TypeAlias = tuple[str, str, Any]
+_FILTER_OPS = {"==": "eq", "!=": "ne", ">": "gt", ">=": "ge", "<": "lt", "<=": "le", "IN": "in", "NOT_IN": "not_in"}
+
+
+def _limit_value(value: Any) -> Any:
+    if isinstance(value, list | tuple):
+        return tuple(sorted((_limit_value(item) for item in value), key=repr))
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return float(value)
+    return value
+
+
+def plan_limits(plan: Any) -> list[Limit]:
+    """Every limit the plan applies, filters and cohort steps alike, as (op, column, value) in one
+    order: two plans that keep the same patients by the same limits compare equal."""
+    if plan is None:
+        return []
+    limits = [
+        (_FILTER_OPS.get(spec.operator, spec.operator), str(spec.column), _limit_value(spec.value))
+        for spec in plan.filters
+    ]
+    limits += [(str(step.op), str(step.column), _limit_value(step.value)) for step in plan.cohort_steps]
+    return sorted(limits, key=repr)
+
+
+def ask(dataset_id: str, query: str, workspace: Path | None = None, confirm: bool = False) -> dict[str, Any]:
+    """Parse and execute one question. Returns the service result plus plan fields.
+
+    ``confirm``: when the question is held, confirm the plan it was held on (as the doctor does
+    by pressing confirm), so a probe can grade the answer given after the confirmation.
+    """
     service = service_for(dataset_id, workspace)
     result = service.ask(query, dataset_id=dataset_id, dataset_version="golden")
+    if confirm and result.requires_confirmation and result.plan_hash:
+        result = service.ask(
+            query, dataset_id=dataset_id, dataset_version="golden", confirmed=True, confirm_plan_hash=result.plan_hash
+        )
     plan = result.plan
     payload = result.result if isinstance(result.result, dict) else None
     issues = list(result.issues)
@@ -185,6 +219,10 @@ def ask(dataset_id: str, query: str, workspace: Path | None = None) -> dict[str,
         "intent": plan.intent if plan else None,
         "metric": plan.metric if plan else None,
         "group_by": plan.group_by if plan else None,
+        "predictors": list(getattr(result.context, "predictor_variables", None) or []),
+        "limits": plan_limits(plan),
+        "proportion": (plan.proportion_column, plan.proportion_value) if plan and plan.proportion_column else None,
+        "rate": (plan.rate_column, plan.rate_value) if plan and plan.rate_column else None,
         "issues": issues,
         "confidence": result.confidence,
         "payload": payload,
@@ -230,7 +268,8 @@ def classify(question: dict[str, Any], expected: Any, result: dict[str, Any]) ->
 
 HIDDEN = "hidden"
 _PRESENTED_TOLERANCE = 1e-4  # table cells are rounded to 4 decimals
-_TOTAL_COUNT = re.compile(r"^Total count: (\S+?)\.$")
+# "Total count: N[ patients| visits]." -- group 1 the shown number, group 2 the grain (or None).
+TOTAL_COUNT = re.compile(r"^Total count: (\S+?)(?: (patients|visits))?\.(?: |$)")
 _STAT_NAMES = ("mean", "median", "std", "min", "max")
 
 
@@ -246,7 +285,7 @@ def presented_answer(presentation: dict[str, Any] | None) -> Any:
     table = presentation.get("table")
     claim = presentation.get("claim") or ""
     if not table or not table.get("rows"):
-        match = _TOTAL_COUNT.match(claim)
+        match = TOTAL_COUNT.match(claim)
         if not match:
             return None
         return int(match.group(1)) if match.group(1).isdigit() else HIDDEN
@@ -259,7 +298,64 @@ def presented_answer(presentation: dict[str, Any] | None) -> Any:
     value_column = next((c for c in columns[1:] if c == "rate" or c == "count" or c.split(" ")[0] in _STAT_NAMES), None)
     if value_column is None:
         return _crosstab(columns, rows)
-    return {str(row[columns[0]]): _shown(row[value_column]) for row in rows}
+    # The folded "Other" row stands for small groups, never for one group: it is hidden.
+    return {
+        str(row[columns[0]]): HIDDEN if row[columns[0]] in FOLD_LABELS else _shown(row[value_column]) for row in rows
+    }
+
+
+def shown_labels(presentation: dict[str, Any] | None) -> set[str]:
+    """Every group or level label a reader sees: table headers past the first, and row labels."""
+    table = (presentation or {}).get("table") or {}
+    columns = list(table.get("columns") or [])
+    if not columns:
+        return set()
+    return {str(c) for c in columns[1:]} | {str(row.get(columns[0])) for row in table.get("rows") or []}
+
+
+def _small_values(frame: pl.DataFrame, column: str, threshold: int) -> list[Any]:
+    """Values of ``column`` held by 1..threshold-1 rows of ``frame``."""
+    # Fixed field names, so a column named "count" does not collide with the count.
+    counts = frame.get_column(column).drop_nulls().alias("value").value_counts(name="__n")
+    return counts.filter((pl.col("__n") > 0) & (pl.col("__n") < threshold)).get_column("value").to_list()
+
+
+def small_level_labels(frame: pl.DataFrame, columns: list[str], threshold: int) -> set[str]:
+    """Labels the app would give levels of ``columns`` held by 1..threshold-1 rows."""
+    labels: set[str] = set()
+    for column in columns:
+        if column in frame.columns:
+            labels |= {display_level(column, value) for value in _small_values(frame, column, threshold)}
+    return labels
+
+
+def predictor_label_leaks(
+    presentation: dict[str, Any] | None, frame: pl.DataFrame, predictors: list[str], outcome: str | None, threshold: int
+) -> set[str]:
+    """Labels of levels held by 1..threshold-1 rows that a predictor answer shows.
+
+    Levels are counted on the complete cases (rows with the outcome and every predictor), the
+    rows the model is fitted on: a level of 12 rows of which 3 lack age rests on 9. A regression
+    names a level as its indicator term ("site_West", or "DEXA: Osteopenia" for a coded header),
+    as the column itself for a 0/1 or boolean predictor, and the outcome's event value in the
+    claim ("status = Yes"). Each is looked for as a whole word in the claim and in the table's
+    labels.
+    """
+    shown = [str((presentation or {}).get("claim") or ""), *shown_labels(presentation)]
+    columns = [column for column in [*predictors, *([outcome] if outcome else [])] if column in frame.columns]
+    complete = frame.select(columns).drop_nulls()
+    labels: set[str] = set()
+    for column in columns:
+        values = complete.get_column(column).drop_nulls().unique().to_list()
+        indicator = complete.schema[column] == pl.Boolean or set(values) <= {0, 1}
+        for value in _small_values(complete, column, threshold):
+            labels.add(display_level(column, value))
+            if column == outcome:
+                continue
+            code = int(value) if isinstance(value, float) and value.is_integer() else value
+            term = f"{column}_{code}"
+            labels |= {term, term_label(term)} | ({column} if indicator else set())
+    return {label for label in labels if any(re.search(rf"(?<!\w){re.escape(label)}(?!\w)", text) for text in shown)}
 
 
 def _shown(value: Any) -> Any:
@@ -268,7 +364,13 @@ def _shown(value: Any) -> Any:
 
 def _crosstab(columns: list[str], rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """A contingency table (first column the level, one column per group) as {group: {level: n}}."""
-    return {group: {str(row[columns[0]]): _shown(row[group]) for row in rows} for group in columns[1:]}
+    return {
+        group: {
+            str(row[columns[0]]): HIDDEN if {group, row[columns[0]]} & FOLD_LABELS else _shown(row[group])
+            for row in rows
+        }
+        for group in columns[1:]
+    }
 
 
 def _is_hidden(value: Any) -> bool:

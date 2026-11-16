@@ -12,8 +12,15 @@ Tests cover:
 
 # Test will fail until autocontext.py is created
 import pytest
+from ibis.common.exceptions import IbisTypeError
+from structlog.testing import capture_logs
 
-from clinical_analytics.core.autocontext import AutoContext, ColumnContext, build_autocontext
+from clinical_analytics.core.autocontext import (
+    AutoContext,
+    ColumnContext,
+    _reconstruct_inferred_schema_from_semantic_layer,
+    build_autocontext,
+)
 
 
 class TestColumnContext:
@@ -313,3 +320,66 @@ class TestEstimateTokens:
             f"Token count should be ~101 with tiktoken (got {result}). "
             f"Character approximation gives ~{len(long_text) // 4}"
         )
+
+
+class TestReconstructInferredSchemaFromConfig:
+    """Tier 3 rebuilds the schema from the layer config: bad entries classify by default, view errors are logged."""
+
+    @pytest.mark.parametrize(
+        "age_entry",
+        [
+            pytest.param(None, id="none"),
+            pytest.param("numeric", id="string"),
+            pytest.param(["numeric"], id="list"),
+        ],
+    )
+    def test_reconstruct_variableTypesEntryNotDict_classifiesCategoricalAndWarns(self, mock_semantic_layer, age_entry):
+        # Arrange: a YAML-style config whose "age" entry is not a dict; "mx" is a well-formed one
+        mock_sl = mock_semantic_layer(columns={"mx": "mx", "age": "age"})
+        mock_sl.config = {
+            "column_mapping": {},
+            "outcomes": {},
+            "variable_types": {"mx": {"type": "numeric"}, "age": age_entry},
+        }
+
+        # Act
+        with capture_logs() as logs:
+            schema = _reconstruct_inferred_schema_from_semantic_layer(mock_sl)
+
+        # Assert
+        assert schema.continuous_columns == ["mx"]
+        assert schema.categorical_columns == ["age"]
+        warned = [e for e in logs if e["event"] == "autocontext_variable_type_not_a_dict"]
+        assert len(warned) == (0 if age_entry is None else 1)
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            pytest.param(IbisTypeError("column 'x' not found"), id="ibis_missing_column"),
+            pytest.param(KeyError("source_column"), id="outcome_without_source_column"),
+        ],
+    )
+    def test_reconstruct_baseViewConfigError_logsWarningAndHasNoColumns(self, mock_semantic_layer, error):
+        # Arrange
+        mock_sl = mock_semantic_layer()
+        mock_sl.config = {"column_mapping": {}, "outcomes": {}, "variable_types": {}}
+        mock_sl.get_base_view.side_effect = error
+
+        # Act
+        with capture_logs() as logs:
+            schema = _reconstruct_inferred_schema_from_semantic_layer(mock_sl)
+
+        # Assert: not silent, and no column is classified
+        assert schema.categorical_columns == [] and schema.continuous_columns == []
+        events = [e for e in logs if e["event"] == "autocontext_base_view_unavailable"]
+        assert [e["error_type"] for e in events] == [type(error).__name__]
+
+    def test_reconstruct_baseViewBug_propagates(self, mock_semantic_layer):
+        # Arrange: an AttributeError is a bug (e.g. a None config field), not a config the data lacks
+        mock_sl = mock_semantic_layer()
+        mock_sl.config = {"column_mapping": {}, "outcomes": {}, "variable_types": {}}
+        mock_sl.get_base_view.side_effect = AttributeError("'NoneType' object has no attribute 'items'")
+
+        # Act / Assert
+        with pytest.raises(AttributeError):
+            _reconstruct_inferred_schema_from_semantic_layer(mock_sl)

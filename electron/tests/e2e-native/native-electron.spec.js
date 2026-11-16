@@ -238,6 +238,16 @@ test.describe.serial('Native Electron binary harness', () => {
     await expect(page.getByTestId('session-sidebar')).toBeVisible();
     await expect(page.getByTestId('upload-area')).toBeAttached();
     await expect(page.locator('#connection-status')).toHaveClass(/status-connected/);
+    // L2: a curated menu, without Reload (it would drop the conversation on screen)
+    const menu = await app.evaluate(({ Menu }) =>
+      Menu.getApplicationMenu().items.map((item) => ({
+        label: item.label,
+        roles: item.submenu ? item.submenu.items.map((sub) => sub.role).filter(Boolean) : [],
+      }))
+    );
+    expect(menu.map((m) => m.label)).toEqual(['File', 'Edit', 'View', 'Window']);
+    expect(menu.flatMap((m) => m.roles)).not.toContain('reload');
+    expect(menu.flatMap((m) => m.roles)).not.toContain('forcereload');
     await app.close();
   });
 
@@ -396,7 +406,7 @@ test.describe.serial('Native Electron binary harness', () => {
         .toBe(1);
       const shown = await app.evaluate(() => globalThis.__crashDialogs[0]);
       expect(shown.message).toBe('The analysis engine stopped.');
-      expect(shown.buttons).toEqual(['Restart engine', 'Quit']);
+      expect(shown.buttons).toEqual(['Restart engine', 'Quit', 'Copy details']);
       await expect
         .poll(() => sidecarPids(electronPid).filter((pid) => pid !== firstPid).length, {
           timeout: 60000,

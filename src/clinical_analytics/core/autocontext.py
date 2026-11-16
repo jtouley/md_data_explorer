@@ -10,7 +10,15 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+import structlog
 import tiktoken
+from ibis.common.exceptions import IbisError
+
+logger = structlog.get_logger()
+
+# What SemanticLayer.get_base_view() raises for a config the data cannot satisfy: an outcome
+# without "source_column" (KeyError) or a column the table lacks (IbisTypeError).
+_BASE_VIEW_ERRORS: tuple[type[Exception], ...] = (IbisError, KeyError)
 
 
 @dataclass
@@ -455,7 +463,8 @@ def _reconstruct_inferred_schema_from_semantic_layer(semantic_layer: Any) -> Any
 
     schema = InferredSchema()
 
-    # Extract patient_id from column_mapping
+    # Extract patient_id from column_mapping (uploaded configs are built from metadata normalized
+    # by storage.upload_metadata, so these fields are never None)
     column_mapping = semantic_layer.config.get("column_mapping", {})
     for col, mapped in column_mapping.items():
         if mapped == "patient_id":
@@ -467,10 +476,17 @@ def _reconstruct_inferred_schema_from_semantic_layer(semantic_layer: Any) -> Any
     schema.outcome_columns = list(outcomes.keys())
 
     # Get all columns from base view
+    # A view the config cannot build (an outcome without source_column, a mapped column the data
+    # lacks) leaves the context without columns, logged; any other error is a bug and propagates.
     try:
         base_view = semantic_layer.get_base_view()
         all_columns = list(base_view.columns)
-    except Exception:
+    except _BASE_VIEW_ERRORS as e:
+        logger.warning(
+            "autocontext_base_view_unavailable",
+            dataset=getattr(semantic_layer, "dataset_name", None),
+            error_type=type(e).__name__,
+        )
         all_columns = []
 
     # Classify columns from variable_types if available
@@ -479,8 +495,12 @@ def _reconstruct_inferred_schema_from_semantic_layer(semantic_layer: Any) -> Any
         if col == schema.patient_id_column or col in schema.outcome_columns:
             continue
 
-        col_meta = variable_types.get(col, {})
-        var_type = col_meta.get("type", "categorical")
+        # A config not built from normalized upload metadata (a YAML dataset) can hold a
+        # non-dict entry, e.g. {"age": "numeric"}: classify that column with the default type.
+        col_meta = variable_types.get(col)
+        if col_meta is not None and not isinstance(col_meta, dict):
+            logger.warning("autocontext_variable_type_not_a_dict", column=col, found_type=type(col_meta).__name__)
+        var_type = col_meta.get("type", "categorical") if isinstance(col_meta, dict) else "categorical"
         if var_type in ("numeric", "continuous"):
             schema.continuous_columns.append(col)
         elif var_type == "datetime":

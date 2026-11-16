@@ -5,13 +5,15 @@ Pure compute functions for analysis - Polars-first, return serializable dicts.
 These functions have no UI dependencies and can be tested independently.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import numpy as np
 import polars as pl
 from scipy import stats
 
+from clinical_analytics.analysis.grouping import SMALL_VALUE_MODEL_REFUSAL, grouping_problem, is_small_level
+from clinical_analytics.analysis.numeric_text import statistic_refusal
 from clinical_analytics.analysis.sample_floors import (
     MIN_COMPARISON_N,
     MIN_CORRELATION_N,
@@ -19,7 +21,14 @@ from clinical_analytics.analysis.sample_floors import (
     MIN_REGRESSION_N,
     MIN_SURVIVAL_N,
 )
-from clinical_analytics.analysis.variable_types import binary_event_level, classify_variable, code_key, is_numeric_dtype
+from clinical_analytics.analysis.variable_types import (
+    VariableKind,
+    binary_event_level,
+    classify_variable,
+    code_key,
+    is_numeric_dtype,
+)
+from clinical_analytics.contracts.builder import implausible_values
 from clinical_analytics.core.analysis_types import AnalysisContext
 from clinical_analytics.core.query_plan import FilterSpec
 
@@ -128,73 +137,10 @@ def _find_matching_column(target_name: str, available_columns: list[str]) -> str
     return best_match
 
 
-def _try_convert_to_numeric(series: pl.Series) -> pl.Series | None:
-    """
-    Try to convert a string series to numeric.
-
-    Handles:
-    - European comma format: "-1,8" -> -1.8 (comma as decimal separator)
-    - US thousands format: "1,234.5" -> 1234.5 (comma as thousands separator)
-    - Below detection limit: "<20" -> 20 (uses upper bound, extracts numeric part)
-    - Above detection limit: ">100" -> 100 (uses lower bound, extracts numeric part)
-    - Empty strings and whitespace -> null
-    - Non-numeric values -> null
-
-    Returns None if conversion fails or results in all nulls.
-    """
-    if series.dtype != pl.Utf8:
-        return None
-
-    try:
-        # Step 1: Extract numeric part (handles "<20", ">100", etc.)
-        # This pattern extracts digits, commas, dots, and minus signs
-        # It will extract "20" from "<20", "1234.5" from "1,234.5", etc.
-        extracted = series.str.extract(r"([\d,\.\-]+)", 1)
-
-        # Step 2: Clean based on format detection
-        # Strategy: Use map_elements for complex logic that Polars string ops can't handle easily
-        def clean_numeric(s: str | None) -> str | None:
-            if s is None:
-                return None
-            s = s.strip()
-            if not s:
-                return None
-
-            # Check if it looks like US format (has both comma and dot)
-            # In US format: "1,234.5" -> comma is thousands, dot is decimal -> remove comma
-            if "," in s and "." in s:
-                # US format: remove commas (thousands separator)
-                return s.replace(",", "")
-            # Check if it looks like European format (comma but no dot)
-            # In European format: "1,8" -> comma is decimal -> replace with dot
-            elif "," in s and "." not in s:
-                # European format: replace comma with dot (decimal separator)
-                return s.replace(",", ".")
-            # No comma, use as-is
-            return s
-
-        # Apply cleaning using map_elements
-        cleaned = extracted.map_elements(clean_numeric, return_dtype=pl.Utf8)
-
-        # Step 3: Try to cast to float
-        numeric = cleaned.cast(pl.Float64, strict=False)
-
-        # Step 4: Check if we got any valid values
-        if numeric.null_count() == len(numeric):
-            # Fallback: try direct conversion on original series
-            # Remove all commas (assume thousands separator) and try again
-            cleaned_direct = (
-                series.str.strip_chars()
-                .str.replace(",", "")  # Remove commas
-                .str.replace_all(r"^\s*$", "")  # Empty strings
-            )
-            numeric = cleaned_direct.cast(pl.Float64, strict=False)
-            if numeric.null_count() == len(numeric):
-                return None
-
-        return numeric
-    except Exception:
-        return None
+def _finite_rows(df: pl.DataFrame) -> pl.Expr:
+    """True on rows with no NaN/inf in any float column of ``df``."""
+    finite = [pl.col(name).is_finite() for name, dtype in df.schema.items() if dtype.is_float()]
+    return pl.all_horizontal(finite) if finite else pl.lit(True)
 
 
 def _drop_missing(df: pl.DataFrame) -> pl.DataFrame:
@@ -203,9 +149,8 @@ def _drop_missing(df: pl.DataFrame) -> pl.DataFrame:
     Polars drop_nulls keeps NaN, and a NaN outcome turns every mean and p-value into NaN while
     n_excluded stays 0. Callers count the dropped rows as excluded.
     """
-    finite = [pl.col(name).is_finite() for name, dtype in df.schema.items() if dtype.is_float()]
     complete = df.drop_nulls()
-    return complete.filter(pl.all_horizontal(finite)) if finite else complete
+    return complete.filter(_finite_rows(complete))
 
 
 # Spread at or below this fraction of the values' magnitude is float noise, not variation:
@@ -231,54 +176,11 @@ def _constant_groups(groups: list[Any], group_data: list[np.ndarray]) -> list[st
     ]
 
 
-# "inf" is a non-finite value, missing like NaN, not a category label.
-_MISSING_TOKENS = (
-    "", "na", "n/a", "nan", "null", "none", "missing", ".", "-", "?", "inf", "+inf", "-inf", "infinity",
-    "+infinity", "-infinity",
-)  # fmt: skip
-_NUMERIC_TEXT = r"^\s*[<>]?\s*-?\d[\d,]*(\.\d+)?\s*$"
-
-
-class AmbiguousNumberFormatError(ValueError):
-    """Text numbers whose comma could be a decimal or a thousands separator."""
-
-
-def _numeric_text_or_none(series: pl.Series) -> pl.Series | None:
-    """Numbers stored as text, or None when any non-missing value is not a plain number.
-
-    "Grade 2" or "1/2" stay text (categorical). "<20" reads as 20. Missing tokens ("n/a", ".")
-    become null. Commas: "1,8" is a decimal comma and "1,234.5" / "12,345,678" use thousands
-    separators; "1,234" with no other evidence could be either, so it raises
-    AmbiguousNumberFormatError instead of guessing.
-    """
-    cleaned = series.str.strip_chars()
-    is_missing = cleaned.is_null() | cleaned.str.to_lowercase().is_in(list(_MISSING_TOKENS))
-    text = pl.select(pl.when(is_missing).then(None).otherwise(cleaned)).to_series()
-    present = text.drop_nulls()
-    if present.len() == 0 or not present.str.contains(_NUMERIC_TEXT).all():
-        return None
-    bare = text.str.replace(r"^[<>]\s*", "")
-    with_comma = bare.drop_nulls().filter(bare.drop_nulls().str.contains(","))
-    if with_comma.len() == 0:
-        return bare.cast(pl.Float64, strict=False)
-    thousands = r"^-?\d{1,3}(,\d{3})+(\.\d+)?$"
-    if with_comma.str.contains(thousands).all():
-        unambiguous = (
-            with_comma.str.contains(r"\.").any()
-            or with_comma.str.contains(r",\d{3},").any()
-            or bare.drop_nulls().str.contains(r"^-?\d+\.\d+$").any()
-        )
-        if not unambiguous:
-            raise AmbiguousNumberFormatError(
-                f"{series.name} has values like '{with_comma[0]}' where the comma could mean thousands or a "
-                "decimal point. Store the column as numbers, or use a dot for decimals."
-            )
-        return bare.str.replace_all(",", "").cast(pl.Float64, strict=False)
-    if with_comma.str.contains(r"^-?\d+,\d+$").all() and not bare.drop_nulls().str.contains(r"\.").any():
-        return bare.str.replace(",", ".").cast(pl.Float64, strict=False)
-    raise AmbiguousNumberFormatError(
-        f"{series.name} mixes comma formats (e.g. '{with_comma[0]}'), so its numbers cannot be read reliably."
-    )
+def _implausible(series: pl.Series) -> dict[str, Any] | None:
+    """Values outside the column's plausibility range, as the presenter's disclosure (one check
+    for every path: ``contracts.builder.implausible_values``)."""
+    found = implausible_values(series)
+    return found.disclosure() if found else None
 
 
 def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
@@ -351,15 +253,12 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
             row_count=row_count,
         )
 
-        # Try to convert string columns to numeric (handles European comma format, etc.)
-        numeric_series = None
-        if series.dtype == pl.Utf8:
-            numeric_series = _try_convert_to_numeric(series)
-            logger.debug(
-                "compute_descriptive_conversion",
-                col=col,
-                conversion_success=numeric_series is not None,
-            )
+        # Numbers stored as text and empty columns: one rule and wording for every path.
+        refusal, parsed = statistic_refusal(series, "describe")
+        if refusal:
+            return {"type": "descriptive", "error": refusal}
+        numeric_series = parsed.values if parsed is not None else None
+        logger.debug("compute_descriptive_conversion", col=col, conversion_success=numeric_series is not None)
 
         # Use converted series if successful, otherwise original
         analysis_series = numeric_series if numeric_series is not None else series
@@ -406,6 +305,9 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
                 result["min"] = float(min_val) if min_val is not None else 0.0  # type: ignore[arg-type]
                 result["max"] = float(max_val) if max_val is not None else 0.0  # type: ignore[arg-type]
                 result["is_numeric"] = True
+                implausible = _implausible(clean_series)
+                if implausible:
+                    result["implausible"] = implausible
 
                 # Add headline answer for the query
                 result["headline"] = f"The average {col} is **{result['mean']:.2f}**"
@@ -420,7 +322,8 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
             result["unique_count"] = series.n_unique()
 
             # Headline for categorical
-            top_value = value_counts[0] if len(value_counts) > 0 else None
+            # A row as a dict: a one-row DataFrame has no truth value (it raised here before).
+            top_value = value_counts.row(0, named=True) if value_counts.height > 0 else None
             if top_value:
                 top_val_name = top_value[col]
                 top_val_count = top_value["count"]
@@ -505,37 +408,6 @@ def _compute_headline_answer(
     }
 
 
-def _try_numeric_conversion(series: pl.Series) -> tuple[pl.Series | None, bool]:
-    """
-    Try to convert a string series to numeric, handling common patterns.
-
-    Returns (converted_series, success).
-    """
-    if is_numeric_dtype(series.dtype):
-        return series, True
-
-    if series.dtype != pl.Utf8:
-        return None, False
-
-    try:
-        # Try direct cast first
-        numeric = series.cast(pl.Float64)
-        if numeric.null_count() < series.len() * 0.5:  # Less than 50% nulls
-            return numeric, True
-    except Exception:
-        pass
-
-    try:
-        # Try extracting numeric part (handles "<20" -> 20, ">100" -> 100)
-        numeric = series.str.extract(r"(\d+\.?\d*)").cast(pl.Float64)
-        if numeric.null_count() < series.len() * 0.5:
-            return numeric, True
-    except Exception:
-        pass
-
-    return None, False
-
-
 def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
     """
     Compare an outcome across groups, choosing the test from what the outcome measures.
@@ -577,10 +449,10 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
 
     outcome_series = analysis_df[outcome_col]
     if outcome_series.dtype == pl.Utf8:
-        try:
-            converted = _numeric_text_or_none(outcome_series)
-        except AmbiguousNumberFormatError as exc:
-            return {"type": "comparison", "error": str(exc)}
+        refusal, parsed = statistic_refusal(outcome_series, "compare")
+        if refusal:
+            return {"type": "comparison", "error": refusal}
+        converted = parsed.values if parsed is not None else None
         if converted is not None:
             # Missing-value tokens ("n/a", ".") became null: exclude and count them.
             analysis_df = _drop_missing(analysis_df.with_columns(converted.alias(outcome_col)))
@@ -590,6 +462,13 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
                 return {"type": "comparison", "error": "Not enough data for comparison"}
             outcome_series = analysis_df[outcome_col]
     outcome_kind = classify_variable(outcome_series)
+    # A grouping or crosstab dimension with many levels labels each group with a few patients'
+    # exact values (one column per LDL value): refused, never tabulated.
+    dimensions = [group_col] if outcome_kind == "continuous" else [group_col, outcome_col]
+    for dimension in dimensions:
+        problem = grouping_problem(dimension, analysis_df[dimension].n_unique())
+        if problem:
+            return {"type": "comparison", "error": problem}
     if outcome_series.n_unique() < 2:
         return {
             "type": "comparison",
@@ -615,6 +494,9 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
     }
 
     if outcome_kind == "continuous":
+        implausible = _implausible(analysis_df[outcome_col])
+        if implausible:
+            base["implausible"] = implausible
         values = analysis_df.with_columns(pl.col(outcome_col).cast(pl.Float64))
         group_data = [values.filter(pl.col(group_col) == g)[outcome_col].to_numpy() for g in groups]
         group_means = {str(g): float(np.mean(d)) for g, d in zip(groups, group_data, strict=True)}
@@ -749,6 +631,10 @@ def _apply_filters(df: pl.DataFrame, filters: list[FilterSpec]) -> pl.DataFrame:
 
     Returns:
         Filtered DataFrame
+
+    Raises:
+        ValueError: a filter names a column the frame lacks. Skipping it would answer on rows
+            the question excluded.
     """
     if not filters:
         return df
@@ -757,7 +643,7 @@ def _apply_filters(df: pl.DataFrame, filters: list[FilterSpec]) -> pl.DataFrame:
     filtered_df = df
     for filter_spec in filters:
         if filter_spec.column not in df.columns:
-            continue  # Skip if column not found
+            raise ValueError(f"Filter column '{filter_spec.column}' not found")
 
         # Apply null exclusion if requested (default: yes)
         if filter_spec.exclude_nulls:
@@ -913,13 +799,16 @@ def compute_count_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[s
         }
 
 
-def compute_analysis_by_type(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
+def compute_analysis_by_type(
+    df: pl.DataFrame, context: AnalysisContext, entity_key: str | None = None
+) -> dict[str, Any]:
     """
     Route to appropriate compute function based on intent.
 
     Args:
         df: Polars DataFrame (cohort data)
         context: AnalysisContext with intent and variables
+        entity_key: the patient key when rows are visits (``SemanticLayer.count_entity_key``)
 
     Returns:
         Serializable dict with analysis results
@@ -961,7 +850,11 @@ def compute_analysis_by_type(df: pl.DataFrame, context: AnalysisContext) -> dict
     analysis = analyses.get(context.inferred_intent)
     if analysis is None:
         return {"type": "unknown", "error": f"Unknown intent: {context.inferred_intent}"}
-    result = analysis(df, context)
+    if context.inferred_intent == AnalysisIntent.FIND_PREDICTORS:
+        # A model's level sizes count patients, so it needs the key when rows are visits.
+        result = compute_predictor_analysis(df, context, entity_key)
+    else:
+        result = analysis(df, context)
     # The rows the question's filters removed (plan filters or legacy context.filters), counted
     # with the same filters each analysis applies: the reader knows the dataset row count, so
     # this is a count too, and the presenter suppresses it like the others.
@@ -970,8 +863,8 @@ def compute_analysis_by_type(df: pl.DataFrame, context: AnalysisContext) -> dict
     return result
 
 
-def _needs_indicators(series: pl.Series) -> bool:
-    kind = classify_variable(series)
+def _needs_indicators(series: pl.Series, kind: VariableKind) -> bool:
+    """``kind``: ``classify_variable(series)``."""
     if series.dtype == pl.Utf8 or kind == "categorical":
         return True
     return kind == "binary" and not set(series.drop_nulls().unique().to_list()) <= {0, 1}
@@ -984,17 +877,79 @@ def _code_text(series: pl.Series) -> pl.Series:
     return series.cast(pl.Utf8)
 
 
-def _ambiguous_event_message(column: str, series: pl.Series) -> str:
-    values = ", ".join(str(v) for v in sorted(series.drop_nulls().unique().to_list(), key=str))
+def _level_sizes(values: pl.Series, keys: pl.Series | None = None) -> dict[Any, int]:
+    """Patients holding each present value of ``values``: rows, or with ``keys`` (the patient
+    key of each row, when rows are visits) the distinct keys. A row with no key is no patient,
+    so a level's count can only fall, never rise (fail closed)."""
+    if keys is None:
+        counts = values.drop_nulls().alias("value").value_counts(name="__n")
+    else:
+        counts = (
+            pl.DataFrame({"value": values, "key": keys})
+            .drop_nulls("value")
+            .group_by("value")
+            .agg(pl.col("key").drop_nulls().n_unique().alias("__n"))
+        )
+    return dict(zip(counts.get_column("value").to_list(), counts.get_column("__n").to_list(), strict=True))
+
+
+def _ambiguous_event_message(column: str, series: pl.Series, keys: pl.Series | None = None) -> str:
+    """Why the event value cannot be told. A value held by 1-10 patients is never named, nor is
+    the column beside it (that would say a few patients have one of its values): the refusal is
+    then the generic one."""
+    sizes = _level_sizes(series, keys)
+    if any(is_small_level(n) for n in sizes.values()):
+        return SMALL_VALUE_MODEL_REFUSAL
+    values = ", ".join(sorted(str(v) for v in sizes))
     return (
         f"Cannot tell which value of {column} is the event (values: {values}). Recode it to 0/1, "
         f"or name the codes in the column header, e.g. '{column} 1: Yes 2: No'."
     )
 
 
-def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
+def _term_sizes(
+    frame: pl.DataFrame, kinds: Mapping[str, VariableKind], categorical: list[str], keys: pl.Series | None
+) -> dict[str, int | None]:
+    """Patients behind each fitted term that names a level: the smaller of its level and the
+    level it is compared with (an indicator ``<column>_<level>`` against its column's reference,
+    the first level in sorted order as ``get_dummies(drop_first=True)`` takes it; 1 against 0).
+    None for a slope, which names no level.
+
+    A level held by 1-10 patients would be named by its term (or, for a 0/1 predictor, by the
+    column) beside an odds ratio that rests on those patients; a reference level that small is
+    behind every other level's odds ratio. The sizes are the one source of the refusal
+    (``compute_predictor_analysis``) and of what the presenter shows.
+
+    ``frame``: the complete cases the model is fitted on, before indicators are made; ``kinds``:
+    ``classify_variable`` of each predictor; ``keys``: the patient key of each row of ``frame``
+    when rows are visits.
+    """
+    sizes: dict[str, int | None] = {}
+    for column, kind in kinds.items():
+        if column in categorical:
+            levels = _level_sizes(_code_text(frame[column]), keys)
+            reference = levels[min(levels)]
+            sizes.update(
+                {f"{column}_{level}": min(n, reference) for level, n in levels.items() if level != min(levels)}
+            )
+        elif kind == "binary":
+            sizes[column] = min(_level_sizes(frame[column], keys).values())
+        else:
+            sizes[column] = None
+    return sizes
+
+
+def compute_predictor_analysis(
+    df: pl.DataFrame, context: AnalysisContext, entity_key: str | None = None
+) -> dict[str, Any]:
     """
     Logistic regression of a binary outcome on the named predictors.
+
+    A model is refused when a predictor level, a 0/1 predictor's value or an outcome value is
+    held by 1-10 patients (``_term_sizes``): its term or claim would name them. Folding the
+    level into "Other" changes the model, so it is refused instead, naming no column or level.
+    ``entity_key``: the patient key when rows are visits (``SemanticLayer.count_entity_key``);
+    the sizes then count distinct patients, never rows.
 
     The outcome is recoded explicitly to 0/1 and the modelled event level is reported, so a
     1/2-coded or text outcome is never fitted on raw codes. Coded categorical predictors
@@ -1022,8 +977,14 @@ def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> di
             f"{outcome_col}?'",
         }
 
+    if entity_key is not None and entity_key not in df.columns:
+        # Patients cannot be counted, so no level's size can be trusted (fail closed).
+        return {"type": "predictor", "outcome_col": outcome_col, "error": SMALL_VALUE_MODEL_REFUSAL}
     n_in_scope = df.height
-    analysis_df = _drop_missing(df.select([outcome_col, *predictors]))
+    complete = df.filter(pl.all_horizontal(pl.col([outcome_col, *predictors]).is_not_null()))
+    complete = complete.filter(_finite_rows(complete.select([outcome_col, *predictors])))
+    analysis_df = complete.select([outcome_col, *predictors])
+    keys = complete.get_column(entity_key) if entity_key is not None else None
     n_used = analysis_df.height
     base: dict[str, Any] = {
         "type": "predictor",
@@ -1042,9 +1003,11 @@ def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> di
             **base,
             "error": f"Outcome has {n_unique} unique values. Only binary outcomes are supported.",
         }
+    if any(is_small_level(n) for n in _level_sizes(outcome_series, keys).values()):
+        return {**base, "error": SMALL_VALUE_MODEL_REFUSAL}
     event_level = binary_event_level(outcome_series)
     if event_level is None:
-        return {**base, "error": _ambiguous_event_message(outcome_col, outcome_series)}
+        return {**base, "error": _ambiguous_event_message(outcome_col, outcome_series, keys)}
     analysis_df = analysis_df.with_columns(
         pl.col(outcome_col).eq(pl.lit(event_level)).cast(pl.Int64).alias(outcome_col)
     )
@@ -1054,7 +1017,11 @@ def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> di
     analysis_df = analysis_df.with_columns(
         [pl.col(p).cast(pl.Int64) for p in predictors if analysis_df[p].dtype == pl.Boolean]
     )
-    categorical = [p for p in predictors if _needs_indicators(analysis_df[p])]
+    kinds = {p: classify_variable(analysis_df[p]) for p in predictors}
+    categorical = [p for p in predictors if _needs_indicators(analysis_df[p], kinds[p])]
+    term_sizes = _term_sizes(analysis_df, kinds, categorical, keys)
+    if any(n is not None and is_small_level(n) for n in term_sizes.values()):
+        return {**base, "error": SMALL_VALUE_MODEL_REFUSAL}
     analysis_df_pd = analysis_df.with_columns([_code_text(analysis_df[c]) for c in categorical]).to_pandas()
     if categorical:
         analysis_df_pd = pd.get_dummies(analysis_df_pd, columns=categorical, drop_first=True, dtype=int)
@@ -1089,6 +1056,7 @@ def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> di
         "event_level": code_key(event_level),
         "summary": summary_dict,
         "significant_predictors": significant_predictors,
+        "term_sizes": term_sizes,
         "schema": {col: str(dtype) for col, dtype in summary_df.dtypes.items()},
     }
 

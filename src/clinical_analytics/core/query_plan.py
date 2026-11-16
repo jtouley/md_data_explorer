@@ -34,6 +34,25 @@ SUPPORTED_COHORT_OPS: frozenset[str] = frozenset(
 )
 
 
+def grouped_statistic(plan: Any) -> Statistic | None:
+    """The statistic a plan computes once per group, or None when it computes no such summary.
+
+    DESCRIBE with a measure and a grouping computes its own statistic (mean when none was
+    asked). COMPARE_GROUPS compares means with a test; when the question asked for another
+    statistic ("compare median ldl by sex") it computes that statistic per group instead, the
+    same way DESCRIBE does, because a test of means would answer a different question.
+    """
+    if not getattr(plan, "metric", None) or not getattr(plan, "group_by", None):
+        return None
+    intent = getattr(plan, "intent", None)
+    statistic = getattr(plan, "statistic", None)
+    if intent == "DESCRIBE":
+        return statistic or "mean"
+    if intent == "COMPARE_GROUPS" and statistic not in (None, "mean"):
+        return statistic  # type: ignore[no-any-return]
+    return None
+
+
 class CohortStepError(ValueError):
     """A cohort restriction or filter cannot be applied.
 

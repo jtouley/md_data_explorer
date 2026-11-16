@@ -24,5 +24,9 @@ class ContractStoreError(ContractError):
     """A contract or quality report could not be written or read in the data home."""
 
 
+class InvalidDeclarationKeyError(ContractStoreError):
+    """The dataset id under which declarations would be stored is not a plain identifier."""
+
+
 class QualityCheckError(ContractError):
     """A contract rule could not be compiled to a Polars check."""
