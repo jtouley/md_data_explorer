@@ -24,6 +24,16 @@ updates:
       python-major:
         applies-to: version-updates
         update-types: ["major"]
+    ignore:
+      # onnxruntime 1.24+ ships macOS wheels only for macOS 14+ arm64 (no macOS 13, no Intel Mac)
+      # and no sdist, so it cannot install on the macOS 13+ floor in README.md. Drop this rule
+      # only together with raising that floor (README.md, docs/development/packaging.md).
+      - dependency-name: "onnxruntime"
+        versions: [">=1.24"]
+      # lifelines 0.30.3 requires pandas<3; Dependabot "solves" pandas 3 by downgrading lifelines
+      # to 0.30.0 (2024, no NumPy 2.4 / Python 3.13 fixes). Revisit when lifelines allows pandas 3.
+      - dependency-name: "pandas"
+        versions: [">=3"]
 
   # Electron desktop shell: electron/package.json + package-lock.json.
   - package-ecosystem: "npm"
