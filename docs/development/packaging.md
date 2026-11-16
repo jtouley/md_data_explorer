@@ -8,12 +8,31 @@ with no network, and Electron owns its lifecycle. Steps 2-6 (bundled Python runt
 
 | Platform | Minimum | Why |
 |---|---|---|
-| macOS | 13 (Ventura), Apple silicon and Intel | `onnxruntime==1.23.2` ships `macosx_13_0_arm64` and `macosx_13_0_x86_64` wheels for cp311-cp313. 1.24+ dropped Intel and needs macOS 14; macOS 12 has no cp313 wheel. |
+| macOS | 13 (Ventura), Apple silicon and Intel | `onnxruntime` 1.23.2 ships `macosx_13_0_arm64` and `macosx_13_0_x86_64` wheels for cp311-cp313. 1.24+ dropped Intel and needs macOS 14; macOS 12 has no cp313 wheel. |
 | Windows | 10/11 x64 (arm64 also has wheels) | |
 | Linux | x86_64 / aarch64, glibc 2.28 (`manylinux_2_28`) | |
 
-`onnxruntime` is pinned exactly in `pyproject.toml`; move the pin only to a release at least two
-weeks old that still covers the platforms above.
+This table is the source of truth for the platform floor. `pyproject.toml` holds `onnxruntime`
+at `>=1.23.2,<1.24` because 1.24+ cannot install on macOS 13 or Intel Macs. 1.23.x patch releases
+may enter `uv.lock`; `make check-lock-platforms` (CI) fails if the locked release lacks a macOS 13
+arm64 or x86_64 wheel for cp311-cp313. Move the ceiling only to a release at least two weeks old
+that still covers the platforms above, or raise the floor here.
+
+Raising the macOS floor (or lifting the `<1.24` ceiling) means changing every place that states
+it, together:
+
+- this table
+- `README.md` ("Prerequisites")
+- `docs/getting-started/installation.md` ("Prerequisites")
+- the `onnxruntime` comment and specifier in `pyproject.toml`
+- the `onnxruntime` ignore rule in `.github/dependabot.yml`
+- the wheel tags in the `check-lock-platforms` target in `Makefile`
+
+Held-back packages and security fixes: the Dependabot ignore rule for `onnxruntime>=1.24` also
+stops Dependabot security PRs above 1.23, and `pandas` 3 cannot resolve while `lifelines` (0.30.3)
+requires `pandas<3`. `make audit-held-back` runs `pip-audit` on the locked `onnxruntime` and
+`pandas`; the "Held-back dependency audit" workflow runs it weekly and on dependency changes, and
+fails when either has a known advisory.
 
 ## What the installed backend reads, and from where
 
