@@ -76,3 +76,18 @@ export function submitConfirmation(api, request) {
     request.planHash
   );
 }
+
+/**
+ * What an approved plan's card says once its outcome is known (docs/app/DESIGN.md, "Held").
+ * The card never offers the plan again, and never claims it ran when the answer below is a
+ * refusal or an error.
+ * @param {'completed' | 'held' | 'ended' | 'refused' | 'error' | 'stopped'} outcome
+ * @returns {string}
+ */
+export function approvedCardNote(outcome) {
+  if (outcome === 'refused' || outcome === 'error') return 'Not run — see below.';
+  if (outcome === 'stopped') {
+    return 'You approved this plan, then stopped waiting. Ask again to see an answer.';
+  }
+  return 'You approved this plan. The answer is below.';
+}

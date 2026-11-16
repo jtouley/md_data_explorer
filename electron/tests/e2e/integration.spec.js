@@ -335,7 +335,7 @@ test.describe('Integration: error resilience', () => {
     await expect(options).toHaveCount(1);
     await expect(options.first()).toHaveText('Choose a cohort…');
     await expect(page.getByTestId('upload-status')).toHaveText(
-      "Couldn't load the list of cohorts."
+      'Couldn’t load the list of cohorts.'
     );
   });
 
@@ -363,7 +363,7 @@ test.describe('Integration: error resilience', () => {
     await page.locator('#dataset-select').selectOption('ds_abc');
 
     const hint = page.getByTestId('enrichment-hint');
-    await expect(hint).toContainText('Could not load enrichments');
+    await expect(hint).toContainText('Couldn’t load variable suggestions');
   });
 });
 
@@ -430,7 +430,7 @@ test.describe('Integration: dataset upload flow', () => {
     await page.waitForTimeout(500);
 
     const uploadStatus = page.locator('[data-testid="upload-status"]');
-    await expect(uploadStatus).toHaveText('new_data is ready.');
+    await expect(uploadStatus).toHaveText('The cohort “new_data” is ready.');
     await expect(page.locator('#dataset-select')).toHaveValue('ds_new');
 
     const selectAfter = page.locator('#dataset-select option');

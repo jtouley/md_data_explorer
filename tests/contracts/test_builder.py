@@ -140,7 +140,7 @@ def test_uniqueNames_physicalColumns_stableSlugs(columns, expected):
 
 @pytest.mark.parametrize(
     ("column", "expected"),
-    [("age", "age"), ("Age (years)", "age"), ("AGE_YEARS", "age"), ("BMI", "bmi"), ("ldl", None), ("page", None)],
+    [("age", "age"), ("Age (years)", "age"), ("AGE_YEARS", "age"), ("BMI", "bmi"), ("ldl", "ldl"), ("page", None)],
 )
 def test_findPlausibilityRange_columnName_matchesByNormalizedShortName(column, expected):
     # Act
@@ -179,7 +179,7 @@ def test_buildContract_textColumn_observedLevelsNotWritten(make_contract):
 
 def test_buildContract_idColumn_requiredUniqueRestrictedWithoutMissingRule(make_contract):
     # Arrange
-    df = pl.DataFrame({"patient_id": ["A", "B"], "age": [40, 50]})
+    df = pl.DataFrame({"patient_id": [f"P{i}" for i in range(20)], "age": [40, 50] * 10})
 
     # Act
     prop = _props(make_contract(df))["patient_id"]

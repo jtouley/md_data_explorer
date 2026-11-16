@@ -9,6 +9,42 @@
 import { icon } from './icons.js';
 
 export const UNTITLED_SESSION = 'Earlier conversation';
+
+/**
+ * Make sure the conversation exists on the server, creating it at most once. The in-flight
+ * creation is kept on `state.sessionCreating`, so a second question asked while the first
+ * creation is still running (for example after Stop) waits for that same creation instead of
+ * starting another session. Setting `sessionCreating` to null (New chat, another cohort)
+ * abandons it: a creation that returns after that changes nothing.
+ * @param {{ currentDatasetId?: string | null, sessionId?: string, sessionOnServer: boolean,
+ *   sessionCreating: Promise<void> | null }} state
+ * @param {{ createSession?: (datasetId: string) => Promise<{ session_id?: string }> }} api
+ * @param {{ warn?: (message: string, detail?: string) => void }} [opts]
+ * @returns {Promise<void>}
+ */
+export function ensureServerSession(state, api, opts = {}) {
+  if (state.sessionOnServer || typeof api?.createSession !== 'function') return Promise.resolve();
+  if (state.sessionCreating) return state.sessionCreating;
+  const warn = opts.warn ?? ((message, detail) => console.warn(message, detail));
+  /** @type {Promise<void>} */
+  const pending = Promise.resolve()
+    .then(() => api.createSession?.(/** @type {string} */ (state.currentDatasetId)))
+    .then(
+      (res) => {
+        if (state.sessionCreating !== pending) return;
+        if (res?.session_id) {
+          state.sessionId = res.session_id;
+          state.sessionOnServer = true;
+        }
+      },
+      (error) => warn('Could not create a session; continuing without one:', error?.message)
+    )
+    .finally(() => {
+      if (state.sessionCreating === pending) state.sessionCreating = null;
+    });
+  state.sessionCreating = pending;
+  return pending;
+}
 const TITLE_MAX = 80;
 
 /**
@@ -186,7 +222,8 @@ export function renderSessionList(container, sessions, activeSessionId, handlers
   for (const group of groups) {
     const groupLi = document.createElement('li');
     groupLi.className = 'session-group';
-    const heading = document.createElement('h3');
+    // h2: the sidebar's h1 (the app name) is the only heading above it.
+    const heading = document.createElement('h2');
     heading.className = 'session-group-label';
     heading.textContent = group.label;
     const list = document.createElement('ul');

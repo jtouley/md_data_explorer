@@ -13,7 +13,9 @@ from unittest.mock import MagicMock, patch
 import polars as pl
 import pytest
 
+from clinical_analytics.analysis.grouping import MAX_GROUP_LEVELS, is_small_level
 from clinical_analytics.api.services.query_service import AsyncQueryService
+from clinical_analytics.core.result_presentation import to_json_safe
 
 # ============================================================================
 # Fixtures
@@ -38,9 +40,15 @@ def mock_core_query_service():
 
 
 @pytest.fixture
-def async_query_service(mock_semantic_layer, mock_core_query_service):
+def async_query_service(mock_core_query_service):
     """Create AsyncQueryService with mocked dependencies."""
-    return AsyncQueryService(mock_semantic_layer)
+    return AsyncQueryService()
+
+
+@pytest.fixture
+def new_lease(mock_semantic_layer, make_layer_lease):
+    """A fresh lease on the mock layer per call (submit_query and execute_query release theirs)."""
+    return lambda: make_layer_lease(mock_semantic_layer)
 
 
 # ============================================================================
@@ -52,7 +60,7 @@ class TestAsyncQueryServiceDelegation:
     """Tests for AsyncQueryService delegating to core QueryService."""
 
     @pytest.mark.asyncio
-    async def test_async_query_service_delegates_to_core(self, async_query_service, mock_core_query_service):
+    async def test_async_query_service_delegates_to_core(self, new_lease, async_query_service, mock_core_query_service):
         """Verify async service delegates query execution to core service."""
         # Arrange
         from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
@@ -68,6 +76,7 @@ class TestAsyncQueryServiceDelegation:
 
         # Act
         result = await async_query_service.execute_query(
+            lease=new_lease(),
             query="What is the average age?",
             dataset_id="test_dataset",
         )
@@ -83,7 +92,7 @@ class TestAsyncQueryServiceQueryId:
     """Tests for query ID generation."""
 
     @pytest.mark.asyncio
-    async def test_async_query_service_returns_query_id(self, async_query_service, mock_core_query_service):
+    async def test_async_query_service_returns_query_id(self, new_lease, async_query_service, mock_core_query_service):
         """Verify submit_query returns a unique query ID."""
         # Arrange
         from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
@@ -99,6 +108,7 @@ class TestAsyncQueryServiceQueryId:
 
         # Act
         query_id = await async_query_service.submit_query(
+            lease=new_lease(),
             query="What is the average age?",
             dataset_id="test_dataset",
         )
@@ -113,7 +123,9 @@ class TestAsyncQueryServiceStreaming:
     """Tests for SSE streaming progress events."""
 
     @pytest.mark.asyncio
-    async def test_async_query_service_streams_progress_events(self, async_query_service, mock_core_query_service):
+    async def test_async_query_service_streams_progress_events(
+        self, new_lease, async_query_service, mock_core_query_service
+    ):
         """Verify stream_events emits SSE events for query progress."""
         # Arrange
         from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
@@ -128,6 +140,7 @@ class TestAsyncQueryServiceStreaming:
         )
 
         query_id = await async_query_service.submit_query(
+            lease=new_lease(),
             query="What is the average age?",
             dataset_id="test_dataset",
         )
@@ -150,7 +163,9 @@ class TestAsyncQueryServiceValidation:
     """Tests for input validation."""
 
     @pytest.mark.asyncio
-    async def test_async_query_service_invalid_dataset_raises_error(self, async_query_service, mock_core_query_service):
+    async def test_async_query_service_invalid_dataset_raises_error(
+        self, new_lease, async_query_service, mock_core_query_service
+    ):
         """Verify invalid dataset ID raises appropriate error."""
         # Arrange
         mock_core_query_service.ask.side_effect = ValueError("Dataset not found")
@@ -158,28 +173,33 @@ class TestAsyncQueryServiceValidation:
         # Act & Assert
         with pytest.raises(ValueError, match="Dataset not found"):
             await async_query_service.execute_query(
+                lease=new_lease(),
                 query="What is the average age?",
                 dataset_id="nonexistent_dataset",
             )
 
     @pytest.mark.asyncio
-    async def test_async_query_service_empty_query_raises_error(self, async_query_service, mock_core_query_service):
+    async def test_async_query_service_empty_query_raises_error(
+        self, new_lease, async_query_service, mock_core_query_service
+    ):
         """Verify empty query raises validation error."""
         # Act & Assert
         with pytest.raises(ValueError, match="Query cannot be empty"):
             await async_query_service.execute_query(
+                lease=new_lease(),
                 query="",
                 dataset_id="test_dataset",
             )
 
     @pytest.mark.asyncio
     async def test_async_query_service_whitespace_query_raises_error(
-        self, async_query_service, mock_core_query_service
+        self, new_lease, async_query_service, mock_core_query_service
     ):
         """Verify whitespace-only query raises validation error."""
         # Act & Assert
         with pytest.raises(ValueError, match="Query cannot be empty"):
             await async_query_service.execute_query(
+                lease=new_lease(),
                 query="   ",
                 dataset_id="test_dataset",
             )
@@ -291,7 +311,7 @@ class TestAsyncQueryServiceAnalysisPayload:
 
     @pytest.mark.asyncio
     async def test_submit_query_withAnalysis_returnsClaimFirstPayload(
-        self, async_query_service, mock_core_query_service
+        self, new_lease, async_query_service, mock_core_query_service
     ):
         # Arrange
         from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
@@ -314,7 +334,7 @@ class TestAsyncQueryServiceAnalysisPayload:
         )
 
         # Act
-        query_id = await async_query_service.submit_query(query="how many by sex?", dataset_id="ds")
+        query_id = await async_query_service.submit_query(lease=new_lease(), query="how many by sex?", dataset_id="ds")
         events = [event async for event in async_query_service.stream_events(query_id)]
         stored = await async_query_service.get_result(query_id)
 
@@ -330,7 +350,91 @@ class TestAsyncQueryServiceAnalysisPayload:
         assert "analysis" not in preview
 
     @pytest.mark.asyncio
-    async def test_execute_query_withoutAnalysis_returnsNoRawRows(self, async_query_service, mock_core_query_service):
+    @pytest.mark.parametrize(
+        ("held_plan_line", "expected_part"),
+        [
+            (None, "filters age > 83"),
+            ("COUNT · outcome none · grouping none · filters age > 83 · test count", "filters age > 83"),
+        ],
+    )
+    async def test_submit_query_completed_sendsTheComputedPlanLine(
+        self, new_lease, async_query_service, mock_core_query_service, held_plan_line, expected_part
+    ):
+        # Arrange: a filtered, distinct-patient count (synthetic plan, no data)
+        from clinical_analytics.core.execution_gate import format_plan_line
+        from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
+        from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
+
+        plan = QueryPlan(
+            intent="COUNT",
+            filters=[FilterSpec(column="age", operator=">", value=83)],
+            entity_key="patient_id",
+            scope="filtered",
+        )
+        mock_core_query_service.ask.return_value = CoreQueryResult(
+            plan=plan,
+            issues=[],
+            result={"success": True},
+            confidence=0.9,
+            run_key="run_key",
+            context=None,
+            analysis={"type": "count", "total_count": 50},
+            plan_line=held_plan_line,
+        )
+
+        # Act
+        query_id = await async_query_service.submit_query(
+            lease=new_lease(), query="how many older than 83?", dataset_id="ds"
+        )
+        events = [event async for event in async_query_service.stream_events(query_id)]
+
+        # Assert: the answer carries the plan it was computed from, limits included
+        completed = next(e for e in events if e.event == "query_completed")
+        plan_line = completed.data["plan_line"]
+        assert expected_part in plan_line
+        assert plan_line == (held_plan_line or format_plan_line(plan, None))
+        # The stored result (GET /api/queries/{id}) carries the same line as the stream.
+        stored = await async_query_service.get_result(query_id)
+        assert stored.plan_line == plan_line
+
+    @pytest.mark.asyncio
+    async def test_execute_query_notHeld_returnsTheComputedPlanLine(
+        self, new_lease, async_query_service, mock_core_query_service
+    ):
+        # Arrange: a filtered count that was not held, so the core result has no plan line
+        from clinical_analytics.core.execution_gate import format_plan_line
+        from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
+        from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
+
+        plan = QueryPlan(
+            intent="COUNT",
+            filters=[FilterSpec(column="age", operator=">", value=83)],
+            entity_key="patient_id",
+            scope="filtered",
+        )
+        mock_core_query_service.ask.return_value = CoreQueryResult(
+            plan=plan,
+            issues=[],
+            result={"success": True},
+            confidence=0.9,
+            run_key="run_key",
+            context=None,
+            analysis={"type": "count", "total_count": 50},
+            plan_line=None,
+        )
+
+        # Act
+        result = await async_query_service.execute_query(
+            lease=new_lease(), query="how many older than 83?", dataset_id="ds"
+        )
+
+        # Assert: the sync route describes the same computed plan as the stream
+        assert result.plan_line == format_plan_line(plan, None)
+
+    @pytest.mark.asyncio
+    async def test_execute_query_withoutAnalysis_returnsNoRawRows(
+        self, new_lease, async_query_service, mock_core_query_service
+    ):
         # Arrange
         from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
 
@@ -344,7 +448,7 @@ class TestAsyncQueryServiceAnalysisPayload:
         )
 
         # Act
-        result = await async_query_service.execute_query(query="anything", dataset_id="ds")
+        result = await async_query_service.execute_query(lease=new_lease(), query="anything", dataset_id="ds")
 
         # Assert: execution rows are never returned in place of a presented answer
         assert result.result is None
@@ -363,7 +467,7 @@ class TestAsyncQueryServiceConversation:
 
     @pytest.mark.asyncio
     async def test_execute_query_secondTurn_receivesFirstTurnAsHistory(
-        self, async_query_service, mock_core_query_service
+        self, new_lease, async_query_service, mock_core_query_service
     ):
         # Arrange
         from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
@@ -377,9 +481,15 @@ class TestAsyncQueryServiceConversation:
         mock_core_query_service.ask.return_value = self._completed(first_plan)
 
         # Act
-        await async_query_service.execute_query(query="count by sex", dataset_id="ds", session_id="sess_1")
-        await async_query_service.execute_query(query="now by site", dataset_id="ds", session_id="sess_1")
-        await async_query_service.execute_query(query="how many?", dataset_id="ds", session_id="sess_other")
+        await async_query_service.execute_query(
+            lease=new_lease(), query="count by sex", dataset_id="ds", session_id="sess_1"
+        )
+        await async_query_service.execute_query(
+            lease=new_lease(), query="now by site", dataset_id="ds", session_id="sess_1"
+        )
+        await async_query_service.execute_query(
+            lease=new_lease(), query="how many?", dataset_id="ds", session_id="sess_other"
+        )
 
         # Assert
         first, second, other = mock_core_query_service.ask.call_args_list
@@ -396,13 +506,14 @@ class TestAsyncQueryServiceConversation:
 
     @pytest.mark.asyncio
     async def test_submit_query_contextWithoutHistory_usedAsPreviousTurn(
-        self, async_query_service, mock_core_query_service
+        self, new_lease, async_query_service, mock_core_query_service
     ):
         # Arrange
         mock_core_query_service.ask.return_value = self._completed(None)
 
         # Act
         query_id = await async_query_service.submit_query(
+            lease=new_lease(),
             query="now by site",
             dataset_id="ds",
             session_id="sess_new",
@@ -465,7 +576,9 @@ class TestContextToTurn:
 
 class TestAsyncQueryServiceHeldTurns:
     @pytest.mark.asyncio
-    async def test_execute_query_heldPlan_notRecordedAsTurn(self, async_query_service, mock_core_query_service):
+    async def test_execute_query_heldPlan_notRecordedAsTurn(
+        self, new_lease, async_query_service, mock_core_query_service
+    ):
         """A held plan has not run, so the next question must not refine it."""
         # Arrange
         from clinical_analytics.core.query_plan import QueryPlan
@@ -483,7 +596,9 @@ class TestAsyncQueryServiceHeldTurns:
         )
 
         # Act
-        await async_query_service.execute_query(query="average age", dataset_id="ds", session_id="sess")
+        await async_query_service.execute_query(
+            lease=new_lease(), query="average age", dataset_id="ds", session_id="sess"
+        )
 
         # Assert
         assert async_query_service.conversation_history("sess") == []
@@ -516,7 +631,7 @@ class TestQueryResultSmallCells:
 
     @pytest.mark.asyncio
     async def test_get_query_result_sparseFisher_bodyHasNoRecoverableSmallCount(
-        self, async_query_service, mock_core_query_service
+        self, new_lease, async_query_service, mock_core_query_service
     ):
         # Arrange: sparse 2x2 (A: 15 alive / 1 dead, B: 1 alive / 3 dead); every cell is hidden
         from fastapi.testclient import TestClient
@@ -553,7 +668,7 @@ class TestQueryResultSmallCells:
             context=None,
             analysis=analysis,
         )
-        stored = await async_query_service.execute_query(query="death by arm?", dataset_id="ds")
+        stored = await async_query_service.execute_query(lease=new_lease(), query="death by arm?", dataset_id="ds")
         # cell counts, group sizes, proportions (and their complements) and the odds ratio
         forbidden = {15.0, 1.0, 3.0, 16.0, 4.0, 45.0}
         forbidden |= {round(v, 4) for p in proportions.values() for v in (p, 1 - p, 100 * p, 100 * (1 - p))}
@@ -570,8 +685,71 @@ class TestQueryResultSmallCells:
         leaked = sorted({n for n in _numbers_in(body) if n in forbidden or round(n, 4) in forbidden})
         assert leaked == [], f"GET body {body} shows {leaked}"
 
+    @pytest.mark.parametrize(
+        ("groups", "small"),
+        [
+            pytest.param({f"{80 + i / 10:.1f}": 1 for i in range(289)}, None, id="exact_ldl_values_289_columns"),
+            pytest.param({"North": 60, "South": 50, "Rare": 3}, "Rare", id="site_with_3_patients"),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_get_query_result_heldQuery_bodyHasNoRawResult(self, async_query_service, mock_core_query_service):
+    async def test_get_query_result_crosstabOfSmallLevels_payloadCarriesNoSmallLabel(
+        self, new_lease, async_query_service, mock_core_query_service, groups, small
+    ):
+        # Arrange: on main "compare treatment between ldl groups" stored one column per exact LDL
+        # value (drug hidden, placebo 0), naming single patients' values and arm
+        from fastapi.testclient import TestClient
+
+        from clinical_analytics.api.main import app
+        from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
+
+        analysis = {
+            "type": "comparison",
+            "test_type": "chi_square",
+            "outcome_col": "treatment",
+            "group_col": "ldl" if small is None else "site",
+            "groups": list(groups),
+            "group_sizes": groups,
+            "contingency": [
+                {"treatment": "drug", **{g: n - n // 2 for g, n in groups.items()}},
+                {"treatment": "placebo", **{g: n // 2 for g, n in groups.items()}},
+            ],
+            "p_value": 0.15,
+            "n_used": sum(groups.values()),
+            "n_excluded": 0,
+        }
+        mock_core_query_service.ask.return_value = CoreQueryResult(
+            plan=MagicMock(),
+            issues=[],
+            result={"success": True, "result": pl.DataFrame({"x": [1]})},
+            confidence=0.9,
+            run_key="run_key",
+            context=None,
+            analysis=analysis,
+        )
+        stored = await async_query_service.execute_query(
+            lease=new_lease(), query="compare treatment by group", dataset_id="ds"
+        )
+
+        async def found(_query_id: str) -> tuple[Any, Any]:
+            return async_query_service, stored
+
+        # Act
+        with patch("clinical_analytics.api.routes.queries.find_query_result", side_effect=found):
+            body = TestClient(app).get(f"/api/queries/{stored.query_id}").json()
+
+        # Assert: the payload itself, not only the claim; the stored result is the same object
+        events = [to_json_safe(getattr(e, "data", e)) for e in async_query_service._events.get(stored.query_id, [])]
+        text = json.dumps(body) + json.dumps(to_json_safe(stored.result)) + json.dumps(events, default=str)
+        forbidden = [g for g in groups if is_small_level(groups[g])] if small else ["ldl=80.0", "ldl=80.1"]
+        assert not any(f'"{label}"' in text for label in forbidden), text[:500]
+        table = (body.get("result_data") or {}).get("table")
+        assert table is None or len(table["columns"]) <= MAX_GROUP_LEVELS + 1
+
+    @pytest.mark.asyncio
+    async def test_get_query_result_heldQuery_bodyHasNoRawResult(
+        self, new_lease, async_query_service, mock_core_query_service
+    ):
         # Arrange: a held query whose execution result carries raw rows and analysis keys
         from fastapi.testclient import TestClient
 
@@ -595,7 +773,7 @@ class TestQueryResultSmallCells:
             requires_confirmation=True,
             plan_line="Compare died by arm",
         )
-        query_id = await async_query_service.submit_query(query="death by arm?", dataset_id="ds")
+        query_id = await async_query_service.submit_query(lease=new_lease(), query="death by arm?", dataset_id="ds")
         _ = [event async for event in async_query_service.stream_events(query_id)]
         stored = await async_query_service.get_result(query_id)
 
@@ -612,3 +790,39 @@ class TestQueryResultSmallCells:
         text = json.dumps(body)
         assert not any(key in text for key in ('"result"', '"contingency"', '"group_proportions"', '"died"'))
         assert not {7.0, 3.0, 0.7, 0.3} & set(_numbers_in(body)), body
+
+
+class TestVersionFromTheLeasedLayer:
+    """A question is labelled with the version of the rows its leased layer holds, read once
+    when it is submitted: never with metadata a re-upload rewrote while it ran."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("loaded", "expected"), [("v1", "v1"), (None, None), ("", None)])
+    async def test_executeQuery_reuploadAfterLease_versionOfLeasedLayer(
+        self,
+        mock_semantic_layer: MagicMock,
+        make_layer_lease: Any,
+        async_query_service: AsyncQueryService,
+        mock_core_query_service: MagicMock,
+        loaded: str | None,
+        expected: str | None,
+    ) -> None:
+        # Arrange: the layer was built from v1; then the dataset was uploaded again (v2).
+        from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
+
+        mock_semantic_layer.loaded_version = loaded
+        lease = make_layer_lease(mock_semantic_layer)
+        mock_core_query_service.ask.return_value = CoreQueryResult(
+            plan=None, issues=[], result=None, confidence=0.9, run_key=None, context=None
+        )
+        reuploaded = {"dataset_version": "v2"}
+
+        # Act
+        with patch(
+            "clinical_analytics.ui.storage.user_datasets.UserDatasetStorage.get_upload_metadata",
+            return_value=reuploaded,
+        ):
+            await async_query_service.execute_query(query="how many patients", dataset_id="ds1", lease=lease)
+
+        # Assert
+        assert mock_core_query_service.ask.call_args.kwargs["dataset_version"] == expected

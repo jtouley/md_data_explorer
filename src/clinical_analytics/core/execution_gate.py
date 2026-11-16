@@ -4,11 +4,15 @@
 import dataclasses
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeAlias
 
 from clinical_analytics.core.column_parser import parse_column_name
 from clinical_analytics.core.query_plan import CohortStep, FilterSpec, QueryPlan
+
+# (column, merged level) -> the spellings shown beside it: "sex = Male (includes 'M', 'male')".
+MergedWords: TypeAlias = Mapping[tuple[str, str], tuple[str, ...]]
 
 HOLD_FAILURE_REASON = "Confirmation required before execution."
 PLAN_CHANGED_REASON = "This plan is different from the one you approved, so it has not run."
@@ -76,12 +80,18 @@ def apply_planned_query_result(result: dict, session: dict, dataset_version: str
     return classify_planned_query(result)
 
 
-def _filter_text(spec: FilterSpec) -> str:
+def _merged(column: str, value: Any, merged: MergedWords | None) -> str:
+    """' (includes 'M', 'male')' after a merged level the plan line shows, else ''."""
+    words = (merged or {}).get((str(column), value)) if isinstance(value, str) else None
+    return f" (includes {', '.join(repr(word) for word in words)})" if words else ""
+
+
+def _filter_text(spec: FilterSpec, merged: MergedWords | None = None) -> str:
     if isinstance(spec.value, list):
-        joined = ", ".join(str(item) for item in spec.value)
+        joined = ", ".join(f"{item}{_merged(spec.column, item, merged)}" for item in spec.value)
         text = f"{spec.column} {spec.operator} [{joined}]"
     else:
-        text = f"{spec.column} {spec.operator} {spec.value}"
+        text = f"{spec.column} {spec.operator} {spec.value}{_merged(spec.column, spec.value, merged)}"
     return text if spec.exclude_nulls else f"{text} (missing kept)"
 
 
@@ -136,12 +146,14 @@ def plan_fingerprint(plan: QueryPlan, context: Any = None) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _value_text(column: str, value: Any) -> str:
-    """Value as stored, with its code label when the column header defines one ("1 (Yes)")."""
+def _value_text(column: str, value: Any, merged: MergedWords | None = None) -> str:
+    """Value as stored, with its code label when the column header defines one ("1 (Yes)"), and
+    the confirmed spellings a merged level includes."""
     text = str(value)
     code = text[:-2] if text.endswith(".0") else text
     label = (parse_column_name(column).value_mapping or {}).get(code)
-    return f"{text} ({label})" if label else text
+    shown = f"{text} ({label})" if label else text
+    return f"{shown}{_merged(column, value, merged)}"
 
 
 def _number(value: Any) -> str:
@@ -151,10 +163,10 @@ def _number(value: Any) -> str:
         return str(value)
 
 
-def _step_text(step: CohortStep) -> str:
+def _step_text(step: CohortStep, merged: MergedWords | None = None) -> str:
     column = step.column
     if step.op == "eq":
-        return f"{column} = {_value_text(column, step.value)}"
+        return f"{column} = {_value_text(column, step.value, merged)}"
     if step.op == "gt":
         return f"{column} > {_number(step.value)}"
     if step.op == "lt":
@@ -173,15 +185,16 @@ def _step_text(step: CohortStep) -> str:
     return f"{column} {step.op} {step.value}"
 
 
-def format_plan_line(plan: QueryPlan, context: Any = None) -> str:
+def format_plan_line(plan: QueryPlan, context: Any = None, merged: MergedWords | None = None) -> str:
     """One hold line naming everything that changes the analysis.
 
     It is what the user reviews and what a confirmation is bound to, so it must include every
     input the analysis uses: predictors and time/event columns come from the analysis context,
     and filter null-handling and scope from the plan. The model has not run, so the test label
-    comes from the intent.
+    comes from the intent. ``merged``: the spellings a confirmed merged level includes, shown
+    beside it (the plan runs on "Male" for a question that said "M").
     """
-    filters = "; ".join(_filter_text(spec) for spec in plan.filters) or "none"
+    filters = "; ".join(_filter_text(spec, merged) for spec in plan.filters) or "none"
     label = _TEST_LABELS.get(str(plan.intent), "not selected")
     outcome = plan.metric or "none"
     grouping = plan.group_by or "none"
@@ -199,17 +212,19 @@ def format_plan_line(plan: QueryPlan, context: Any = None) -> str:
         parts.append(f"time {time_col or 'none'} · event {event_col or 'none'}")
     parts.append(f"filters {filters}")
     if plan.cohort_steps:
-        ordered = "; ".join(f"{index}) {_step_text(step)}" for index, step in enumerate(plan.cohort_steps, start=1))
+        ordered = "; ".join(
+            f"{index}) {_step_text(step, merged)}" for index, step in enumerate(plan.cohort_steps, start=1)
+        )
         parts.append(f"limits in order {ordered}")
     if plan.proportion_column:
         population = "patients matching the limits" if plan.cohort_steps or plan.filters else "all patients"
         parts.append(
             f"result proportion with {plan.proportion_column} = "
-            f"{_value_text(plan.proportion_column, plan.proportion_value)} among {population}"
+            f"{_value_text(plan.proportion_column, plan.proportion_value, merged)} among {population}"
         )
     if plan.rate_column:
         parts.append(
-            f"result rate of {plan.rate_column} = {_value_text(plan.rate_column, plan.rate_value)}"
+            f"result rate of {plan.rate_column} = {_value_text(plan.rate_column, plan.rate_value, merged)}"
             f" within each {plan.group_by or 'patient'} group"
         )
     if plan.entity_key:

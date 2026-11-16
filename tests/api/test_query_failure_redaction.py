@@ -19,7 +19,7 @@ SECRET = "MRN 4471 has HbA1c 9.1"
 
 @pytest.mark.asyncio
 async def test_executeQuery_coreRaisesWithValues_streamStoreAndLogsCarryGenericMessage(
-    caplog: pytest.LogCaptureFixture,
+    caplog: pytest.LogCaptureFixture, make_layer_lease: Any
 ) -> None:
     # Arrange
     previous = structlog.get_config()
@@ -32,11 +32,13 @@ async def test_executeQuery_coreRaisesWithValues_streamStoreAndLogsCarryGenericM
     try:
         with patch("clinical_analytics.api.services.query_service.CoreQueryService") as core_cls:
             core_cls.return_value.ask.side_effect = ValueError(SECRET)
-            service = AsyncQueryService(MagicMock())
+            service = AsyncQueryService()
 
             # Act
             with caplog.at_level(logging.DEBUG):
-                query_id = await service.submit_query(query="how many", dataset_id="ds")
+                query_id = await service.submit_query(
+                    query="how many", dataset_id="ds", lease=make_layer_lease(MagicMock())
+                )
                 for _ in range(200):
                     if service._queries[query_id].status == "failed":
                         break

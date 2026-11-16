@@ -11,6 +11,8 @@
  * The API address. An IP literal, never "localhost": localhost may resolve to ::1, where another
  * program could listen and relay /health proofs from the real backend on 127.0.0.1.
  */
+import { httpFailureText } from './resultPresentation.js';
+
 export const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8000';
 
 /** Argument main passes to the preload with the sidecar backend's address (its port varies). */
@@ -239,6 +241,18 @@ export function apiErrorMessage(data, fallback) {
   }
   if (typeof data?.message === 'string' && data.message) return data.message;
   return fallback;
+}
+
+/**
+ * The Error a failed API response becomes. Only an Error's message crosses contextBridge, so
+ * the HTTP status travels in it ("[HTTP 404] ...") for plainFailureMessage to read: "couldn't
+ * reach" is kept for network failures, and a 4xx keeps the server's reason.
+ * @param {{ status: number }} response
+ * @param {unknown} data parsed JSON body ({} or null when it was not JSON)
+ * @returns {Error}
+ */
+export function httpFailureError(response, data) {
+  return new Error(httpFailureText(response.status, /** @type {any} */ (data)?.detail ?? ''));
 }
 
 /** 404 / 409 on accept/reject/revert: the patch was removed or decided elsewhere. */

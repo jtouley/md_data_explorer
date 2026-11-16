@@ -6,6 +6,7 @@ import {
   MAX_STREAM_RECONNECTS,
   apiBaseUrlFromArgv,
   apiErrorMessage,
+  httpFailureError,
   enrichmentDecisionResult,
   createReplayFilter,
   decideAfterDrop,
@@ -15,6 +16,7 @@ import {
   verifyBackendEnforcesAuth,
   withAuth,
 } from './apiAuth.js';
+import { plainFailureMessage } from './resultPresentation.js';
 
 function streamOf(chunks) {
   const encoder = new TextEncoder();
@@ -465,5 +467,42 @@ describe('parseLoopbackApiUrl: the preload address and the CSP header accept the
     expect(fromArgv).toBe(port === null ? null : `http://127.0.0.1:${port}`);
     if (port === null) expect(csp).toBeNull();
     else expect(csp).toContain(`connect-src http://127.0.0.1:${port}`);
+  });
+});
+
+describe('httpFailureError: the status crosses the context bridge (round 2)', () => {
+  test.each([
+    [{ status: 404 }, { detail: 'Dataset not found: abc' }, '[HTTP 404] Dataset not found: abc'],
+    [{ status: 500 }, {}, '[HTTP 500]'],
+    [{ status: 500 }, null, '[HTTP 500]'],
+    [
+      { status: 422 },
+      { detail: [{ type: 'string_too_short', loc: ['body', 'query_text'], msg: 'x' }] },
+      '[HTTP 422] [{"type":"string_too_short","loc":["body","query_text"],"msg":"x"}]',
+    ],
+  ])('httpFailureError_%o_%o', (response, data, expected) => {
+    // Arrange / Act
+    const error = httpFailureError(response, data);
+
+    // Assert
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe(expected);
+  });
+
+  test.each([
+    [{ status: 404 }, { detail: 'Dataset not found: abc' }, 'This cohort no longer exists.'],
+    [
+      { status: 422 },
+      { detail: [{ type: 'string_too_short', loc: ['body', 'query_text'], msg: 'x' }] },
+      'The question is empty.',
+    ],
+    [{ status: 503 }, {}, 'ran into a problem'],
+  ])('httpFailureError_thenPlainWords_%o_isNotCouldntReach', (response, data, expected) => {
+    // Arrange / Act
+    const text = plainFailureMessage(httpFailureError(response, data).message);
+
+    // Assert
+    expect(text).toContain(expected);
+    expect(text).not.toMatch(/reach/);
   });
 });

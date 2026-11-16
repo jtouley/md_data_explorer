@@ -31,7 +31,7 @@ export function renderDatasetDeleteConfirm(container, { datasetName, onConfirm, 
   body.className = 'dataset-delete-body';
   body.textContent =
     'This removes the uploaded file, its tables and exports, accepted enrichments, and every ' +
-    'session and answer for this dataset. It cannot be undone.';
+    'session and answer for this cohort. It cannot be undone.';
 
   const error = document.createElement('p');
   error.className = 'dataset-delete-error hidden';

@@ -1,20 +1,26 @@
 """Grade what the app shows, not the raw execution frame.
 
-Every golden, hard, reviewer and adversarial question that the app answers goes through the
-display path (QueryService.ask -> format_execution_result -> present_analysis) and the claim
-and table are read the way a clinician reads them. Safety property: an answered question
+Every golden, hard, reviewer, adversarial, over-holding and negation-scope question that the
+app answers goes through the display path (QueryService.ask -> format_execution_result ->
+present_analysis) and the claim and table are read the way a clinician reads them. Safety property: an answered question
 shows the true value, or hides it for small cells; it never shows a different value.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import polars as pl
 import pytest
 
-from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED
+from clinical_analytics.contracts.config import LEVEL_VARIANT_MAX_LEVELS
+from clinical_analytics.core.nl_query_config import SMALL_CELL_THRESHOLD
+from clinical_analytics.core.query_plan import QueryPlan
+from clinical_analytics.core.query_service import QueryService
+from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED, present_analysis
 from clinical_analytics.eval.catalog import questions_for_dataset
 from clinical_analytics.eval.hard_questions import all_hard_questions, oracle_value
 from clinical_analytics.eval.headless import (
@@ -22,11 +28,29 @@ from clinical_analytics.eval.headless import (
     ask,
     classify_presented,
     classify_presented_generic,
+    frame_for,
+    layer_for,
+    predictor_label_leaks,
     presented_answer,
     register_frame,
+    shown_labels,
+    small_level_labels,
 )
 from tests.eval.adversarial_probes import own_frame, probes
+from tests.eval.dq_probes import (
+    DQ_QUESTIONS,
+    PREDICTOR_PROBES,
+    SHOWN_PROBES,
+    dq_frames,
+    fold_frame,
+    predictor_frame,
+    visits_died_frame,
+)
+from tests.eval.negation_probes import PROBES as SCOPE_PROBES
+from tests.eval.over_holding_probes import ANSWERED, HELD, HELD_SINCE_NARROWING
 from tests.eval.reviewer_probes import PROBES
+from tests.eval.test_negation_probes import outcome as negation_outcome
+from tests.eval.test_over_holding_probes import outcome as over_holding_outcome
 
 
 def _held(result: dict[str, Any]) -> str:
@@ -119,14 +143,104 @@ class TestPresentedAnswer:
         assert outcome == expected_outcome
 
 
+# Privacy probes (design review): the answer may be refused or held, never a table whose labels
+# name levels held by 1-10 patients. On main the first showed 289 columns, one per exact LDL value.
+PRIVACY_QUERIES = (
+    "compare treatment between ldl groups",
+    "count by ldl",
+    "average age by ldl",
+    "compare ldl between hdl groups",
+)
+
+
+def _label_leak(result: dict[str, Any], workspace: Path | None) -> str | None:
+    """A shown label for a level with 1-10 patients in the dataset, or None."""
+    if not result["success"]:
+        return None
+    frame = frame_for(result["dataset_id"], workspace)
+    columns = [c for c in (result.get("group_by"), result.get("metric")) if c]
+    leaked = shown_labels(result["presentation"]) & small_level_labels(frame, columns, SMALL_CELL_THRESHOLD)
+    if result.get("intent") == "FIND_PREDICTORS":
+        # A regression names a level as its term ("site_West") and the outcome's value in its claim.
+        predictors = list(result.get("predictors") or [])
+        leaked |= predictor_label_leaks(
+            result["presentation"], frame, predictors, result.get("metric"), SMALL_CELL_THRESHOLD
+        )
+    return f"{result['query']!r} shows labels of small levels: {sorted(leaked)[:5]}" if leaked else None
+
+
+def _ask_plan(dataset_id: str, plan: QueryPlan, confirm: bool, predictors: tuple[str, ...] = ()) -> dict[str, Any]:
+    """Ask with ``plan`` (and its ``predictors``) fixed (the parser is not under test) and grade
+    what the app shows."""
+    service = QueryService(layer_for(dataset_id))
+    intent = SimpleNamespace(
+        confidence=0.99,
+        intent_type=plan.intent,
+        primary_variable=plan.metric,
+        grouping_variable=plan.group_by,
+        predictor_variables=list(predictors),
+        time_variable=None,
+        event_variable=None,
+        filters=[],
+    )
+    service.nl_engine.parse_query = lambda *args, **kwargs: intent  # type: ignore[method-assign]
+    service.nl_engine._intent_to_plan = lambda *args: plan  # type: ignore[method-assign]
+    result = service.ask("fixed plan", dataset_id=dataset_id, dataset_version="golden")
+    if confirm and result.requires_confirmation:
+        result = service.ask(
+            "fixed plan",
+            dataset_id=dataset_id,
+            dataset_version="golden",
+            confirmed=True,
+            confirm_plan_hash=result.plan_hash,
+        )
+    errors = [i for i in result.issues if i.get("severity") == "error"]
+    success = result.analysis is not None and not result.requires_confirmation and not errors
+    return {
+        "dataset_id": dataset_id,
+        "query": str(plan),
+        "success": success,
+        "held": result.requires_confirmation,
+        "failure_reason": result.failure_reason,
+        "group_by": plan.group_by,
+        "metric": plan.metric,
+        "intent": plan.intent,
+        "predictors": list(predictors),
+        "presentation": present_analysis(result.analysis) if success else {"claim": None, "table": None},
+    }
+
+
+def _hold_leak(result: dict[str, Any], frame: pl.DataFrame) -> str | None:
+    """A held question whose sentence names a level held by 1-10 rows, or None."""
+    reason = str(result.get("failure_reason") or "")
+    if not result["held"] or not reason:
+        return None
+    text_columns = [
+        c
+        for c, dtype in frame.schema.items()
+        if dtype == pl.String and c != "patient_id" and frame.get_column(c).n_unique() <= LEVEL_VARIANT_MAX_LEVELS
+    ]
+    small = small_level_labels(frame, text_columns, SMALL_CELL_THRESHOLD)
+    named = sorted(label for label in small if re.search(rf"(?<!\w){re.escape(label)}(?!\w)", reason))
+    return f"hold names small levels {named}" if named else None
+
+
 def _presented_outcomes(project_root: Path) -> tuple[dict[str, int], list[str]]:
-    """Ask every question of the four suites and grade the presented answer."""
+    """Ask every question of the four suites and grade the presented answer.
+
+    A presented label that names a level held by 1-10 patients counts as wrong too.
+    """
     tally: dict[str, int] = {}
     wrong: list[str] = []
 
     def record(suite: str, query: str, outcome: str, expected: Any, result: dict[str, Any]) -> None:
+        leak = _label_leak(result, project_root if suite in ("golden", "hard", "reviewer", "privacy") else None)
+        if leak:
+            outcome = "wrong"
         tally[outcome] = tally.get(outcome, 0) + 1
-        if outcome == "wrong":
+        if leak:
+            wrong.append(f"{suite} {leak}")
+        elif outcome == "wrong":
             wrong.append(f"{suite} {query!r} expected={expected!r} shown={presented_answer(result['presentation'])!r}")
 
     for question in questions_for_dataset("cohort", project_root):
@@ -157,6 +271,40 @@ def _presented_outcomes(project_root: Path) -> tuple[dict[str, int], list[str]]:
             result,
         )
 
+    for query in PRIVACY_QUERIES:
+        result = ask("cohort", query, project_root)
+        record("privacy", query, _held(result) if not result["success"] else "answered", "no small labels", result)
+
+    # Predictor answers: a term or the claim never names a level held by 1-10 patients.
+    for name, outcome, predictors in PREDICTOR_PROBES:
+        register_frame(f"dq_{name}", predictor_frame(name))
+        plan = QueryPlan(intent="FIND_PREDICTORS", metric=outcome, confidence=0.99)
+        result = _ask_plan(f"dq_{name}", plan, True, predictors)
+        outcome_shown = _held(result) if not result["success"] else "answered"
+        record("privacy", f"{name}: {outcome} ~ {predictors}", outcome_shown, "no small labels", result)
+
+    # Data-quality probe files: held or refused, never a number (see tests/eval/dq_probes.py),
+    # and a hold sentence never names a level held by 1-10 rows.
+    frames = dq_frames()
+    for name, frame in frames.items():
+        register_frame(f"dq_{name}", frame)
+    for name, query in DQ_QUESTIONS:
+        result = ask(f"dq_{name}", query)
+        leak = _hold_leak(result, frames[name])
+        record("dq", f"{name}: {query}", "wrong" if leak else _held(result), leak or "held or refused", result)
+
+    # Shown-answer probes: the exact table or claim the app shows (dq_probes.SHOWN_PROBES).
+    register_frame("dq_fold", fold_frame())
+    register_frame("dq_visits_died", visits_died_frame())
+    for name, query, confirm, expected in SHOWN_PROBES:
+        if isinstance(query, QueryPlan):
+            result = _ask_plan(f"dq_{name}", query, confirm)
+        else:
+            result = ask(f"dq_{name}", query, confirm=confirm)
+        presentation = result["presentation"]
+        shown = presented_answer(presentation) if isinstance(expected, dict) else presentation["claim"]
+        record("dq_shown", f"{name}: {query}", "answered" if shown == expected else "wrong", expected, result)
+
     own = own_frame()
     register_frame("probe_coh", cohort)
     register_frame("probe_own", own)
@@ -164,6 +312,14 @@ def _presented_outcomes(project_root: Path) -> tuple[dict[str, int], list[str]]:
         result = ask(f"probe_{dataset}", query)
         outcome = _held(result) if truth is None else classify_presented_generic(truth, result)
         record("adversarial", query, outcome, truth, result)
+
+    for probe in (*ANSWERED, *HELD_SINCE_NARROWING, *HELD):
+        graded, result, expected = over_holding_outcome(probe)
+        record("over-holding", probe.query, graded, expected, result)
+
+    for scope_probe in SCOPE_PROBES:
+        graded, result, expected = negation_outcome(scope_probe)
+        record("negation-scope", scope_probe.query, graded, expected, result)
     return tally, wrong
 
 

@@ -15,6 +15,8 @@ import os
 import re
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -23,6 +25,8 @@ import pandas as pd
 import polars as pl
 from ibis import _
 
+from clinical_analytics.analysis.numeric_text import is_missing_token, is_numeric_text, missing_token_sql
+from clinical_analytics.core import nl_query_config
 from clinical_analytics.core.execution_gate import evaluate_execution_gate
 from clinical_analytics.core.log_redaction import stable_hash
 from clinical_analytics.core.mapper import load_dataset_config
@@ -38,6 +42,7 @@ from clinical_analytics.core.query_plan import (
     CohortStep,
     CohortStepError,
     generate_chart_spec,
+    grouped_statistic,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,6 +63,35 @@ def _sql_literal(value: Any) -> str:
 
 
 _SUPPORTED_FILTER_OPS = frozenset({"==", "!=", "IN", "NOT_IN", ">", ">=", "<", "<="})
+
+# How a single source file is read (``init_params["source_format"]``). Typed uploads are Parquet;
+# bundled registry datasets name a CSV. There is no fallback: an unknown file type is an error,
+# never a sample-based CSV re-inference.
+SourceFormat = Literal["parquet", "csv"]
+_SOURCE_FORMAT_BY_SUFFIX: dict[str, SourceFormat] = {".parquet": "parquet", ".csv": "csv"}
+_SOURCE_READERS: dict[SourceFormat, str] = {"parquet": "read_parquet", "csv": "read_csv"}
+
+
+def resolve_source_format(source_path: Path, declared: object = None) -> SourceFormat:
+    """The reader format for a source file: the declared one, checked against the file suffix.
+
+    Raises:
+        ValueError: unknown suffix, unknown declared format, or a declared format the suffix contradicts.
+    """
+    by_suffix = _SOURCE_FORMAT_BY_SUFFIX.get(source_path.suffix.lower())
+    if declared is None:
+        if by_suffix is None:
+            raise ValueError(
+                f"Unknown source file type '{source_path.suffix}' for {source_path.name}; "
+                f"expected one of {sorted(_SOURCE_FORMAT_BY_SUFFIX)} or an explicit source_format"
+            )
+        return by_suffix
+    if declared not in _SOURCE_READERS:
+        raise ValueError(f"Unknown source_format {declared!r}; expected one of {sorted(_SOURCE_READERS)}")
+    if by_suffix is not None and by_suffix != declared:
+        raise ValueError(f"source_format {declared!r} does not match the file type of {source_path.name}")
+    fmt: SourceFormat = "parquet" if declared == "parquet" else "csv"
+    return fmt
 
 
 def _missing_column_message(column: str) -> str:
@@ -118,6 +152,13 @@ def _ungrouped_rate_message(column: str) -> str:
     )
 
 
+def _missing_token_share_message(column: str, value: Any) -> str:
+    return (
+        f"Cannot give the share of '{column}' = '{value}': '{value}' marks a missing value in '{column}', and "
+        "patients with it missing are left out of every share. Ask how many patients have it missing instead."
+    )
+
+
 def _text_statistic_message(statistic: str, column: str) -> str:
     return (
         f"Cannot compute the {statistic} of '{column}': that column holds text, not numbers. "
@@ -148,6 +189,85 @@ def plan_restriction_problem(plan: "QueryPlan", columns: list[str]) -> str | Non
         if problem:
             return problem
     return None
+
+
+_COHORT_CTE = "_cohort_in"
+# A leading WITH, whatever whitespace follows it (space, newline, tab), and whether it is RECURSIVE.
+_LEADING_WITH = re.compile(r"WITH\s+(RECURSIVE\b)?", re.IGNORECASE)
+
+
+def _with_cohort_cte(view_sql: str, sql: str) -> str:
+    """``sql`` with the compiled view bound to ``_cohort_in`` as its first CTE.
+
+    A query that has its own WITH clause gets ``_cohort_in`` prepended to that clause, since
+    a query cannot have two.
+    """
+    body = sql.lstrip()
+    leading = _LEADING_WITH.match(body)
+    if leading is not None:
+        if leading.group(1):
+            raise ValueError("A recursive cohort query is not supported")
+        return f"WITH {_COHORT_CTE} AS ({view_sql}), {body[leading.end() :]}"
+    return f"WITH {_COHORT_CTE} AS ({view_sql}) {body}"
+
+
+ENTITY_KEY_MISSING_REASON = (
+    "Patients could not be counted for this answer because the patient ID column was not read, so no answer is shown."
+)
+
+
+def _analysis_columns(
+    plan: "QueryPlan", context: Any, columns: list[str], entity_key: str | None = None
+) -> list[str] | None:
+    """The view columns compute_analysis_by_type reads for this plan, in view order, or None.
+
+    The analysis reads the context's variables and filter columns, nothing else, when each one
+    is a column of the view by its exact name. Its filters are every one it may apply: the
+    plan's, ``context.query_plan``'s (compute applies those first) and the legacy
+    ``context.filters``. Otherwise (no variable, "all", a fuzzy name the analysis resolves
+    against every column, a filter on a column the view lacks, or a ``context.query_plan`` that
+    is not ``plan``) None: the whole view is passed, so the result, and any error it reports,
+    is what it always was. ``entity_key``: the patient key a visit-grain frequency counts
+    distinct values of (``count_entity_key``), always kept.
+    """
+    context_plan = getattr(context, "query_plan", None)
+    if context_plan is not None and context_plan is not plan and context_plan != plan:
+        # compute_* filters by context.query_plan; a projection chosen from another plan could
+        # drop the column one of its filters needs.
+        return None
+    variables = [
+        getattr(context, "primary_variable", None),
+        getattr(context, "grouping_variable", None),
+        getattr(context, "time_variable", None),
+        getattr(context, "event_variable", None),
+        *(getattr(context, "predictor_variables", None) or []),
+    ]
+    named = [variable for variable in variables if variable is not None]
+    if not named or any(not isinstance(variable, str) or variable not in columns for variable in named):
+        return None
+    filters = [
+        *(plan.filters or []),
+        *((context_plan.filters or []) if context_plan is not None else []),
+        *(getattr(context, "filters", None) or []),
+    ]
+    filter_columns = [getattr(spec, "column", None) for spec in filters]
+    if any(column not in columns for column in filter_columns):
+        return None
+    if entity_key is not None and entity_key not in columns:
+        return None
+    wanted = {*named, *filter_columns, *([entity_key] if entity_key else [])}
+    return [column for column in columns if column in wanted]
+
+
+def _apply_duckdb_limits(raw: Any) -> None:
+    """Set the standalone memory limit and the thread count on one layer's DuckDB connection.
+
+    Every SemanticLayer is its own in-memory DuckDB. A layer gets the standalone limit; the
+    API's layer cache lowers the layers it keeps to their share of the total budget
+    (``set_memory_limit``). Both values were validated when nl_query_config was imported.
+    """
+    raw.execute(f"SET memory_limit = '{nl_query_config.DUCKDB_MEMORY_LIMIT.sql}'")
+    raw.execute(f"SET threads = {int(nl_query_config.DUCKDB_THREADS)}")
 
 
 def _sample_counts(frame: pl.DataFrame, base_rows: int) -> dict[str, int]:
@@ -188,7 +308,7 @@ def _format_share_result(frame: pl.DataFrame, plan: "QueryPlan", group: str | No
 
 def _format_grouped_statistic(frame: pl.DataFrame, plan: "QueryPlan", base_rows: int) -> dict[str, Any]:
     """One statistic of the metric per group, as the plan computed it."""
-    statistic = plan.statistic or "mean"
+    statistic = grouped_statistic(plan) or "mean"
     group = str(plan.group_by)
     return {
         "type": "grouped_statistic",
@@ -455,6 +575,14 @@ class SemanticLayer:
     DRY Principle: All datasets use this same class, just with different configs.
     """
 
+    # The patient key once the doctor has declared rows to be visits (set by QueryService):
+    # COUNTs, shares and frequency tables then count distinct patients, not rows.
+    count_entity_key: str | None = None
+    # The upload version whose rows this layer holds (set by the uploaded-dataset loader from
+    # the metadata it read the rows with); None for built-in datasets. A question labels its
+    # answer and matches declarations with this, never with metadata read later.
+    loaded_version: str | None = None
+
     def __init__(
         self,
         dataset_name: str,
@@ -489,9 +617,27 @@ class SemanticLayer:
         )
 
         # Connect to DuckDB (in-memory for now, can be file-based later).
-        # One connection is not safe for overlapping threads.
+        # One connection is not safe for overlapping threads: every DuckDB call holds _con_lock.
         self.con = ibis.duckdb.connect()
-        self._con_lock = threading.Lock()
+        configured = False
+        try:
+            _apply_duckdb_limits(self.con.con)
+            configured = True
+        finally:
+            if not configured:
+                # Never leave an unconfigured in-memory database open behind a failed build.
+                self.con.disconnect()
+        # Re-entrant: DuckDB-reading helpers run on their own and inside a locked question step.
+        self._con_lock = threading.RLock()
+        # Bumped whenever what a parse or a check reads changes (a level merge, a stored
+        # declaration). A question parsed without the lock checks it under the lock and parses
+        # again if another question changed it.
+        self.state_generation = 0
+        # Confirmed level merges already applied to this layer: (column, spellings, version).
+        self.applied_levels: set[tuple[str, tuple[str, ...], str | None]] = set()
+        self._closed = False
+        # Temporary views the current cohort query created; dropped once its rows are read.
+        self._cohort_views: list[str] = []
 
         # Register data source
         self._register_source()
@@ -499,8 +645,13 @@ class SemanticLayer:
         # Build base semantic view (lazy - no SQL executed yet)
         self._base_view = None
         # Base-view counts, each counted once (the source does not change): rows under None,
-        # distinct values of an entity key under its column name.
+        # distinct non-null values of an entity key under its column name.
         self._base_counts: dict[str | None, int] = {}
+        # Rows with no value in a column (a missing patient ID), counted once per column.
+        self._base_missing: dict[str, int] = {}
+        # (values, rows per value) of a column, counted once until a level remap changes it.
+        self._value_counts: dict[str, tuple[pl.Series, pl.Series]] = {}
+        self.count_entity_key = None
 
         # Alias index (lazy initialization)
         self._alias_index: dict[str, str] | None = None  # normalized_alias -> canonical_name
@@ -605,7 +756,8 @@ class SemanticLayer:
                     f"Directory sources need dataset-specific handling. See {self.dataset_name} dataset implementation."
                 )
             else:
-                # Single file (CSV)
+                # Single file: typed Parquet (uploads, the stored source of truth) or CSV (bundled
+                # registry datasets, whose configs name a CSV).
                 abs_path = str(source_path.resolve())
                 logger.debug(f"Registering source file with DuckDB: {abs_path}")
 
@@ -620,14 +772,31 @@ class SemanticLayer:
                 # Use quoted identifiers for extra safety + parameter binding for file path
                 # DuckDB supports ? placeholders for parameterized queries
                 quoted_table = f'"{validated_name}"'
+                reader = _SOURCE_READERS[resolve_source_format(source_path, init_params.get("source_format"))]
                 duckdb_con.execute(
-                    f"CREATE OR REPLACE TABLE {quoted_table} AS SELECT * FROM read_csv_auto(?)",
+                    f"CREATE OR REPLACE TABLE {quoted_table} AS SELECT * FROM {reader}(?)",
                     [abs_path],
                 )
 
                 # Now reference it via Ibis
                 self.raw = self.con.table(validated_name)
                 logger.info(f"Successfully registered source table '{validated_name}' from {abs_path}")
+
+        elif "frame" in init_params:
+            # A typed Polars frame held in memory (a legacy upload whose conversion to Parquet
+            # could not be saved; see UserDatasetStorage.stored_dataset).
+            frame = init_params["frame"]
+            if not isinstance(frame, pl.DataFrame):
+                raise TypeError(f"init_params['frame'] must be a polars DataFrame, got {type(frame).__name__}")
+            validated_name = _validate_table_identifier(f"{_safe_identifier(self.dataset_name)}_raw")
+            duckdb_con = self.con.con
+            duckdb_con.register("_staged_frame", frame.to_arrow())
+            try:
+                duckdb_con.execute(f'CREATE OR REPLACE TABLE "{validated_name}" AS SELECT * FROM _staged_frame')
+            finally:
+                duckdb_con.unregister("_staged_frame")
+            self.raw = self.con.table(validated_name)
+            logger.info(f"Registered in-memory source table '{validated_name}'")
 
         elif "db_table" in init_params:
             # Database table source (already registered)
@@ -725,12 +894,48 @@ class SemanticLayer:
         return self._base_count(None)
 
     def _base_count(self, entity_key: str | None) -> int:
-        """Rows of the base view, or its distinct ``entity_key`` values; each counted once."""
-        if entity_key not in self._base_counts:
-            view = self.get_base_view()
-            counted = view.count() if entity_key is None else view.select(entity_key).distinct().count()
-            self._base_counts[entity_key] = int(counted.execute())
-        return self._base_counts[entity_key]
+        """Rows of the base view, or its distinct non-null ``entity_key`` values; each counted once.
+
+        A row with no ID is not one more patient: SQL ``DISTINCT`` would keep NULL as a value, so
+        the count is ``COUNT(DISTINCT key)``, which leaves it out (``base_missing_count`` counts it).
+        """
+        cached = self._base_counts.get(entity_key)
+        if cached is not None:  # a hit never waits for another question's DuckDB step
+            return cached
+        with self._con_lock:  # also read by a parse, which runs without the lock
+            if entity_key not in self._base_counts:
+                view = self.get_base_view()
+                counted = view.count() if entity_key is None else view[entity_key].nunique()
+                self._base_counts[entity_key] = int(counted.execute())
+            return self._base_counts[entity_key]
+
+    def base_missing_count(self, column: str) -> int:
+        """Rows of the base view with no value in ``column``, counted once."""
+        cached = self._base_missing.get(column)
+        if cached is not None:
+            return cached
+        with self._con_lock:
+            if column not in self._base_missing:
+                view = self.get_base_view()
+                self._base_missing[column] = int(view.filter(view[column].isnull()).count().execute())
+            return self._base_missing[column]
+
+    def base_value_counts(self, column: str) -> tuple[pl.Series, pl.Series]:
+        """(distinct values of ``column`` named as the column, nulls included; rows holding each),
+        counted in DuckDB once per column until ``remap_levels`` changes the levels."""
+        cached = self._value_counts.get(column)
+        if cached is not None:
+            return cached
+        with self._con_lock:
+            if column not in self._value_counts:
+                self._value_counts[column] = self._compute_value_counts(column)
+            return self._value_counts[column]
+
+    def _compute_value_counts(self, column: str) -> tuple[pl.Series, pl.Series]:
+        # Fixed field names, so no column name ("count", "__n") can collide with the count.
+        view = self.get_base_view()
+        counted = view.select(value=view[column]).group_by("value").aggregate(n=_.count()).to_polars()
+        return counted.get_column("value").alias(column), counted.get_column("n")
 
     def apply_filters(self, view, filters: dict[str, Any]) -> ibis.Table:
         """
@@ -1445,29 +1650,45 @@ class SemanticLayer:
 
     def _save_metadata(self, upload_id: str, metadata: dict[str, Any]) -> None:
         """
-        Save metadata JSON for upload (atomic update).
+        Persist this layer's alias mappings into the upload's metadata (read-modify-write).
+
+        Goes through ``storage.metadata_lock.update_metadata``: under the metadata's sidecar lock the
+        file is re-read and only ``alias_mappings`` (the one key the layer owns) is merged in, so
+        a concurrent writer (legacy conversion, content-hash backfill, documentation add) is
+        never overwritten with the stale copy this layer read earlier.
 
         Args:
             upload_id: Upload identifier
-            metadata: Metadata dict to save
+            metadata: Metadata holding the alias mappings to save (and its dataset_version)
+
+        Raises:
+            ValueError: the stored metadata belongs to another dataset version.
+            RuntimeError, OSError: the lock or the write failed; the file is unchanged.
         """
-        import json
+        from clinical_analytics.storage.metadata_lock import update_metadata
 
         metadata_path = self._get_metadata_path(upload_id)
-        metadata_dir = metadata_path.parent
-        metadata_dir.mkdir(parents=True, exist_ok=True)
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        alias_mappings = metadata.get("alias_mappings") or {"user_aliases": {}, "system_aliases": {}}
+        expected_version = metadata.get("dataset_version")
 
-        # Atomic write: write to temp file, then rename
-        temp_path = metadata_path.with_suffix(".json.tmp")
-        try:
-            with open(temp_path, "w") as f:
-                json.dump(metadata, f, indent=2)
-            temp_path.replace(metadata_path)
-        except Exception as e:
-            logger.error(f"Failed to save metadata for {upload_id}: {e}")
-            if temp_path.exists():
-                temp_path.unlink()
-            raise
+        def mutate(current: dict[str, Any]) -> bool:
+            if not current:  # no metadata yet: start from what the layer holds
+                current.update(metadata)
+                return True
+            stored_version = current.get("dataset_version")
+            if expected_version and stored_version and stored_version != expected_version:
+                raise ValueError(
+                    f"Dataset version mismatch: stored={stored_version}, requested={expected_version}. "
+                    "Aliases are scoped per dataset version."
+                )
+            stored = current.setdefault("alias_mappings", {})
+            for kind in ("user_aliases", "system_aliases"):
+                # Merged, not replaced: an alias another writer added meanwhile is kept.
+                stored[kind] = {**(stored.get(kind) or {}), **(alias_mappings.get(kind) or {})}
+            return True
+
+        update_metadata(metadata_path, mutate, missing_ok=True)
 
     def _load_user_aliases(self, upload_id: str, dataset_version: str) -> None:
         """
@@ -2020,7 +2241,11 @@ class SemanticLayer:
             gap_columns = list(self.get_base_view().columns)
             gaps = unapplied_constraints(query_text, plan, gap_columns)
             if gaps:
-                quoted = ", ".join(f"'{gap}'" for gap in gaps)
+                # Each word once, in order. A stem ("diabete") is dropped only when an inflection of
+                # it ("diabetes") is listed; unrelated words sharing a prefix ("men", "menopause") stay.
+                unique = list(dict.fromkeys(gaps))
+                words = [w for w in unique if not any(o in (w + "s", w + "es") for o in unique)]
+                quoted = ", ".join(f"'{gap}'" for gap in words)
                 message = (
                     f"Part of the question could not be applied ({quoted}), so the answer would "
                     "not match what you asked. Rephrase it using the dataset's columns and values."
@@ -2165,33 +2390,38 @@ class SemanticLayer:
         # Format based on intent
         # Phase 3.3: Pass chart_spec to formatting methods
         # Shares and grouped statistics are already the answer: format the SQL frame as it is.
+        # Shares count patients once rows are declared visits (_share_sql), so the filtered-out
+        # count is in patients too.
         if query_plan.proportion_column:
-            formatted = _format_share_result(result_df_pl, query_plan, None, self.get_base_row_count())
+            formatted = _format_share_result(result_df_pl, query_plan, None, self._base_count(self.count_entity_key))
         elif query_plan.rate_column and query_plan.group_by:
-            formatted = _format_share_result(result_df_pl, query_plan, query_plan.group_by, self.get_base_row_count())
-        elif query_plan.intent == "DESCRIBE" and query_plan.metric and query_plan.group_by:
+            share_base = self._base_count(self.count_entity_key)
+            formatted = _format_share_result(result_df_pl, query_plan, query_plan.group_by, share_base)
+        elif grouped_statistic(query_plan) is not None:
             formatted = _format_grouped_statistic(result_df_pl, query_plan, self.get_base_row_count())
         elif query_plan.intent == "COUNT":
             formatted = self._format_count_result(result_df_pl, query_plan, context)
             # What the filters removed, in the unit the total is counted in: distinct entities
             # for an entity count (60 visit rows of 55 patients: 55, not 60), rows otherwise.
-            entity_key = query_plan.entity_key if not query_plan.group_by else None
+            entity_key = self._count_entity_key(query_plan) if not query_plan.group_by else None
             formatted["n_filtered_out"] = self._base_count(entity_key) - formatted["total_count"]
         else:
             # The aggregated SQL frame is not renderer-shaped. Recompute from the
             # filtered base view the plan validated, not from get_cohort().
             from clinical_analytics.analysis.compute import compute_analysis_by_type
 
-            base_rows = self._filtered_view(query_plan).execute()
-            if isinstance(base_rows, pd.DataFrame):
-                base_rows = pl.from_pandas(base_rows)
+            with self._cohort_views_dropped():
+                view = self._filtered_view(query_plan)
+                needed = _analysis_columns(query_plan, context, list(view.columns), self.count_entity_key)
+                # Only the columns the analysis reads leave DuckDB, straight into Polars.
+                base_rows = (view.select(needed) if needed is not None else view).to_polars()
             if cohort is not None:
                 logger.debug(
                     "non_count_format_uses_base_view cohort_passed=%s intent=%s",
                     True,
                     query_plan.intent,
                 )
-            formatted = compute_analysis_by_type(base_rows, context)
+            formatted = compute_analysis_by_type(base_rows, context, self.count_entity_key)
             if query_plan.intent == "DESCRIBE" and query_plan.statistic:
                 # The claim leads with the statistic the question asked for.
                 formatted["statistic"] = query_plan.statistic
@@ -2203,10 +2433,41 @@ class SemanticLayer:
                 formatted["n_filtered_out"] = (
                     self.get_base_row_count() - base_rows.height + formatted.get("n_filtered_out", 0)
                 )
+                entity = self.count_entity_key
+                if entity and formatted.get("value_counts") is not None and not formatted.get("is_numeric"):
+                    formatted = self._entity_frequency(formatted, base_rows, entity)
 
         # Phase 3.3: Add chart_spec to formatted result
         formatted["chart_spec"] = chart_spec
         return formatted
+
+    def _entity_frequency(self, formatted: dict[str, Any], rows: pl.DataFrame, entity: str) -> dict[str, Any]:
+        """A frequency table that counts patients per level once rows are visits (distinct
+        ``entity`` per level), refused when a patient's level differs between visits: the levels
+        would then not add up to the patients."""
+        from clinical_analytics.core.answer_checks import varies_refusal
+
+        column = formatted.get("focused_variable")
+        if not column or column not in rows.columns or entity not in rows.columns:
+            # Never fall back to row counts: they would be shown as patients (a wrong answer).
+            logger.error(
+                "entity_frequency_column_missing entity_present=%s level_present=%s",
+                entity in rows.columns,
+                bool(column) and column in rows.columns,
+            )
+            return {"type": "descriptive", "error": ENTITY_KEY_MISSING_REASON}
+        pairs = rows.select(entity, column).filter(pl.col(entity).is_not_null()).unique()
+        patients = pairs.get_column(entity).n_unique()
+        if pairs.height != patients:
+            return {"type": "descriptive", "error": varies_refusal(column, "level")}
+        counts = pairs.group_by(column).agg(pl.len().alias("count")).sort(["count", column], descending=[True, False])
+        return {
+            **formatted,
+            "value_counts": counts.head(10).to_dicts(),
+            "row_count": patients,
+            "unique_count": counts.height,
+            "n_filtered_out": self._base_count(entity) - patients,
+        }
 
     def _format_count_result(self, result_df: pl.DataFrame, query_plan: "QueryPlan", context: Any) -> dict[str, Any]:
         """Format COUNT result DataFrame to result dict format."""
@@ -2263,10 +2524,16 @@ class SemanticLayer:
                 "headline": f"Total count: **{total_count}**",
             }
 
+    def _count_entity_key(self, plan: "QueryPlan") -> str | None:
+        """What a COUNT counts: the plan's entity key, else the patient key once the doctor has
+        declared rows to be visits (``count_entity_key``, set by QueryService), else rows."""
+        return plan.entity_key or self.count_entity_key
+
     def _check_plan_completeness(self, plan: "QueryPlan") -> tuple[bool, str]:
         """Check if QueryPlan has all required fields for its intent."""
         if plan.intent == "COUNT":
-            # A COUNT with neither entity_key nor group_by is a row count ("how many patients?").
+            # A COUNT with neither entity_key nor group_by counts rows, or patients (distinct
+            # patient key) once rows are declared visits: see _count_entity_key.
             pass
         elif plan.intent == "DESCRIBE":
             # DESCRIBE requires metric (primary_variable)
@@ -2291,6 +2558,18 @@ class SemanticLayer:
         # Check group_by exists
         if plan.group_by and plan.group_by not in available_columns:
             return {"valid": False, "error": f"Column '{plan.group_by}' not found in dataset"}
+
+        # A share counts one stored value; several at once ("north or west") is not computed here.
+        for share_column, share_value in (
+            (plan.proportion_column, plan.proportion_value),
+            (plan.rate_column, plan.rate_value),
+        ):
+            if share_column and isinstance(share_value, list | tuple | set):
+                return {
+                    "valid": False,
+                    "error": f"A share of several values of '{share_column}' at once is not supported; "
+                    "ask about one value at a time.",
+                }
 
         # Check filter columns exist and operators are valid
         valid_operators = {"==", "!=", ">", ">=", "<", "<=", "IN", "NOT_IN"}
@@ -2632,44 +2911,90 @@ class SemanticLayer:
         return {str(value) for value in frame.get_column(column).to_list() if value is not None}
 
     def _cohort_sql(self, view: Any, sql_template: str, column: str) -> Any:
+        """The rows ``sql_template`` keeps of ``view``, as a lazy Ibis table.
+
+        The view is compiled into the SQL as the ``_cohort_in`` CTE and the query is kept as a
+        temporary DuckDB view: nothing is exported to Python or materialised, and DuckDB plans
+        the cutoff together with whatever reads it next. The view is named by its own SQL, so
+        asking again reuses it, and a later step that reads this one never replaces it.
+        """
         quoted = '"' + column.replace('"', '""') + '"'
-        frame = view.to_pyarrow()
-        raw = self.con.con
-        raw.register("_cohort_in", frame)
+        sql = _with_cohort_cte(self.con.compile(view), sql_template.format(col=quoted))
+        name = "_cohort_" + hashlib.sha256(sql.encode()).hexdigest()[:24]
+        self.con.con.execute(f"CREATE OR REPLACE TEMP VIEW {name} AS {sql}")
+        if name not in self._cohort_views:
+            self._cohort_views.append(name)
+        return self.con.table(name)
+
+    @contextmanager
+    def _cohort_views_dropped(self) -> Iterator[None]:
+        """Drop the cohort views created inside this block once it ends, result read or not.
+
+        Materialise every view built here before the block ends: a lazy table that reads one
+        fails after it. Nested blocks drop only their own views.
+        """
+        start = len(self._cohort_views)
         try:
-            raw.execute("DROP TABLE IF EXISTS _cohort_out")
-            raw.execute("CREATE TEMP TABLE _cohort_out AS " + sql_template.format(col=quoted))
+            yield
         finally:
-            raw.unregister("_cohort_in")
-        return self.con.table("_cohort_out")
+            created = self._cohort_views[start:]
+            del self._cohort_views[start:]
+            # Newest first: a later view may read an earlier one.
+            for name in reversed(created):
+                self.con.con.execute(f"DROP VIEW IF EXISTS {name}")
 
     def _duck_aggregate(self, view: Any, sql: str) -> pl.DataFrame:
-        frame = view.to_pyarrow()
-        raw = self.con.con
-        raw.register("_cohort_in", frame)
-        try:
-            # Arrow straight into Polars: no pandas round trip.
-            table = raw.execute(sql).to_arrow_table()
-            frame_out = pl.from_arrow(table)
-            if not isinstance(frame_out, pl.DataFrame):
-                raise TypeError("DuckDB aggregate did not return a table")
-            return frame_out
-        finally:
-            raw.unregister("_cohort_in")
+        """Run ``sql`` over ``view`` (named ``_cohort_in``) in DuckDB, as a Polars frame.
+
+        The view is compiled into the query as a CTE, so DuckDB reads only the columns and rows
+        the aggregate needs; no row-level frame crosses into Python.
+        """
+        # Arrow straight into Polars: no pandas round trip.
+        table = self.con.con.execute(_with_cohort_cte(self.con.compile(view), sql)).to_arrow_table()
+        frame_out = pl.from_arrow(table)
+        if not isinstance(frame_out, pl.DataFrame):
+            raise TypeError("DuckDB aggregate did not return a table")
+        return frame_out
 
     def _share_sql(self, view: Any, column: str, value: Any, group: str | None) -> str:
         """Share of patients whose ``column`` equals ``value``, among those with it recorded.
 
         Patients missing the column are left out of the denominator (n) and counted in
-        n_rows, so the presentation can report them as excluded. Grouped: one row per group.
+        n_rows, so the presentation can report them as excluded. Missing is the rule every
+        analysis uses (``analysis.numeric_text``): null, and in numbers stored as text a missing
+        token ("N/A", "."). A text category keeps every level ("None" is an answer there).
+        Grouped: one row per group.
         """
         quoted = _quote_ident(column)
         literal = _sql_literal(self._equality_value(view, column, value))
-        events = f"count(*) FILTER (WHERE {quoted} = {literal})"
         share = "rate" if group else "proportion"
+        recorded = f"{quoted} IS NOT NULL"
+        if view[column].type().is_string() and is_numeric_text(*self.base_value_counts(column)):
+            if is_missing_token(value):
+                # "N/A" is missing here, so it is outside n: its share would count events that
+                # are not in the denominator (above 1 when tokens outnumber values).
+                raise CohortStepError(_missing_token_share_message(column, value))
+            recorded += f" AND NOT ({missing_token_sql(quoted)})"
+        # Events are recorded rows only, so events never exceed n.
+        asked = f"{quoted} = {literal} AND {recorded}"
+        entity = self.count_entity_key
+        if entity:
+            # Rows are visits: count patients (distinct key), as the COUNT answer does. The query
+            # service refuses first when the value differs between a patient's visits.
+            key = _quote_ident(entity)
+            events = f"count(DISTINCT {key}) FILTER (WHERE {asked})"
+            n = f"count(DISTINCT {key}) FILTER (WHERE {recorded})"
+            # A row with no ID is no patient, as SemanticLayer._base_count counts them.
+            n_rows = f"count(DISTINCT {key})"
+        else:
+            events, n, n_rows = (
+                f"count(*) FILTER (WHERE {asked})",
+                f"count(*) FILTER (WHERE {recorded})",
+                "count(*)",
+            )
         select = (
-            f"{events} AS events, count({quoted}) AS n, count(*) AS n_rows, "
-            f"CASE WHEN count({quoted}) = 0 THEN NULL ELSE {events} / count({quoted}) END AS {share}"
+            f"{events} AS events, {n} AS n, {n_rows} AS n_rows, "
+            f"CASE WHEN {n} = 0 THEN NULL ELSE {events} / {n} END AS {share}"
         )
         if group is None:
             return f"SELECT {select} FROM _cohort_in"
@@ -2677,7 +3002,12 @@ class SemanticLayer:
         return f"SELECT {by}, {select} FROM _cohort_in GROUP BY 1 ORDER BY 1 NULLS LAST"
 
     def _execute_plan(self, plan: "QueryPlan") -> pd.DataFrame | pl.DataFrame:
-        """Execute QueryPlan and return results DataFrame."""
+        """Execute QueryPlan and return results DataFrame, with its cohort views dropped."""
+        with self._cohort_views_dropped():
+            return self._execute_plan_rows(plan)
+
+    def _execute_plan_rows(self, plan: "QueryPlan") -> pd.DataFrame | pl.DataFrame:
+        """The plan's result, materialised (the caller drops the cohort views it created)."""
         view = self._filtered_view(plan)
 
         if plan.proportion_column:
@@ -2703,19 +3033,22 @@ class SemanticLayer:
         # Execute based on intent
         if plan.intent == "COUNT":
             # COUNT: Use entity_key or group_by
+            entity_key = self._count_entity_key(plan)
             if plan.group_by:
-                # Count by group
-                result = view.group_by(plan.group_by).aggregate(_.count().name("count")).order_by(plan.group_by)
-            elif plan.entity_key:
-                # Count distinct entities
-                result = view.select(plan.entity_key).distinct().count()
+                # Count by group: patients per group once rows are visits (QueryService checks
+                # each patient has one group value, so the groups add up to the patients).
+                counted = view[entity_key].nunique() if entity_key else _.count()
+                result = view.group_by(plan.group_by).aggregate(counted.name("count")).order_by(plan.group_by)
+            elif entity_key:
+                # Count distinct entities; a row with no ID is not one more (see _base_count).
+                result = view[entity_key].nunique()
             else:
                 # Total count
                 result = view.count()
-        elif plan.intent == "DESCRIBE":
-            # DESCRIBE: Type-aware aggregation
+        elif grouped_statistic(plan) is not None:
+            # One statistic per group: DESCRIBE, or a comparison that asked for a median etc.
             if plan.metric and plan.group_by:
-                statistic = plan.statistic or "mean"
+                statistic = grouped_statistic(plan) or "mean"
                 if not view[plan.metric].type().is_numeric():
                     raise CohortStepError(_text_statistic_message(statistic, plan.metric))
                 metric_col = view[plan.metric]
@@ -2726,12 +3059,17 @@ class SemanticLayer:
                     .aggregate([aggregate.name(statistic), metric_col.count().name("n"), _.count().name("n_rows")])
                     .order_by(plan.group_by)
                 )
-            elif plan.metric:
+        elif plan.intent == "DESCRIBE":
+            # DESCRIBE: Type-aware aggregation
+            if plan.metric:
                 # Detect if categorical or numeric
                 is_categorical = self._detect_categorical_encoding(view[plan.metric])
                 if is_categorical:
                     # Frequency table
                     result = view.group_by(plan.metric).aggregate(_.count().name("count")).order_by(plan.metric)
+                elif view[plan.metric].type().is_string():
+                    # Mean/median of text would raise inside DuckDB; refuse in plain words instead.
+                    raise CohortStepError(_text_statistic_message(plan.statistic or "mean", plan.metric))
                 else:
                     # Descriptive statistics
                     metric_col = view[plan.metric]
@@ -2773,6 +3111,39 @@ class SemanticLayer:
 
         _log_ibis_sql_and_optional_explain(result, self.con.con)
         return result.execute()
+
+    def remap_levels(self, column: str, mapping: dict[str, str]) -> None:
+        """Read the spellings in ``mapping`` as one level from now on (a confirmed mapping:
+        "Male", "male", "M" -> "Male"). Rows and patients are unchanged; only labels merge."""
+        with self._con_lock:
+            view = self.get_base_view()
+            self._base_view = view.mutate(**{column: view[column].substitute(mapping)})
+            # The column's levels changed: its cached distinct count and value counts are stale.
+            self._base_counts.pop(column, None)
+            self._value_counts.pop(column, None)
+            self.state_generation += 1
+
+    def set_memory_limit(self, limit: nl_query_config.DuckdbMemoryLimit) -> None:
+        """Lower (or raise) this layer's DuckDB memory limit: the API's layer cache gives the
+        layers it keeps their share of the total budget."""
+        with self._con_lock:
+            self.con.con.execute(f"SET memory_limit = '{limit.sql}'")
+
+    def close(self) -> None:
+        """Close this layer's in-memory DuckDB. Safe to call twice.
+
+        Waits for the DuckDB step running on the layer, if any. The API's layer cache calls this
+        on a background thread, only once no request holds a lease on the layer.
+        """
+        with self._con_lock:
+            if self._closed:
+                return
+            self._closed = True
+            self.con.disconnect()
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
 
     def _column_is_string(self, view: Any, column: str) -> bool:
         """From the schema: no rows are read."""

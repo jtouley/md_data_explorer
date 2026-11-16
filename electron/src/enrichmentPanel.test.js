@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
+/** @vitest-environment jsdom */
 import { describe, expect, it, vi } from 'vitest';
 import {
   createEnrichmentPanelGate,
   normalizePendingResponse,
+  renderEnrichmentCards,
   runEnrichmentDecision,
   suggestionToRows,
 } from './enrichmentPanel.js';
@@ -43,7 +45,7 @@ describe('suggestionToRows', () => {
       model_id: 'm1',
     });
     expect(rows).toContainEqual(['Operation', 'SET']);
-    expect(rows).toContainEqual(['Column', 'age']);
+    expect(rows).toContainEqual(['Variable', 'age']);
     expect(rows).toContainEqual(['Suggested', 'numeric']);
     expect(rows).toContainEqual(['Current', '—']);
     expect(rows).toContainEqual(['Confidence', '0.9']);
@@ -315,5 +317,34 @@ describe('createEnrichmentPanelGate', () => {
     // Assert
     expect(gate.mayWriteHint(load, 'suggestions')).toBe(true);
     expect(gate.mayWriteHint(load, 'history')).toBe(true);
+  });
+});
+
+describe('renderEnrichmentCards empty state (M5)', () => {
+  it('renderEnrichmentCards_none_saysCohortOnce', () => {
+    // Arrange
+    const container = document.createElement('div');
+
+    // Act
+    renderEnrichmentCards(container, [], { onAccept: () => {}, onReject: () => {} });
+
+    // Assert
+    expect(container.textContent).toBe('No suggestions for this cohort.');
+  });
+});
+
+describe('heading levels (round 2)', () => {
+  it('renderEnrichmentCards_cardTitle_isH4UnderTheSectionH3', () => {
+    // Arrange
+    const container = document.createElement('div');
+
+    // Act
+    renderEnrichmentCards(container, [{ patch_id: 'p1', operation: 'rename', column: 'age' }], {
+      onAccept: () => {},
+      onReject: () => {},
+    });
+
+    // Assert
+    expect(container.querySelector('.enrichment-card-title').tagName).toBe('H4');
   });
 });

@@ -86,14 +86,14 @@ class TestGetUploadDataSource:
     """Which file get_upload_data() reads, and legacy migration under concurrent reads."""
 
     @pytest.mark.parametrize(
-        ("tables", "expect_parquet"),
-        [(["only_table"], True), (["first_table", "second_table"], False)],
-        ids=["single_table_prefers_parquet", "multi_table_reads_unified_cohort"],
+        "tables",
+        [["only_table"], ["first_table", "second_table"]],
+        ids=["single_table", "multi_table"],
     )
-    def test_get_upload_data_parquetPresent_readsUnifiedCohortUnlessSingleTable(
-        self, upload_storage, create_upload, sample_upload_df, tmp_path, tables, expect_parquet
+    def test_get_upload_data_legacyWithParquet_readsUnifiedCohortLikeTheLayer(
+        self, upload_storage, create_upload, sample_upload_df, tmp_path, tables
     ):
-        # Arrange: the parquet holds a different frame than the unified-cohort CSV
+        # Arrange: a pre-typed-storage upload whose per-table Parquet differs from the unified CSV
         source_table = sample_upload_df.head(1)
         parquet_path = tmp_path / f"{tables[0]}.parquet"
         source_table.write_parquet(parquet_path)
@@ -110,11 +110,10 @@ class TestGetUploadDataSource:
         # Act
         result = upload_storage.get_upload_data(upload_id).collect()
 
-        # Assert
-        expected = source_table if expect_parquet else sample_upload_df
-        plt.assert_frame_equal(result, expected, check_dtypes=False)
+        # Assert: the unified cohort the semantic layer queried, now converted to typed Parquet
+        plt.assert_frame_equal(result, sample_upload_df, check_dtypes=False)
 
-    def test_get_upload_data_concurrentLegacyReads_migrateOnce(self, upload_storage, create_upload, monkeypatch):
+    def test_get_upload_data_concurrentLegacyReads_convertOnce(self, upload_storage, create_upload, monkeypatch):
         # Arrange
         import threading
         import time
@@ -123,14 +122,14 @@ class TestGetUploadDataSource:
 
         upload_id = create_upload("test_concurrent_legacy")
         calls: list[str] = []
+        real_convert = user_datasets._convert_legacy_upload
 
-        def slow_migrate(storage, migrated_id, metadata):
-            calls.append(migrated_id)
+        def slow_convert(storage, converted_id, metadata):
+            calls.append(converted_id)
             time.sleep(0.2)  # widen the race window
-            metadata_path = storage.metadata_dir / f"{migrated_id}.json"
-            metadata_path.write_text(json.dumps({**metadata, "migrated_to_v2": True}))
+            return real_convert(storage, converted_id, metadata)
 
-        monkeypatch.setattr(user_datasets, "_migrate_legacy_upload", slow_migrate)
+        monkeypatch.setattr(user_datasets, "_convert_legacy_upload", slow_convert)
         threads = [threading.Thread(target=upload_storage.get_upload_data, args=(upload_id,)) for _ in range(4)]
 
         # Act

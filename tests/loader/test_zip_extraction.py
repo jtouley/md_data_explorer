@@ -219,12 +219,9 @@ class TestZipExtraction:
 
         assert success is True
 
-        # Check that unified cohort CSV was created
-        csv_path = upload_storage.upload_dir / "raw" / f"{upload_id}.csv"
-        assert csv_path.exists()
-
-        # Load and verify unified cohort
-        unified_df = pl.read_csv(csv_path)
+        # The unified cohort is stored as typed Parquet (the file the semantic layer reads)
+        cohort_path = upload_storage.get_upload_metadata(upload_id)["cohort_parquet"]
+        unified_df = pl.read_parquet(cohort_path)
         assert "patient_id" in unified_df.columns
         assert "age" in unified_df.columns
         assert "admission_date" in unified_df.columns

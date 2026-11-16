@@ -4,6 +4,8 @@
 **Date**: 2026-01-03
 **Related**: LIGHTWEIGHT_UI_ARCHITECTURE.md
 
+**Update (2026-11)**: the unbounded `_semantic_layer_cache` dict and `get_semantic_layer()` below were replaced by a bounded, reference-counted cache (`api/layer_cache.py`). Routes take a lease (`lease_semantic_layer()`); the worker thread that uses the layer releases it when it is done with it. A layer is closed on a background thread only once it has left the cache and no lease is left, and its query core goes with it. `semantic_layer_cache_size` and the total `duckdb_memory_budget` are set in `nl_query.yaml`. The code samples below show the original design.
+
 ## Overview
 
 This document describes the adapter patterns needed to use the existing SemanticLayer (DuckDB + Ibis) with FastAPI's async dependency injection system. These patterns replace Streamlit's `@st.cache_resource` pattern.

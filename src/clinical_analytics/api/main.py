@@ -38,6 +38,7 @@ from clinical_analytics.api.security import (
 from clinical_analytics.core.data_home import uploads_dir
 from clinical_analytics.core.log_redaction import configure_logging
 from clinical_analytics.core.ollama_init import initialize_ollama
+from clinical_analytics.storage.atomic import sweep_stale_part_files
 from clinical_analytics.storage.dataset_deletion import finish_pending_compaction
 from clinical_analytics.storage.store_format import StoreFormatError, prepare_store_for_engine
 
@@ -114,6 +115,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # deleted dataset's bytes. serve.py runs the same step first and exits 2 with one line.
     if await asyncio.to_thread(finish_pending_compaction, uploads_dir().parent):
         logger.info("api_store_compaction_resumed")
+
+    # Temp files a crashed write left behind can hold patient rows; nothing references them.
+    try:
+        await asyncio.to_thread(sweep_stale_part_files, uploads_dir().parent)
+    except OSError as e:
+        logger.error("api_stale_part_sweep_failed", error_type=type(e).__name__)
 
     if _ollama_autoinit_enabled():
         _initialize_ollama_in_background()

@@ -1,5 +1,17 @@
 # Claude Code Rules
 
+## Purpose and steel thread (read first, every session)
+
+The purpose, what "works" means, the ordered steel thread, the merge gate and the real-data rule live in [docs/vision/PURPOSE.md](../docs/vision/PURPOSE.md). Read it first. Do the first unfinished step; work that does not move it waits.
+
+**Rules that stop wasted work:**
+- **Check before building.** Before writing code or briefing an agent, search the repo for what already does the job (`eval/`, `contracts/`, `analysis/`, `core/`, `tests/eval/`) and the open PRs. Extend what exists. A brief must name what exists and say to reuse it.
+- **One change on the thread at a time:** one PR, one independent review, one fix round. A second review only when the fix changes privacy, security or concurrency logic.
+- **A change merges only if it moves the acceptance table,** or fixes a WRONG, LEAK or ERROR the table shows. Hardening for cases the corpus doesn't hit waits. **Exception:** fixes for privacy, security or data loss merge on their own merits, whether or not the corpus triggers the issue.
+- **Report status as the latest acceptance table,** not as a list of PRs. Give answered right and correctly held as separate numbers.
+- **One issue per cause** for each reproducible WRONG, LEAK, ERROR or unacceptable HOLD, linked to the fixing PR and the oracle it must pass (PURPOSE.md, Merge gate).
+- **Real data:** synthetic data is the rule. The only exception is acceptance testing on public, openly licensed, de-identified datasets: fetched at test time from their public source, checked against a pinned checksum, used under their licence, never committed, and never shown row by row. Aggregate results (counts, statistics, grades) may appear in logs, issues and pull requests. Everything else, unit tests included, uses synthetic data.
+
 ## Behavior
 
 You are a thought partner, not a yes-machine. Accuracy over politeness.
@@ -14,7 +26,13 @@ You are a thought partner, not a yes-machine. Accuracy over politeness.
 
 - **Polars only**. Pandas requires explicit justification comment. NEVER use map_elements.
 - **Lazy by default**: `scan_*`, single `collect()` at pipeline end
-- **Delta Lake** for persistence, medallion architecture (Bronze/Silver/Gold)
+- **Typed Parquet** for persistence (no Delta Lake; do not add it). The layers of one uploaded dataset version:
+  1. **Raw landing**: the uploaded bytes as received, `uploads/raw/{upload_id}/{dataset_version}{ext}`.
+  2. **Staged/stored**: each table read as text and typed once, column by column over the whole file (`storage/staging.py`), written as `parquet/{upload_id}_{table}_{dataset_version}.parquet`.
+  3. **Unified cohort**: the single table, or for a ZIP the joined cohort `parquet/{upload_id}__cohort_{dataset_version}.parquet`.
+  4. **Semantic layer**: in-memory DuckDB built with `read_parquet` on that cohort (`core/semantic.py`), probed at upload.
+  - The cohort Parquet is the one source of truth: queries, previews and the contract/quality checks all read it. `analytics.duckdb` holds only pre-Parquet uploads until they are deleted.
+  - Every data and metadata write goes through `storage/atomic.py` (`*.part`, fsync, `os.replace`). Data files are named by `dataset_version` and never replaced; the metadata JSON is written last, as the commit point.
 - **Pydantic** for external data validation at boundaries
 
 ## Code Standards

@@ -12,6 +12,14 @@ Tests follow AAA pattern (Arrange, Act, Assert) and MVP scope:
 import polars as pl
 import pytest
 
+from clinical_analytics.storage.datastore import DataStore, _sanitize_table_name
+
+
+def _read_back(datastore: DataStore, upload_id: str, table_name: str, dataset_version: str) -> pl.LazyFrame:
+    """Read a saved table back by its stored name (DataStore no longer loads tables itself)."""
+    name = f"{upload_id}_{_sanitize_table_name(table_name)}_{dataset_version}"
+    return datastore.conn.sql(f"SELECT * FROM {name}").pl().lazy()
+
 
 @pytest.fixture
 def datastore(tmp_path):
@@ -59,8 +67,8 @@ class TestDataStoreSaveLoad:
         expected_table_name = f"{upload_id}_{table_name}_{dataset_version}"
         assert expected_table_name in tables
 
-    def test_datastore_load_table_returns_lazy_frame(self, datastore, sample_table):
-        """Loading tables should return Polars lazy frames."""
+    def test_datastore_saved_table_readsBackUnchanged(self, datastore, sample_table):
+        """A saved table reads back with the same rows and columns."""
         # Arrange: Save table first
         upload_id = "test_upload_456"
         table_name = "patients"
@@ -74,14 +82,12 @@ class TestDataStoreSaveLoad:
         )
 
         # Act: Load table
-        lazy_df = datastore.load_table(
+        lazy_df = _read_back(
+            datastore,
             upload_id=upload_id,
             table_name=table_name,
             dataset_version=dataset_version,
         )
-
-        # Assert: Returns LazyFrame
-        assert isinstance(lazy_df, pl.LazyFrame)
 
         # Assert: Data matches (collect to verify)
         loaded_data = lazy_df.collect()
@@ -153,7 +159,8 @@ class TestDataStorePersistence:
 
         # Act: Create new DataStore, load table
         datastore2 = DataStore(db_path)
-        lazy_df = datastore2.load_table(
+        lazy_df = _read_back(
+            datastore2,
             upload_id=upload_id,
             table_name=table_name,
             dataset_version=dataset_version,
@@ -321,9 +328,6 @@ class TestDataStoreParquetExport:
         # Act: Load from Parquet
         lazy_df = datastore.load_from_parquet(parquet_path)
 
-        # Assert: Returns LazyFrame
-        assert isinstance(lazy_df, pl.LazyFrame)
-
         # Verify data matches
         loaded = lazy_df.collect()
         assert loaded.height == sample_table.height
@@ -376,7 +380,8 @@ class TestDataStoreTableNameSanitization:
         )
 
         # Act: Load table using original table_name (should sanitize internally)
-        lazy_df = datastore.load_table(
+        lazy_df = _read_back(
+            datastore,
             upload_id=upload_id,
             table_name=table_name,  # Original name with spaces
             dataset_version=dataset_version,

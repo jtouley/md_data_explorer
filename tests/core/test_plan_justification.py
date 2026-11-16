@@ -192,16 +192,21 @@ def test_unjustifiedElements_everyElementAsked_returnsNothing(question: str, pla
     ("elements", "expected"),
     [
         pytest.param(
-            ["Creatinine = 2.2"], "The plan uses Creatinine = 2.2, which your question doesn't ask for.", id="one"
+            ["Creatinine = 2.2"],
+            "The plan uses Creatinine = 2.2, which your question doesn't ask for; "
+            "confirm the plan if that is what you meant, or name what you want.",
+            id="one",
         ),
         pytest.param(
             ["Creatinine = 2.2", "age > 2"],
-            "The plan uses Creatinine = 2.2 and age > 2, which your question doesn't ask for.",
+            "The plan uses Creatinine = 2.2 and age > 2, which your question doesn't ask for; "
+            "confirm the plan if that is what you meant, or name what you want.",
             id="two",
         ),
         pytest.param(
             ["a = 1", "b = 2", "c = 3"],
-            "The plan uses a = 1, b = 2 and c = 3, which your question doesn't ask for.",
+            "The plan uses a = 1, b = 2 and c = 3, which your question doesn't ask for; "
+            "confirm the plan if that is what you meant, or name what you want.",
             id="three",
         ),
     ],
