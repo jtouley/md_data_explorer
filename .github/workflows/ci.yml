@@ -46,6 +46,9 @@ jobs:
       - name: SPDX headers
         run: make check-spdx
 
+      - name: onnxruntime lock covers macOS 13
+        run: make check-lock-platforms
+
       - name: Type Check
         run: make type-check
 
