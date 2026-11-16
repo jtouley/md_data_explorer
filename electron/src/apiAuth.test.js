@@ -455,7 +455,7 @@ describe('parseLoopbackApiUrl: the preload address and the CSP header accept the
     // Act
     const parsed = parseLoopbackApiUrl(value);
     const fromArgv = apiBaseUrlFromArgv([`${API_BASE_URL_ARG_PREFIX}${value ?? ''}`]);
-    let csp = null;
+    let csp;
     try {
       csp = contentSecurityPolicy(value);
     } catch {
