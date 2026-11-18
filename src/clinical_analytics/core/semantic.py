@@ -298,9 +298,8 @@ def _format_share_result(frame: pl.DataFrame, plan: "QueryPlan", group: str | No
     ]
     return {
         "type": "rate",
-        # A grouped share ("share positive, by gender") is a rate per group of the share's value.
-        "column": plan.rate_column or plan.proportion_column,
-        "value": plan.rate_value if plan.rate_column else plan.proportion_value,
+        "column": plan.rate_column,
+        "value": plan.rate_value,
         "group_col": group,
         "groups": groups,
         **base,
@@ -2394,11 +2393,7 @@ class SemanticLayer:
         # Shares count patients once rows are declared visits (_share_sql), so the filtered-out
         # count is in patients too.
         if query_plan.proportion_column:
-            # A share with a grouping is one share per group, exactly like a rate: never one
-            # overall share for a by-group question.
-            formatted = _format_share_result(
-                result_df_pl, query_plan, query_plan.group_by, self._base_count(self.count_entity_key)
-            )
+            formatted = _format_share_result(result_df_pl, query_plan, None, self._base_count(self.count_entity_key))
         elif query_plan.rate_column and query_plan.group_by:
             share_base = self._base_count(self.count_entity_key)
             formatted = _format_share_result(result_df_pl, query_plan, query_plan.group_by, share_base)
@@ -2575,6 +2570,23 @@ class SemanticLayer:
                     "error": f"A share of several values of '{share_column}' at once is not supported; "
                     "ask about one value at a time.",
                 }
+
+        # A share and a different rate at once (QueryPlan.__post_init__ leaves such a plan as it
+        # is): which one the answer is would depend on execution order. Never run it.
+        if plan.proportion_column and plan.rate_column:
+            return {
+                "valid": False,
+                "error": f"The plan asks for a share of '{plan.proportion_column}' and a rate of "
+                f"'{plan.rate_column}' at once; ask about one of them.",
+            }
+
+        # "share with sex = F, by sex" is 100% in one group and 0% in the rest: not a comparison.
+        if plan.rate_column and plan.rate_column == plan.group_by:
+            return {
+                "valid": False,
+                "error": f"A share of '{plan.rate_column}' compared across groups of '{plan.group_by}' "
+                "itself is always 100% or 0%; group by a different column.",
+            }
 
         # Check filter columns exist and operators are valid
         valid_operators = {"==", "!=", ">", ">=", "<", "<=", "IN", "NOT_IN"}
@@ -3016,9 +3028,8 @@ class SemanticLayer:
         view = self._filtered_view(plan)
 
         if plan.proportion_column:
-            # "What share were positive, by gender?": grouped when the plan has a grouping.
             return self._duck_aggregate(
-                view, self._share_sql(view, plan.proportion_column, plan.proportion_value, plan.group_by)
+                view, self._share_sql(view, plan.proportion_column, plan.proportion_value, None)
             )
         if plan.rate_column:
             if not plan.group_by:
