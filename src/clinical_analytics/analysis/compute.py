@@ -939,6 +939,35 @@ def _term_sizes(
     return sizes
 
 
+def _small_outcome_cell(
+    frame: pl.DataFrame,
+    kinds: Mapping[str, VariableKind],
+    categorical: list[str],
+    outcome_col: str,
+    keys: pl.Series | None,
+) -> bool:
+    """Whether a level of a coded predictor holds 1-10 patients with one outcome value.
+
+    Every level and the event total can be large while a level's events are few (328 and 813
+    patients, 15 events, 9 and 6 of them by level). The odds ratio and its CI, with level and
+    event totals that other answers show, give those cells back, so the model is withheld like
+    a small level (``_term_sizes``). ``frame``: complete cases with the outcome already 0/1.
+    """
+    outcome = frame[outcome_col].cast(pl.Utf8)
+    for column, kind in kinds.items():
+        if column not in categorical and kind != "binary":
+            continue  # a slope names no level
+        level = _code_text(frame[column]) if column in categorical else frame[column].cast(pl.Utf8)
+        cells = (
+            pl.DataFrame({"level": level, "outcome": outcome})
+            .select(pl.concat_str(["level", "outcome"], separator="\x1f").alias("cell"))
+            .to_series()
+        )
+        if any(is_small_level(n) for n in _level_sizes(cells, keys).values()):
+            return True
+    return False
+
+
 def compute_predictor_analysis(
     df: pl.DataFrame, context: AnalysisContext, entity_key: str | None = None
 ) -> dict[str, Any]:
@@ -1021,6 +1050,8 @@ def compute_predictor_analysis(
     categorical = [p for p in predictors if _needs_indicators(analysis_df[p], kinds[p])]
     term_sizes = _term_sizes(analysis_df, kinds, categorical, keys)
     if any(n is not None and is_small_level(n) for n in term_sizes.values()):
+        return {**base, "error": SMALL_VALUE_MODEL_REFUSAL}
+    if _small_outcome_cell(analysis_df, kinds, categorical, outcome_col, keys):
         return {**base, "error": SMALL_VALUE_MODEL_REFUSAL}
     analysis_df_pd = analysis_df.with_columns([_code_text(analysis_df[c]) for c in categorical]).to_pandas()
     if categorical:

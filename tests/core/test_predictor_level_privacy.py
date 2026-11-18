@@ -15,11 +15,17 @@ import polars as pl
 import pytest
 
 from clinical_analytics.analysis.compute import (
+    _term_sizes,
     compute_analysis_by_type,
     compute_predictor_analysis,
     compute_survival_analysis,
 )
-from clinical_analytics.analysis.grouping import SMALL_VALUE_MODEL_REFUSAL, UNRECORDED_SIZES_MODEL_REFUSAL
+from clinical_analytics.analysis.grouping import (
+    SMALL_VALUE_MODEL_REFUSAL,
+    UNRECORDED_SIZES_MODEL_REFUSAL,
+    is_small_level,
+)
+from clinical_analytics.analysis.variable_types import classify_variable
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.core.nl_query_config import SMALL_CELL_THRESHOLD
 from clinical_analytics.core.query_plan import QueryPlan
@@ -56,7 +62,6 @@ class TestComputePredictorSmallLevels:
             pytest.param(3, True, id="three_patients"),
             pytest.param(1, True, id="one_patient"),
             pytest.param(SMALL_CELL_THRESHOLD - 1, True, id="just_under_threshold"),
-            pytest.param(SMALL_CELL_THRESHOLD, False, id="at_threshold"),
         ],
     )
     def test_computePredictor_categoricalLevelSize_refusedOnlyWhenSmall(
@@ -78,6 +83,34 @@ class TestComputePredictorSmallLevels:
             assert "error" not in result
             assert "treatment_West" in result["summary"]
             assert result["term_sizes"]["treatment_West"] == SMALL_CELL_THRESHOLD
+
+    def test_termSizes_levelAtThreshold_isNotSmall(self, make_cohort_with_categorical: CohortFactory) -> None:
+        """The level rule's boundary on its own. A full model with a level of exactly the
+        threshold is still refused: a yes/no outcome splits those patients into a cell of 1-10
+        (``test_computePredictor_levelAtThreshold_refusedByOutcomeCell``)."""
+        # Arrange
+        frame = _cohort(make_cohort_with_categorical, SMALL_CELL_THRESHOLD)
+        kinds = {"treatment": classify_variable(frame["treatment"])}
+
+        # Act
+        sizes = _term_sizes(frame, kinds, ["treatment"], None)
+
+        # Assert
+        assert sizes["treatment_West"] == SMALL_CELL_THRESHOLD
+        assert not is_small_level(sizes["treatment_West"])
+
+    def test_computePredictor_levelAtThreshold_refusedByOutcomeCell(
+        self, make_cohort_with_categorical: CohortFactory, site_context: AnalysisContext
+    ) -> None:
+        # Arrange: 11 West patients, every third with status Yes, so West has 1-10 with each value
+        frame = _cohort(make_cohort_with_categorical, SMALL_CELL_THRESHOLD)
+
+        # Act
+        result = compute_predictor_analysis(frame, site_context)
+
+        # Assert
+        assert result["error"] == SMALL_VALUE_MODEL_REFUSAL
+        assert "summary" not in result
 
     def test_computePredictor_smallReferenceLevel_refused(
         self, make_cohort_with_categorical: CohortFactory, site_context: AnalysisContext
@@ -125,18 +158,28 @@ class TestComputePredictorSmallLevels:
     def test_computePredictor_noSmallLevel_reportsEveryTermSize(
         self, make_cohort_with_categorical: CohortFactory, site_context: AnalysisContext
     ) -> None:
-        # Arrange
-        frame = _cohort(make_cohort_with_categorical, 20)
+        # Arrange: every level-by-outcome cell has 25 patients (no small cell); West 50, East 40.
+        frame = _two_by_two(
+            make_cohort_with_categorical,
+            {
+                ("West", "Yes"): 25,
+                ("West", "No"): 25,
+                ("East", "Yes"): 20,
+                ("East", "No"): 20,
+                ("North", "Yes"): 30,
+                ("North", "No"): 30,
+            },
+        )
 
         # Act
         result = compute_predictor_analysis(frame, site_context)
 
-        # Assert: a level's term rests on the smaller of its level and the reference (East, 20);
+        # Assert: a level's term rests on the smaller of its level and the reference (East, 40);
         # a slope names no level (None).
         terms = {term for term in result["summary"] if term != "Intercept"}
         assert set(result["term_sizes"]) == terms
         assert result["term_sizes"]["age"] is None
-        assert result["term_sizes"]["treatment_West"] == 20
+        assert result["term_sizes"]["treatment_West"] == 40
 
 
 @pytest.mark.parametrize(
@@ -348,7 +391,9 @@ class TestComputePredictorPatientsNotRows:
         [
             pytest.param(3, 4, True, id="three_patients_twelve_visits"),
             pytest.param(SMALL_CELL_THRESHOLD - 1, 2, True, id="just_under_threshold_patients"),
-            pytest.param(SMALL_CELL_THRESHOLD, 2, False, id="at_threshold_patients"),
+            # 11 West patients as 22 visit rows: their outcome cells count patients (1-10), so the
+            # model is withheld; counting rows would have let it through.
+            pytest.param(SMALL_CELL_THRESHOLD, 2, True, id="at_threshold_patients_small_cell"),
         ],
     )
     def test_computePredictor_visitRows_countsPatientsPerLevel(
@@ -460,3 +505,57 @@ class TestPredictorRefusalNamesNothing:
         # Assert
         assert result["error"] == SMALL_VALUE_MODEL_REFUSAL
         assert hidden not in result["error"]
+
+
+def _two_by_two(make_cohort_with_categorical: CohortFactory, cells: dict[tuple[str, str], int]) -> pl.DataFrame:
+    """One patient per row, with (treatment level, status) counts as given."""
+    rows = [key for key, count in cells.items() for _ in range(count)]
+    return make_cohort_with_categorical(
+        patient_ids=[f"P{index:05d}" for index in range(len(rows))],
+        treatment=[level for level, _status in rows],
+        status=[status for _level, status in rows],
+        ages=[30 + (index * 13) % 40 for index in range(len(rows))],
+    )
+
+
+class TestComputePredictorOutcomeCells:
+    """Every level and the event total can be large while a level's events are few: 328 with a
+    comorbidity (9 admitted) and 813 without (6 admitted). The odds ratio and its CI, with the
+    level and event totals shown elsewhere, give back 9 and 6. The model is withheld then."""
+
+    @pytest.mark.parametrize(
+        ("events_a", "events_b", "refused"),
+        [
+            pytest.param(9, 6, True, id="both_cells_small"),
+            pytest.param(SMALL_CELL_THRESHOLD - 1, 40, True, id="one_events_cell_small"),
+            pytest.param(40, 40, False, id="no_small_cell"),
+            pytest.param(SMALL_CELL_THRESHOLD, SMALL_CELL_THRESHOLD, False, id="at_threshold"),
+        ],
+    )
+    def test_computePredictor_smallPredictorOutcomeCell_refused(
+        self,
+        make_cohort_with_categorical: CohortFactory,
+        site_context: AnalysisContext,
+        events_a: int,
+        events_b: int,
+        refused: bool,
+    ) -> None:
+        # Arrange: both levels and the event total are at least the threshold
+        frame = _two_by_two(
+            make_cohort_with_categorical,
+            {
+                ("Comorbid", "Yes"): events_a,
+                ("Comorbid", "No"): 328 - events_a,
+                ("None", "Yes"): events_b,
+                ("None", "No"): 813 - events_b,
+            },
+        )
+        site_context.predictor_variables = ["treatment"]
+
+        # Act
+        result = compute_predictor_analysis(frame, site_context)
+
+        # Assert
+        assert ("summary" not in result) is refused
+        if refused:
+            assert result["error"] == SMALL_VALUE_MODEL_REFUSAL
