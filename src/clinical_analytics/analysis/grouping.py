@@ -43,6 +43,14 @@ SMALL_VALUE_MODEL_REFUSAL: Final = (
     f"A predictor or outcome value is held by fewer than {SMALL_CELL_THRESHOLD} patients, so this model can't be "
     f"shown without identifying them. Try fewer or broader variables."
 )
+# A model whose every predictor value and outcome value has SMALL_CELL_THRESHOLD or more patients,
+# but where one predictor value has 1 to SMALL_CELL_THRESHOLD - 1 patients with one outcome value:
+# the odds ratio and its CI, with totals shown elsewhere, give that number back. Names no column.
+SMALL_CELL_MODEL_REFUSAL: Final = (
+    f"Fewer than {SMALL_CELL_THRESHOLD} patients have one combination of a predictor value and the outcome, "
+    f"so this model can't be shown without letting their number be worked out. Try a broader predictor or "
+    f"a more common outcome."
+)
 # A stored model whose group sizes are missing (a payload from before they were recorded): it is
 # withheld (fail closed), but no value is small, so none is blamed.
 UNRECORDED_SIZES_MODEL_REFUSAL: Final = (
