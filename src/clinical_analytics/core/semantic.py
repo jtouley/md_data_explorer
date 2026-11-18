@@ -298,8 +298,9 @@ def _format_share_result(frame: pl.DataFrame, plan: "QueryPlan", group: str | No
     ]
     return {
         "type": "rate",
-        "column": plan.rate_column,
-        "value": plan.rate_value,
+        # A grouped share ("share positive, by gender") is a rate per group of the share's value.
+        "column": plan.rate_column or plan.proportion_column,
+        "value": plan.rate_value if plan.rate_column else plan.proportion_value,
         "group_col": group,
         "groups": groups,
         **base,
@@ -2393,7 +2394,11 @@ class SemanticLayer:
         # Shares count patients once rows are declared visits (_share_sql), so the filtered-out
         # count is in patients too.
         if query_plan.proportion_column:
-            formatted = _format_share_result(result_df_pl, query_plan, None, self._base_count(self.count_entity_key))
+            # A share with a grouping is one share per group, exactly like a rate: never one
+            # overall share for a by-group question.
+            formatted = _format_share_result(
+                result_df_pl, query_plan, query_plan.group_by, self._base_count(self.count_entity_key)
+            )
         elif query_plan.rate_column and query_plan.group_by:
             share_base = self._base_count(self.count_entity_key)
             formatted = _format_share_result(result_df_pl, query_plan, query_plan.group_by, share_base)
@@ -3011,8 +3016,9 @@ class SemanticLayer:
         view = self._filtered_view(plan)
 
         if plan.proportion_column:
+            # "What share were positive, by gender?": grouped when the plan has a grouping.
             return self._duck_aggregate(
-                view, self._share_sql(view, plan.proportion_column, plan.proportion_value, None)
+                view, self._share_sql(view, plan.proportion_column, plan.proportion_value, plan.group_by)
             )
         if plan.rate_column:
             if not plan.group_by:

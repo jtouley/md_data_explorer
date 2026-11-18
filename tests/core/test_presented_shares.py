@@ -122,6 +122,28 @@ def test_rate_groupedPlan_presentsRatePerGroup(share_layer) -> None:
     assert shown["table"]["rows"] == [{"site": "North", "rate": 0.5, "n": 60}, {"site": "South", "rate": None, "n": 0}]
 
 
+@pytest.mark.parametrize("group_by", ["site", "sex"])
+def test_proportion_groupedPlan_presentsShareForEachGroup_neverOverall(share_layer, group_by: str) -> None:
+    """ "What share of tests were positive, by gender?" parses to a share with a grouping. The
+    grouping used to be dropped at execution: one overall share answered a by-group question."""
+    # Arrange
+    plan = QueryPlan(
+        intent="COUNT", confidence=0.95, group_by=group_by, proportion_column="statin", proportion_value="taking"
+    )
+    rate_plan = QueryPlan(intent="COUNT", confidence=0.95, group_by=group_by, rate_column="statin", rate_value="taking")
+
+    # Act
+    _execution, shown = _present(share_layer, plan)
+    _rate_execution, expected = _present(share_layer, rate_plan)
+
+    # Assert: the same per-group table the rate plan gives, never a single overall share
+    assert shown["table"]["columns"][0] == group_by
+    assert shown["table"] == expected["table"]
+    assert shown["claim"] == expected["claim"]
+    assert "None" not in shown["claim"]
+    assert len(shown["table"]["rows"]) == 2
+
+
 def test_rate_smallCellInGroup_hidesThatRate(make_semantic_layer) -> None:
     # Arrange: South has 3 events of 40; North has 30 of 60.
     frame = _FRAME.with_columns(
