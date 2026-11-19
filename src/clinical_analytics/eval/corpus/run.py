@@ -65,7 +65,15 @@ from clinical_analytics.eval.corpus.fetch import (
     load_corpus,
     table_path,
 )
-from clinical_analytics.eval.corpus.score import AGGREGATE, SMALL_MAX, SMALL_MIN, ApiOutcome, OracleAnswer, Scored, score
+from clinical_analytics.eval.corpus.score import (
+    AGGREGATE,
+    SMALL_MAX,
+    SMALL_MIN,
+    ApiOutcome,
+    OracleAnswer,
+    Scored,
+    score,
+)
 
 logger = structlog.get_logger()
 
@@ -628,9 +636,7 @@ def run(
     try:
         report.settings["startup_s"] = round(api.wait_healthy(), 1)
         upload_started = time.monotonic()
-        # A question file of ``grain: aggregate`` is a public population-estimate set: uploaded with
-        # the mark a person ticks for it (ADR014). An app without the field ignores it.
-        declared = any(q.get("grain") == AGGREGATE for q in questions)
+        declared = declared_estimates(questions)
         report.settings["population_estimates"] = declared
         try:
             dataset_id = api.upload(zip_path, dataset, declared)
@@ -898,6 +904,12 @@ def table_shape(detail: dict[str, Any]) -> tuple[int, int]:
     return table.row_count, len(table.columns)
 
 
+def declared_estimates(questions: list[dict[str, Any]]) -> bool:
+    """A question file of ``grain: aggregate`` is a public population-estimate set: it is uploaded
+    with the mark a person ticks for it (ADR014 §7)."""
+    return any(q.get("grain") == AGGREGATE for q in questions)
+
+
 def check_load(
     name: str, corpus: dict[str, CorpusDataset], cache_dir: Path | None, seed_dirs: list[Path]
 ) -> LoadResult:
@@ -924,7 +936,8 @@ def check_load(
         api = Api(work, server_env(work, secrets.token_urlsafe(32), NO_MODEL, UNREACHABLE_OLLAMA, None))
         api.wait_healthy()
         started = time.monotonic()
-        response = api.upload_response(path, name)
+        # Uploaded as the acceptance run uploads it: an aggregate set carries the declaration.
+        response = api.upload_response(path, name, declared_estimates(load_questions(name)))
         result.upload_s = round(time.monotonic() - started, 1)
         result.status = str(response.get("status"))
         upload_id = required_field(response, "upload_id", "POST /api/datasets/upload")

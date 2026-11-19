@@ -354,7 +354,7 @@ class TestHeldOutReport:
         # Arrange
         def result(qid: str, grade: str, held_out: bool) -> QuestionResult:
             return QuestionResult(
-                qid, "f", "q", grade, False, "r", "completed", None, False, "not called", 1.0, False, held_out
+                qid, "f", "q", grade, False, "r", "completed", None, False, "not called", 1.0, False, held_out=held_out
             )
 
         report = RunReport("d", "none", "local", "abc", "2026-01-01T00:00:00+00:00", {})
