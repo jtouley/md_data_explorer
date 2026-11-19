@@ -329,32 +329,61 @@ def small_level_labels(frame: pl.DataFrame, columns: list[str], threshold: int) 
     return labels
 
 
+def _code_text(value: Any) -> str:
+    """A level's code as an indicator term spells it: 2.0 -> "2"."""
+    return str(int(value) if isinstance(value, float) and value.is_integer() else value)
+
+
+def _small_cell_levels(frame: pl.DataFrame, column: str, outcome: str, threshold: int) -> list[Any]:
+    """Values of ``column`` held by 1..threshold-1 rows of ``frame`` with one value of ``outcome``."""
+    cells = frame.group_by([column, outcome]).agg(pl.len().alias("__n"))
+    return cells.filter((pl.col("__n") > 0) & (pl.col("__n") < threshold)).get_column(column).unique().to_list()
+
+
 def predictor_label_leaks(
     presentation: dict[str, Any] | None, frame: pl.DataFrame, predictors: list[str], outcome: str | None, threshold: int
 ) -> set[str]:
-    """Labels of levels held by 1..threshold-1 rows that a predictor answer shows.
+    """Labels of small levels and small level-by-outcome cells that a predictor answer shows.
 
     Levels are counted on the complete cases (rows with the outcome and every predictor), the
     rows the model is fitted on: a level of 12 rows of which 3 lack age rests on 9. A regression
     names a level as its indicator term ("site_West", or "DEXA: Osteopenia" for a coded header),
-    as the column itself for a 0/1 or boolean predictor, and the outcome's event value in the
-    claim ("status = Yes"). Each is looked for as a whole word in the claim and in the table's
-    labels.
+    as the column itself for a 0/1, boolean or two-valued predictor, and the outcome's event
+    value in the claim ("status = Yes"). Each is looked for as a whole word in the claim and in
+    the table's labels.
+
+    A level held by 1..threshold-1 rows with one outcome value is a leak too, however large the
+    level: its odds ratio and CI, with totals shown elsewhere, give that cell back. It is flagged
+    by its own term, or by every term of its column when it is the reference (the first code in
+    text order, the level each indicator is compared with).
     """
     shown = [str((presentation or {}).get("claim") or ""), *shown_labels(presentation)]
     columns = [column for column in [*predictors, *([outcome] if outcome else [])] if column in frame.columns]
     complete = frame.select(columns).drop_nulls()
     labels: set[str] = set()
+
+    def terms(column: str, values: list[Any]) -> set[str]:
+        """How a regression can name ``values`` of predictor ``column``."""
+        named: set[str] = set()
+        for value in values:
+            term = f"{column}_{_code_text(value)}"
+            named |= {term, term_label(term)}
+        present = complete.get_column(column).unique().to_list()
+        single_term = complete.schema[column] == pl.Boolean or set(present) <= {0, 1} or len(present) <= 2
+        return named | ({column} if single_term and values else set())
+
     for column in columns:
-        values = complete.get_column(column).drop_nulls().unique().to_list()
-        indicator = complete.schema[column] == pl.Boolean or set(values) <= {0, 1}
-        for value in _small_values(complete, column, threshold):
-            labels.add(display_level(column, value))
-            if column == outcome:
-                continue
-            code = int(value) if isinstance(value, float) and value.is_integer() else value
-            term = f"{column}_{code}"
-            labels |= {term, term_label(term)} | ({column} if indicator else set())
+        small = _small_values(complete, column, threshold)
+        labels |= {display_level(column, value) for value in small}
+        if column == outcome:
+            continue
+        labels |= terms(column, small)
+        if outcome is None:
+            continue
+        cell_levels = _small_cell_levels(complete, column, outcome, threshold)
+        present = complete.get_column(column).unique().to_list()
+        reference = min(present, key=_code_text, default=None)
+        labels |= terms(column, present if reference in cell_levels else cell_levels)
     return {label for label in labels if any(re.search(rf"(?<!\w){re.escape(label)}(?!\w)", text) for text in shown)}
 
 

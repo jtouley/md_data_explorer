@@ -20,9 +20,8 @@ from clinical_analytics.analysis.grouping import (
     HIDDEN_GROUPS_LABEL,
     MAX_GROUP_LEVELS,
     OTHER_LABEL,
-    SMALL_VALUE_MODEL_REFUSAL,
-    UNRECORDED_SIZES_MODEL_REFUSAL,
     is_small_level,
+    predictor_model_refusal,
     too_many_levels_message,
 )
 from clinical_analytics.analysis.sample_floors import (
@@ -736,22 +735,20 @@ def _present_predictor(analysis: Mapping[str, Any]) -> Presentation:
     summary = analysis.get("summary") or {}
     n_clause = _n_clause(analysis, suppress_with_exclusions(analysis, {}, floor=MIN_REGRESSION_N))
     # A term names a level ("site_West") beside an odds ratio that rests on its patients and its
-    # reference level's: with 1-10 of them it is never shown. Folding it into "Other" would be a
-    # different model, so the model is withheld (compute refuses it first). ``term_sizes`` maps
-    # each term to those patients, None for a slope. A size that is not a count is small; a
-    # payload without sizes, or a term it does not list (stored before sizes were recorded), is
-    # withheld too (fail closed), saying so rather than blaming a small value. Neither names a
-    # column: for a 0/1 predictor the column is the label of its level.
-    sizes = analysis.get("term_sizes")
+    # reference level's, and with the totals other answers show it gives back how many of them
+    # had the outcome. With 1-10 in a level, or in a level with one outcome value, the model is
+    # withheld: folding the level into "Other" would be a different model. Compute refuses it
+    # first; this applies the same rule (``predictor_model_refusal``) to the recorded
+    # ``term_sizes`` and ``cell_sizes``, so a payload that skipped compute's check, or one stored
+    # before both were recorded, is withheld too (fail closed). No refusal names a column: for a
+    # 0/1 predictor the column is the label of its level.
     named = analysis.get("significant_predictors") or []
     terms = [var for var in summary if var != "Intercept"] + [
         s.get("variable") for s in named if isinstance(s, Mapping)
     ]
-    if terms:
-        if not isinstance(sizes, Mapping) or any(var not in sizes for var in terms):
-            return {"claim": UNRECORDED_SIZES_MODEL_REFUSAL, "table": None}
-        if any(sizes[var] is not None and is_small_level(sizes[var]) for var in terms):
-            return {"claim": SMALL_VALUE_MODEL_REFUSAL, "table": None}
+    refusal = predictor_model_refusal(terms, analysis.get("term_sizes"), analysis.get("cell_sizes"))
+    if refusal is not None:
+        return {"claim": refusal, "table": None}
     rows = [
         {
             "variable": term_label(var),
