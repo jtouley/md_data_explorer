@@ -91,10 +91,10 @@ def _expression(layer: Any, frame: pl.DataFrame, condition: Condition) -> pl.Exp
     if condition.kind == "outside":
         return _outside(frame, column, condition.value)
     if condition.kind == "upper_value":
-        values = frame.get_column(column).drop_nulls().unique()
-        if values.len() != 2:
+        levels: pl.Series = frame.get_column(column).drop_nulls().unique()
+        if levels.len() != 2:
             raise _NotACountError
-        return (ref == pl.lit(values.max())).fill_null(False)
+        return (ref == pl.lit(levels.max())).fill_null(False)
     raise ShownCountMismatchError(f"unknown condition kind {condition.kind!r}")
 
 
