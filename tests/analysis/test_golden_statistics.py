@@ -421,10 +421,11 @@ class TestEdgeInputs:
         assert [row["variable"] for row in table["rows"]] == ["DEXA result: Osteopenia", "DEXA result: Osteoporosis"]
 
     def test_predict_calendarYearPredictor_isNotRefusedAsSeparation(self):
-        # Arrange: a large intercept is normal when a predictor is a year
+        # Arrange: a large intercept is normal when a predictor is a year. 11 years behave like
+        # categories, so each year x outcome cell must hold 11+ patients for the model to show.
         rng = np.random.default_rng(11)
-        year = rng.integers(2010, 2021, 300)
-        outcome = (rng.random(300) < 1 / (1 + np.exp(-0.1 * (year - 2015)))).astype(int)
+        year = rng.integers(2010, 2021, 3000)
+        outcome = (rng.random(3000) < 1 / (1 + np.exp(-0.1 * (year - 2015)))).astype(int)
         df = pl.DataFrame({"outcome": outcome, "year": year})
 
         # Act
@@ -465,8 +466,8 @@ class TestEdgeInputs:
         ids=["thousands_with_decimals", "multi_group_thousands", "decimal_comma"],
     )
     def test_compare_commaNumbersAsText_parseByEvidence(self, values, expected_means):
-        # Arrange
-        df = pl.DataFrame({"lab": values * 5, "arm": ["a", "b"] * 10})
+        # Arrange: 11 patients per value and arm, so no value x arm cell is small
+        df = pl.DataFrame({"lab": values * 11, "arm": ["a", "b"] * 22})
 
         # Act
         result = compute_comparison_analysis(df, _context(primary_variable="lab", grouping_variable="arm"))

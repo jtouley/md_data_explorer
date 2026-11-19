@@ -246,3 +246,77 @@ def added_id_columns(metadata: Mapping[str, object]) -> list[str]:
     if source == "row_index" and isinstance(info, Mapping):
         return [str(info.get("row_number_column") or ROW_NUMBER_COLUMN)]
     return []
+
+
+# --------------------------------------------------------------------- "Is each row one patient?"
+#
+# Asked once at upload when the stored patient_id is a row key (``patient_id_is_row_key``) built
+# from one column unique on every row, or when nothing identifies a row (a row number). A "yes" on
+# visit data would turn visit counts into "patients", so the question is never offered when a
+# column that looks like an ID repeats: those rows are visits or tests of someone.
+
+# Upload metadata (``synthetic_id_metadata.patient_id``): the ID-like columns whose values repeat,
+# recorded by ``ensure_patient_id`` for the sources that may be asked. Absent: never asked.
+REPEATED_ID_COLUMNS_KEY: Final = "repeated_id_columns"
+# Semantic-layer config flag: ``rows_may_be_patients`` for the dataset. A stored one-row-per-patient
+# confirmation makes answers count patients only where it is set (``answer_checks``), so a
+# confirmation given elsewhere (governed SQL) never turns visit rows into patients.
+PATIENT_ROWS_ASKABLE_CONFIG_FLAG: Final = "rows_may_be_patients"
+
+# Name tokens of an identifier ("person_id", "caseId", "Hosp No", "Record Number"): split on
+# anything but letters and digits and at a lower-to-upper case change. Broad on purpose: a column
+# matched by mistake that repeats ("number_of_children", "site_id") only means the question is not
+# asked; a repeating ID that is missed means it is asked on visit rows.
+ID_NAME_TOKENS: Final[frozenset[str]] = frozenset(
+    {"id", "ids", "identifier", "mrn", "mr", "uuid", "guid", "no", "nr", "num", "number", "ref"}
+)
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def is_id_name(column: str) -> bool:
+    """A column named as an identifier of someone or something (``ID_NAME_TOKENS``), or named for
+    the patient-key role (``schema_inference.PATIENT_KEY_NAMES``)."""
+    from clinical_analytics.core.schema_inference import PATIENT_KEY_NAMES
+
+    if re.sub(r"[^a-z0-9]", "", column.lower()) in PATIENT_KEY_NAMES:
+        return True
+    return any(token in ID_NAME_TOKENS for token in name_tokens(_CAMEL_BOUNDARY.sub("_", column)))
+
+
+def repeated_id_columns(df: pl.DataFrame, identifier_columns: list[str]) -> list[str]:
+    """The columns that look like IDs and hold a value on more than one row: named as an ID
+    (``is_id_name``, whatever the type: SPSS stores an ID of 1, 2, ... as floats) or typed as one
+    (``identifier_columns``, over 95% unique), with more than one distinct value (a study code on
+    every row identifies no one). One select over the frame.
+    """
+    candidates = [
+        column
+        for column in df.columns
+        if column != ROW_NUMBER_COLUMN and (column in identifier_columns or is_id_name(column))
+    ]
+    if not candidates or df.height < 2:
+        return []
+    found = df.select(
+        [
+            ((pl.col(c).drop_nulls().n_unique() > 1) & pl.col(c).drop_nulls().is_duplicated().any()).alias(c)
+            for c in candidates
+        ]
+    ).row(0)
+    return [column for column, repeats in zip(candidates, found, strict=True) if repeats]
+
+
+def rows_may_be_patients(metadata: Mapping[str, object]) -> bool:
+    """Whether the upload may ask "Is each row one patient?": patient_id is a row key copied from
+    one column unique on every row, or rows were numbered because nothing identifies them, and
+    ``ensure_patient_id`` recorded that no ID-like column repeats. Composite keys (rows told apart
+    only by a combination, so single columns repeat) and uploads without the record are never
+    asked: the answer would rest on data that may be visits.
+    """
+    if not patient_id_is_row_key(metadata):
+        return False
+    synthetic = metadata.get("synthetic_id_metadata")
+    info = synthetic.get("patient_id") if isinstance(synthetic, Mapping) else None
+    if not isinstance(info, Mapping) or info.get("patient_id_source") not in ("single_column", "row_index"):
+        return False
+    repeated = info.get(REPEATED_ID_COLUMNS_KEY)
+    return isinstance(repeated, list) and not repeated
