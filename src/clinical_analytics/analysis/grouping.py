@@ -146,3 +146,55 @@ def level_variants(levels: Sequence[object]) -> list[tuple[str, ...]]:
     for text in texts:
         groups.setdefault(normalised_level(text), []).append(text)
     return [tuple(group) for _, group in sorted(groups.items()) if len(group) > 1]
+
+
+# A statistic computed from a table of patient counts: a chi-square, Fisher or log-rank test of
+# groups by outcome, and a correlation of two coded variables (for two 0/1 columns it is phi).
+# With the table's totals, which other answers show, and the direction a claim states, the
+# statistic is monotone in the cells (for a 2x2, in |ad - bc|), so it gives a cell back. It is
+# withheld when any non-empty cell holds 1 to SMALL_CELL_THRESHOLD - 1 patients. The refusal
+# names no column or level: for a 0/1 column the column is the label of its level.
+SMALL_CELL_TEST_REFUSAL: Final = (
+    f"A significance test or correlation isn't shown: fewer than {SMALL_CELL_THRESHOLD} patients have one "
+    f"combination of the values compared, and its result, with totals shown elsewhere, would let their number "
+    f"be worked out. Try broader groups or a more common outcome."
+)
+# A stored result whose table cell sizes are missing (a payload from before they were recorded):
+# withheld (fail closed), but no cell is blamed.
+UNRECORDED_CELLS_TEST_REFUSAL: Final = (
+    "A significance test or correlation isn't shown because the sizes of the groups it rests on weren't "
+    "recorded; ask again to recompute."
+)
+# ``table_min_cell`` of a statistic that rests on no table of counts (a correlation of two
+# measurements). Only compute records it; any other value that is not a count is withheld.
+NO_COUNT_TABLE: Final = "no_count_table"
+
+
+def table_statistic_refusal(min_cell: object, *, may_rest_on_no_table: bool = False) -> str | None:
+    """Why a statistic computed from a table of patient counts may not be shown, or None.
+
+    The one decision behind compute (which does not record a withheld statistic) and the
+    presenter (which withholds one from a payload that skipped that step), so they cannot
+    disagree: the counterpart, for a table, of ``predictor_model_refusal`` for a model's terms,
+    with the same ``is_small_level`` rule for a count. ``min_cell``: the fewest patients in any
+    non-empty cell of the tested table, as compute records it (``table_min_cell``).
+    ``NO_COUNT_TABLE`` says the statistic rests on no table; it is accepted only with
+    ``may_rest_on_no_table`` (a correlation, which may be of two measurements), never for a test
+    of a table, so a stray marker cannot let a test through.
+    Fail closed:
+
+    * None (not recorded), or ``NO_COUNT_TABLE`` where a table is required:
+      ``UNRECORDED_CELLS_TEST_REFUSAL``;
+    * anything else that is not a count of at least ``SMALL_CELL_THRESHOLD`` (1-10, 0 or a
+      negative count, which a minimum over non-empty cells never is, a float, a bool, other
+      text): ``SMALL_CELL_TEST_REFUSAL``.
+    """
+    if isinstance(min_cell, str) and min_cell == NO_COUNT_TABLE:
+        return None if may_rest_on_no_table else UNRECORDED_CELLS_TEST_REFUSAL
+    if min_cell is None:
+        return UNRECORDED_CELLS_TEST_REFUSAL
+    # ``is_small_level`` is the level rule (1-10, negative or not a count is small); a minimum
+    # over non-empty cells is never 0, so a recorded 0 is malformed and withheld as well.
+    if is_small_level(min_cell) or min_cell == 0:
+        return SMALL_CELL_TEST_REFUSAL
+    return None
