@@ -55,8 +55,6 @@ _AGE_BAND = re.compile(
 _OPEN_AGE_TOP: Final = 200
 # Columns the semantic layer adds for patient cohorts; skipped when detecting an estimate table.
 APP_ADDED_COLUMNS: Final = ("time_zero", "outcome_label", "features_json", ROW_NUMBER_COLUMN)
-_ID_LIKE_VALUE: Final = re.compile(r"^([A-Za-z]{0,6}[-_ #]?\d+[A-Za-z]?|[0-9a-fA-F]{8,}(-[0-9a-fA-F]{4,})*)$")
-_SEX_WORDS: Final = frozenset({"female", "male", "both", "f", "m", "women", "men", "all", "total", "both sexes"})
 _CI_STEM: Final = re.compile(r"(^|_)(ci|confidence|interval)($|_)")
 
 
@@ -299,95 +297,6 @@ def is_metric_column(column: str) -> bool:
     return bool(config.ESTIMATE_METRIC_DIMENSION.search(_norm(column)))
 
 
-def _name_tokens(column: str) -> list[str]:
-    """Lowercase word tokens of a column name, camelCase split ("ClientID" -> client, id)."""
-    spaced = re.sub(r"([a-z])([A-Z])", r"\1 \2", column)
-    return re.findall(r"[a-z]+|\d+", spaced.casefold())
-
-
-def is_patient_key_name(column: str) -> bool:
-    """A column named as a person or encounter ID or a person's name: mrn, patient_id, person,
-    member_no, enc, encounter, Client, case_number, record_id, name, first_name, dob, ...
-    Token-based, so spellings a fixed list misses still match."""
-    from clinical_analytics.core.schema_inference import PATIENT_KEY_NAMES
-
-    tokens = _name_tokens(column)
-    joined = "".join(tokens)
-    if not tokens:
-        return False
-    if joined in PATIENT_KEY_NAMES or joined in config.ESTIMATE_PERSON_NAMES:
-        return True
-    if set(tokens) & config.ESTIMATE_PERSON_TOKENS:
-        return True
-    if set(tokens) & config.ESTIMATE_RECORD_TOKENS and set(tokens) & config.ESTIMATE_ID_SUFFIX_TOKENS:
-        return True  # case_number, record_id, visit_no, stay_id, claim_id
-    return all(t in config.ESTIMATE_NAME_TOKENS for t in tokens)  # name, first_name, full name
-
-
-def _recognised_dimension(column: str, levels: Sequence[Any]) -> bool:
-    """A key column a public table is keyed by: named for a place, time, age, sex, race, cause,
-    measure or category, or holding places, years, age bands or sex levels."""
-    if set(_name_tokens(column)) & config.ESTIMATE_DIMENSION_TOKENS:
-        return True
-    return _recognised_values(column, levels)
-
-
-def _id_like(levels: Sequence[Any], count: int) -> bool:
-    """Most levels look like record IDs (MRN0007, 10045, P12) over enough levels."""
-    present = [str(v).strip() for v in levels if v is not None]
-    if count < config.ESTIMATE_ID_LIKE_MIN_LEVELS or not present:
-        return False
-    if all(v.isdigit() and int(v) <= config.ESTIMATE_SMALL_CODE_MAX for v in present):
-        return False  # week 1-53, month 1-12, single years of age: small numbers, not record IDs
-    return sum(bool(_ID_LIKE_VALUE.match(v)) for v in present) * 5 >= len(present) * 4
-
-
-def _year_value(level: Any) -> bool:
-    """A year (1800-2200) or a season ("2022-23"), by value, whatever the column is called."""
-    text = str(level).strip()
-    if text.isdigit():
-        return 1800 <= int(text) <= 2200
-    return bool(re.fullmatch(r"(18|19|20|21)\d\d\s*[-–/]\s*(\d\d|\d{4})", text))
-
-
-def _recognised_values(column: str, levels: Sequence[Any]) -> bool:
-    """The levels themselves are places, years, dates, sexes or age bands."""
-    present = [level for level in levels if level is not None]
-    if not present:
-        return False
-    if _mostly_places(present, column) or all(_year_value(v) for v in present):
-        return True
-    if all(_DATE_LIKE.match(str(v)) for v in present):
-        return True
-    if all(isinstance(v, str) and v.strip().casefold() in _SEX_WORDS for v in present):
-        return True
-    return sum(_age_band(v) is not None for v in present) * 2 >= len(present)
-
-
-_DATE_LIKE: Final = re.compile(r"^\d{4}[-/]\d{1,2}([-/]\d{1,2})?")
-
-
-def _is_time(column: str, levels: Sequence[Any]) -> bool:
-    """A key column for time: years, or named for a date, month, week, quarter or period, or
-    holding dates ("2024-01")."""
-    if _is_year(column, levels) or set(_name_tokens(column)) & config.ESTIMATE_TIME_TOKENS:
-        return True
-    present = [str(v) for v in levels if v is not None]
-    return bool(present) and all(_DATE_LIKE.match(v) for v in present)
-
-
-def _looks_like_people(column: str, count: int, listed: Sequence[Any], timed: bool) -> bool:
-    """A key column that is not a recognised dimension and looks like it identifies people or
-    records: many levels, ID-like values (MRN0007, 10045, P12), free text, or more than a few
-    levels repeated across a time dimension (visits)."""
-    if count > config.ESTIMATE_UNRECOGNISED_MAX_LEVELS:
-        return True
-    present = [str(v) for v in listed if v is not None]
-    if present and sorted(len(v) for v in present)[len(present) // 2] > config.ESTIMATE_FREE_TEXT_LENGTH:
-        return count > config.ESTIMATE_FREE_TEXT_MIN_LEVELS
-    return timed and count > config.ESTIMATE_REPEATED_OVER_TIME_LEVELS
-
-
 def _county_states(view: Any, dimension: Dimension) -> dict[Any, Any]:
     """County-like level -> its state's level in the same dimension (empty when unknown)."""
     from clinical_analytics.contracts.geography import classify, is_geo_code_column
@@ -435,7 +344,9 @@ def _mostly_places(levels: Sequence[Any], column: str) -> bool:
 
 def _mostly_states(levels: Sequence[Any], column: str) -> bool:
     present = [level for level in levels if level is not None]
-    return len(present) >= 2 and sum(_place_kind(level, column) == "state" for level in present) * 2 >= len(present)
+    # States, territories and regions (census or HHS): one row each is an aggregate table.
+    kinds = ("state", "territory", "region")
+    return len(present) >= 2 and sum(_place_kind(level, column) in kinds for level in present) * 2 >= len(present)
 
 
 def _is_dimension_name(column: str) -> bool:
@@ -451,6 +362,70 @@ def _is_year(column: str, levels: Sequence[Any]) -> bool:
         and len(numbers) == len([v for v in levels if v is not None])
         and all(1800 <= n <= 2200 for n in numbers)
     )
+
+
+def _public_shape_problem(
+    view: Any,
+    schema: Any,
+    key: Sequence[str],
+    listed_by: Mapping[str, list[Any]],
+    levels: Mapping[str, int],
+    candidates: Sequence[str],
+    aliases: Mapping[str, list[str]],
+    numeric: set[str],
+    pairs: Mapping[str, tuple[str, str]],
+    values: Sequence[ValueColumn],
+    metric_levels: Mapping[str, Mapping[Any, str]],
+) -> str | None:
+    """Which allowlist rule a table breaks (``core/public_shape.py``), or None when it is shaped like
+    a public estimate table. Fail closed: a key too large to list is never recognised."""
+    from clinical_analytics.core import public_shape
+
+    def distinct(column: str) -> list[Any]:
+        if levels.get(column, 0) > config.ESTIMATE_MAX_LISTED_LEVELS:
+            return []
+        found: list[Any] = view.select(column).distinct().to_polars().get_column(column).to_list()
+        return found
+
+    kinds_seen: list[frozenset[str]] = []
+    has_label = False
+    for column in key:
+        verdict = public_shape.key_column(column, listed_by[column], {a: distinct(a) for a in aliases.get(column, [])})
+        if not verdict.ok:
+            return "key_not_a_public_dimension"
+        kinds_seen.append(verdict.kinds)
+        has_label = has_label or verdict.label
+    time_keys = sum("time" in kinds and not (kinds - {"time", "total"}) for kinds in kinds_seen)
+    if time_keys > 1:
+        return "two_time_keys"  # a year beside a visit month: an ID shaped like years, not a public grid
+    all_kinds = frozenset().union(*kinds_seen) if kinds_seen else frozenset()
+    if has_label:
+        rated = any(v.kind == "rate" for v in values) or any(
+            kind == "rate" for levels_ in metric_levels.values() for kind in levels_.values()
+        )
+        if not (all_kinds & {"place", "time"} and (pairs or rated or "total" in all_kinds)):
+            return "label_key_without_place_time_and_estimate"
+    if not all_kinds & {"place", "time"} and not pairs and "total" not in all_kinds:
+        # Demographics only (sex x age band x race), no interval and no total row: a patient file
+        # with one row per person in each cell is shaped the same, so it is not opened here.
+        return "demographics_only_without_interval_or_total"
+    alias_of = {a: k for k, names in aliases.items() for a in names}
+    for column in candidates:
+        if column in key:
+            continue
+        # A code column for an accepted key column (GBD location_id, CDC stratificationid1): an alias
+        # of one, a one-value column, or fixed by one key column. A per-row MRN is none of these.
+        id_alias = public_shape.id_named(column) and (
+            column in alias_of
+            or levels.get(column) == 1
+            or any(_distinct_rows(view, [k, column]) == _distinct_rows(view, [k]) for k in key)
+        )
+        if public_shape.other_column_problem(column, distinct(column), is_numeric=False, id_alias=id_alias):
+            return "other_column_reveals_people"
+    for column in numeric:
+        if column not in candidates and public_shape.other_column_problem(column, [], is_numeric=True, id_alias=False):
+            return "numeric_patient_id"
+    return None
 
 
 def _distinct_rows(view: Any, columns: Sequence[str]) -> int:
@@ -472,8 +447,6 @@ def detect_estimate_table(view: Any, rows: int, skip: Sequence[str] = ()) -> Est
         return None
     schema = view.schema()
     columns = [c for c in view.columns if c not in skip and c not in APP_ADDED_COLUMNS]
-    if any(is_patient_key_name(c) for c in columns if not schema[c].is_floating()):
-        return None  # a column named as a person or encounter ID: patient data, never estimates
     numeric = {c for c in columns if schema[c].is_numeric() and not schema[c].is_boolean()}
     pairs = _bound_pairs(columns, numeric)
     bound_columns = {c for pair in pairs.values() for c in pair}
@@ -554,31 +527,12 @@ def detect_estimate_table(view: Any, rows: int, skip: Sequence[str] = ()) -> Est
     # exception: it has at most 51 levels, and one row per state is an aggregate table.
     if any(levels[c] * 2 > rows and not _mostly_states(listed_by[c], c) for c in key):
         return None
-    # Structural guard (fail closed): a key column that is not a recognised public dimension and
-    # looks like it identifies people or records makes this patient-level data, whatever it was
-    # declared. Its values are never listed anywhere.
-    timed = any(_is_time(c, listed_by[c]) for c in key)
-    for column in key:
-        listed = listed_by[column]
-        # ID-like values refuse whatever the column is called ("location" holding MRN0007): only
-        # values that are themselves places, years, dates or age bands vouch for a column.
-        id_like = not _recognised_values(column, listed) and _id_like(listed, levels[column])
-        if id_like or (
-            not _recognised_dimension(column, listed) and _looks_like_people(column, levels[column], listed, timed)
-        ):
-            logger.info("estimate_table_refused_people_like_key", key_columns=len(key))
-            return None
-    # Rows that are single people described only by categories (sex x age group x race x county,
-    # no ID column) look like a grid too. Public tables carry a time column, intervals or a total;
-    # three or more key columns with none of them is treated as patient data (fail closed).
-    any_time = timed  # a key that varies over time; a one-value year column proves nothing
-    any_total = any(
-        level is not None and str(level).strip().casefold() in config.ESTIMATE_TOTAL_LEVELS
-        for column in key
-        for level in listed_by[column]
+    problem = _public_shape_problem(
+        view, schema, key, listed_by, levels, candidates, aliases, numeric, pairs, values, metric_levels
     )
-    if len(key) >= 3 and not any_time and not pairs and not any_total:
-        logger.info("estimate_table_refused_categories_only", key_columns=len(key))
+    if problem is not None:
+        # Never a value in the log: only which rule refused it.
+        logger.info("estimate_table_refused_not_public_shape", rule=problem, key_columns=len(key))
         return None
     dimensions = []
     for column in key:
@@ -1141,13 +1095,39 @@ def _ranks_subareas(
         and any(w in _SUBAREA_WORDS for w in words)
         and bool(_RANK_WORDS.search(question))
         and any(isinstance(v, str) and config.ESTIMATE_SUBAREA_NAME.search(v) for v in dimension.values)
-        # Counties of one state only, or counties known to nest under their state: otherwise a
-        # national county file would rank every state's counties under "Colorado".
-        and (
-            sum(_place_kind(v, dimension.name) == "state" for v in dimension.parents) <= 1
-            or bool(table.nesting.get(dimension.name))
-        )
+        # Counties of one state only, or every county known to nest under its state: otherwise a
+        # national county file would rank every state's counties under "Colorado", or leave out
+        # the counties whose state is not known (a partial ranking read as the whole state's).
+        and _nesting_complete(dimension, table)
     )
+
+
+def _subareas(dimension: Dimension) -> list[Any]:
+    return [v for v in dimension.values if isinstance(v, str) and config.ESTIMATE_SUBAREA_NAME.search(v.split(",")[0])]
+
+
+def _nesting_complete(dimension: Dimension, table: EstimateTable) -> bool:
+    """Every county-like level's state is known, or the dimension holds one state at most."""
+    if sum(_place_kind(v, dimension.name) == "state" for v in dimension.parents) <= 1:
+        return True
+    nested = table.nesting.get(dimension.name, {})
+    return all(level in nested for level in _subareas(dimension))
+
+
+def subarea_ranking_refusal(table: EstimateTable, question: str, name: str) -> str | None:
+    """The refusal for "Which Texas county ..." on a file of several states' counties whose
+    counties are not all known to nest under their state, or None. Ranking only the counties
+    whose state is known would read as the whole state's ranking; ranking all would mix states."""
+    words = _words(question)
+    if not _RANK_WORDS.search(question) or not any(w in _SUBAREA_WORDS for w in words):
+        return None
+    for dimension in table.dimensions:
+        if dimension.yearlike or not _subareas(dimension):
+            continue
+        named = _named_levels(dimension, words)
+        if named and all(level in dimension.parents for level in named) and not _nesting_complete(dimension, table):
+            return config.ESTIMATE_SUBAREA_NESTING_UNKNOWN.format(source=name, column=dimension.name)
+    return None
 
 
 def grounded_words(table: EstimateTable, question: str) -> str:

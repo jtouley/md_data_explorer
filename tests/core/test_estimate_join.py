@@ -909,8 +909,11 @@ class TestPatientFileGuard:
         # Assert
         assert table is not None
 
-    def test_detectFrame_onePatientPerRowByCategoriesOnly_neverEstimates(self):
-        # Arrange: no ID column; each row is one patient, unique by sex x age group x race x county
+    def test_detectFrame_patientRowsShapedLikePublicTable_acceptedResidualRisk(self):
+        # Arrange: no ID column; each row is one patient, unique by sex x age group x race x county,
+        # with a rate. This is indistinguishable from a public county table by its structure: the
+        # documented residual risk (ADR014 §7). The exact declaration value is the safeguard; an
+        # undeclared upload of the same file never reaches the estimates path.
         import itertools
 
         combos = list(itertools.product(("F", "M"), ("18-44", "45-64", "65+"), ("Black", "White", "Asian"),
@@ -929,7 +932,7 @@ class TestPatientFileGuard:
         table = detect_frame(frame)
 
         # Assert
-        assert table is None
+        assert table is not None
 
     @pytest.mark.parametrize(
         "shape",
@@ -1021,3 +1024,139 @@ class TestVerificationReviewWrongAnswers:
 
         # Act / Assert
         assert ej.standardization_by_source([gbd, wonder], question) == expected
+
+
+def _monthly() -> ej.SourceInput:
+    """A synthetic monthly table: ten states x twelve months of 2023 (made-up rates)."""
+    rows = [
+        {"State": s.name, "Month": f"2023-{m:02d}", "Rate per 100000": float(m * 10 + i)}
+        for i, s in enumerate(STATES[:10])
+        for m in range(1, 13)
+    ]
+    return _source(pl.DataFrame(rows), "monthly")
+
+
+class TestAllowlistRoundJoins:
+    """Round 4: months are not seasons, "respectively" binds in order, Georgia stays a state."""
+
+    def test_roleOf_monthLevels_monthNotSeason(self):
+        # Arrange
+        table = _monthly().table
+        assert table is not None
+
+        # Act
+        role = ej.role_of(table.dimension("Month"))
+
+        # Assert
+        assert role == "month"
+
+    def test_answer_yearOnMonthlyTable_heldAllMonthsOrOneNeverDecember(self):
+        # Act
+        result = ej.answer([_monthly()], "Rate in Alaska in 2023")
+
+        # Assert
+        assert result.status == "held"
+        [option] = result.options
+        assert option.column == "Month"
+        assert option.default == ej.ALL_MONTHS_CHOICE
+        assert option.levels == (ej.ALL_MONTHS_CHOICE, *(f"2023-{m:02d}" for m in range(1, 13)))
+
+    def test_answer_allMonthsConfirmed_eachMonthShown(self):
+        # Arrange
+        source = _monthly()
+        oracle = source.frame.filter(pl.col("State") == "Alaska").sort("Month")
+
+        # Act
+        result = ej.answer([source], "Rate in Alaska in 2023", {"monthly": {"Month": ej.ALL_MONTHS_CHOICE}})
+
+        # Assert
+        assert result.status == "answered", result.message
+        shown = [r["monthly: Rate per 100000"] for r in sorted(result.table["rows"], key=lambda r: r["month"])]
+        assert shown == oracle.get_column("Rate per 100000").to_list()
+
+    def test_answer_namedMonth_thatMonthOnly(self):
+        # Arrange
+        source = _monthly()
+        oracle = source.frame.filter((pl.col("State") == "Alaska") & (pl.col("Month") == "2023-03"))
+
+        # Act
+        result = ej.answer([source], "Rate in Alaska in 2023-03")
+
+        # Assert
+        assert result.status == "answered", result.message
+        assert [r["monthly: Rate per 100000"] for r in result.table["rows"]] == [
+            oracle.get_column("Rate per 100000").item()
+        ]
+
+    @pytest.mark.parametrize(
+        ("question", "expected"),
+        [
+            ("GBD and WONDER, age-standardized and crude respectively", {"GBD": "age-standardized", "WONDER": "crude"}),
+            ("WONDER and GBD, crude and age-adjusted respectively", {"WONDER": "crude", "GBD": "age-standardized"}),
+            ("GBD and WONDER, age-standardized respectively", {"GBD": None, "WONDER": None}),
+        ],
+    )
+    def test_standardizationBySource_respectively_boundInOrder(self, question, expected):
+        # Arrange
+        sources = [
+            ej.SourceInput(dataset_id=n, name=n, frame=pl.DataFrame(), table=None, declared=True)
+            for n in ("WONDER", "GBD")
+        ]
+
+        # Act
+        chosen = ej.standardization_by_source(sources, question)
+
+        # Assert
+        assert chosen == expected
+
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            ["Puerto Rico", "Guam", "Virgin Islands, U.S."],
+            ["Puerto Rico", "Virgin Islands of the U.S."],
+            ["Northeast", "Midwest", "South", "West"],
+            ["HHS Region 1", "HHS Region 2"],
+            ["Unknown", "Other", "Total"],
+        ],
+    )
+    def test_answer_usTableWithRegionsOrPlaceholders_georgiaKept(self, extra):
+        # Arrange
+        places = [s.name for s in STATES] + extra
+        rows = [
+            {"Indicator": "Primary and Secondary Syphilis", "Year": y, "Geography": p, "Rate per 100000": 10.0 + i / 10}
+            for i, p in enumerate(places)
+            for y in (2022, 2023)
+        ]
+        source = _source(pl.DataFrame(rows), "atlas")
+
+        # Act
+        result = ej.answer([source], "Rank states by syphilis rate in 2023", {"atlas": {}})
+        if result.status == "held":
+            result = ej.answer([source], "Rank states by syphilis rate in 2023", _held_defaults(result))
+
+        # Assert
+        assert result.status == "answered", result.message
+        assert "Georgia" in {r["state"] for r in result.table["rows"]}
+
+    def test_answer_tableListingCountries_georgiaLeftOut(self):
+        # Arrange
+        places = [s.name for s in STATES] + ["Armenia", "Azerbaijan"]
+        rows = [{"Year": 2023, "Geography": p, "Rate per 100000": 10.0 + i / 10} for i, p in enumerate(places)]
+        rows += [{"Year": 2022, "Geography": p, "Rate per 100000": 9.0 + i / 10} for i, p in enumerate(places)]
+        source = _source(pl.DataFrame(rows), "mixed")
+
+        # Act
+        result = ej.answer([source], "Rank states by rate in 2023")
+
+        # Assert
+        assert result.status == "answered", result.message
+        assert "Georgia" not in {r["state"] for r in result.table["rows"]}
+        assert any("Georgia was left out" in n for n in result.notes)
+
+
+def _held_defaults(result: ej.JoinAnswer) -> dict[str, dict[str, object]]:
+    """The defaults a held answer offers, as the choices a reader would confirm."""
+    chosen: dict[str, dict[str, object]] = {}
+    for option in result.options:
+        chosen.setdefault(option.dataset_id, {})[option.column] = option.default
+    return chosen

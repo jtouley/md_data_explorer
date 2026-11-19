@@ -23,7 +23,7 @@ import re
 from dataclasses import dataclass
 from typing import Final, Literal, TypeAlias
 
-GeoKind: TypeAlias = Literal["state", "nation", "substate", "territory", "unknown"]
+GeoKind: TypeAlias = Literal["state", "nation", "substate", "territory", "region", "country", "other", "unknown"]
 
 
 @dataclass(frozen=True)
@@ -99,8 +99,65 @@ _TERRITORY_KEYS: Final = frozenset(
     {t.fips for t in TERRITORIES}
     | {t.usps.casefold() for t in TERRITORIES}
     | {t.name.casefold() for t in TERRITORIES}
-    | {"virgin islands", "us virgin islands", "commonwealth of the northern mariana islands"}
+    | {
+        "virgin islands",
+        "us virgin islands",
+        "u.s. virgin islands",
+        "virgin islands, u.s.",
+        "virgin islands of the u.s.",
+        "virgin islands of the united states",
+        "united states virgin islands",
+        "commonwealth of the northern mariana islands",
+        "northern mariana islands",
+    }
 )
+# Census regions and divisions, HHS regions: groups of states, never countries.
+_REGIONS: Final = frozenset(
+    {
+        "northeast", "midwest", "south", "west", "north central",
+        "new england", "middle atlantic", "mid-atlantic", "east north central", "west north central",
+        "south atlantic", "east south central", "west south central", "mountain", "pacific",
+    }
+)  # fmt: skip
+_HHS_REGION: Final = re.compile(r"^(hhs\s+)?region\s*(10|[1-9])(\s*[-–:(].*)?$", re.IGNORECASE)
+# Labels that sit beside places in public tables and are neither a place nor a country.
+OTHER_PLACE_LABELS: Final = frozenset(
+    {"unknown", "other", "total", "all", "overall", "not stated", "missing", "entire network", "all states", "none"}
+)
+# Countries and areas as GBD and WHO name them (lowercase). A table listing any of these is
+# international, which makes a state name that is also a country's ("Georgia") ambiguous.
+COUNTRIES: Final = frozenset(
+    {
+        "afghanistan", "albania", "algeria", "andorra", "angola", "antigua and barbuda", "argentina", "armenia",
+        "australia", "austria", "azerbaijan", "bahamas", "bahrain", "bangladesh", "barbados", "belarus", "belgium",
+        "belize", "benin", "bhutan", "bolivia", "bolivia (plurinational state of)", "bosnia and herzegovina",
+        "botswana", "brazil", "brunei darussalam", "bulgaria", "burkina faso", "burundi", "cabo verde", "cambodia",
+        "cameroon", "canada", "central african republic", "chad", "chile", "china", "colombia", "comoros", "congo",
+        "costa rica", "cote d'ivoire", "côte d'ivoire", "croatia", "cuba", "cyprus", "czechia", "czech republic",
+        "democratic people's republic of korea", "democratic republic of the congo", "denmark", "djibouti",
+        "dominica", "dominican republic", "ecuador", "egypt", "el salvador", "equatorial guinea", "eritrea",
+        "estonia", "eswatini", "ethiopia", "fiji", "finland", "france", "gabon", "gambia", "germany", "ghana",
+        "greece", "grenada", "guatemala", "guinea", "guinea-bissau", "guyana", "haiti", "honduras", "hungary",
+        "iceland", "india", "indonesia", "iran", "iran (islamic republic of)", "iraq", "ireland", "israel", "italy",
+        "jamaica", "japan", "jordan", "kazakhstan", "kenya", "kiribati", "kuwait", "kyrgyzstan",
+        "lao people's democratic republic", "latvia", "lebanon", "lesotho", "liberia", "libya", "lithuania",
+        "luxembourg", "madagascar", "malawi", "malaysia", "maldives", "mali", "malta", "marshall islands",
+        "mauritania", "mauritius", "mexico", "micronesia (federated states of)", "monaco", "mongolia", "montenegro",
+        "morocco", "mozambique", "myanmar", "namibia", "nauru", "nepal", "netherlands", "new zealand", "nicaragua",
+        "niger", "nigeria", "north macedonia", "norway", "oman", "pakistan", "palau", "palestine", "panama",
+        "papua new guinea", "paraguay", "peru", "philippines", "poland", "portugal", "qatar", "republic of korea",
+        "republic of moldova", "romania", "russian federation", "russia", "rwanda", "saint kitts and nevis",
+        "saint lucia", "saint vincent and the grenadines", "samoa", "san marino", "sao tome and principe",
+        "saudi arabia", "senegal", "serbia", "seychelles", "sierra leone", "singapore", "slovakia", "slovenia",
+        "solomon islands", "somalia", "south africa", "south sudan", "spain", "sri lanka", "sudan", "suriname",
+        "sweden", "switzerland", "syrian arab republic", "syria", "taiwan", "tajikistan", "thailand", "timor-leste",
+        "togo", "tonga", "trinidad and tobago", "tunisia", "turkey", "türkiye", "turkmenistan", "tuvalu", "uganda",
+        "ukraine", "united arab emirates", "united kingdom", "united republic of tanzania", "tanzania",
+        "united states of america", "uruguay", "uzbekistan", "vanuatu", "venezuela",
+        "venezuela (bolivarian republic of)", "viet nam", "vietnam", "yemen", "zambia", "zimbabwe", "greenland",
+        "bermuda", "cook islands", "niue", "tokelau",
+    }
+)  # fmt: skip
 _BY_FIPS: Final = {s.fips: s for s in STATES}
 _BY_USPS: Final = {s.usps.casefold(): s for s in STATES}
 _BY_NAME: Final = {s.name.casefold(): s for s in STATES} | {
@@ -187,6 +244,12 @@ def classify(level: object, codes: bool = False) -> Place:
     folded = _STATE_SUFFIX.sub("", text).strip().casefold()
     if folded in _TERRITORY_KEYS and (codes or not folded.isdigit()):
         return Place("territory")
+    if folded in _REGIONS or _HHS_REGION.match(folded):
+        return Place("region")
+    if folded in OTHER_PLACE_LABELS:
+        return Place("other")
+    if folded in COUNTRIES and folded not in _BY_NAME and folded not in NATION_LEVELS:
+        return Place("country")
     if folded in NATION_LEVELS:
         return Place("nation")
     if folded in _BY_NAME:

@@ -52,7 +52,7 @@ class TestDetection:
         # Arrange: country x year, with _lo/_hi bounds and a region that depends on the country
         frame = pl.DataFrame(
             {
-                "country": ["A", "A", "B", "B", "C", "C"],
+                "country": ["Kenya", "Kenya", "Peru", "Peru", "Chile", "Chile"],
                 "iso3": ["AAA", "AAA", "BBB", "BBB", "CCC", "CCC"],
                 "g_whoregion": ["AFR", "AFR", "AFR", "AFR", "EUR", "EUR"],
                 "year": [2023, 2024, 2023, 2024, 2023, 2024],
@@ -367,12 +367,12 @@ class TestNullKeysAndDuplicates:
         # Arrange: a key column with an empty level is two levels, not one (RESP-NET "Rate Type")
         frame = pl.DataFrame(
             {
-                "State": ["A", "A", "B", "B"],
+                "State": ["Ohio", "Ohio", "Iowa", "Iowa"],
                 "Rate Type": ["Observed", None, "Observed", None],
                 "Rate": [1.0, 2.0, 3.0, 4.0],
             }
         )
-        plan = QueryPlan(intent="DESCRIBE", metric="Rate", filters=[FilterSpec("State", "==", "A")])
+        plan = QueryPlan(intent="DESCRIBE", metric="Rate", filters=[FilterSpec("State", "==", "Ohio")])
 
         # Act
         check = _check(frame, plan)
@@ -517,3 +517,58 @@ class TestReviewRegressions:
         kept = [f.value for f in grounded.filters if f.column == "location_name"]
         assert grounded.group_by == "location_name"
         assert kept == [["Place01 County", "Place02 County", "Place03 County"]]
+
+
+class TestPartialCountyNesting:
+    """Round 4 item 6: "Which Texas county" ranks Texas's counties only when every county's
+    state is known; otherwise it is refused, never a partial or mixed ranking."""
+
+    @staticmethod
+    def _two_states(make_estimate_frame, unknown_fips: int | None) -> estimates.EstimateTable:
+        colorado = make_estimate_frame(state="Colorado")
+        texas = (
+            make_estimate_frame(state="Texas")
+            .with_columns(
+                pl.col("location_name").str.replace(r"^Place", "TexPlace"), (pl.col("FIPS") + 40000).alias("FIPS")
+            )
+            .with_columns(pl.when(pl.col("FIPS") == 40008).then(48).otherwise(pl.col("FIPS")).alias("FIPS"))
+        )
+        if unknown_fips is not None:  # one Texas county whose code names no state in the file
+            texas = texas.with_columns(
+                pl.when(pl.col("location_name") == "TexPlace02 County")
+                .then(unknown_fips)
+                .otherwise(pl.col("FIPS"))
+                .alias("FIPS")
+            )
+        table = _detect(pl.concat([colorado, texas]).with_columns(pl.col("FIPS").alias("location_id")))
+        assert table is not None
+        return table
+
+    def test_subareaRankingRefusal_partialNesting_refused(self, make_estimate_frame):
+        # Arrange
+        table = self._two_states(make_estimate_frame, unknown_fips=99002)
+        question = "Which Texas county had the highest mx in 2014?"
+        plan = QueryPlan(intent="DESCRIBE", filters=[FilterSpec("location_name", "==", "Texas")])
+
+        # Act
+        refusal = estimates.subarea_ranking_refusal(table, question, "This file")
+        grounded = estimates.ground_plan(plan, table, question)
+
+        # Assert
+        assert refusal is not None and "state of some counties is not known" in refusal
+        assert grounded.group_by != "location_name"
+
+    def test_subareaRankingRefusal_completeNesting_rankedNoRefusal(self, make_estimate_frame):
+        # Arrange
+        table = self._two_states(make_estimate_frame, unknown_fips=None)
+        question = "Which Texas county had the highest mx in 2014?"
+        plan = QueryPlan(intent="DESCRIBE", filters=[FilterSpec("location_name", "==", "Texas")])
+
+        # Act
+        refusal = estimates.subarea_ranking_refusal(table, question, "This file")
+        grounded = estimates.ground_plan(plan, table, question)
+
+        # Assert
+        kept = [f.value for f in grounded.filters if f.column == "location_name"]
+        assert refusal is None
+        assert kept == [["TexPlace01 County", "TexPlace02 County", "TexPlace03 County"]]

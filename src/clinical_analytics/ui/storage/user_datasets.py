@@ -24,6 +24,7 @@ Uploads made before this layout (``{id}.csv``) are converted to it on first load
 (``UserDatasetStorage.stored_dataset``).
 """
 
+import functools
 import hashlib
 import io
 import json
@@ -187,7 +188,7 @@ def normalize_upload_to_table_list(
     # Detect upload type from file extension
     if filename.endswith(".zip"):
         # Multi-table: extract from ZIP
-        tables = extract_zip_tables(file_bytes)
+        tables = extract_zip_tables(file_bytes, declared=_declared(metadata))
 
         # Extract documentation files from ZIP (Phase 1: ADR004)
         from io import BytesIO
@@ -196,9 +197,9 @@ def normalize_upload_to_table_list(
         logger.info(f"Extracted {len(doc_files)} documentation files from ZIP")
     else:
         # Single-file: wrap in list (becomes multi-table with 1 table)
-        # A declared public table's own suppression markers ("<10", "(D)", "*") are read as such.
-        public = bool(metadata and metadata.get("population_estimates") is True)
-        staged = load_single_file_staged(file_bytes, filename, public=public)
+        staged = stage_declared(
+            lambda public: load_single_file_staged(file_bytes, filename, public=public), _declared(metadata)
+        )
         table_name = Path(filename).stem  # Use original filename stem
         tables = [
             {
@@ -288,7 +289,47 @@ def extract_documentation_files(zip_file: Any) -> list[Any]:
         return []
 
 
-def extract_zip_tables(file_bytes: bytes) -> list[dict[str, Any]]:
+def _declared(metadata: dict[str, Any] | None) -> bool:
+    return bool(metadata and metadata.get("population_estimates") is True)
+
+
+def _read_csv_staged(content: bytes, public: bool) -> StagedTable:
+    return read_csv_typed(content, public=public)
+
+
+def stage_declared(stage: Callable[[bool], StagedTable], declared: bool) -> StagedTable:
+    """Stage a table; for an upload declared public estimates, read the source's own markers ("<10",
+    "(D)", "*") as suppression only once the table is accepted as public (ADR014 §7).
+
+    Order: stage without the public markers; run detection and the public-shape guard on that
+    (columns that only the markers would turn into numbers read as those numbers, unflagged); then
+    check the table staged with the markers too. A declared file that is refused stays exactly as an undeclared
+    one would be staged: a patient file's "<5" stays text.
+    """
+    from clinical_analytics.contracts.config import SUPPRESSED_FLAG_SUFFIX
+    from clinical_analytics.core.estimates import detect_frame
+
+    plain = stage(False)
+    if not declared:
+        return plain
+    public = stage(True)
+    marked = [
+        c
+        for c in plain.data.columns
+        if plain.data.schema[c] == pl.String
+        and f"{c}{SUPPRESSED_FLAG_SUFFIX}" in public.data.columns
+        and f"{c}{SUPPRESSED_FLAG_SUFFIX}" not in plain.data.columns
+    ]
+    # The marked columns read as the numbers they hold (a marker is a missing value here, with no
+    # suppression flag yet): they are values, never keys, and nothing else differs from ``plain``.
+    unflagged = plain.data.with_columns(public.data.get_column(c) for c in marked)
+    if detect_frame(unflagged) is None or detect_frame(public.data) is None:
+        logger.info("declared_table_staged_as_undeclared", marked_columns=len(marked))
+        return plain
+    return public
+
+
+def extract_zip_tables(file_bytes: bytes, declared: bool = False) -> list[dict[str, Any]]:
     """
     Extract tables from ZIP archive.
 
@@ -347,7 +388,7 @@ def extract_zip_tables(file_bytes: bytes) -> list[dict[str, Any]]:
 
                 # Typed over the whole file, column by column (storage.staging); no all-text fallback.
                 try:
-                    staged = read_csv_typed(csv_content)
+                    staged = stage_declared(functools.partial(_read_csv_staged, csv_content), declared)
                 except StagingError as e:
                     raise UploadError(f"Table '{name}': {e}") from e
                 df = staged.data

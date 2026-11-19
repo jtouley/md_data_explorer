@@ -382,8 +382,6 @@ ESTIMATE_RATE_NAME: Final = re.compile(
     r"(^|_)(rate|rates|ratio|sir|pct|percent|percentage|prevalence|proportion|coverage|mx|"
     r"per_?\d+k?|\d+k)($|_)"
 )
-# A value column named for a count: values of 1-10 stay hidden even on a declared dataset.
-ESTIMATE_COUNT_NAME: Final = re.compile(r"(^|_)(deaths?|count|counts|cases|number|num|n|notified|events)($|_)")
 # Integer columns that key rows rather than measure (year, codes, FIPS); other integers are values.
 ESTIMATE_KEY_NAME: Final = re.compile(
     r"year|season|(^|_)(yr|id|code|fips|iso|iso\d|numeric|week|month|level)($|_)"
@@ -431,6 +429,11 @@ ESTIMATE_COUNT_LEVELS: Final = frozenset({"number", "count", "counts", "cases", 
 ESTIMATE_RATE_LEVEL: Final = re.compile(
     r"(^|_)(rate|rates|percent|percentage|pct|prevalence|proportion|ratio|coverage|per)($|_)"
 )
+ESTIMATE_SUBAREA_NESTING_UNKNOWN: Final = (
+    "{source} has counties of several states in {column}, and the state of some counties is not known "
+    "(no county FIPS code or 'County, ST' name). A ranking of one state's counties could leave some out "
+    "or mix in another state's, so it is not answered. Add a state column or county FIPS codes."
+)
 ESTIMATE_SUBAREA_NAME: Final = re.compile(r"\b(county|parish|borough|census area|municipality)\s*$", re.IGNORECASE)
 # ---- Patient-level files can never pass as public estimates (structural guard, fail closed).
 # Name tokens of a column that identifies a person or an encounter (any one is enough).
@@ -440,34 +443,7 @@ ESTIMATE_PERSON_TOKENS: Final = frozenset(
         "encounter", "client", "ssn", "hadm", "beneficiary", "enrollee", "respondent", "guarantor",
     }
 )  # fmt: skip
-# Record words that identify a row when paired with an ID word: case_number, record_id, visit_no.
-ESTIMATE_RECORD_TOKENS: Final = frozenset({"case", "record", "visit", "stay", "admission", "claim", "episode", "chart"})
-ESTIMATE_ID_SUFFIX_TOKENS: Final = frozenset({"id", "no", "nbr", "num", "number", "key", "code"})
-# A column whose every token is one of these names a person ("name", "first_name", "full name").
-ESTIMATE_NAME_TOKENS: Final = frozenset({"name", "first", "last", "full", "given", "family", "surname", "middle"})
 ESTIMATE_PERSON_NAMES: Final = frozenset({"dob", "dateofbirth", "birthdate", "id", "uid", "uuid"})
-# Name tokens of the dimensions public tables are keyed by (place, time, age, sex, race, cause,
-# measure, category). A key column named for none of them, and not holding places, years, age bands
-# or sexes, is checked for looking like people (below).
-ESTIMATE_DIMENSION_TOKENS: Final = frozenset(
-    {
-        "location", "country", "state", "county", "geography", "geo", "geolocation", "area", "region",
-        "jurisdiction", "place", "fips", "iso", "city", "territory", "nation", "reporting", "residence",
-        "year", "yearstart", "yearend", "season", "week", "month", "quarter", "date", "period", "time",
-        "age", "sex", "gender", "race", "ethnicity", "ethnic", "hispanic", "cause", "disease", "condition",
-        "pathogen", "etiology", "rei", "risk", "icd", "measure", "metric", "indicator", "question", "topic",
-        "category", "type", "unit", "stratification", "stratification1", "stratification2", "group",
-        "vaccine", "dimension", "network", "response", "class", "datavaluetype", "outcome", "sector",
-        "setting", "facility", "source", "surveillance", "survey",
-    }
-)  # fmt: skip
-ESTIMATE_TIME_TOKENS: Final = frozenset({"year", "season", "week", "month", "quarter", "date", "period", "time", "day"})
-ESTIMATE_UNRECOGNISED_MAX_LEVELS: Final = 60  # an unrecognised key with more levels identifies records
-ESTIMATE_SMALL_CODE_MAX: Final = 200  # whole-number levels up to this are weeks, months or ages, not IDs
-ESTIMATE_ID_LIKE_MIN_LEVELS: Final = 10  # ID-like codes (MRN0007, 10045) over this many levels
-ESTIMATE_FREE_TEXT_LENGTH: Final = 40  # median characters of a free-text key
-ESTIMATE_FREE_TEXT_MIN_LEVELS: Final = 20
-ESTIMATE_REPEATED_OVER_TIME_LEVELS: Final = 20  # an unrecognised key repeated across years or dates
 ESTIMATE_MAX_LISTED_LEVELS: Final = 5000  # levels read to find totals; a key with more lists none
 ESTIMATE_LEVELS_IN_HOLD: Final = 6
 
@@ -718,6 +694,11 @@ ESTIMATE_JOIN_SEASON_HOLD: Final = (
     "{source} reports by flu season ({column}), which spans two calendar years. Confirm season {default} for {year}, "
     "or choose another season."
 )
+ESTIMATE_JOIN_MONTH_HOLD: Final = (
+    "{source} is a monthly table ({column}). Confirm 'all months' to see each month of the year asked, "
+    "or choose one month."
+)
+ESTIMATE_JOIN_NAME_MONTH_YEAR: Final = "{source} is a monthly table. Name a year (or a month, such as 2023-03)."
 ESTIMATE_JOIN_SEASON_TREND: Final = (
     "{source} reports by flu season ({column}), which spans two calendar years, so it can't be lined up with "
     "calendar years over a range. Ask about one year, and confirm which season goes with it."

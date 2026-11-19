@@ -459,7 +459,12 @@ class QueryService:
         # Wayne County on a table whose Wayne rows exclude Detroit is refused on every path,
         # counting rows included: those rows are not Wayne County (ADR014 §10).
         declared = declarations.population_estimates_for(dataset_version) is not None
-        wayne = estimates.out_wayne_refusal(detected, normalized_query, "This file") if detected and declared else None
+        wayne = (
+            estimates.out_wayne_refusal(detected, normalized_query, "This file")
+            or estimates.subarea_ranking_refusal(detected, normalized_query, "This file")
+            if detected and declared
+            else None
+        )
         if wayne is not None:
             return QueryResult(
                 plan=query_plan,

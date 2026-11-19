@@ -16,7 +16,7 @@ def _estimates_csv() -> bytes:
         f"{place},{sex},{year},{100 + i},{90 + i},{110 + i}"
         for i, (place, sex, year) in enumerate(
             (p, s, y)
-            for p in ("State", "A County", "B County")
+            for p in ("Colorado", "Baca County", "Otero County")
             for s in ("Both", "Male", "Female")
             for y in range(2005, 2015)
         )

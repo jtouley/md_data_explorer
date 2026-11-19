@@ -55,7 +55,7 @@ from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED
 
 logger = structlog.get_logger()
 
-Role: TypeAlias = Literal["state", "year", "season", "sex", "age"]
+Role: TypeAlias = Literal["state", "year", "season", "month", "sex", "age"]
 Analysis: TypeAlias = Literal["table", "change", "rank", "disagree", "precision"]
 Status: TypeAlias = Literal["answered", "held", "refused"]
 Standardization: TypeAlias = Literal["age-standardized", "crude", "unknown", "not a rate"]
@@ -65,6 +65,8 @@ VALUE_CHOICE: Final = "__value__"
 STANDARDIZATION_CHOICE: Final = "__standardization__"
 STANDARDIZATION_LEVELS: Final = ("age-standardized", "crude")
 
+_MONTH: Final = re.compile(r"^((18|19|20|21)\d\d)[-/](0[1-9]|1[0-2])$")
+ALL_MONTHS_CHOICE: Final = "all months"
 _SEASON: Final = re.compile(r"^\s*(\d{4})\s*[-–/]\s*(\d{2}|\d{4})\s*$")
 _YEAR: Final = re.compile(r"\b(19\d\d|20\d\d)\b")
 _SPAN: Final = re.compile(r"\b(19\d\d|20\d\d)\s*(?:-|–|—|to|through|until)\s*(19\d\d|20\d\d)\b", re.IGNORECASE)
@@ -142,6 +144,8 @@ class Asked:
     by_sex: bool
     standardization: Literal["age-standardized", "crude"] | None
     lowest_first: bool
+    months: list[str] = field(default_factory=list)  # "2023-03" named in the question
+    by_month: bool = False
 
 
 @dataclass
@@ -199,6 +203,7 @@ def read_question(question: str) -> Asked:
         years += [low, high]
         trend = trend or not _has(text, r"\b(change|changed)\b")
     years += [int(y) for y in _YEAR.findall(text)]
+    months = sorted(dict.fromkeys(f"{y}-{m}" for y, m in re.findall(r"\b((?:19|20)\d\d)[-/](0[1-9]|1[0-2])\b", text)))
     years = sorted(dict.fromkeys(years))
     sexes = [
         canonical
@@ -224,6 +229,8 @@ def read_question(question: str) -> Asked:
         by_sex=by_sex,
         standardization=standardization,
         lowest_first=estimates.lowest_first(text),
+        months=months,
+        by_month=_has(text, r"\b(by month|each month|every month|monthly|month by month)\b"),
     )
 
 
@@ -255,10 +262,18 @@ def standardization_by_source(
         for s in sources
         for m in re.finditer(rf"(?<![\w]){re.escape(s.name)}(?![\w])", text, re.IGNORECASE)
     )
+    chosen: dict[str, Literal["age-standardized", "crude"] | None] = {s.dataset_id: None for s in sources}
+    if len(sources) >= 2 and mentions and re.search(r"\brespectively\b", text, re.IGNORECASE):
+        # "GBD and WONDER, age-standardized and crude respectively": tables in the order named,
+        # phrases in the order written. Bound only when the counts match; otherwise none is bound.
+        named = list(dict.fromkeys(dataset_id for _s, _e, dataset_id in mentions))
+        if len(named) == len(phrases):
+            for dataset_id, (_s, _e, std) in zip(named, phrases, strict=True):
+                chosen[dataset_id] = std
+        return chosen
     if len(kinds) <= 1 or len(sources) < 2 or not mentions:
         shared = next(iter(kinds)) if len(kinds) == 1 else None
         return {s.dataset_id: shared for s in sources}
-    chosen: dict[str, Literal["age-standardized", "crude"] | None] = {s.dataset_id: None for s in sources}
     for start, end, std in phrases:
         after = text[end:]
         bound = next(
@@ -292,8 +307,16 @@ def _norm(name: str) -> str:
 
 
 def _season_levels(levels: Sequence[Any]) -> bool:
+    """Flu seasons ("2022-23"): consecutive years, never months ("2023-01")."""
+    from clinical_analytics.core import public_shape
+
     texts = [v for v in levels if v is not None]
-    return bool(texts) and all(isinstance(v, str) and _SEASON.match(v) for v in texts)
+    return bool(texts) and all(isinstance(v, str) and public_shape._season(v) for v in texts)
+
+
+def _month_levels(levels: Sequence[Any]) -> bool:
+    texts = [v for v in levels if v is not None]
+    return bool(texts) and all(isinstance(v, str) and _MONTH.match(v.strip()) for v in texts)
 
 
 def role_of(dimension: Dimension) -> Role | None:
@@ -301,7 +324,9 @@ def role_of(dimension: Dimension) -> Role | None:
     norm = _norm(dimension.name)
     parts = norm.split("_")
     levels = [v for v in dimension.values if v is not None]
-    if _season_levels(levels) or "season" in parts:
+    if _month_levels(levels):
+        return "month"  # "2023-01".."2023-12" is a month dimension, never a flu season
+    if _season_levels(levels) or ("season" in parts and not levels):
         return "season"
     if dimension.yearlike:
         return "year"
@@ -610,9 +635,9 @@ def _state_map(levels: Sequence[Any]) -> tuple[pl.DataFrame, dict[str, list[Any]
     rows: list[dict[str, Any]] = []
     others: dict[str, list[Any]] = {}
     # Only real foreign places make "Georgia" ambiguous: US territories (PR, GU, VI, AS, MP) don't.
-    foreign = sum(geography.classify(level, codes=True).kind == "unknown" for level in levels)
+    foreign = sum(geography.classify(level, codes=True).kind == "country" for level in levels)
     for level in levels:
-        if foreign >= 2 and str(level).strip().casefold() in geography.COUNTRY_NAMESAKES:
+        if foreign >= 1 and str(level).strip().casefold() in geography.COUNTRY_NAMESAKES:
             others.setdefault("ambiguous", []).append(level)
             continue
         place = geography.classify(level, codes=True)  # the state role is already established
@@ -682,6 +707,10 @@ def _harmonize(
         keys.append("year")
     elif season_col is not None:
         raise JoinRefusedError(config.ESTIMATE_JOIN_SEASON_TREND.format(source=source.name, column=season_col))
+    month_col = pins.roles.get("month")
+    if month_col is not None:
+        exprs.append(pl.col(month_col).cast(pl.String).str.strip_chars().alias("month"))
+        keys.append("month")
     elif "year" in pins.constants:
         exprs.append(pl.lit(int(pins.constants["year"][1]), dtype=pl.Int64).alias("year"))
         keys.append("year")
@@ -740,6 +769,11 @@ def _harmonize(
             frame = frame.filter(pl.col("year").is_between(min(asked.years), max(asked.years)))
         else:
             frame = frame.filter(pl.col("year").is_in(asked.years))
+    if "month" in keys:
+        if asked.months:
+            frame = frame.filter(pl.col("month").is_in(asked.months))
+        elif asked.years:
+            frame = frame.filter(pl.col("month").str.slice(0, 4).cast(pl.Int64, strict=False).is_in(asked.years))
     if "sex" in keys:
         if asked.sexes:
             frame = frame.filter(pl.col("sex").is_in(asked.sexes))
@@ -821,6 +855,7 @@ def _resolve_roles(source: SourceInput, pins: _Pins, asked: Asked, choices: Mapp
                         HoldOption(source.dataset_id, source.name, column, constant, (constant,)),
                     )
                 )
+    _resolve_month(source, pins, asked, choices)
     sex_col = pins.roles.get("sex")
     if sex_col is None:
         if asked.by_sex or any(s != "Both" for s in asked.sexes):
@@ -858,6 +893,38 @@ def _resolve_roles(source: SourceInput, pins: _Pins, asked: Asked, choices: Mapp
         and asked.analysis in ("table", "change")
     ):
         pins.refusals.append(config.ESTIMATE_JOIN_NAME_STATE.format(source=source.name))
+
+
+def _resolve_month(source: SourceInput, pins: _Pins, asked: Asked, choices: Mapping[str, Any]) -> None:
+    """A monthly table: a named month is used; "by month" or the confirmed "all months" shows each
+    month of the asked year; a year alone is held to ask which (never one month picked silently)."""
+    month_col = pins.roles.get("month")
+    table = source.table
+    if month_col is None or table is None:
+        return
+    dimension = table.dimension(month_col)
+    assert dimension is not None  # noqa: S101
+    available = sorted(str(v) for v in dimension.values if v is not None)
+    chosen = choices.get(month_col)
+    if asked.months:
+        return
+    if asked.by_month or chosen == ALL_MONTHS_CHOICE:
+        if not asked.years:
+            pins.refusals.append(config.ESTIMATE_JOIN_NAME_MONTH_YEAR.format(source=source.name))
+        return
+    if chosen is not None and str(chosen) in available:
+        pins.pinned[month_col] = chosen
+        return
+    in_year = [m for m in available if not asked.years or int(m[:4]) in asked.years]
+    if not in_year:
+        pins.refusals.append(config.ESTIMATE_JOIN_NAME_MONTH_YEAR.format(source=source.name))
+        return
+    pins.holds.append(
+        (
+            config.ESTIMATE_JOIN_MONTH_HOLD.format(source=source.name, column=month_col),
+            HoldOption(source.dataset_id, source.name, month_col, ALL_MONTHS_CHOICE, (ALL_MONTHS_CHOICE, *in_year)),
+        )
+    )
 
 
 def _season_end(level: Any) -> int | None:
@@ -1495,7 +1562,7 @@ def savable_choices(source: SourceInput, choices: Mapping[str, Any]) -> dict[str
     kept: dict[str, Any] = {}
     for column, value in choices.items():
         dimension = table.dimension(column)
-        if dimension is not None and role_of(dimension) in ("year", "season"):
+        if dimension is not None and role_of(dimension) in ("year", "season", "month"):
             continue
         if dimension is None and column not in (VALUE_CHOICE, STANDARDIZATION_CHOICE):
             continue  # a one-value column (a constant year) chosen for one pairing
@@ -1519,6 +1586,8 @@ def choice_problem(source: SourceInput, choices: Mapping[str, Any]) -> str | Non
             continue
         dimension = table.dimension(column)
         if dimension is not None:
+            if value == ALL_MONTHS_CHOICE and role_of(dimension) == "month":
+                continue
             if dimension.values and value not in dimension.values:
                 return f"{source.name}: {value!r} is not a value of {column}."
             continue
