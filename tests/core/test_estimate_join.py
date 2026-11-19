@@ -1414,3 +1414,74 @@ class TestRoundSixJoins:
         # Assert
         left_out = [n for n in result.notes if "left out (" in n]
         assert left_out and "Guam" in left_out[0] and "Total" not in left_out[0]
+
+
+def _monthly_ci(name: str, factor: float = 1.0) -> ej.SourceInput:
+    """Two years of monthly rates with consistent 95% CIs (made-up numbers)."""
+    rows = [
+        {
+            "State": st.name,
+            "Month": f"{y}-{m:02d}",
+            "Rate per 100000": factor * (m + i + (y - 2022) * 10),
+            "Lower 95% CI": factor * (m + i + (y - 2022) * 10 - 1),
+            "Upper 95% CI": factor * (m + i + (y - 2022) * 10 + 1),
+        }
+        for i, st in enumerate(STATES[:10])
+        for y in (2022, 2023)
+        for m in range(1, 13)
+    ]
+    return _source(pl.DataFrame(rows), name)
+
+
+class TestRoundSevenJoins:
+    def test_answer_twoMonthlyTablesSameMonth_disagreeAnswered(self):
+        # Arrange
+        sources = [_monthly_ci("MA"), _monthly_ci("MB", factor=3.0)]
+        choices = {
+            "MA": {"Month": "2023-03", ej.STANDARDIZATION_CHOICE: "crude"},
+            "MB": {"Month": "2023-03", ej.STANDARDIZATION_CHOICE: "crude"},
+        }
+
+        # Act
+        result = ej.answer(sources, "Does the MA rate disagree with MB in all states in 2023?", choices)
+
+        # Assert
+        assert result.status == "answered", result.message
+        assert not any("whole year" in n for n in result.notes)
+        assert {r["reported vs interval"] for r in result.table["rows"]} == {"above"}
+
+    def test_answer_twoMonthlyTablesSameMonth_changeComparesThatMonthEachYear(self):
+        # Arrange
+        sources = [_monthly_ci("MA"), _monthly_ci("MB", factor=3.0)]
+        choices = {"MA": {"Month": "2023-03"}, "MB": {"Month": "2023-03"}}
+        oracle = sources[0].frame.filter((pl.col("State") == "Alaska") & pl.col("Month").is_in(["2022-03", "2023-03"]))
+
+        # Act
+        result = ej.answer(sources, "How did the MA and MB rate change from 2022 to 2023 in Alaska?", choices)
+
+        # Assert
+        assert result.status == "answered", result.message
+        assert not any("whole year" in n for n in result.notes)
+        row = next(r for r in result.table["rows"] if r["table"] == "MA")
+        assert [row["2022"], row["2023"]] == oracle.sort("Month").get_column("Rate per 100000").to_list()
+
+    def test_answer_unknownAndOtherRows_namedWhenLeftOut(self):
+        # Arrange
+        places = [st.name for st in STATES] + ["Unknown", "Other", "Total"]
+        source = _source(
+            pl.DataFrame(
+                [
+                    {"Geography": p, "Year": y, "Rate per 100000": 1.0 + i}
+                    for i, p in enumerate(places)
+                    for y in (2022, 2023)
+                ]
+            ),
+            "geo",
+        )
+
+        # Act
+        result = ej.answer([source], "Rank states by rate in 2023")
+
+        # Assert
+        left_out = [n for n in result.notes if "left out (" in n]
+        assert left_out and "Unknown" in left_out[0] and "Other" in left_out[0] and "Total" not in left_out[0]

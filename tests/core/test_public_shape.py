@@ -805,3 +805,140 @@ class TestRoundSixGuard:
 
         # Assert
         assert table is not None
+
+
+class TestRoundSevenGuard:
+    """Round 7 (final follow-up): titled and particle names, event names inside a word, ICD lists
+    bounded, any-script codes, and columns too large to list are still scanned."""
+
+    @pytest.mark.parametrize(
+        "name",
+        ["Dr. Patel", "Dr Smith", "Mrs Jones", "John White", "Del Rio, Ana", "Van Buren, Martin", "Le Van Anh"],
+    )
+    def test_personName_titledOrParticleName_isName(self, name):
+        # Act
+        found = public_shape.person_name(name)
+
+        # Assert
+        assert found
+
+    @pytest.mark.parametrize(
+        "label", ["Rocky Mountain Spotted Fever", "St. Louis Encephalitis", "West Nile Virus", "Non-Hispanic White"]
+    )
+    def test_personName_diseaseOrRaceLabel_notName(self, label):
+        # Act
+        found = public_shape.person_name(label)
+
+        # Assert
+        assert not found
+
+    def test_detectFrame_attendingPhysicianTitledNames_refused(self):
+        # Arrange: probe r6b
+        names = [
+            "Dr. Patel",
+            "Dr Smith",
+            "Dr. Nguyen",
+            "Mrs Jones",
+            "John White",
+            "Del Rio, Ana",
+            "Van Buren, Martin",
+            "Le Van Anh",
+        ]
+        frame = pl.DataFrame(
+            [
+                {"State": s, "Year": y, "Rate per 100000": 10.0 + i, "Attending Physician": names[i]}
+                for i, s in enumerate(_TEN_STATES[:6] + ["Nevada", "Oregon"])
+                for y in range(2016, 2024)
+            ]
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is None
+
+    @pytest.mark.parametrize("column", ["birthyear", "dobyear", "admityear", "yob", "BirthYear"])
+    def test_detectFrame_eventNameInsideWord_neverTimeKey(self, column):
+        # Arrange
+        frame = pl.DataFrame(
+            [
+                {"County": c, "Sex": s, column: by, "bmi_rate": 20.0 + by % 7}
+                for c in ("Alcona County, MI", "Alger County, MI", "Allegan County, MI")
+                for s in ("Female", "Male")
+                for by in range(1950, 1960)
+            ]
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is None
+
+    def test_detectFrame_wonderCausesWithAssault_accepted(self):
+        # Arrange
+        causes = [
+            "#Tuberculosis (A16-A19)",
+            "#Assault (homicide) (*U01-*U02,X85-Y09,Y87.1)",
+            "#Diabetes mellitus (E10-E14)",
+        ]
+        frame = pl.DataFrame(
+            [
+                {"State": s, "Year": y, "ICD-10 113 Cause List": c, "Crude Rate": 3.0 + i}
+                for s in _TEN_STATES
+                for y in (2022, 2023)
+                for i, c in enumerate(causes)
+            ]
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is not None
+
+    @pytest.mark.parametrize("disease", ["Rocky Mountain Spotted Fever", "St. Louis Encephalitis"])
+    def test_detectFrame_diseaseLabelThatLooksTitled_accepted(self, disease):
+        # Arrange
+        frame = pl.DataFrame(
+            [
+                {"State": s, "Year": y, "Disease": d, "Rate per 100000": 1.0 + i}
+                for i, s in enumerate(_TEN_STATES)
+                for y in range(2016, 2024)
+                for d in (disease, "Lyme disease")
+            ]
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is not None
+
+    @pytest.mark.parametrize("value", ["Smith (B12)", "É12", "Étienne7"])
+    def test_labelsOk_boundedIcdOrNonAsciiCode_refused(self, value):
+        # Act
+        ok = public_shape.labels_ok([value], "cause")
+
+        # Assert
+        assert not ok
+
+    def test_detectFrame_attributeOverListedLevels_stillScanned(self):
+        # Arrange: 6000 rows, a contact-name attribute with 6000 distinct names (made up)
+        first = [f"{c}{v}na" for c in "BDFGKLMNPRST" for v in "aeiou"]  # 60
+        last = [f"{c}{v}{e}" for c in "BCDFGHJKLMNPRSTVWZ" for v in "aeiou" for e in ("rson", "rman")]  # 180
+        names = [f"{f} {g}" for f in first for g in last]
+        rows = [
+            {"State": s, "Year": 1900 + y, "Rate per 100000": 1.0, "Contact": names[i * 120 + y]}
+            for i, s in enumerate(_STATE_NAMES[:50])
+            for y in range(120)
+        ]
+        frame = pl.DataFrame(rows)
+        assert frame.get_column("Contact").n_unique() > 5000
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is None

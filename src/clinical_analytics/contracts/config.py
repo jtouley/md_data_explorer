@@ -443,6 +443,9 @@ ESTIMATE_PERSON_TOKENS: Final = frozenset(
     }
 )  # fmt: skip
 ESTIMATE_PERSON_NAMES: Final = frozenset({"dob", "dateofbirth", "birthdate", "id", "uid", "uuid"})
+# A label or attribute column with at least this share of values reading as people's names is a
+# names column (ADR014 §7); one odd title-case label below it is not.
+ESTIMATE_NAME_SHARE_LIMIT: Final = 0.3
 ESTIMATE_MAX_LISTED_LEVELS: Final = 5000  # levels read to find totals; a key with more lists none
 ESTIMATE_LEVELS_IN_HOLD: Final = 6
 
@@ -712,6 +715,9 @@ ESTIMATE_JOIN_MONTH_VS_YEAR_REFUSED: Final = (
 ESTIMATE_JOIN_MONTHS_DIFFER: Final = (
     "The monthly tables are set to different months ({months}), so their values are not the same period and "
     "aren't joined. Choose the same month for each."
+)
+ESTIMATE_JOIN_SAME_MONTH_EACH_YEAR: Final = (
+    "{source} is monthly: the change compares the same month (month {month}) of each year asked."
 )
 ESTIMATE_JOIN_NAME_MONTH_YEAR: Final = "{source} is a monthly table. Name a year (or a month, such as 2023-03)."
 ESTIMATE_JOIN_SEASON_TREND: Final = (

@@ -649,3 +649,14 @@ class TestReferenceRanges:
 
         # Assert
         assert pairs == {}
+
+
+def test_boundPairs_estimateLowHigh_pairedAsInterval():
+    # Arrange
+    columns = ["estimate", "estimate_low", "estimate_high"]
+
+    # Act
+    pairs = estimates._bound_pairs(columns, set(columns))
+
+    # Assert
+    assert pairs == {"estimate": ("estimate_low", "estimate_high")}

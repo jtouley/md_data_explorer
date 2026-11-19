@@ -521,6 +521,7 @@ class _Pins:
     constants: dict[Role, tuple[str, Any]] = field(default_factory=dict)  # role -> (column, its one level)
     year_aligned: int | None = None  # a chosen year shown beside the question's year
     annual_partner: bool = False  # another table in the question has one value per year
+    month_of_year: str | None = None  # a change question on a monthly table: this month ("03") each year
 
 
 def _choice(source: SourceInput, choices: Mapping[str, Any], column: str) -> Any:
@@ -685,6 +686,17 @@ def _choose_value(
 # ---------------------------------------------------------------------------- harmonize
 
 
+def _is_total_level(level: Any) -> bool:
+    folded = str(level).strip().casefold()
+    return folded in config.ESTIMATE_TOTAL_LEVELS or folded in {
+        "total",
+        "all",
+        "overall",
+        "all states",
+        "entire network",
+    }
+
+
 def _state_map(levels: Sequence[Any]) -> tuple[pl.DataFrame, dict[str, list[Any]]]:
     """level -> (state_fips, state) for the levels that are states; the others by kind.
 
@@ -743,6 +755,8 @@ def _harmonize(
             for kind in ("substate", "territory", "region", "country", "unknown")
             for level in others.get(kind, [])
         ]
+        # "Unknown" and "Other" rows are dropped too, and named; a Total row is the whole, not a place.
+        substate += [level for level in others.get("other", []) if not _is_total_level(level)]
         if substate:
             notes.append(
                 config.ESTIMATE_JOIN_NOT_STATES.format(
@@ -773,7 +787,13 @@ def _harmonize(
         exprs.append(pl.lit(int(pins.constants["year"][1]), dtype=pl.Int64).alias("year"))
         keys.append("year")
     month_col = pins.roles.get("month")
-    if month_col is not None and month_col in pins.pinned and "year" not in keys:
+    if month_col is not None and pins.month_of_year is not None and "year" not in keys:
+        # The same month of each year, keyed by its year ("2022-03", "2023-03" for a change).
+        lazy = lazy.filter(pl.col(month_col).cast(pl.String).str.strip_chars().str.ends_with(f"-{pins.month_of_year}"))
+        exprs.append(pl.col(month_col).cast(pl.String).str.strip_chars().str.slice(0, 4).cast(pl.Int64).alias("year"))
+        keys.append("year")
+        notes.append(config.ESTIMATE_JOIN_SAME_MONTH_EACH_YEAR.format(source=source.name, month=pins.month_of_year))
+    elif month_col is not None and month_col in pins.pinned and pins.annual_partner and "year" not in keys:
         # One month chosen to line up with an annual table: joined on its year, and said plainly.
         month = str(pins.pinned[month_col])
         exprs.append(pl.lit(int(month[:4]), dtype=pl.Int64).alias("year"))
@@ -998,6 +1018,14 @@ def _resolve_month(source: SourceInput, pins: _Pins, asked: Asked, choices: Mapp
     available = sorted(str(v) for v in dimension.values if v is not None)
     chosen = choices.get(month_col)
     in_year = [m for m in available if not asked.years or int(m[:4]) in _years_asked(asked)]
+    if asked.analysis == "change":
+        # A change on a monthly table compares the same month of each year ("2023-03": March).
+        named = asked.months[0] if len(asked.months) == 1 else None
+        if named is None and chosen is not None and str(chosen) in available:
+            named = str(chosen)
+        if named is not None:
+            pins.month_of_year = named[5:7]
+            return
     if pins.annual_partner:
         # Beside a table with one value per year, one month lines up with it, never "all months"
         # (each annual value would repeat beside twelve months) and never a month picked silently.
@@ -1117,11 +1145,11 @@ def prepare(
         str(pins.pinned[col])
         for _source, pins, _value in pinned_all
         if (col := pins.roles.get("month")) is not None and col in pins.pinned
-    }
+    } | {f"--{pins.month_of_year}" for _source, pins, _value in pinned_all if pins.month_of_year is not None}
     if len(month_pins) > 1:
         # Two monthly tables at different months never join as one year.
         refusals.append(config.ESTIMATE_JOIN_MONTHS_DIFFER.format(months=", ".join(sorted(month_pins))))
-    if month_pins and asked.analysis in ("disagree", "change"):
+    if month_pins and any(annual) and asked.analysis in ("disagree", "change"):
         refusals.append(config.ESTIMATE_JOIN_MONTH_VS_YEAR_REFUSED.format(month=sorted(month_pins)[0]))
     if refusals:
         return asked, _refused(" ".join(dict.fromkeys(refusals)))

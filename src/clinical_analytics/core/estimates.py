@@ -216,8 +216,12 @@ def _labelled_bound_pairs(by_norm: Mapping[str, str], pairs: dict[str, tuple[str
         stem, tail = match.group("stem"), match.group("tail")
         if not stem and not tail and match.group("side") in ("low", "lower"):
             continue  # a bare "lower"/"low" is the standalone pass's
-        if match.group("side") == "low" and not re.search(r"(ci|cl|confidence|interval|limit|bound)", tail):
-            continue  # "Result Low"/"Result High" is a lab's reference range, not an interval
+        if (
+            match.group("side") == "low"
+            and not re.search(r"(ci|cl|confidence|interval|limit|bound)", tail)
+            and stem not in config.ESTIMATE_VALUE_NAMES
+        ):
+            continue  # "Result Low"/"Result High" is a lab's reference range; "estimate_low" is not
         high = _LOWER_SIDES[match.group("side")]
         upper = by_norm.get(f"{stem}_{high}{tail}" if stem else f"{high}{tail}")
         if upper is None or upper in used:
@@ -432,6 +436,15 @@ def _public_shape_problem(
         found: list[Any] = view.select(column).distinct().to_polars().get_column(column).to_list()
         return found
 
+    def scanned(column: str) -> list[Any]:
+        """The values to scan for people: all of them, or a fixed sample of the listed size for a
+        column with more (never none: an empty scan would pass anything)."""
+        if levels.get(column, 0) <= config.ESTIMATE_MAX_LISTED_LEVELS:
+            return distinct(column)
+        sample = view.select(column).distinct().order_by(column).limit(config.ESTIMATE_MAX_LISTED_LEVELS)
+        found: list[Any] = sample.to_polars().get_column(column).to_list()
+        return found
+
     # A column named as a person or record ID refuses the table whatever its values or type, key
     # or not (a pl.Date "dob" too).
     if any(public_shape.person_id_named(c) for c in (*columns, *candidates, *numeric)):
@@ -486,7 +499,7 @@ def _public_shape_problem(
             or levels.get(column) == 1
             or any(_distinct_rows(view, [k, column]) == _distinct_rows(view, [k]) for k in key)
         )
-        if public_shape.other_column_problem(column, distinct(column), is_numeric=False, id_alias=id_alias):
+        if public_shape.other_column_problem(column, scanned(column), is_numeric=False, id_alias=id_alias):
             return "other_column_reveals_people"
     for column in numeric:
         if column not in candidates and public_shape.other_column_problem(column, [], is_numeric=True, id_alias=False):
@@ -501,7 +514,7 @@ def _public_shape_problem(
             continue  # a flag ("Deaths suppressed") or an empty column; its name was checked above
         if not dtype.is_temporal():
             return "unsupported_column_type"
-        if set(public_shape.tokens(column)) & public_shape.PERSON_EVENT_TOKENS:
+        if public_shape.person_event_named(column):
             return "person_event_date"  # "dob", "visit_date", "admit_ts"
         if _distinct_rows(view, [column]) > 1 and not (
             time_keys and _distinct_rows(view, [*time_keys, column]) == _distinct_rows(view, time_keys)

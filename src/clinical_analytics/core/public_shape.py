@@ -147,22 +147,25 @@ _NAME_COLUMN_TOKENS: Final = frozenset(
 )
 # A letters-then-digits code inside a label ("A12", "MRN.0007", "Patient7"); public-health codes
 # that look like one are named here ("COVID-19", "H1N1", "PM2.5").
+# Letters in any script ("É12" is a code too), so [^\W\d_] rather than [A-Za-z].
 _CODE_TOKEN: Final = re.compile(
-    r"(?<![A-Za-z0-9.])([A-Za-z]{1,8}[-_.#]?\d+(\.\d+)?[A-Za-z]?"
-    r"|(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]+)(?![A-Za-z0-9])"
+    r"(?<![^\W_.])([^\W\d_]{1,8}[-_.#]?\d+(\.\d+)?[^\W\d_]?"
+    r"|(?=\w*\d)(?=\w*[^\W\d_])[^\W_]+)(?![^\W_])"
 )
 _PUBLIC_CODES: Final = re.compile(
     r"^(covid-?19|sars-cov-?2|h\d{1,2}n\d{1,2}|hiv-?[12]|htlv-?[12]|hpv-?\d{1,2}|pm2\.5|pm10|cd4|hba1c|"
-    r"vitamin\s?d3?|b12|ivd\d*|cvd19|covid19|mmr2?|dtap\d?|tdap\d?|pcv\d{2}|ppsv23|hepb\d?|ccc2|q[1-4]|h[1-9]|"
+    r"vitamin\s?d3?|ivd\d*|cvd19|covid19|mmr2?|dtap\d?|tdap\d?|pcv\d{2}|ppsv23|hepb\d?|ccc2|q[1-4]|h[1-9]|"
     r"pdm09|o157|o26|o45|o103|o111|o121|o145|\d{1,2}(st|nd|rd|th)|\d{1,2}v)$",
     re.IGNORECASE,
 )
 # "Smith J", "J. Smith", "Smith, J.": a surname with an initial.
 _NAME_INITIAL: Final = re.compile(r"^([A-Z][A-Za-z'’\-]+,?\s+[A-Z]\.?|[A-Z]\.?\s+[A-Z][A-Za-z'’\-]+)$")
+# A published ICD code list after a cause: "(A16-A19)", "(*U01-*U02,X85-Y09,Y87.1)", "(R95)".
 _ICD_RANGES: Final = re.compile(
-    r"\(\s*\*?[A-Z]\d{2}(\.\d+)?(\s*[-–]\s*[A-Z]?\d{2}(\.\d+)?)?"
-    r"(\s*,\s*\*?[A-Z]\d{2}(\.\d+)?(\s*[-–]\s*[A-Z]?\d{2}(\.\d+)?)?)*\s*\)"
+    r"\(\s*\*?[A-Z]\d{2}(\.\d+)?(\s*[-–]\s*\*?[A-Z]?\d{2}(\.\d+)?)?"
+    r"(\s*,\s*\*?[A-Z]\d{2}(\.\d+)?(\s*[-–]\s*\*?[A-Z]?\d{2}(\.\d+)?)?)*\s*\)"
 )
+_ICD_LIST_COLUMN_TOKENS: Final = frozenset({"cause", "causes", "icd", "ucd", "mcd", "list", "diagnosis", "condition"})
 # Columns about a named clinician: any value that reads as a name refuses the table.
 _CLINICIAN_TOKENS: Final = frozenset(
     {
@@ -173,6 +176,25 @@ _CLINICIAN_TOKENS: Final = frozenset(
 # Columns of a person's own dates or events: never a public time key ("birth_year", "visit_month").
 PERSON_EVENT_TOKENS: Final = frozenset(
     {"birth", "dob", "born", "visit", "admit", "admission", "discharge", "encounter", "death", "deceased"}
+)
+# Matched inside a column name too ("birthyear", "dobyear", "admityear", "yob", "dod").
+_PERSON_EVENT_STEMS: Final = ("birth", "dob", "yob", "dod", "born", "admit", "admission", "visit", "discharge",
+                              "death", "deceased", "encounter")  # fmt: skip
+
+
+def person_event_named(column: str) -> bool:
+    """A column named for a person's own dates or events, as a word or inside one."""
+    names = tokens(column)
+    joined = "".join(names)
+    return (
+        bool(set(names) & PERSON_EVENT_TOKENS)
+        or any(name.startswith(_PERSON_EVENT_STEMS) for name in names)
+        or any(stem in joined for stem in ("birth", "dob", "admit", "discharge", "encounter"))
+    )
+
+
+_UNICODE_LAST_FIRST: Final = re.compile(
+    r"^[^\W\d_][^\W\d_'’\-]*(\s+[^\W\d_][^\W\d_'’\-]*){0,2},\s*[^\W\d_][^\W\d_'’\-.]*(\s+[^\W\d_][^\W\d_'’\-.]*)?$"
 )
 _LAST_FIRST: Final = re.compile(r"^[A-Za-z'’\-]+(\s[A-Za-z'’\-]+)?,\s*[A-Za-z'’\-.]+(\s[A-Za-z'’\-.]+)?$")
 
@@ -286,8 +308,18 @@ def label_shaped(value: Any, column: str) -> bool:
     if value is None:
         return True
     text = _text(value)
-    # A published ICD range after a cause ("Tuberculosis (A16-A19)") is part of the label.
-    text = _ICD_RANGES.sub("", text).strip() or text
+    # A published ICD code list after a cause ("Tuberculosis (A16-A19)") is part of the label, in a
+    # cause or ICD column, after a cause that reads as one ("Smith (B12)" does not).
+    if set(tokens(column)) & _ICD_LIST_COLUMN_TOKENS and _ICD_RANGES.search(text):
+        rest = _ICD_RANGES.sub("", text).strip()
+        rest_words = _words_of(rest)
+        if (
+            rest.startswith("#")
+            or len(rest_words) >= 2
+            or set(rest_words) & _NOT_NAME_WORDS
+            or any(_MEDICAL_ENDING.search(w) for w in rest_words)
+        ):
+            text = rest
     if mixed_script(text) or not text.isascii() and not _latin(text):
         return False  # a lookalike letter from another script
     if _PUBLIC_CODES.match(text):
@@ -338,11 +370,12 @@ _NAME_PART: Final = re.compile(r"^[^\W\d_]+([’'\-][^\W\d_]+)*$")
 _INITIAL_PART: Final = re.compile(r"^[^\W\d_]\.?$")
 
 
-_NOT_NAME_WORDS: Final = (
-    _LABEL_VOCABULARY
-    | _RACE_CORE
-    | {"sexes", "both", "atlantic", "central", "north", "south", "east", "west", "new", "mid", "hispanic", "latino"}
-)
+_NOT_NAME_WORDS: Final = _LABEL_VOCABULARY | {
+    "sexes", "both", "atlantic", "central", "north", "south", "east", "west", "new", "mid", "hispanic", "latino",
+    "fever", "encephalitis", "spotted", "nile", "valley", "mountain", "louis", "fungal", "bacterial", "viral",
+}  # fmt: skip
+# Medical word endings: a value holding one is a condition, not a person ("Lyme borreliosis").
+_MEDICAL_ENDING: Final = re.compile(r"(itis|osis|iasis|emia|aemia|oma|pathy|plasia|algia|virus|pox|ism|ectomy)$")
 
 
 def _words_of(text: str) -> list[str]:
@@ -357,14 +390,22 @@ def person_name(text: str) -> bool:
     text = _text(text)
     if _INITIALS.match(text):
         return True
-    if set(_words_of(text)) & _NOT_NAME_WORDS:
+    words = _words_of(text)
+    if set(words) & _NOT_NAME_WORDS or any(_MEDICAL_ENDING.search(w) for w in words) or _race(text):
         return False
     parts = text.replace(",", " ").split()
+    titled = bool(parts) and parts[0].rstrip(".").casefold() in _TITLES
     while parts and parts[0].rstrip(".").casefold() in _TITLES:
         parts = parts[1:]
-    if not 2 <= len(parts) <= 5 or any(p.casefold() in _PARTICLES for p in (parts[0], parts[-1])):
+    if titled and 1 <= len(parts) <= 4 and all(_NAME_PART.match(p.rstrip(".")) for p in parts):
+        return parts[0][:1].isupper() or parts[0][:1].upper() == parts[0][:1].lower()  # "Dr. Patel", "Mrs Jones"
+    if "," in text and _UNICODE_LAST_FIRST.match(text):
+        return True  # "Del Rio, Ana", "Van Buren, Martin", "LOPEZ, ANA"
+    if not 2 <= len(parts) <= 5 or parts[-1].casefold() in _PARTICLES:
         return False
-    core = [p for p in parts if p.casefold() not in _PARTICLES]
+    if parts[0].casefold() in _PARTICLES and not parts[0][:1].isupper():
+        return False  # a lower-case particle never starts a name; "Le Van Anh" and "Del Rio" do
+    core = [p for p in parts if not (p.casefold() in _PARTICLES and p.islower())]
     if not all(_NAME_PART.match(p.rstrip(".")) or _INITIAL_PART.match(p) for p in core):
         return False
     if not any(_NAME_PART.match(p) and len(p) >= 2 for p in core) or len(core) < 2:
@@ -394,7 +435,7 @@ def key_column(column: str, values: Sequence[Any], alias_values: Mapping[str, Se
     strict = [c for c in classes if c is not None]
     kinds = frozenset(strict)
     name_tokens = set(tokens(column))
-    if "time" in kinds and name_tokens & PERSON_EVENT_TOKENS:
+    if "time" in kinds and person_event_named(column):
         return KeyVerdict(False, kinds, False)  # "birth_year", "visit_month": a person's own dates
     if present and len(strict) == len(present):
         return KeyVerdict(True, kinds, False)
@@ -419,7 +460,7 @@ def labels_ok(values: Sequence[Any], column: str) -> bool:
     present = [v for v in values if v is not None]
     if not all(label_shaped(v, column) for v in present):
         return False
-    return sum(person_name(_text(v)) for v in present) * 10 < len(present) * 3
+    return sum(person_name(_text(v)) for v in present) < len(present) * config.ESTIMATE_NAME_SHARE_LIMIT
 
 
 def other_column_problem(column: str, values: Sequence[Any], *, is_numeric: bool, id_alias: bool) -> bool:
@@ -441,7 +482,7 @@ def other_column_problem(column: str, values: Sequence[Any], *, is_numeric: bool
         return not all(classify_value(v, column) == "place" for v in present)
     if name_tokens & _CLINICIAN_TOKENS and any(person_name(v) for v in present):
         return True  # "Provider": "José García"
-    if name_tokens & PERSON_EVENT_TOKENS and any(classify_value(v, column) == "time" for v in present):
+    if person_event_named(column) and any(classify_value(v, column) == "time" for v in present):
         return True  # "dob", "visit_date": a person's own dates
     if any(mixed_script(v) or not _latin(v) for v in present):
         return True  # lookalike letters, or text in a script these tables never use (fail closed)
@@ -449,7 +490,7 @@ def other_column_problem(column: str, values: Sequence[Any], *, is_numeric: bool
         return False  # years, FIPS, states, totals: public values whatever the column is called
     if any(_SSN.match(v) or _MRN.match(v) or (_CASE_NUMBER.match(v) and not _season(v)) for v in present):
         return not id_alias
-    if not id_alias and sum(person_name(v) for v in present) * 10 >= len(present) * 3:
+    if not id_alias and sum(person_name(v) for v in present) >= len(present) * config.ESTIMATE_NAME_SHARE_LIMIT:
         return True
     if not id_alias and sum(id_shaped(v) for v in present) * 2 >= len(present):
         return True
