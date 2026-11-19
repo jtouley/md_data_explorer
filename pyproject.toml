@@ -27,15 +27,19 @@ dependencies = [
     "sqlglot>=30.31.0,<31",
     "statsmodels>=0.14.0",
     "pyyaml>=6.0",
-    "lifelines>=0.27.0",
+    # >=0.30.3: lifelines 0.30.3 requires pandas<3, so this floor keeps pandas 3 unresolvable for
+    # every resolver (uv lock --upgrade, Dependabot). Below it, a resolver may take pandas 3 by dropping
+    # lifelines to 0.30.0 (no NumPy 2.4 / Python 3.13 fixes), as Dependabot did in #91.
+    "lifelines>=0.30.3",
     "openpyxl>=3.1.0",  # Excel file support
     "pyreadstat>=1.2.0",  # SPSS file support
     "pymupdf>=1.23.0",  # PDF text extraction
     # Embeddings for semantic matching: the all-MiniLM-L6-v2 ONNX export run with ONNX Runtime
     # (core/embeddings.py). No torch: the model is bundled at build time (make fetch-embedding-model).
-    # Pinned: newest release >= 2 weeks old with macOS 13 arm64 + x86_64 wheels for cp311-cp313
-    # (1.24+ dropped Intel macOS and needs macOS 14). Supported minimum: macOS 13.
-    "onnxruntime==1.23.2",
+    # <1.24: 1.24+ ships macOS wheels only for macOS 14+ arm64 (no Intel, no sdist), which breaks
+    # the macOS 13 floor. That floor and every place that restates it: docs/development/packaging.md
+    # ("Supported platforms"). 1.23.x patches may flow in; make check-lock-platforms gates their wheels.
+    "onnxruntime>=1.23.2,<1.24",
     "tokenizers>=0.22.1,<0.24",
     "scikit-learn>=1.8.0",
     "seaborn>=0.13.2",
