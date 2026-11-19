@@ -480,3 +480,30 @@ class TestPositionColumns:
         # Assert
         assert first.claim is not None
         assert _withheld(result)
+
+
+class TestConfirmedPatientRows:
+    def test_ask_rowsConfirmedAsPatients_loggedAndOverlapWithheld(self, make_semantic_layer: Any) -> None:
+        # Arrange: no ID column; the user answered "yes, each row is one patient" for this version
+        # (#145). Rows are then the patients, the unit governed SQL logs for such data too.
+        from clinical_analytics.contracts.declarations import GrainDeclaration, MemoryDeclarationStore
+        from clinical_analytics.core.identifier_rules import PATIENT_ROWS_ASKABLE_CONFIG_FLAG
+
+        frame = _patients().drop("patient_id")
+        layer = make_semantic_layer(
+            data=frame, config_overrides={"column_mapping": {}, PATIENT_ROWS_ASKABLE_CONFIG_FLAG: True}
+        )
+        store = MemoryDeclarationStore()
+        grain = GrainDeclaration(
+            grain="patient", key=None, rows=frame.height, patients=frame.height, dataset_version="v1"
+        )
+        store.update("probe", lambda current: current.with_grain(grain))
+        service = QueryService(layer, declarations=store)
+        first = _ask(service, _count(CohortStep("le", "age", 65)))
+
+        # Act
+        result = _ask(service, _count(CohortStep("ge", "age", 65)))
+
+        # Assert: the answer counts patients, and the overlap of 5 is withheld
+        assert first.claim is not None and "patients" in first.claim
+        assert _withheld(result)
