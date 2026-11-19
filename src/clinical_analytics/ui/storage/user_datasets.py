@@ -1291,6 +1291,29 @@ _USER_MESSAGE_ERRORS: Final = (StagingError, UploadError, SecurityError, DataQua
 USER_FILE_ERRORS: Final = (UploadFileError, StagingError, SecurityError, DataQualityError, NoCohortAnchorError)
 
 
+def duplicate_name_message(dataset_name: str) -> str:
+    """Why an upload under a name already in use is refused, and the two ways forward."""
+    return (
+        f"A dataset named '{dataset_name}' already exists. To keep both, upload this file under "
+        "another name. To replace it, delete the existing dataset, then upload this file."
+    )
+
+
+def no_data_rows_message(filename: str, columns: int) -> str:
+    """Why a file whose header has no rows under it is refused, and what to do (no cell values)."""
+    width = "1 column" if columns == 1 else f"{columns} columns"
+    if Path(filename).suffix.lower() in (".xlsx", ".xls"):
+        return (
+            f"No data rows were found in this file. Only a header row with {width} was read from the "
+            "first sheet. Check that the data is on the first sheet, under its header row. If it is, "
+            "open the file, save that sheet as CSV, and upload the CSV."
+        )
+    return (
+        f"No data rows were found in this file. Only a header row with {width} was read. "
+        "Add the data rows under the header row and upload the file again."
+    )
+
+
 def _upload_failure_reason(e: BaseException) -> str:
     """A reason for the user that never quotes cell values.
 
@@ -1994,12 +2017,7 @@ class UserDatasetStorage:
                 if same_dataset:
                     if not overwrite:
                         # Reject duplicate without overwrite flag
-                        return (
-                            False,
-                            f"Dataset '{dataset_name}' already exists. "
-                            "Use a different name or enable overwrite to update.",
-                            None,
-                        )
+                        return False, duplicate_name_message(dataset_name), None
                     else:
                         # Overwrite mode: preserve existing upload_id and version_history
                         existing_upload_id = existing_meta.get("upload_id")
@@ -2080,6 +2098,10 @@ class UserDatasetStorage:
             _notify_progress(progress_cb, 20, "Normalizing upload to table list...")
 
             tables, table_metadata = normalize_upload_to_table_list(file_bytes, original_filename, metadata)
+            # A file with a header and no data rows answers nothing: refuse it before an ID is
+            # added, so a row number on zero rows never makes it look "ready".
+            if all(t["data"].height == 0 for t in tables):
+                raise StagingError(no_data_rows_message(original_filename, tables[0]["data"].width if tables else 0))
             # A ZIP's documentation (ADR004) becomes the dataset's doc context in save_table_list.
             if table_metadata["doc_files"]:
                 metadata["doc_files"] = table_metadata["doc_files"]
@@ -2113,14 +2135,17 @@ class UserDatasetStorage:
                 # Update table with patient_id
                 tables[0]["data"] = df_with_id
 
-                # No patient ID: refuse rather than count rows as patients (a wrong answer is
-                # worse than none). Says what to add; names no values.
-                if "patient_id" not in df_with_id.columns:
+                # Every upload has an ID: patient_id, or the row number added when no column
+                # identifies a patient (answers then count rows, never patients, and the upload
+                # says so: identifier_rules.row_key_note). Neither is a file the app cannot key:
+                # refused with what to add, never stored with rows counted as patients.
+                has_row_number = id_metadata.get("patient_id_source") == "row_index"
+                if "patient_id" not in df_with_id.columns and not has_row_number:
                     logger.warning("upload_no_patient_id", columns=df_with_id.width)
                     raise NoPatientIdError(no_patient_id_message(df_with_id.width))
                 logger.info(
-                    f"Successfully ensured patient_id exists. DataFrame shape: {df_with_id.shape}, "
-                    f"columns: {list(df_with_id.columns)}"
+                    f"Ensured an ID column ({'row number' if has_row_number else 'patient_id'}). "
+                    f"DataFrame shape: {df_with_id.shape}"
                 )
 
             df = tables[0]["data"]

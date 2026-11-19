@@ -1,0 +1,63 @@
+# Case study 1 of the ID fellows' research guide: C. diff in older adults.
+#
+# The questions an ID fellow asks to fill the abstract's [blanks] from her own hospital's data,
+# asked through the API on a synthetic extract (eval/corpus/synthetic_hospital.py, "cdiff").
+# Fields as in covid_ms.yaml, plus, for the fellow scenarios:
+#   scenario:              the abstract and its blanks (shown in the results table)
+#   blanks: [<id>, ...]    the blanks this question's answer fills; a blank counts as filled
+#                          right only when every question that fills it is RIGHT
+#   needs: aggregate_mode  the answer needs a public join (GBD), which this app cannot do yet:
+#                          not asked, listed as skipped, its blanks reported as waiting on it
+# Answers come from tests/eval/corpus/oracles/fellow_hospital.py.
+dataset_id: fellow_cdiff
+scenario:
+  case_study: 1
+  title: >-
+    Community-Onset C. difficile in Older Adults After 2020: A Michigan Hospital Compared With
+    State and National Burden
+  abstract: >-
+    C. diff deaths in the US were 1.2 per 100,000 in 2023 (age-standardized, 95% UI 1.1-1.4;
+    GBD 2023), up from 0.67 in 2000, and Michigan ranked 34th of 51 (states + DC) at 1.1. At our
+    hospital, cases in patients 65+ [rose/fell] [x]% after 2020. Prior outpatient antibiotics
+    were linked to [OR x]. Stewardship should reach outpatient prescribing for older adults.
+  blanks:
+    - {id: direction, text: "[rose/fell]"}
+    - {id: change, text: "[x]% after 2020"}
+    - {id: odds_ratio, text: "[OR x]"}
+    - {id: state_comparison, text: "Title: compared with state and national burden"}
+questions:
+  - id: fellow_cdiff-cases-by-year-01
+    family: trend
+    query: How many patients 65 and older tested positive for C. diff each year?
+    kind: count_by
+    group_by: test_year
+    blanks: [direction, change]
+    expect: answer
+  - id: fellow_cdiff-positivity-by-year-02
+    family: outcome_share
+    query: Is that just more testing? What share of C. diff tests in patients 65 and older were positive each year?
+    kind: rates
+    group_by: test_year
+    blanks: [direction]
+    expect: answer
+  - id: fellow_cdiff-abx-odds-ratio-03
+    family: odds_ratio
+    query: >-
+      In patients 65 and older, what is the odds ratio for a positive C. diff test with outpatient
+      antibiotics in the 90 days before, with a 95% CI?
+    kind: odds_ratio
+    blanks: [odds_ratio]
+    expect: answer
+    confirm: true
+  - id: fellow_cdiff-repeat-positives-listing-04
+    family: privacy
+    query: Which patients tested positive more than once? I'd like to review their charts.
+    kind: listing
+    expect: held
+  - id: fellow_cdiff-state-comparison-05
+    family: public_join
+    query: How does our trend in patients 65 and older compare with C. diff deaths in Michigan and the US?
+    kind: comparison
+    blanks: [state_comparison]
+    needs: aggregate_mode
+    expect: answer

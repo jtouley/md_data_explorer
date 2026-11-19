@@ -49,9 +49,9 @@ import {
 } from './sessionSidebar.js';
 import {
   normalizeUploadResponse,
-  readyHeadline,
   renderUploadArea,
-  uploadStatusText,
+  uploadIsUsable,
+  uploadResultText,
 } from './uploadPanel.js';
 import {
   dataCheckNeedsReview,
@@ -1787,14 +1787,16 @@ async function handleLoadSample() {
   try {
     const raw = await window.clinicalAPI.loadSampleDataset();
     const result = normalizeUploadResponse(raw);
-    if (result.status === 'ready' && result.upload_id) {
+    if (uploadIsUsable(result)) {
       setDatasetStatus(
-        uploadStatusText(
-          result.dataset_name ? readyHeadline(result.dataset_name) : 'The sample cohort is ready.',
-          dataCheckStatusNote(result.quality)
+        uploadResultText(
+          result,
+          result.dataset_name,
+          dataCheckStatusNote(result.quality),
+          'The sample cohort is ready.'
         ),
-        'ok',
-        { showDetails: dataCheckNeedsReview(result.quality) }
+        result.unit_note || result.sheet_note || result.status === 'needs_review' ? 'note' : 'ok',
+        { showDetails: result.status === 'needs_review' || dataCheckNeedsReview(result.quality) }
       );
       await selectNewDataset(result.upload_id);
     } else {
@@ -1820,17 +1822,23 @@ async function handleFileUpload(file) {
     const raw = await window.clinicalAPI.uploadDataset(file);
     const result = normalizeUploadResponse(raw);
 
-    if (result.status === 'ready') {
+    if (uploadIsUsable(result)) {
       setDatasetStatus(
-        uploadStatusText(
-          readyHeadline(result.dataset_name || file.name),
-          result.sheet_note,
-          ...result.cohort_notes,
+        uploadResultText(
+          result,
+          result.dataset_name || file.name,
           dataCheckStatusNote(result.quality)
         ),
-        // A sheet note says part of the workbook was not read: keep it until the user moves on.
-        result.sheet_note ? 'note' : 'ok',
-        { showDetails: dataCheckNeedsReview(result.quality) }
+        // A unit note (rows, not patients), a sheet note (part of the workbook not read), a
+        // cohort note (ZIP files or tables left out) or a failed check (needs review) stays
+        // until the user moves on: Refresh keeps 'note'.
+        result.unit_note ||
+          result.sheet_note ||
+          result.cohort_notes.length ||
+          result.status === 'needs_review'
+          ? 'note'
+          : 'ok',
+        { showDetails: result.status === 'needs_review' || dataCheckNeedsReview(result.quality) }
       );
       await selectNewDataset(result.upload_id);
     } else {
@@ -1925,7 +1933,8 @@ function openDatasetLinkForm(returnFocusTo) {
       try {
         raw = await window.clinicalAPI.loadDatasetFromUrl(url, name);
         result = normalizeUploadResponse(raw);
-        if (result.status !== 'ready' || !result.upload_id) {
+        // needs_review is loaded too: the cohort is stored; the message names the failed check.
+        if (!uploadIsUsable(result)) {
           throw new Error(result.message || '');
         }
       } catch (error) {
@@ -1940,13 +1949,14 @@ function openDatasetLinkForm(returnFocusTo) {
       // Loaded. From here on nothing may read as a failure to load.
       closeDatasetLinkForm(datasetLinkArea);
       const source = normalizeSource(raw?.source);
-      const headline = uploadStatusText(
-        readyHeadline(result.dataset_name),
+      const headline = uploadResultText(
+        result,
+        result.dataset_name,
         dataCheckStatusNote(result.quality)
       );
       setDatasetStatus(
         `${headline} ${linkSourceNote(source, raw?.source_recorded !== false)}`,
-        'ok',
+        result.unit_note || result.sheet_note || result.status === 'needs_review' ? 'note' : 'ok',
         {
           showDetails: true,
         }

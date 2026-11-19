@@ -1488,3 +1488,47 @@ describe('vocabulary in summaries (round 2)', () => {
     expect(text).toBe('N=400 | Variables: age, ldl');
   });
 });
+
+describe('upload name already in use (409)', () => {
+  it.each([
+    [
+      "[HTTP 409] A dataset named 'small' already exists. To keep both, upload this file under another name.",
+      'small',
+    ],
+    [
+      "[HTTP 409] A dataset named 'O'Brien ward' already exists. To keep both, upload this file under another name.",
+      "O'Brien ward",
+    ],
+  ])('says to rename the file or delete the cohort (%#)', (raw, name) => {
+    const text = plainFailureMessage(raw, { context: 'upload' });
+    expect(text).toBe(
+      `A cohort named “${name}” already exists. To keep both, rename the file and upload it again. ` +
+        'To replace it, choose “Delete this cohort…” in the cohort menu, then upload the file.'
+    );
+    expect(text).not.toMatch(/overwrite/i);
+  });
+});
+
+describe('language model step failed', () => {
+  const reason =
+    'The local language model couldn’t be used for this question, so it was not answered. ' +
+    'Ask again naming the columns you mean, or restart the app if it keeps happening.';
+
+  it('shows the server sentence unchanged, as a refusal', () => {
+    expect(describeQueryFailure({ failure_reason: reason })).toEqual({
+      kind: 'refused',
+      message: reason,
+    });
+  });
+});
+
+describe('upload refused for having no data rows', () => {
+  const detail =
+    'No data rows were found in this file. Only a header row with 1 column was read from the ' +
+    'first sheet. Check that the data is on the first sheet, under its header row. If it is, ' +
+    'open the file, save that sheet as CSV, and upload the CSV.';
+
+  it('shows the API sentence unchanged, so the user sees what to do', () => {
+    expect(plainFailureMessage(`[HTTP 400] ${detail}`, { context: 'upload' })).toBe(detail);
+  });
+});

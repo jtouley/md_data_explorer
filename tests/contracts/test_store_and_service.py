@@ -6,6 +6,7 @@ import errno
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 import pytest
@@ -134,6 +135,41 @@ def test_latestReport_corruptNewest_raisesContractStoreError(tmp_path: Path):
 def test_idColumnFromMetadata_inferredSchema_returnsPatientIdColumn(metadata, expected):
     # Act / Assert
     assert id_column_from_metadata(metadata) == expected
+
+
+_MAPPED = {"inferred_schema": {"column_mapping": {"patient_id": "patient_id"}}}
+
+
+@pytest.mark.parametrize(
+    ("patient_id_meta", "expected_id", "expected_sources"),
+    [
+        pytest.param({"patient_id_source": "composite", "patient_id_columns": ["a", "b"]}, None, (), id="hash"),
+        pytest.param({"patient_id_source": "single_column", "patient_id_columns": ["FIPS"]}, None, (), id="row_copy"),
+        pytest.param(
+            {"patient_id_source": "single_column", "patient_id_columns": ["subject_id"]},
+            "patient_id",
+            ("subject_id",),
+            id="named_copy",
+        ),
+        pytest.param({"patient_id_source": "existing"}, "patient_id", (), id="existing"),
+    ],
+)
+def test_idColumnFromMetadata_rowKey_noPatientIdAndCopiedSourceRestricted(
+    patient_id_meta: dict[str, Any], expected_id: str | None, expected_sources: tuple[str, ...]
+) -> None:
+    # Arrange: a row key names rows, so the contract states no patient ID (governed SQL then
+    # asks the user to confirm one row per patient instead of calling counts patients)
+    from clinical_analytics.contracts.service import id_source_columns_from_metadata
+
+    metadata = {**_MAPPED, "synthetic_id_metadata": {"patient_id": patient_id_meta}}
+
+    # Act
+    id_column = id_column_from_metadata(metadata)
+    sources = id_source_columns_from_metadata(metadata)
+
+    # Assert
+    assert id_column == expected_id
+    assert sources == expected_sources
 
 
 def _patch(patch_id: str, status: PatchStatus, minute: int) -> MetadataPatch:

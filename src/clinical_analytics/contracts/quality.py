@@ -8,6 +8,8 @@ Supported (ODCS v3.2.0 ``library`` metrics plus type options):
   level), or rows minus distinct combinations of ``arguments.properties`` (object level)
 * ``invalidValues``   -> non-null values not in ``arguments.validValues``
 * ``rowCount``        -> ``pl.len()``
+* ``intervalOrder``   -> rows where ``arguments.properties`` = [lower, value, upper] are all
+  present and ``lower <= value <= upper`` does not hold (table level)
 * ``logicalTypeOptions.minimum/maximum`` on a numeric column -> non-null values outside the bounds
 
 Anything else (``sql``, ``text``, ``custom`` rules, ``missingValues``) is reported as ``not_run``
@@ -58,7 +60,8 @@ RANGE_METRIC = "range"
 CENSORED_METRIC = "censoredValues"
 TYPE_METRIC = "logicalType"
 LEVEL_VARIANTS_METRIC = "levelVariants"
-_BAD_VALUE_METRICS = frozenset({"invalidValues", "duplicateValues", RANGE_METRIC, CENSORED_METRIC})
+INTERVAL_METRIC = "intervalOrder"
+_BAD_VALUE_METRICS = frozenset({"invalidValues", "duplicateValues", RANGE_METRIC, CENSORED_METRIC, INTERVAL_METRIC})
 _OPERATORS = (
     "mustBe",
     "mustNotBe",
@@ -243,7 +246,33 @@ def _compile_range(prop: SchemaProperty, schema: pl.Schema) -> CompiledCheck | N
     return CompiledCheck(**base, expr=(present & outside).sum())
 
 
-def _compile_object_rule(rule: DataQuality, props: dict[str, SchemaProperty], index: int) -> CompiledCheck:
+def _present(column: str, schema: pl.Schema) -> pl.Expr:
+    """A value the check reads: not null, and not NaN in a float column."""
+    col = pl.col(column)
+    return col.is_not_null() & col.is_not_nan() if schema[column].is_float() else col.is_not_null()
+
+
+def _compile_interval(
+    base: dict[str, Any], names: list[str], props: dict[str, SchemaProperty], schema: pl.Schema
+) -> CompiledCheck:
+    """Rows whose value lies outside its own interval: lower <= value <= upper, all three present."""
+    missing = [n for n in names if n not in props]
+    if len(names) != 3 or missing:
+        return _not_run(base, "interval check names no known columns")
+    lower, value, upper = (props[n].physicalName or n for n in names)
+    shown = {**base, "display": _display(props[names[1]]), "detail": f"{lower} ≤ {value} ≤ {upper}"}
+    if any(c not in schema for c in (lower, value, upper)):
+        return _not_run(shown, "column not in the data")
+    if not all(schema[c].is_numeric() for c in (lower, value, upper)):
+        return _not_run(shown, "column is not numeric")
+    present = _present(lower, schema) & _present(value, schema) & _present(upper, schema)
+    outside = (pl.col(lower) > pl.col(value)) | (pl.col(value) > pl.col(upper))
+    return CompiledCheck(**shown, expr=(present & outside).sum(), columns=(lower, value, upper))
+
+
+def _compile_object_rule(
+    rule: DataQuality, props: dict[str, SchemaProperty], index: int, schema: pl.Schema
+) -> CompiledCheck:
     metric = rule.metric or rule.rule or rule.type or "unknown"
     base: dict[str, Any] = {
         "id": rule.id or f"table_{metric}_{index}",
@@ -269,6 +298,8 @@ def _compile_object_rule(rule: DataQuality, props: dict[str, SchemaProperty], in
             return _not_run(base, "duplicate check names no known columns")
         cols = [props[n].physicalName or n for n in names]
         return CompiledCheck(**base, expr=pl.len() - pl.struct(cols).n_unique(), columns=tuple(cols))
+    if metric == INTERVAL_METRIC:
+        return _compile_interval(base, list((rule.arguments or {}).get("properties") or []), props, schema)
     return _not_run(base, f"metric '{metric}' is not supported at table level")
 
 
@@ -282,7 +313,7 @@ def compile_contract(contract: OpenDataContractStandard, schema: pl.Schema) -> l
         raise QualityCheckError("Contract has no schema object")
     obj = contract.schema_[0]
     props = {p.name: p for p in obj.properties or [] if p.name}
-    checks: list[CompiledCheck] = [_compile_object_rule(r, props, i) for i, r in enumerate(obj.quality or [])]
+    checks: list[CompiledCheck] = [_compile_object_rule(r, props, i, schema) for i, r in enumerate(obj.quality or [])]
     for prop in obj.properties or []:
         checks.extend(_compile_property_rule(r, prop, schema, i) for i, r in enumerate(prop.quality or []))
         range_check = _compile_range(prop, schema)
@@ -379,6 +410,8 @@ def _message(check: CompiledCheck, count: int, shown: int | str, percent: float 
         return f"{name}: {amount} values outside {check.detail}{note}"
     if check.metric == CENSORED_METRIC:
         return f"{name}: {amount} values recorded as a limit (like '<5'), not as numbers{note}"
+    if check.metric == INTERVAL_METRIC:
+        return f"{name}: {amount} rows where {check.detail} does not hold{note}"
     return f"{name}: {amount} rows flagged{note}"
 
 
