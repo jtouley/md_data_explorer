@@ -25,7 +25,15 @@ from clinical_analytics.api import health_llm
 from clinical_analytics.api.db.database import create_tables
 
 # Import routes
-from clinical_analytics.api.routes import dataset_url, datasets, enrichments, queries, sessions, sql_queries
+from clinical_analytics.api.routes import (
+    aggregate,
+    dataset_url,
+    datasets,
+    enrichments,
+    queries,
+    sessions,
+    sql_queries,
+)
 from clinical_analytics.api.security import (
     NONCE_PATTERN,
     BearerTokenMiddleware,
@@ -221,6 +229,7 @@ app.include_router(dataset_url.router, prefix="/api", tags=["datasets"])
 app.include_router(queries.router, prefix="/api", tags=["queries"])
 app.include_router(sql_queries.router, prefix="/api", tags=["queries"])
 app.include_router(enrichments.router, prefix="/api", tags=["enrichments"])
+app.include_router(aggregate.router, prefix="/api", tags=["aggregate"])
 
 
 # ============================================================================

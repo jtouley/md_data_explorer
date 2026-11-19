@@ -33,7 +33,12 @@ from clinical_analytics.contracts.declarations import (
 from clinical_analytics.contracts.errors import ContractError, ContractStoreError
 from clinical_analytics.contracts.service import read_saved_contract
 from clinical_analytics.contracts.store import contract_path
-from clinical_analytics.core.shown_counts import FileShownCountLog, ShownCountLog, synthesized_columns
+from clinical_analytics.core.shown_counts import (
+    PUBLISHED_ESTIMATES_LOG,
+    FileShownCountLog,
+    ShownCountLog,
+    synthesized_columns,
+)
 from clinical_analytics.sql.catalog import SqlCatalog
 from clinical_analytics.sql.errors import SqlRefusedError
 from clinical_analytics.sql.privacy import PatientRowsUnconfirmedError, ShownLogTarget, SqlAnswer, answer_query
@@ -101,6 +106,10 @@ def run_governed_sql(
     if made_up:
         catalog = dataclasses.replace(catalog, synthesized=made_up)
     query = validate_sql(sql, catalog)
+    # Declared public estimates are shown as published (ADR014 section 7): the log neither
+    # withholds nor records them (ADR013 section 12).
+    if declared.population_estimates_for(version) is not None:
+        shown_log = PUBLISHED_ESTIMATES_LOG
     target = ShownLogTarget(shown_log or FileShownCountLog(data_dir), dataset_id, version)
     with SandboxConnection(catalog) as sandbox:
         try:

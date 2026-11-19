@@ -322,5 +322,7 @@ def rows_may_be_patients(metadata: Mapping[str, object]) -> bool:
     info = synthetic.get("patient_id") if isinstance(synthetic, Mapping) else None
     if not isinstance(info, Mapping) or info.get("patient_id_source") not in ("single_column", "row_index"):
         return False
+    if info.get("population_estimates") is True:
+        return False  # a declared public estimate table (ADR014): its rows are groups, never patients
     repeated = info.get(REPEATED_ID_COLUMNS_KEY)
     return isinstance(repeated, list) and not repeated

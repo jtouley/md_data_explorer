@@ -701,6 +701,20 @@ class ShownCountLog:
         raise NotImplementedError
 
 
+class _PublishedEstimates(ShownCountLog):
+    """The log for a dataset declared public population estimates (ADR014): it admits every
+    answer and records nothing. Such a table's rows are published estimates, not people, shown as
+    published by the owner's policy (ADR014 section 7) with no small-cell rule, so a cross-question
+    check would only withhold published values. Used only where the declaration is in force
+    (``Declarations.population_estimates_for``)."""
+
+    def admit(self, dataset: str, version: str, universe: Universe, sets: Sequence[ShownSet]) -> Verdict:
+        return Verdict(shown=True)
+
+
+PUBLISHED_ESTIMATES_LOG: Final = _PublishedEstimates()
+
+
 class MemoryShownCountLog(ShownCountLog):
     """The log in this process only (a service with no data directory: tests, tools)."""
 

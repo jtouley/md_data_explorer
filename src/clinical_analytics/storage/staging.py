@@ -37,7 +37,15 @@ from typing import Any, Final, Literal
 import polars as pl
 import structlog
 
-from clinical_analytics.contracts.config import MISSING_VALUE_TOKENS
+from clinical_analytics.contracts.config import (
+    MISSING_VALUE_TOKENS,
+    SOURCE_NOT_APPLICABLE_TOKENS,
+    SOURCE_SUPPRESSED_PATTERN,
+    SOURCE_SUPPRESSED_WORDS,
+    SOURCE_UNRELIABLE_PATTERN,
+    SUPPRESSED_FLAG_SUFFIX,
+    UNRELIABLE_FLAG_SUFFIX,
+)
 
 logger = structlog.get_logger()
 
@@ -446,7 +454,174 @@ def _reject_empty_rows(df: pl.DataFrame, first_row_number: int) -> None:
 # --- entry points ---------------------------------------------------------------------------
 
 
-def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1) -> StagedTable:
+# "401.63 (390.33, 412.62)": an estimate and its interval packed in one cell (IHME Excel tables).
+_NUM = r"(-?\d[\d,]*\.?\d*)"
+PACKED_INTERVAL = rf"^\s*{_NUM}\s*\(\s*{_NUM}\s*(?:,|to|–|—|;)\s*{_NUM}\s*\)\s*$"
+_YEAR_IN_HEADER = re.compile(r"(?<!\d)(1[89]\d\d|20\d\d|2100)(?!\d)")
+MIN_YEAR_COLUMNS = 3  # a table with years as columns has at least this many
+
+
+def _packed(df: pl.DataFrame, col: str) -> bool:
+    """Every non-empty cell of a text column is a value with its interval in brackets."""
+    cleaned = df.select(_clean_tokens(col).alias(col)).get_column(col).drop_nulls()
+    return cleaned.len() > 0 and bool(cleaned.str.contains(PACKED_INTERVAL).all())
+
+
+def _header_year(col: str) -> tuple[str, int] | None:
+    """(header without its year, the year) when the header names exactly one year."""
+    years = _YEAR_IN_HEADER.findall(col)
+    if len(years) != 1:
+        return None
+    stem = re.sub(r"[\s,;:*()\-–]+$", "", _YEAR_IN_HEADER.sub("", col)).strip(" ,;:*()-–")
+    return stem, int(years[0])
+
+
+def _years_to_rows(df: pl.DataFrame) -> pl.DataFrame:
+    """Unpivot packed estimate columns that are one per year ("Mortality Rate, 1980*") into rows:
+    the other columns, then ``year`` and one value column per header stem (several stems: a
+    ``measure`` column and ``value``). Returns ``df`` unchanged when there are not enough."""
+    by_year = {c: found for c in df.columns if (found := _header_year(c)) is not None and _packed(df, c)}
+    if len(by_year) < MIN_YEAR_COLUMNS:
+        return df
+    ids = [c for c in df.columns if c not in by_year]
+    if {"year", "measure", "value"} & set(ids):
+        # The unpivot would add a column the file already has: leave the years as columns.
+        logger.info("staging_years_unpivot_skipped", reason="name_taken", year_columns=len(by_year))
+        return df
+    stems = sorted({stem for stem, _year in by_year.values()})
+    value = stems[0] if len(stems) == 1 and stems[0] else "value"
+    long = df.unpivot(on=list(by_year), index=ids, variable_name="__column", value_name=value)
+    mapping = pl.DataFrame(
+        {
+            "__column": list(by_year),
+            "measure": [stem for stem, _ in by_year.values()],
+            "year": [str(year) for _, year in by_year.values()],
+        }
+    )
+    long = long.join(mapping, on="__column", how="left").drop("__column")
+    keep = [*ids, *(["measure"] if len(stems) > 1 else []), "year", value]
+    logger.info("staging_years_unpivoted", year_columns=len(by_year), measures=len(stems))
+    return long.select(keep)
+
+
+# "45.1 to 48.3" under a header that names an interval (FluVaxView's "95% CI (%)"): the bounds
+# packed in one cell without the estimate.
+RANGE_CELL = rf"^\s*{_NUM}\s*(?:to|–|—)\s*{_NUM}\s*$"
+_INTERVAL_HEADER = re.compile(r"(\bci\b|confidence|interval)", re.IGNORECASE)
+
+
+def _range_column(df: pl.DataFrame, col: str) -> bool:
+    if df.schema[col] != pl.String or not _INTERVAL_HEADER.search(col):
+        return False
+    cleaned = df.select(_clean_tokens(col).alias(col)).get_column(col).drop_nulls()
+    return cleaned.len() > 0 and bool(cleaned.str.contains(RANGE_CELL).all())
+
+
+def split_interval_ranges(df: pl.DataFrame) -> pl.DataFrame:
+    """Columns named for an interval whose every non-empty cell is "lo to hi" become ``<col> lower``
+    and ``<col> upper``. Others are left as they are."""
+    ranges = [c for c in df.columns if _range_column(df, c)]
+    if not ranges:
+        return df
+    parts: list[pl.Expr] = []
+    order: list[str] = []
+    for col in df.columns:
+        if col not in ranges:
+            order.append(col)
+            continue
+        groups = _clean_tokens(col).str.extract_groups(RANGE_CELL)
+        for index, name in enumerate((f"{col} lower", f"{col} upper"), start=1):
+            parts.append(groups.struct.field(str(index)).str.replace_all(",", "").alias(name))
+            order.append(name)
+    logger.info("staging_interval_ranges_split", columns=len(ranges))
+    return df.with_columns(parts).select(order)
+
+
+def unpack_intervals(df: pl.DataFrame) -> pl.DataFrame:
+    """Text frame with packed "value (lower, upper)" cells split into three columns (``x``,
+    ``x lower``, ``x upper``), after any years laid out as columns are turned into rows. Only a
+    column whose every non-empty cell is packed is split; others are left as they are."""
+    df = split_interval_ranges(_years_to_rows(df))
+    packed = [c for c in df.columns if df.schema[c] == pl.String and _packed(df, c)]
+    if not packed:
+        return df
+    parts: list[pl.Expr] = []
+    for col in packed:
+        groups = _clean_tokens(col).str.extract_groups(PACKED_INTERVAL)
+        for index, name in enumerate((col, f"{col} lower", f"{col} upper"), start=1):
+            parts.append(groups.struct.field(str(index)).str.replace_all(",", "").alias(name))
+    order: list[str] = []
+    for col in df.columns:
+        order += [col, f"{col} lower", f"{col} upper"] if col in packed else [col]
+    logger.info("staging_intervals_unpacked", columns=len(packed))
+    return df.with_columns(parts).select(order)
+
+
+def _flag_masks(cleaned: pl.Series, public: bool) -> tuple[pl.Series, pl.Series, pl.Series] | None:
+    """(suppressed, unreliable, not-applicable) masks for a column that holds numbers plus source
+    markers only, or None when any other text is present (the column is left to the typing rules)."""
+    folded = cleaned.str.strip_chars().str.to_lowercase()
+    # A public table's own markers ("<10", "(D)", "*") are suppression. In any other file "<5" is a
+    # censored lab value, so only the unambiguous words count there.
+    pattern = SOURCE_SUPPRESSED_PATTERN if public else SOURCE_SUPPRESSED_WORDS
+    suppressed = folded.str.contains(pattern).fill_null(False)
+    unreliable = folded.str.contains(SOURCE_UNRELIABLE_PATTERN).fill_null(False)
+    not_applicable = folded.is_in(list(SOURCE_NOT_APPLICABLE_TOKENS)).fill_null(False)
+    if not bool(suppressed.any() or unreliable.any()):
+        return None
+    numbers = folded.str.replace(SOURCE_UNRELIABLE_PATTERN, "").str.strip_chars()
+    rest = numbers.filter(~(suppressed | not_applicable) & numbers.is_not_null())
+    rest = rest.filter(~rest.is_in(list(MISSING_VALUE_TOKENS)))
+    if rest.len() == 0 or not bool(rest.str.contains(_FLOAT_RE).all()):
+        return None
+    return suppressed, unreliable, not_applicable
+
+
+def split_source_flags(df: pl.DataFrame, *, public: bool = False) -> pl.DataFrame:
+    """Text frame with each source's own suppression markers moved out of its numbers (ADR014 §10).
+
+    CDC WONDER writes "Suppressed" for deaths of 1-9 (and for rates built on them), "12.3
+    (Unreliable)" for a rate on fewer than 20 deaths and "Not Applicable" where there is no rate.
+    A column whose other cells are all numbers keeps its numbers; a "Suppressed" cell becomes empty
+    and ``<column> suppressed`` is true there, and an unreliable value keeps its number and
+    ``<column> unreliable`` is true. A suppressed cell is never a zero and never a missing value
+    the answer could fill in: answers name it as suppressed at the source.
+    """
+    added: list[pl.Expr] = []
+    order: list[str] = []
+    for col in df.columns:
+        order.append(col)
+        if df.schema[col] != pl.String or is_id_column_name(col):
+            continue
+        cleaned = df.select(_clean(col)).to_series()
+        masks = _flag_masks(cleaned, public)
+        if masks is None:
+            continue
+        suppressed, unreliable, not_applicable = masks
+        flag_names = [f"{col}{suffix}" for suffix in (SUPPRESSED_FLAG_SUFFIX, UNRELIABLE_FLAG_SUFFIX)]
+        if any(name in df.columns for name in flag_names):
+            # A flag column of that name exists already: splitting would lose which cells were
+            # suppressed, so the column stays text (fail closed: no number is read from it).
+            logger.info("staging_source_flags_skipped", column_index=df.columns.index(col), reason="name_taken")
+            continue
+        value = cleaned.str.replace(SOURCE_UNRELIABLE_PATTERN, "").str.strip_chars()
+        value = value.set(suppressed | not_applicable, None)
+        added.append(pl.lit(value).alias(col))
+        for suffix, mask in ((SUPPRESSED_FLAG_SUFFIX, suppressed), (UNRELIABLE_FLAG_SUFFIX, unreliable)):
+            name = f"{col}{suffix}"
+            if bool(mask.any()):
+                added.append(pl.lit(pl.Series(name, mask.cast(pl.String).str.to_lowercase())).alias(name))
+                order.append(name)
+        logger.info(
+            "staging_source_flags_split",
+            column_index=df.columns.index(col),
+            suppressed=int(suppressed.sum()),
+            unreliable=int(unreliable.sum()),
+        )
+    return df.with_columns(added).select(order) if added else df
+
+
+def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1, public: bool = False) -> StagedTable:
     """Type an all-text frame (one row per data line). ``header_row_number``: the header's file row.
 
     Raises:
@@ -461,7 +636,7 @@ def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1) -> StagedT
     body = df.slice(1) if units else df
     first_data_row = header_row_number + (2 if units else 1)
     _reject_empty_rows(body, first_data_row)
-    typed, notes = _type_columns(body)
+    typed, notes = _type_columns(split_source_flags(unpack_intervals(body), public=public))
     log = logger.bind(rows=typed.height, columns=typed.width)
     for note in notes:
         log.info("staging_column_note", column_index=df.columns.index(note.column), reason=note.reason)
@@ -470,7 +645,7 @@ def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1) -> StagedT
     return StagedTable(data=typed, notes=tuple(notes), units=units or {})
 
 
-def read_csv_typed(file_bytes: bytes) -> StagedTable:
+def read_csv_typed(file_bytes: bytes, *, public: bool = False) -> StagedTable:
     """Read CSV bytes as text over the whole file, then stage.
 
     Raises:
@@ -480,7 +655,7 @@ def read_csv_typed(file_bytes: bytes) -> StagedTable:
         text = pl.read_csv(io.BytesIO(file_bytes), infer_schema=False)
     except (pl.exceptions.ComputeError, pl.exceptions.NoDataError) as e:
         raise StagingError(f"The CSV file could not be read: {type(e).__name__}") from e
-    return stage_text_frame(_drop_trailing_blank_rows(text))
+    return stage_text_frame(_drop_trailing_blank_rows(text), public=public)
 
 
 def _cell_text(value: object) -> str | None:
@@ -618,7 +793,7 @@ def _sheet_has_values(sheet: Any) -> bool:
         return True
 
 
-def read_excel_typed(file_bytes: bytes, header_row: int | None = None) -> StagedTable:
+def read_excel_typed(file_bytes: bytes, header_row: int | None = None, *, public: bool = False) -> StagedTable:
     """Read the first sheet of an .xlsx as text, then stage.
 
     Args:
@@ -647,7 +822,7 @@ def read_excel_typed(file_bytes: bytes, header_row: int | None = None) -> Staged
         logger.info("staging_excel_footnote_rows_dropped", rows=footnote_rows)
     # Trailing all-empty rows are sheet formatting, not data lines (unlike in a CSV).
     text = _drop_trailing_blank_rows(pl.DataFrame(body, schema=dict.fromkeys(headers, pl.String), orient="row"))
-    staged = stage_text_frame(text, header_row_number=header_row + 1)
+    staged = stage_text_frame(text, header_row_number=header_row + 1, public=public)
     return replace(staged, sheets=replace(sheets, footnote_rows=footnote_rows))
 
 
