@@ -710,7 +710,7 @@ class QueryService:
         findings.keyed, findings.visits = grain.key is not None, visits
         findings.key = grain.key
         findings.rows_are_patients = grain.rows_are_patients or answer_checks.declared_patient_rows(
-            grain, declarations, dataset_version
+            layer, grain, declarations, dataset_version
         )
 
         findings.refusal = answer_checks.metric_refusal(plan, layer)

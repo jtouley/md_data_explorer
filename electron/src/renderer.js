@@ -1840,6 +1840,8 @@ function askPatientRows(result, name) {
         panel.focus();
         return;
       }
+      // Saved; the question on screen may by now be another cohort's (a slow answer): leave it.
+      if (state.patientRowsDatasetId !== datasetId) return;
       const text = patientRowsAnsweredText(counts, name);
       const hadFocus = area.contains(document.activeElement);
       closePatientRows();

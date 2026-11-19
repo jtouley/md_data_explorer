@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from types import ModuleType
 
 import polars as pl
 import pytest
@@ -145,7 +146,9 @@ class TestRowsArePatients:
             pytest.param("secret_name,sex\na,female\n,male\nc,male\n", False, id="code_missing"),
         ],
     )
-    def test_rowsArePatients_personCodes_yesOnlyWhenUniqueOnEveryRow(self, tmp_path, covid_ms_oracles, text, expected):
+    def test_rowsArePatients_personCodes_yesOnlyWhenUniqueOnEveryRow(
+        self, tmp_path: Path, covid_ms_oracles: ModuleType, text: str, expected: bool
+    ) -> None:
         # Arrange
         csv = _csv(tmp_path, text)
 

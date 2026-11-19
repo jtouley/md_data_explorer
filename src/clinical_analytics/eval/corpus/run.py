@@ -207,7 +207,10 @@ def answer_patient_rows(
     knows = getattr(oracles, "rows_are_patients", None)
     if not callable(knows):
         return "asked; not answered (the oracle does not say), so answers count rows"
-    yes = bool(knows(csv_path))
+    try:
+        yes = bool(knows(csv_path))
+    except pl.exceptions.PolarsError as error:
+        raise AcceptanceError(f"rows_are_patients does not run on {csv_path.name}: {error}") from error
     body = api.post_json(
         f"/api/datasets/{dataset_id}/one-row-per-patient",
         {"confirmation": question.get("confirmation"), "one_row_per_patient": yes},

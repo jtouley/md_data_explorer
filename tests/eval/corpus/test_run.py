@@ -5,9 +5,12 @@ A fake API on a fake clock stands in for the server; no process is started.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import polars as pl
 import pytest
 
 from clinical_analytics.eval.corpus.run import AcceptanceError, answer_patient_rows, ask_all
@@ -102,7 +105,9 @@ class TestAnswerPatientRows:
             pytest.param(lambda path: False, "answered no, so answers count rows", False, id="oracle_no"),
         ],
     )
-    def test_answerPatientRows_asked_oracleAnswersWithToken(self, tmp_path, knows, said, answer):
+    def test_answerPatientRows_asked_oracleAnswersWithToken(
+        self, tmp_path: Path, knows: Callable[[Path], bool], said: str, answer: bool
+    ) -> None:
         # Arrange
         api, oracles = _AnswerApi(), SimpleNamespace(rows_are_patients=knows)
         uploaded = {"one_row_per_patient": {"status": "pending", "confirmation": "a" * 32}}
@@ -131,7 +136,9 @@ class TestAnswerPatientRows:
             ),
         ],
     )
-    def test_answerPatientRows_notAskedOrOracleSilent_nothingSent(self, tmp_path, uploaded, oracles, said):
+    def test_answerPatientRows_notAskedOrOracleSilent_nothingSent(
+        self, tmp_path: Path, uploaded: dict[str, Any], oracles: SimpleNamespace, said: str
+    ) -> None:
         # Arrange
         api = _AnswerApi()
 
@@ -142,7 +149,7 @@ class TestAnswerPatientRows:
         assert note == said
         assert api.sent == []
 
-    def test_answerPatientRows_appCountsOtherThing_acceptanceError(self, tmp_path):
+    def test_answerPatientRows_appCountsOtherThing_acceptanceError(self, tmp_path: Path) -> None:
         # Arrange
         api = _AnswerApi()
         api.post_json = lambda path, payload: {"counts": "rows"}  # type: ignore[method-assign]
@@ -151,3 +158,14 @@ class TestAnswerPatientRows:
         # Act / Assert
         with pytest.raises(AcceptanceError, match="count 'rows'"):
             answer_patient_rows(api, "d1", uploaded, SimpleNamespace(rows_are_patients=lambda p: True), tmp_path)
+
+    def test_answerPatientRows_oracleFailsOnFile_acceptanceErrorNotTraceback(self, tmp_path: Path) -> None:
+        # Arrange
+        def broken(path: Path) -> bool:
+            raise pl.exceptions.ColumnNotFoundError("secret_name")
+
+        uploaded = {"one_row_per_patient": {"confirmation": "a" * 32}}
+
+        # Act / Assert
+        with pytest.raises(AcceptanceError, match="rows_are_patients does not run"):
+            answer_patient_rows(_AnswerApi(), "d1", uploaded, SimpleNamespace(rows_are_patients=broken), tmp_path)

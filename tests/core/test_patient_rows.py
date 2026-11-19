@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import polars as pl
@@ -14,7 +15,12 @@ from clinical_analytics.contracts.declarations import (
     confirmation_token,
 )
 from clinical_analytics.core.answer_checks import Grain, declared_patient_rows
-from clinical_analytics.core.identifier_rules import REPEATED_ID_COLUMNS_KEY, is_id_name, rows_may_be_patients
+from clinical_analytics.core.identifier_rules import (
+    PATIENT_ROWS_ASKABLE_CONFIG_FLAG,
+    REPEATED_ID_COLUMNS_KEY,
+    is_id_name,
+    rows_may_be_patients,
+)
 from clinical_analytics.core.patient_rows import (
     PatientRowsNotAskedError,
     PatientRowsStaleError,
@@ -62,6 +68,21 @@ def _frame(**columns: list[Any]) -> pl.DataFrame:
             id="patient_key_name_repeats",
         ),
         pytest.param(_frame(patient_id=[f"P{i:04d}" for i in range(N)]), False, id="patient_id_names_patients"),
+        pytest.param(
+            _frame(record_code=[f"R{i:04d}" for i in range(N)], person_id=[float(i % 50) for i in range(N)]),
+            False,
+            id="spss_float_person_id_repeats",
+        ),
+        pytest.param(
+            _frame(record_code=[f"R{i:04d}" for i in range(N)], **{"Hosp No": [f"H{i % 70:03d}" for i in range(N)]}),
+            False,
+            id="hosp_no_repeats",
+        ),
+        pytest.param(
+            _frame(record_code=[f"R{i:04d}" for i in range(N)], site_id=[f"S{i % 5}" for i in range(N)]),
+            False,
+            id="site_id_repeats_not_asked_by_design",
+        ),
         pytest.param(
             _frame(
                 record_code=[f"R{i:04d}" for i in range(N)],
@@ -138,6 +159,8 @@ def test_questionToken_badCountsOrVersion_notAsked(rows: Any, version: str) -> N
         ("covid19_admission_hospital", False),
         ("paid", False),
         ("record_code", False),
+        ("Hosp No", True),
+        ("Record Number", True),
         ("", False),
     ],
 )
@@ -250,24 +273,30 @@ def test_recordAnswer_notAsked_refusedNothingStored() -> None:
 
 
 @pytest.mark.parametrize(
-    ("grain", "stored", "expected"),
+    ("askable", "grain", "stored", "expected"),
     [
-        pytest.param(Grain(key=None, rows=N, patients=None), (None, N, "v1"), True, id="confirmed"),
-        pytest.param(Grain(key=None, rows=N, patients=None), (None, N - 1, "v1"), False, id="other_row_count"),
-        pytest.param(Grain(key=None, rows=N, patients=None), (None, N, "v0"), False, id="other_version"),
+        pytest.param(True, Grain(key=None, rows=N, patients=None), (None, N, "v1"), True, id="confirmed"),
         pytest.param(
+            False, Grain(key=None, rows=N, patients=None), (None, N, "v1"), False, id="ids_repeat_not_askable"
+        ),
+        pytest.param(None, Grain(key=None, rows=N, patients=None), (None, N, "v1"), False, id="flag_absent"),
+        pytest.param(True, Grain(key=None, rows=N, patients=None), (None, N - 1, "v1"), False, id="other_row_count"),
+        pytest.param(True, Grain(key=None, rows=N, patients=None), (None, N, "v0"), False, id="other_version"),
+        pytest.param(
+            True,
             Grain(key="patient_id", rows=N, patients=N - 2, missing_keys=2),
             ("patient_id", N, "v1"),
             False,
             id="keyed_rows",
         ),
-        pytest.param(Grain(key=None, rows=N, patients=None), None, False, id="nothing_stored"),
+        pytest.param(True, Grain(key=None, rows=N, patients=None), None, False, id="nothing_stored"),
     ],
 )
-def test_declaredPatientRows_storedGrain_onlyThisVersionAndCount(
-    grain: Grain, stored: tuple[str | None, int, str] | None, expected: bool
+def test_declaredPatientRows_storedGrain_onlyAskableVersionAndCount(
+    askable: bool | None, grain: Grain, stored: tuple[str | None, int, str] | None, expected: bool
 ) -> None:
     # Arrange
+    layer = SimpleNamespace(config={} if askable is None else {PATIENT_ROWS_ASKABLE_CONFIG_FLAG: askable})
     store = MemoryDeclarationStore()
     if stored is not None:
         key, rows, version = stored
@@ -275,7 +304,7 @@ def test_declaredPatientRows_storedGrain_onlyThisVersionAndCount(
         store.update(DATASET, lambda d: d.with_grain(declared))
 
     # Act
-    result = declared_patient_rows(grain, store.load(DATASET), "v1")
+    result = declared_patient_rows(layer, grain, store.load(DATASET), "v1")
 
     # Assert
     assert result is expected

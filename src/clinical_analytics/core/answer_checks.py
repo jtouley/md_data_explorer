@@ -35,7 +35,7 @@ from clinical_analytics.contracts.builder import range_text as plausibility_text
 from clinical_analytics.contracts.config import MIN_CELL_SIZE, MISSINGNESS_WARN_PERCENT
 from clinical_analytics.contracts.declarations import Declarations, GrainDeclaration, LevelMapping
 from clinical_analytics.contracts.quality import RANGE_METRIC, QualityReport
-from clinical_analytics.core.identifier_rules import ROW_KEY_CONFIG_FLAG
+from clinical_analytics.core.identifier_rules import PATIENT_ROWS_ASKABLE_CONFIG_FLAG, ROW_KEY_CONFIG_FLAG
 from clinical_analytics.core.plan_values import plan_values
 from clinical_analytics.core.query_plan import QueryPlan
 from clinical_analytics.core.result_presentation import line_count_text
@@ -130,13 +130,17 @@ def declared_visits(grain: Grain, declarations: Declarations, dataset_version: s
     return stored is not None and stored == grain.declaration(dataset_version)
 
 
-def declared_patient_rows(grain: Grain, declarations: Declarations, dataset_version: str | None) -> bool:
+def declared_patient_rows(layer: Any, grain: Grain, declarations: Declarations, dataset_version: str | None) -> bool:
     """Whether the user confirmed one row per patient on this dataset version, where no column
     identifies a patient (the upload's "Is each row one patient?", or governed SQL's
-    confirmation; ``core.patient_rows``). Only for the row count it was confirmed on."""
+    confirmation; ``core.patient_rows``). Only for the row count it was confirmed on, and only on
+    a dataset the upload may ask about (``PATIENT_ROWS_ASKABLE_CONFIG_FLAG``): where an ID-like
+    column repeats, no confirmation makes rows patients."""
+    config = getattr(layer, "config", None) or {}
     stored = declarations.grain_for(dataset_version)
     return (
-        grain.key is None
+        config.get(PATIENT_ROWS_ASKABLE_CONFIG_FLAG) is True
+        and grain.key is None
         and stored is not None
         and stored.grain == "patient"
         and stored.key is None

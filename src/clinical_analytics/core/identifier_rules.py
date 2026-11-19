@@ -258,11 +258,18 @@ def added_id_columns(metadata: Mapping[str, object]) -> list[str]:
 # Upload metadata (``synthetic_id_metadata.patient_id``): the ID-like columns whose values repeat,
 # recorded by ``ensure_patient_id`` for the sources that may be asked. Absent: never asked.
 REPEATED_ID_COLUMNS_KEY: Final = "repeated_id_columns"
+# Semantic-layer config flag: ``rows_may_be_patients`` for the dataset. A stored one-row-per-patient
+# confirmation makes answers count patients only where it is set (``answer_checks``), so a
+# confirmation given elsewhere (governed SQL) never turns visit rows into patients.
+PATIENT_ROWS_ASKABLE_CONFIG_FLAG: Final = "rows_may_be_patients"
 
-# Name tokens of an identifier ("person_id", "caseId", "Encounter ID"): split on anything but
-# letters and digits and at a lower-to-upper case change. Kept narrow ("number" and "no" also
-# name counts and answers): a missed ID only means the question is not asked.
-ID_NAME_TOKENS: Final[frozenset[str]] = frozenset({"id", "ids", "identifier", "mrn", "uuid", "guid"})
+# Name tokens of an identifier ("person_id", "caseId", "Hosp No", "Record Number"): split on
+# anything but letters and digits and at a lower-to-upper case change. Broad on purpose: a column
+# matched by mistake that repeats ("number_of_children", "site_id") only means the question is not
+# asked; a repeating ID that is missed means it is asked on visit rows.
+ID_NAME_TOKENS: Final[frozenset[str]] = frozenset(
+    {"id", "ids", "identifier", "mrn", "mr", "uuid", "guid", "no", "nr", "num", "number", "ref"}
+)
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
 
@@ -278,16 +285,14 @@ def is_id_name(column: str) -> bool:
 
 def repeated_id_columns(df: pl.DataFrame, identifier_columns: list[str]) -> list[str]:
     """The columns that look like IDs and hold a value on more than one row: named as an ID
-    (``is_id_name``) or typed as one (``identifier_columns``, over 95% unique), values that may
-    name someone (``can_identify_patients``), and more than one distinct value (a study code on
+    (``is_id_name``, whatever the type: SPSS stores an ID of 1, 2, ... as floats) or typed as one
+    (``identifier_columns``, over 95% unique), with more than one distinct value (a study code on
     every row identifies no one). One select over the frame.
     """
     candidates = [
         column
         for column in df.columns
-        if column != ROW_NUMBER_COLUMN
-        and (column in identifier_columns or is_id_name(column))
-        and can_identify_patients(df.get_column(column))
+        if column != ROW_NUMBER_COLUMN and (column in identifier_columns or is_id_name(column))
     ]
     if not candidates or df.height < 2:
         return []

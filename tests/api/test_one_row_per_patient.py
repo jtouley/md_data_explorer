@@ -6,7 +6,7 @@ Synthetic frames only: no real data.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from typing import Any
 
 import polars as pl
@@ -18,7 +18,6 @@ from clinical_analytics.core.data_home import uploads_dir
 
 pytestmark = [pytest.mark.slow, pytest.mark.integration, pytest.mark.usefixtures("isolated_data_home")]
 
-UPLOAD = "/api/datasets/upload"
 N = 200
 
 
@@ -48,24 +47,12 @@ def _visit_rows(n: int = N) -> pl.DataFrame:
     )
 
 
-@pytest.fixture
-def upload(test_client: TestClient) -> Iterator[Callable[[pl.DataFrame, str], Any]]:
-    """POST a frame as CSV and return the JSON body; drops the cached layers it created."""
-    from clinical_analytics.api import dependencies
-
-    created: list[str] = []
-
-    def _upload(df: pl.DataFrame, name: str) -> Any:
-        response = test_client.post(
-            UPLOAD, files={"file": (f"{name}.csv", df.write_csv().encode(), "text/csv")}, data={"dataset_name": name}
-        )
-        assert response.status_code == 200, response.text
-        created.append(response.json()["upload_id"])
-        return response.json()
-
-    yield _upload
-    for upload_id in created:
-        dependencies.invalidate_semantic_layer_cache(upload_id)
+def _uploaded(upload: Callable[..., Any], df: pl.DataFrame, name: str) -> dict[str, Any]:
+    """The upload response body (``upload`` is the API conftest factory); the upload must work."""
+    response = upload(df, name)
+    assert response.status_code == 200, response.text
+    body: dict[str, Any] = response.json()
+    return body
 
 
 def _version(upload_id: str) -> str:
@@ -88,10 +75,10 @@ def _count_unit(upload_id: str) -> str | None:
 
 
 def test_upload_uniqueUnnamedId_questionPendingThenYesCountsPatients(
-    test_client: TestClient, upload: Callable[[pl.DataFrame, str], Any]
+    test_client: TestClient, upload: Callable[..., Any]
 ) -> None:
     # Arrange
-    body = upload(_one_row_per_record(), "records")
+    body = _uploaded(upload, _one_row_per_record(), "records")
     upload_id = body["upload_id"]
     question = body["one_row_per_patient"]
     before = _count_unit(upload_id)
@@ -111,11 +98,9 @@ def test_upload_uniqueUnnamedId_questionPendingThenYesCountsPatients(
     assert after == "patients"
 
 
-def test_upload_answeredNo_rowsKeptNothingStored(
-    test_client: TestClient, upload: Callable[[pl.DataFrame, str], Any]
-) -> None:
+def test_upload_answeredNo_rowsKeptNothingStored(test_client: TestClient, upload: Callable[..., Any]) -> None:
     # Arrange
-    body = upload(_one_row_per_record(), "records_no")
+    body = _uploaded(upload, _one_row_per_record(), "records_no")
     upload_id = body["upload_id"]
 
     # Act
@@ -141,10 +126,10 @@ def test_upload_answeredNo_rowsKeptNothingStored(
     ],
 )
 def test_answer_staleOrForgedToken_409NothingStored(
-    test_client: TestClient, upload: Callable[[pl.DataFrame, str], Any], make_token: Callable[[str], str]
+    test_client: TestClient, upload: Callable[..., Any], make_token: Callable[[str], str]
 ) -> None:
     # Arrange
-    upload_id = upload(_one_row_per_record(), "records_stale")["upload_id"]
+    upload_id = _uploaded(upload, _one_row_per_record(), "records_stale")["upload_id"]
     version = _version(upload_id)
 
     # Act
@@ -160,10 +145,10 @@ def test_answer_staleOrForgedToken_409NothingStored(
 
 
 def test_upload_visitLevelIdsRepeat_neverAskedAnswerRefused(
-    test_client: TestClient, upload: Callable[[pl.DataFrame, str], Any]
+    test_client: TestClient, upload: Callable[..., Any]
 ) -> None:
     # Arrange
-    body = upload(_visit_rows(), "visits")
+    body = _uploaded(upload, _visit_rows(), "visits")
     upload_id = body["upload_id"]
     version = _version(upload_id)
 
@@ -180,12 +165,12 @@ def test_upload_visitLevelIdsRepeat_neverAskedAnswerRefused(
     assert FileDeclarationStore(uploads_dir().parent).load(upload_id).grains == ()
 
 
-def test_upload_patientIdColumn_neverAsked(upload: Callable[[pl.DataFrame, str], Any]) -> None:
+def test_upload_patientIdColumn_neverAsked(upload: Callable[..., Any]) -> None:
     # Arrange
     df = _one_row_per_record().rename({"record_code": "patient_id"})
 
     # Act
-    body = upload(df, "patients")
+    body = _uploaded(upload, df, "patients")
 
     # Assert
     assert body["one_row_per_patient"] is None
@@ -202,11 +187,9 @@ def test_upload_patientIdColumn_neverAsked(upload: Callable[[pl.DataFrame, str],
         pytest.param({"confirmation": "0" * 32, "one_row_per_patient": True, "rows": 5}, id="extra_field"),
     ],
 )
-def test_answer_invalidBody_422(
-    test_client: TestClient, upload: Callable[[pl.DataFrame, str], Any], payload: dict[str, Any]
-) -> None:
+def test_answer_invalidBody_422(test_client: TestClient, upload: Callable[..., Any], payload: dict[str, Any]) -> None:
     # Arrange
-    upload_id = upload(_one_row_per_record(), "records_bad")["upload_id"]
+    upload_id = _uploaded(upload, _one_row_per_record(), "records_bad")["upload_id"]
 
     # Act
     response = test_client.post(_answer_url(upload_id), json=payload)
@@ -228,13 +211,13 @@ def test_answer_unknownDataset_404(test_client: TestClient) -> None:
 
 
 def test_answerYes_governedSqlReadsSameConfirmation(
-    test_client: TestClient, upload: Callable[[pl.DataFrame, str], Any], monkeypatch: pytest.MonkeyPatch
+    test_client: TestClient, upload: Callable[..., Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Arrange
     from clinical_analytics.core import nl_query_config
 
     monkeypatch.setattr(nl_query_config, "ENABLE_SQL_QUERIES", True)
-    body = upload(_one_row_per_record(), "records_sql")
+    body = _uploaded(upload, _one_row_per_record(), "records_sql")
     upload_id = body["upload_id"]
     sql = {"dataset_id": upload_id, "sql": "SELECT ward, count(*) AS n FROM unified GROUP BY ward"}
     refused = test_client.post("/api/queries/sql", json=sql).json()
@@ -251,3 +234,23 @@ def test_answerYes_governedSqlReadsSameConfirmation(
     assert refused["confirmation"] == body["one_row_per_patient"]["confirmation"]
     assert answered["status"] == "answered", answered
     assert answered["needs_confirmation"] is None
+
+
+def test_sqlConfirmationOnVisitRows_questionsStillCountRows(
+    test_client: TestClient, upload: Callable[..., Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Arrange: visit rows the upload never asks about; the user confirms in governed SQL anyway
+    from clinical_analytics.core import nl_query_config
+
+    monkeypatch.setattr(nl_query_config, "ENABLE_SQL_QUERIES", True)
+    upload_id = _uploaded(upload, _visit_rows(), "visits_sql")["upload_id"]
+    sql = {"dataset_id": upload_id, "sql": "SELECT sex, count(*) AS n FROM unified GROUP BY sex"}
+    refused = test_client.post("/api/queries/sql", json=sql).json()
+    test_client.post("/api/queries/sql", json={**sql, "confirm_one_row_per_patient": refused["confirmation"]})
+
+    # Act
+    unit = _count_unit(upload_id)
+
+    # Assert: the SQL confirmation is stored, but never turns visit rows into patients
+    assert FileDeclarationStore(uploads_dir().parent).load(upload_id).grains != ()
+    assert unit == "rows"
