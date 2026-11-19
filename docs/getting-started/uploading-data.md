@@ -104,13 +104,12 @@ The app runs locally after setup. It is **not a compliance certification**; chec
 
 ## Troubleshooting
 
-### "No column in this file identifies a patient"
+### "Answers count rows, not patients"
 
-**Problem:** No column has one ID per patient, so the app cannot count patients. It refuses the upload rather than count rows as patients.
+**What it means:** no column in the file identifies a patient, so the upload added a row number (or tells the rows apart by a combination of columns) and every answer counts rows. The upload says so, and answers say "rows", never "patients". If each row is one patient the numbers are right; if a patient can have several rows (visits, episodes), a row count is not a patient count.
 
-**Solution:**
-- Add a column with one ID for each patient (patient ID, subject ID or MRN), with the same ID on each of that patient's rows.
-- Add a row number only if each row really is a different patient. When a patient can have several rows (visits, episodes), a row number would count each row as a new patient, and answers would be wrong.
+**To count patients:**
+- Add a column with one ID for each patient (patient ID, subject ID or MRN), with the same ID on each of that patient's rows, and upload the file again. A column named as a patient ID is used even when it repeats; repeated IDs are read as visits, and questions that count patients first ask you to confirm that.
 
 ### Other upload errors
 

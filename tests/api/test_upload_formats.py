@@ -292,20 +292,22 @@ def _no_id_cohort(n: int = 150) -> bytes:
 
 
 @pytest.mark.parametrize("as_zip", [False, True], ids=["csv", "zip_of_one_csv"])
-def test_uploadDataset_noPatientIdColumn_refused400SaysToAddOne(
+def test_uploadDataset_noPatientIdColumn_uploadsAndSaysRowsNotPatients(
     test_client: TestClient, isolated_data_home, as_zip: bool
 ):
-    # Arrange: before, "Error saving upload: ValueError" with a 500
+    # Arrange: before #103 and this branch, "Error saving upload: ValueError" with a 500
     data = _zip({"primary_cohort.csv": _no_id_cohort()}) if as_zip else _no_id_cohort()
     name = "sepsis.zip" if as_zip else "sepsis.csv"
 
     # Act
     body = _upload(test_client, name, data, "sepsis")
 
-    # Assert: refused rather than counting rows as patients; says what to add
-    assert body["_status_code"] == 400, body
-    assert "No column in this file identifies a patient" in body["detail"]
-    assert "Add a column with one ID for each patient" in body["detail"]
+    # Assert: stored with a row number, never counted as patients, and the upload says so
+    assert body["_status_code"] == 200, body
+    assert body["status"] == "ready"
+    assert body["unit_note"].startswith("No column in this file identifies a patient")
+    assert "Answers count rows, not patients." in body["unit_note"]
+    assert "add a column with one ID for each patient" in body["unit_note"]
 
 
 def test_uploadDataset_headersDifferOnlyInCase_refused400NamesBoth(test_client: TestClient, isolated_data_home):
