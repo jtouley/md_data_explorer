@@ -256,3 +256,18 @@ def answers(csv_path: Path, oracles: dict[str, Oracle] | None = None) -> dict[st
         except OracleError as error:
             result[question_id] = OracleAnswer(None, query.unit, oracle_error=str(error))
     return result
+
+
+PERSON_CODE = "secret_name"
+
+
+def rows_are_patients(csv_path: Path) -> bool:
+    """The answer to the upload's "Is each row one patient?". The data description says each row
+    is one person with MS reporting COVID-19, coded by ``secret_name``: yes, while that code is
+    on every row and never repeats (if it ever did, the description would not hold: no)."""
+    codes = scan(csv_path).select(
+        pl.col(PERSON_CODE).null_count().alias("missing"),
+        (pl.col(PERSON_CODE).n_unique() == pl.len()).alias("unique"),
+    )
+    missing, unique = codes.collect().row(0)
+    return missing == 0 and bool(unique)

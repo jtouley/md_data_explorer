@@ -1,0 +1,253 @@
+# SPDX-License-Identifier: MIT
+""" "Is each row one patient?" through the API: asked at upload, answered for that version.
+
+Synthetic frames only: no real data.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Iterator
+from typing import Any
+
+import polars as pl
+import pytest
+from fastapi.testclient import TestClient
+
+from clinical_analytics.contracts.declarations import FileDeclarationStore, confirmation_token
+from clinical_analytics.core.data_home import uploads_dir
+
+pytestmark = [pytest.mark.slow, pytest.mark.integration, pytest.mark.usefixtures("isolated_data_home")]
+
+UPLOAD = "/api/datasets/upload"
+N = 200
+
+
+def _answer_url(upload_id: str) -> str:
+    return f"/api/datasets/{upload_id}/one-row-per-patient"
+
+
+def _one_row_per_record(n: int = N) -> pl.DataFrame:
+    """Shaped like COVID-MS: a record code unique on every row, not named as a patient ID."""
+    return pl.DataFrame(
+        {
+            "record_code": [f"R{i:04d}" for i in range(n)],
+            "sex": ["female" if i % 2 else "male" for i in range(n)],
+            "ward": [("A", "B", "C", "D")[i % 4] for i in range(n)],
+        }
+    )
+
+
+def _visit_rows(n: int = N) -> pl.DataFrame:
+    """Visit-level: a unique visit code, and a person ID (not a patient-key name) that repeats."""
+    return pl.DataFrame(
+        {
+            "visit_code": [f"V{i:04d}" for i in range(n)],
+            "person_id": [f"P{i % (n // 2):04d}" for i in range(n)],
+            "sex": ["female" if (i % (n // 2)) % 2 else "male" for i in range(n)],
+        }
+    )
+
+
+@pytest.fixture
+def upload(test_client: TestClient) -> Iterator[Callable[[pl.DataFrame, str], Any]]:
+    """POST a frame as CSV and return the JSON body; drops the cached layers it created."""
+    from clinical_analytics.api import dependencies
+
+    created: list[str] = []
+
+    def _upload(df: pl.DataFrame, name: str) -> Any:
+        response = test_client.post(
+            UPLOAD, files={"file": (f"{name}.csv", df.write_csv().encode(), "text/csv")}, data={"dataset_name": name}
+        )
+        assert response.status_code == 200, response.text
+        created.append(response.json()["upload_id"])
+        return response.json()
+
+    yield _upload
+    for upload_id in created:
+        dependencies.invalidate_semantic_layer_cache(upload_id)
+
+
+def _version(upload_id: str) -> str:
+    from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
+
+    return str((UserDatasetStorage().get_upload_metadata(upload_id) or {})["dataset_version"])
+
+
+def _count_unit(upload_id: str) -> str | None:
+    """The unit of "how many patients?" asked as the API asks it (declarations on disk)."""
+    from clinical_analytics.api import dependencies
+    from clinical_analytics.core.query_service import QueryService
+
+    data_dir = uploads_dir().parent
+    with dependencies.lease_semantic_layer(upload_id) as lease:
+        service = QueryService(lease.layer, declarations=FileDeclarationStore(data_dir), data_dir=data_dir)
+        result = service.ask("how many patients?", dataset_id=upload_id, dataset_version=lease.layer.loaded_version)
+    assert result.analysis is not None, result.failure_reason
+    return result.analysis.get("unit")
+
+
+def test_upload_uniqueUnnamedId_questionPendingThenYesCountsPatients(
+    test_client: TestClient, upload: Callable[[pl.DataFrame, str], Any]
+) -> None:
+    # Arrange
+    body = upload(_one_row_per_record(), "records")
+    upload_id = body["upload_id"]
+    question = body["one_row_per_patient"]
+    before = _count_unit(upload_id)
+
+    # Act
+    response = test_client.post(
+        _answer_url(upload_id), json={"confirmation": question["confirmation"], "one_row_per_patient": True}
+    )
+    after = _count_unit(upload_id)
+
+    # Assert: pending until answered (rows), then patients
+    assert question["status"] == "pending"
+    assert "Answers count rows, not patients." in body["unit_note"]
+    assert before == "rows"
+    assert response.status_code == 200, response.text
+    assert response.json() == {"dataset_id": upload_id, "counts": "patients"}
+    assert after == "patients"
+
+
+def test_upload_answeredNo_rowsKeptNothingStored(
+    test_client: TestClient, upload: Callable[[pl.DataFrame, str], Any]
+) -> None:
+    # Arrange
+    body = upload(_one_row_per_record(), "records_no")
+    upload_id = body["upload_id"]
+
+    # Act
+    response = test_client.post(
+        _answer_url(upload_id),
+        json={"confirmation": body["one_row_per_patient"]["confirmation"], "one_row_per_patient": False},
+    )
+
+    # Assert
+    assert response.status_code == 200, response.text
+    assert response.json()["counts"] == "rows"
+    assert _count_unit(upload_id) == "rows"
+    assert FileDeclarationStore(uploads_dir().parent).load(upload_id).grains == ()
+
+
+@pytest.mark.parametrize(
+    "make_token",
+    [
+        pytest.param(lambda version: confirmation_token("v0", None, N), id="earlier_version"),
+        pytest.param(lambda version: confirmation_token(version, None, N - 1), id="other_row_count"),
+        pytest.param(lambda version: confirmation_token(version, "record_code", N), id="other_id_column"),
+        pytest.param(lambda version: "0" * 32, id="forged"),
+    ],
+)
+def test_answer_staleOrForgedToken_409NothingStored(
+    test_client: TestClient, upload: Callable[[pl.DataFrame, str], Any], make_token: Callable[[str], str]
+) -> None:
+    # Arrange
+    upload_id = upload(_one_row_per_record(), "records_stale")["upload_id"]
+    version = _version(upload_id)
+
+    # Act
+    response = test_client.post(
+        _answer_url(upload_id), json={"confirmation": make_token(version), "one_row_per_patient": True}
+    )
+
+    # Assert
+    assert response.status_code == 409
+    assert "changed after you were asked" in response.json()["detail"]
+    assert FileDeclarationStore(uploads_dir().parent).load(upload_id).grains == ()
+    assert _count_unit(upload_id) == "rows"
+
+
+def test_upload_visitLevelIdsRepeat_neverAskedAnswerRefused(
+    test_client: TestClient, upload: Callable[[pl.DataFrame, str], Any]
+) -> None:
+    # Arrange
+    body = upload(_visit_rows(), "visits")
+    upload_id = body["upload_id"]
+    version = _version(upload_id)
+
+    # Act: even a client that computes the token is refused
+    response = test_client.post(
+        _answer_url(upload_id),
+        json={"confirmation": confirmation_token(version, None, N), "one_row_per_patient": True},
+    )
+
+    # Assert
+    assert body["one_row_per_patient"] is None
+    assert response.status_code == 409
+    assert "not asked" in response.json()["detail"]
+    assert FileDeclarationStore(uploads_dir().parent).load(upload_id).grains == ()
+
+
+def test_upload_patientIdColumn_neverAsked(upload: Callable[[pl.DataFrame, str], Any]) -> None:
+    # Arrange
+    df = _one_row_per_record().rename({"record_code": "patient_id"})
+
+    # Act
+    body = upload(df, "patients")
+
+    # Assert
+    assert body["one_row_per_patient"] is None
+    assert body["unit_note"] == ""
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param({"confirmation": "z" * 32, "one_row_per_patient": True}, id="not_hex"),
+        pytest.param({"confirmation": "0" * 31, "one_row_per_patient": True}, id="too_short"),
+        pytest.param({"confirmation": "0" * 32, "one_row_per_patient": "yes"}, id="answer_not_bool"),
+        pytest.param({"confirmation": "0" * 32}, id="no_answer"),
+        pytest.param({"confirmation": "0" * 32, "one_row_per_patient": True, "rows": 5}, id="extra_field"),
+    ],
+)
+def test_answer_invalidBody_422(
+    test_client: TestClient, upload: Callable[[pl.DataFrame, str], Any], payload: dict[str, Any]
+) -> None:
+    # Arrange
+    upload_id = upload(_one_row_per_record(), "records_bad")["upload_id"]
+
+    # Act
+    response = test_client.post(_answer_url(upload_id), json=payload)
+
+    # Assert
+    assert response.status_code == 422
+    assert FileDeclarationStore(uploads_dir().parent).load(upload_id).grains == ()
+
+
+def test_answer_unknownDataset_404(test_client: TestClient) -> None:
+    # Arrange
+    payload = {"confirmation": "0" * 32, "one_row_per_patient": True}
+
+    # Act
+    response = test_client.post(_answer_url("user_upload_missing"), json=payload)
+
+    # Assert
+    assert response.status_code == 404
+
+
+def test_answerYes_governedSqlReadsSameConfirmation(
+    test_client: TestClient, upload: Callable[[pl.DataFrame, str], Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Arrange
+    from clinical_analytics.core import nl_query_config
+
+    monkeypatch.setattr(nl_query_config, "ENABLE_SQL_QUERIES", True)
+    body = upload(_one_row_per_record(), "records_sql")
+    upload_id = body["upload_id"]
+    sql = {"dataset_id": upload_id, "sql": "SELECT ward, count(*) AS n FROM unified GROUP BY ward"}
+    refused = test_client.post("/api/queries/sql", json=sql).json()
+
+    # Act
+    test_client.post(
+        _answer_url(upload_id),
+        json={"confirmation": body["one_row_per_patient"]["confirmation"], "one_row_per_patient": True},
+    )
+    answered = test_client.post("/api/queries/sql", json=sql).json()
+
+    # Assert: the upload's question and SQL's refusal ask about the same thing, with one token
+    assert refused["needs_confirmation"] == "one_row_per_patient"
+    assert refused["confirmation"] == body["one_row_per_patient"]["confirmation"]
+    assert answered["status"] == "answered", answered
+    assert answered["needs_confirmation"] is None

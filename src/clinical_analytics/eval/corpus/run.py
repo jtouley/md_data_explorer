@@ -6,7 +6,9 @@ clinical_analytics.api.serve``, the installed app's entry point) from an unrelat
 with a new temporary ``CLINICAL_ANALYTICS_DATA_HOME`` and HOME, uploads the ZIP through
 ``POST /api/datasets/upload``, and asks every question through ``/api/queries``: each in a new
 session, a follow-up in its parent's session. A held question is confirmed once only when its
-YAML says ``confirm: true``. The presented answer is graded by ``eval.corpus.score``.
+YAML says ``confirm: true``. When the upload asks "Is each row one patient?", the dataset's
+oracle module answers it (``rows_are_patients``, written from the data description); a module
+without one leaves it unanswered, so answers count rows. The presented answer is graded by ``eval.corpus.score``.
 
 Results (JSON and a markdown table) go to a directory outside the repo; the table is printed.
 Only aggregates are written: the claim and table the app presents, never rows.
@@ -188,6 +190,32 @@ class RunReport:
 
 
 # ---------------------------------------------------------------------------- questions/oracles
+
+
+def answer_patient_rows(
+    api: Api, dataset_id: str, uploaded: dict[str, Any], oracles: ModuleType, csv_path: Path
+) -> str:
+    """Answer the upload's "Is each row one patient?" as the data owner would, from the oracle
+    module's ``rows_are_patients(csv_path)``, and say what was done (recorded in the report).
+
+    Raises:
+        AcceptanceError: the app refused the answer, or then counts something else.
+    """
+    question = uploaded.get("one_row_per_patient")
+    if not isinstance(question, dict):
+        return "not asked"
+    knows = getattr(oracles, "rows_are_patients", None)
+    if not callable(knows):
+        return "asked; not answered (the oracle does not say), so answers count rows"
+    yes = bool(knows(csv_path))
+    body = api.post_json(
+        f"/api/datasets/{dataset_id}/one-row-per-patient",
+        {"confirmation": question.get("confirmation"), "one_row_per_patient": yes},
+    )
+    expected = "patients" if yes else "rows"
+    if body.get("counts") != expected:
+        raise AcceptanceError(f"answered one row per patient {yes}, but answers count {body.get('counts')!r}")
+    return f"asked; answered {'yes' if yes else 'no'}, so answers count {expected}"
 
 
 def _question_file(dataset: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -627,8 +655,9 @@ def run(
     zip_path = fetch_dataset(dataset, cache_dir, seed_dirs, corpus=corpus)
     csv_path = table_path(corpus[dataset], cache_dir)
     csv_name = csv_path.name
+    oracles = load_oracles(dataset)
     try:
-        truth: dict[str, OracleAnswer] = load_oracles(dataset).answers(csv_path)
+        truth: dict[str, OracleAnswer] = oracles.answers(csv_path)
     except pl.exceptions.PolarsError as error:
         raise AcceptanceError(f"oracles for {dataset} do not run on {csv_name}: {error}") from error
     missing = [q["id"] for q in asked if q["id"] not in truth]
@@ -651,7 +680,7 @@ def run(
         report.settings["startup_s"] = round(api.wait_healthy(), 1)
         upload_started = time.monotonic()
         try:
-            dataset_id = api.upload(zip_path, dataset)
+            uploaded = api.upload_response(zip_path, dataset)
             report.settings["upload"] = "zip (table + dictionary)"
         except AcceptanceError as error:
             if "-> 400" not in str(error):
@@ -659,8 +688,10 @@ def run(
             # Recorded, never silent: the API refused the ZIP, so the table goes up alone and
             # the app answers without the dictionary.
             report.settings["upload"] = f"csv only; ZIP rejected: {str(error)[:200]}"
-            dataset_id = api.upload(csv_path, dataset)
+            uploaded = api.upload_response(csv_path, dataset)
+        dataset_id = required_field(uploaded, "upload_id", "POST /api/datasets/upload")
         report.settings["upload_s"] = round(time.monotonic() - upload_started, 1)
+        report.settings["one_row_per_patient"] = answer_patient_rows(api, dataset_id, uploaded, oracles, csv_path)
         report.results = ask_all(api, dataset_id, asked, truth, model, timeout_s)
         if scenario is not None:
             report.blanks = blank_results(scenario, questions, report.results)
@@ -703,6 +734,7 @@ def markdown(report: RunReport) -> str:
         f"### {report.dataset} · MODEL={report.model} · {report.label} @ {report.git_head}",
         "",
         f"Upload: {report.settings.get('upload')} · "
+        f"one row per patient: {report.settings.get('one_row_per_patient') or 'not asked'} · "
         f"model-call timeout: {report.settings.get('llm_timeout_s') or 'app default'}"
         + _server_note(report.settings.get("server_exit_code")),
         "",

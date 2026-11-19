@@ -84,7 +84,7 @@ class Findings:
     keyed: bool = False  # the dataset has a patient key, so every n can say what it counts
     visits: bool = False  # rows are declared visits (on this dataset version)
     key: str | None = None  # the patient key
-    rows_are_patients: bool = False  # every row has an ID and none repeats
+    rows_are_patients: bool = False  # every row has an ID and none repeats, or the user confirmed it
 
 
 def patient_key(layer: Any) -> str | None:
@@ -128,6 +128,20 @@ def declared_visits(grain: Grain, declarations: Declarations, dataset_version: s
     its counts (a corrected re-upload of the same shape is a new version: asked again)."""
     stored = declarations.grain_for(dataset_version)
     return stored is not None and stored == grain.declaration(dataset_version)
+
+
+def declared_patient_rows(grain: Grain, declarations: Declarations, dataset_version: str | None) -> bool:
+    """Whether the user confirmed one row per patient on this dataset version, where no column
+    identifies a patient (the upload's "Is each row one patient?", or governed SQL's
+    confirmation; ``core.patient_rows``). Only for the row count it was confirmed on."""
+    stored = declarations.grain_for(dataset_version)
+    return (
+        grain.key is None
+        and stored is not None
+        and stored.grain == "patient"
+        and stored.key is None
+        and stored.rows == grain.rows
+    )
 
 
 def grain_hold_reason(key: str) -> str:
