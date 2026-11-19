@@ -135,7 +135,10 @@ async def load_dataset_from_url(request: DatasetFromUrlRequest) -> DatasetFromUr
     if chosen_name is None:
         await asyncio.to_thread(_refuse_taken_name, Path(fetched.filename).stem)
     upload = UploadFile(file=io.BytesIO(fetched.content), filename=fetched.filename, size=len(fetched.content))
-    uploaded = await upload_dataset(file=upload, dataset_name=chosen_name)
+    # Called directly, not through FastAPI, so every Form() parameter must be passed explicitly:
+    # a default left out is a Form object, not None. A linked file declares no population
+    # estimates; that is set the same way as for any upload, after it is loaded.
+    uploaded = await upload_dataset(file=upload, dataset_name=chosen_name, population_estimates=None)
 
     message = uploaded.message
     recorded = await asyncio.to_thread(_record_source, uploaded.upload_id, fetched.provenance)
