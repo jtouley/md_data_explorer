@@ -1032,6 +1032,372 @@ def mock_semantic_layer():
 
 
 @pytest.fixture
+def make_estimate_frame():
+    """
+    Factory fixture for synthetic population-estimate tables shaped like IHME county files
+    (ADR014): a state row plus its counties x causes x years x sexes, rate ``mx`` with ``lower``
+    and ``upper`` bounds, and ID columns that repeat the labels. Values are made up.
+
+    Usage:
+        def test_example(make_estimate_frame):
+            frame = make_estimate_frame(counties=25, years=(2014,))
+    """
+
+    def _make(
+        counties: int = 3,
+        years: tuple[int, ...] = (2010, 2014),
+        causes: tuple[str, ...] = ("Cardiovascular diseases", "Ischemic heart disease"),
+        sexes: tuple[str, ...] = ("Both", "Male", "Female"),
+        state: str = "Colorado",
+        half_width: float = 0.03,
+    ) -> pl.DataFrame:
+        places = [(state, 8)] + [(f"Place{i:02d} County", 8000 + i) for i in range(1, counties + 1)]
+        sex_factor = {"Both": 1.0, "Male": 1.15, "Female": 0.87}
+        rows = []
+        for place_index, (place, fips) in enumerate(places):
+            for cause_index, cause in enumerate(causes):
+                for year in years:
+                    for sex_index, sex in enumerate(sexes):
+                        value = round(
+                            400.0
+                            / (cause_index + 1)
+                            * (1 + 0.05 * place_index)
+                            * sex_factor.get(sex, 1.0)
+                            * (1 - 0.01 * (year - years[0])),
+                            2,
+                        )
+                        half = round(value * half_width, 2)
+                        rows.append(
+                            {
+                                "location_id": fips,
+                                "location_name": place,
+                                "FIPS": fips,
+                                "cause_id": 400 + cause_index,
+                                "cause_name": cause,
+                                "sex_id": sex_index + 1,
+                                "sex": sex,
+                                "year_id": year,
+                                "metric": "Rate",
+                                "mx": value,
+                                "lower": round(value - half, 2),
+                                "upper": round(value + half, 2),
+                            }
+                        )
+        return pl.DataFrame(rows)
+
+    return _make
+
+
+@pytest.fixture
+def make_public_table():
+    """
+    Factory fixture for synthetic public aggregate tables in the shapes fellows download
+    (ADR014 §10): ``make_public_table(shape, **options) -> pl.DataFrame`` (all values made up,
+    seeded). Text cells as the source writes them ("Suppressed", "45.1 to 48.3") so the frame,
+    written as CSV, goes through the real upload staging.
+
+    Shapes: ``gbd`` (IHME GBD Results Tool export), ``wonder`` (CDC WONDER by state, year, sex),
+    ``atlasplus`` (NCHHSTP AtlasPlus), ``aidsvu``, ``nndss``, ``fluvaxview``, ``places`` (by county),
+    ``noaa`` (daily station rainfall), ``mdhhs_local`` (Detroit, out-Wayne and counties).
+
+    Usage:
+        def test_example(make_public_table):
+            gbd = make_public_table("gbd", causes=("Syphilis",), measures=("Incidence",))
+    """
+    import random
+
+    from clinical_analytics.contracts.geography import STATES
+
+    all_states = tuple(s.name for s in STATES)
+
+    def gbd(
+        locations: tuple[str, ...] = all_states + ("United States",),
+        years: tuple[int, ...] = (2010, 2023),
+        sexes: tuple[str, ...] = ("Both", "Female", "Male"),
+        ages: tuple[str, ...] = ("All ages", "Age-standardized"),
+        metrics: tuple[str, ...] = ("Rate", "Number"),
+        causes: tuple[str, ...] = ("Hepatitis C",),
+        measures: tuple[str, ...] = ("Deaths",),
+        rei: str | None = None,
+        seed: int = 1,
+    ) -> pl.DataFrame:
+        rng = random.Random(seed)
+        rows = []
+        for li, location in enumerate(locations):
+            for ci, cause in enumerate(causes):
+                for measure in measures:
+                    for sex in sexes:
+                        for age in ages:
+                            for year in years:
+                                for metric in metrics:
+                                    if metric == "Percent":
+                                        val = rng.uniform(2, 30)
+                                    else:
+                                        val = rng.uniform(0.3, 6.0) * (1 + 0.02 * (year - years[0]))
+                                        if metric == "Number":
+                                            val *= rng.choice((2, 40, 400))
+                                    half = val * rng.uniform(0.05, 0.7)
+                                    row = {
+                                        "measure_name": measure,
+                                        "location_id": 500 + li,  # GBD's own id: never a FIPS code
+                                        "location_name": location,
+                                        "sex_name": sex,
+                                        "age_name": age,
+                                        "cause_name": cause,
+                                        "cause_id": 400 + ci,
+                                        "metric_name": metric,
+                                        "year": year,
+                                        "val": round(val, 4),
+                                        "upper": round(val + half, 4),
+                                        "lower": round(max(val - half, 0.0), 4),
+                                    }
+                                    if rei is not None:
+                                        row = {"rei_name": rei} | row
+                                    rows.append(row)
+        return pl.DataFrame(rows)
+
+    def wonder(
+        states: tuple[str, ...] = ("Michigan", "Ohio", "Indiana", "Illinois", "Wisconsin"),
+        years: tuple[int, ...] = tuple(range(2010, 2024)),
+        sexes: tuple[str, ...] = ("Female", "Male"),
+        totals: bool = True,
+        seed: int = 2,
+    ) -> pl.DataFrame:
+        from clinical_analytics.contracts.geography import classify
+
+        rng = random.Random(seed)
+        rows = []
+
+        def rate_text(deaths: int, population: int, adjusted: bool) -> str:
+            if deaths < 10:
+                return "Suppressed"
+            rate = deaths / population * 100_000 * (rng.uniform(0.9, 1.1) if adjusted else 1)
+            return f"{rate:.1f}" + (" (Unreliable)" if deaths < 20 else "")
+
+        for state in states:
+            fips = classify(state).state.fips  # type: ignore[union-attr]
+            for year in years:
+                for sex in sexes:
+                    deaths = rng.choice((3, 8, 14, 25, 60, 140))
+                    population = rng.randint(2_000_000, 6_000_000)
+                    rows.append(
+                        {
+                            "Notes": "",
+                            "State": state,
+                            "State Code": fips,
+                            "Year": str(year),
+                            "Year Code": str(year),
+                            "Gender": sex,
+                            "Gender Code": sex[0],
+                            "Deaths": "Suppressed" if deaths < 10 else str(deaths),
+                            "Population": str(population),
+                            "Crude Rate": rate_text(deaths, population, False),
+                            "Age Adjusted Rate": rate_text(deaths, population, True),
+                        }
+                    )
+                if totals:
+                    rows.append(
+                        {
+                            "Notes": "Total",
+                            "State": state,
+                            "State Code": fips,
+                            "Year": str(year),
+                            "Year Code": str(year),
+                            "Gender": "",
+                            "Gender Code": "",
+                            "Deaths": "200",
+                            "Population": "9000000",
+                            "Crude Rate": "2.2",
+                            "Age Adjusted Rate": "2.1",
+                        }  # fmt: skip
+                    )
+        return pl.DataFrame(rows)
+
+    def atlasplus(
+        states: tuple[str, ...] = all_states,
+        years: tuple[int, ...] = (2022, 2023),
+        indicator: str = "Primary and Secondary Syphilis",
+        seed: int = 3,
+    ) -> pl.DataFrame:
+        from clinical_analytics.contracts.geography import classify
+
+        rng = random.Random(seed)
+        rows = []
+        for state in states:
+            for year in years:
+                rate = rng.uniform(2, 30)
+                rows.append(
+                    {
+                        "Indicator": indicator,
+                        "Year": str(year),
+                        "Geography": state,
+                        "FIPS": classify(state).state.fips,  # type: ignore[union-attr]
+                        "Cases": str(int(rate * rng.uniform(5, 300))),
+                        "Rate per 100000": f"{rate:.1f}",
+                    }
+                )
+        return pl.DataFrame(rows)
+
+    def aidsvu(
+        states: tuple[str, ...] = all_states, years: tuple[int, ...] = (2022, 2023), seed: int = 4
+    ) -> pl.DataFrame:
+        from clinical_analytics.contracts.geography import classify
+
+        rng = random.Random(seed)
+        return pl.DataFrame(
+            [
+                {
+                    "State Abbreviation": classify(state).state.usps,  # type: ignore[union-attr]
+                    "Year": str(year),
+                    "PrEP Users": str(rng.randint(200, 40_000)),
+                    "PrEP Rate": f"{rng.uniform(20, 400):.1f}",
+                }
+                for state in states
+                for year in years
+            ]
+        )
+
+    def nndss(
+        states: tuple[str, ...] = all_states, years: tuple[int, ...] = (2022, 2023), seed: int = 5
+    ) -> pl.DataFrame:
+        rng = random.Random(seed)
+        return pl.DataFrame(
+            [
+                {
+                    "Reporting Area": state.upper(),
+                    "Year": str(year),
+                    "Legionellosis Cases": str(rng.choice((4, 9, 30, 210))),
+                }
+                for state in states
+                for year in years
+            ]
+        )
+
+    def fluvaxview(
+        states: tuple[str, ...] = ("Michigan", "Ohio", "Indiana", "Illinois", "Wisconsin", "Minnesota"),
+        seasons: tuple[str, ...] = ("2021-22", "2022-23"),
+        dimensions: tuple[str, ...] = ("≥18 Years", "≥65 Years"),
+        seed: int = 6,
+    ) -> pl.DataFrame:
+        rng = random.Random(seed)
+        rows = []
+        for state in states:
+            for season in seasons:
+                for dimension in dimensions:
+                    estimate = rng.uniform(35, 70)
+                    rows.append(
+                        {
+                            "Vaccine": "Seasonal Influenza",
+                            "Geography": state,
+                            "Season/Survey Year": season,
+                            "Dimension Type": "Age",
+                            "Dimension": dimension,
+                            "Estimate (%)": f"{estimate:.1f}",
+                            "95% CI (%)": f"{estimate - 2.1:.1f} to {estimate + 2.3:.1f}",
+                            "Sample Size": str(rng.randint(300, 3000)),
+                        }
+                    )
+        return pl.DataFrame(rows)
+
+    def places(seed: int = 7) -> pl.DataFrame:
+        rng = random.Random(seed)
+        counties = [
+            ("MI", "Wayne", 26163), ("MI", "Oakland", 26125), ("MI", "Kent", 26081), ("MI", "Genesee", 26049),
+            ("MI", "Washtenaw", 26161), ("OH", "Cuyahoga", 39035), ("OH", "Franklin", 39049), ("OH", "Hamilton", 39061),
+        ]  # fmt: skip
+        return pl.DataFrame(
+            [
+                {
+                    "Year": "2022",
+                    "StateAbbr": state,
+                    "LocationName": county,
+                    "LocationID": str(fips),
+                    "Measure": "Current smoking among adults",
+                    "Data_Value_Type": value_type,
+                    "Data_Value": f"{rng.uniform(10, 25):.1f}",
+                    "Low_Confidence_Limit": "9.0",
+                    "High_Confidence_Limit": "26.0",
+                }
+                for state, county, fips in counties
+                for value_type in ("Crude prevalence", "Age-adjusted prevalence")
+            ]
+        )
+
+    def noaa(seed: int = 8) -> pl.DataFrame:
+        rng = random.Random(seed)
+        return pl.DataFrame(
+            [
+                {"STATION": station, "DATE": f"2023-{month:02d}-{day:02d}", "PRCP": f"{rng.uniform(0, 2):.2f}"}
+                for station in ("USW00094847", "USW00014822")
+                for month in (6, 7, 8)
+                for day in range(1, 29)
+            ]
+        )
+
+    def mdhhs_local(seed: int = 9) -> pl.DataFrame:
+        rng = random.Random(seed)
+        places_ = ("Detroit", "Out-Wayne", "Genesee County", "Kent County", "Oakland County")
+        return pl.DataFrame(
+            [
+                {"Jurisdiction": place, "Year": str(year), "Hepatitis C cases": str(rng.choice((6, 40, 120, 331)))}
+                for place in places_
+                for year in (2022, 2023, 2024)
+            ]
+        )
+
+    shapes = {
+        "gbd": gbd,
+        "wonder": wonder,
+        "atlasplus": atlasplus,
+        "aidsvu": aidsvu,
+        "nndss": nndss,
+        "fluvaxview": fluvaxview,
+        "places": places,
+        "noaa": noaa,
+        "mdhhs_local": mdhhs_local,
+    }
+
+    def _make(shape: str, **options):
+        return shapes[shape](**options)
+
+    return _make
+
+
+@pytest.fixture
+def make_public_source(make_public_table):
+    """
+    Factory fixture: a synthetic public table (``make_public_table``) written as CSV, staged by
+    the real upload reader and wrapped as one table of a join question (ADR014 §10).
+
+    Usage:
+        def test_example(make_public_source):
+            gbd = make_public_source("gbd", name="GBD", years=(2010, 2023))
+            wonder = make_public_source("wonder", name="WONDER", declared=False)
+    """
+    import io
+
+    from clinical_analytics.core.estimate_join import SourceInput
+    from clinical_analytics.core.estimates import detect_frame
+    from clinical_analytics.storage.staging import read_csv_typed
+
+    def _make(shape: str, name: str | None = None, declared: bool = True, saved_choices=None, **options):
+        buffer = io.BytesIO()
+        make_public_table(shape, **options).write_csv(buffer)
+        frame = read_csv_typed(buffer.getvalue()).data
+        label = name or shape
+        return SourceInput(
+            dataset_id=label,
+            name=label,
+            frame=frame,
+            table=detect_frame(frame),
+            declared=declared,
+            saved_choices=saved_choices or {},
+        )
+
+    return _make
+
+
+@pytest.fixture
 def make_semantic_layer(tmp_path):
     """
     Factory fixture for creating SemanticLayer instances.
@@ -2052,7 +2418,7 @@ def make_wonder_export() -> Callable[..., bytes]:
     """Factory: a synthetic file shaped like a CDC WONDER export (no real data).
 
     Tab-separated, quoted text, a first column "Notes", ``states`` data rows with "Suppressed"
-    deaths and "Unreliable" rates in some of them, a "Total" subtotal row, then a "---" notes block
+    deaths and "12.3 (Unreliable)" rates in some of them, a "Total" row, then a "---" notes block
     (dataset, query parameters, citation) that is documentation, not data.
     """
 
@@ -2061,11 +2427,8 @@ def make_wonder_export() -> Callable[..., bytes]:
         lines = ["\t".join(header)]
         for i in range(1, states + 1):
             deaths = "Suppressed" if i % suppressed_every == 0 else str(100 + i * 13)
-            rate = (
-                "Suppressed"
-                if i % suppressed_every == 0
-                else ("Unreliable" if i % unreliable_every == 0 else f"{10 + i / 10:.1f}")
-            )
+            rate = f"{10 + i / 10:.1f}" + (" (Unreliable)" if i % unreliable_every == 0 else "")
+            rate = "Suppressed" if i % suppressed_every == 0 else rate
             lines.append("\t".join(["", f'"State {i:02d}"', f'"{i:02d}"', deaths, str(500000 + i * 1000), rate]))
         if total_row:
             lines.append("\t".join(['"Total"', "", "", "99999", "99999999", "12.3"]))

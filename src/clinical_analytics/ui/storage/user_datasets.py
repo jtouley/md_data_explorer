@@ -40,6 +40,7 @@ from typing import Any, Final
 import polars as pl
 import structlog
 
+from clinical_analytics.core.identifier_rules import ROW_NUMBER_COLUMN
 from clinical_analytics.core.schema import DataQualityError, NoCohortAnchorError
 from clinical_analytics.storage import atomic
 from clinical_analytics.storage.file_sets import TextMember, read_file_set, split_file_sets
@@ -143,6 +144,17 @@ def no_patient_id_message(columns: int) -> str:
 
 class DatasetChangedError(UploadError):
     """Another save changed the dataset's active version while this one ran (retry the upload)."""
+
+
+def _declared_estimates(df: pl.DataFrame, metadata: dict[str, Any]) -> bool:
+    """A table declared public population estimates at upload whose rows look like estimates
+    (ADR014). Not when it has a patient_id or any column named as a patient ID: detection refuses
+    those, so the usual patient-ID rules apply and the real ID is kept."""
+    if metadata.get("population_estimates") is not True or ROW_NUMBER_COLUMN in df.columns:
+        return False
+    from clinical_analytics.core.estimates import detect_frame
+
+    return detect_frame(df) is not None
 
 
 def active_version_id(metadata: dict[str, Any] | None) -> str | None:
@@ -579,7 +591,7 @@ def read_zip_tables(file_bytes: bytes, budget: ZipExpansionBudget | None = None)
         try:
             staged = load_single_file_staged(content, f"{name}{ext}")
             staged_tables.append((name, staged))
-            # A notes block under the data (CDC WONDER) is documentation; rows left out are said.
+            # A notes block under the data (CDC WONDER) is documentation, and the upload says so.
             if staged.export_notes.strip():
                 as_docs.append(DocFile(name=f"{name}_notes.txt", path=entry, content=staged.export_notes.encode()))
             notes.extend(f"{Path(entry).name}: {note}" for note in staged.table_notes)
@@ -2159,7 +2171,21 @@ class UserDatasetStorage:
                 from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
 
                 logger.info(f"Ensuring patient_id exists for upload {upload_id}")
-                df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(tables[0]["data"])
+                if _declared_estimates(tables[0]["data"], metadata):
+                    # A declared table of estimates (ADR014): its rows are groups, not patients, so
+                    # no data column becomes patient_id; rows are numbered and counted as rows.
+                    df_with_id = (
+                        tables[0]["data"]
+                        .with_row_index(ROW_NUMBER_COLUMN, offset=1)
+                        .with_columns(pl.col(ROW_NUMBER_COLUMN).cast(pl.Int64))
+                    )
+                    id_metadata = {
+                        "patient_id_source": "row_index",
+                        "patient_id_columns": None,
+                        "row_number_column": ROW_NUMBER_COLUMN,
+                    }
+                else:
+                    df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(tables[0]["data"])
 
                 logger.info(
                     f"Patient ID creation result: source={id_metadata['patient_id_source']}, "

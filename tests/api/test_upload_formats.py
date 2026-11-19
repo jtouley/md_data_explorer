@@ -491,7 +491,7 @@ def test_uploadDataset_zipWithTwoWorkbooks_eachUnreadSheetNamedWithItsFile(test_
 
 
 @pytest.mark.parametrize("extension", [".txt", ".tsv"])
-def test_uploadDataset_wonderExport_readyNotesAsDocsSuppressedMissing(
+def test_uploadDataset_wonderExport_readyNotesAsDocsNeverRows(
     test_client: TestClient, isolated_data_home, make_wonder_export, extension: str
 ):
     # Arrange: a synthetic CDC WONDER export as downloaded (tab-separated .txt)
@@ -501,14 +501,12 @@ def test_uploadDataset_wonderExport_readyNotesAsDocsSuppressedMissing(
     body = _upload(test_client, f"wonder{extension}", data, f"wonder{extension[1:]}")
     frame, meta = _stored(body["upload_id"])
 
-    # Assert: uploaded; the notes block is documentation, not rows; suppressed values are missing
+    # Assert: uploaded; the notes block is documentation (doc_context), not rows
     assert body["_status_code"] == 200, body
-    assert frame.height == 40
-    assert frame["Deaths"].min() > 0
-    assert frame["Deaths"].null_count() == 5
+    assert frame.height == 41  # 40 states and the Total row
     assert "Query Parameters" in meta.get("doc_context", "")
-    assert any("withheld or not given by the data source" in note for note in body["type_notes"])
-    assert "1 subtotal row (Notes: Total) was left out, so no row is counted twice." in body["cohort_notes"]
+    assert any("were kept as the dataset's documentation, not as rows" in n for n in body["cohort_notes"])
+    assert frame["Deaths"].min() > 0  # "Suppressed" is never 0
 
 
 def test_uploadDataset_txtNotTabSeparated_refused400SaysHowToFix(test_client: TestClient, isolated_data_home):
@@ -556,7 +554,7 @@ def test_uploadDataset_zipOfNumberedWonderExports_neverJoinedAsOneSet(
     assert "Upload the table you want to ask about as its own file." in body["detail"]
 
 
-def test_uploadDataset_zipOfOneWonderExport_notesAsDocsTotalsSaid(
+def test_uploadDataset_zipOfOneWonderExport_notesAsDocsNeverRows(
     test_client: TestClient, isolated_data_home, make_wonder_export
 ):
     # Arrange
@@ -568,6 +566,6 @@ def test_uploadDataset_zipOfOneWonderExport_notesAsDocsTotalsSaid(
 
     # Assert
     assert body["_status_code"] == 200, body
-    assert frame.height == 29
+    assert frame.height == 30  # 29 states and the Total row
     assert "Query Parameters" in meta.get("doc_context", "")
-    assert "deaths.tsv: 1 subtotal row (Notes: Total) was left out, so no row is counted twice." in body["cohort_notes"]
+    assert any(n.startswith("deaths.tsv: The notes under the data") for n in body["cohort_notes"])

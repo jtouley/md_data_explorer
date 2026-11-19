@@ -1,0 +1,99 @@
+# RESP-NET Rates and Clinical Data: COVID-NET, FluSurv-NET, RSV-NET (data.cdc.gov kvib-3txy).
+#
+# Grain: one row per Surveillance Network x Season x Date Type x Date x Age Category x Race x Sex x
+# State x Data Type x Estimate Type x Rate Type (verified unique). Weekly and cumulative rates per
+# 100,000 sit in one Estimate column beside clinical percentages; observed and age-adjusted rates
+# beside each other; "Overall"/"All" rows beside their strata; overlapping age bands. A season's
+# cumulative rate is the cumulative rate at its last reported week. Sex is published only for all
+# ages, so there is no age x sex cross. No CI is published.
+# Answers: tests/eval/corpus/oracles/cdc_respnet_rates.py.
+dataset_id: cdc_respnet_rates
+grain: aggregate
+questions:
+  - id: rsp-flu65-001
+    family: trend
+    query: How did the cumulative influenza hospitalisation rate for adults 65 and older change from season to season?
+    kind: value_by
+    group_by: Season
+    expect: answer
+  - id: rsp-rsv65-002
+    family: follow_up
+    query: Now show the same for RSV.
+    kind: value_by
+    group_by: Season
+    follow_up_of: rsp-flu65-001
+    expect: answer
+  - id: rsp-age-rsv-003
+    family: by_age_sex
+    query: Break down the cumulative RSV hospitalisation rate in the 2024-25 season by age group.
+    kind: value_by
+    group_by: Age Category
+    expect: answer
+  - id: rsp-sex-004
+    family: by_age_sex
+    query: In the 2024-25 season, was the cumulative RSV hospitalisation rate higher in males or in females?
+    kind: value_by
+    group_by: Sex
+    expect: answer
+    held_out: true
+  - id: rsp-rank-sites-005
+    family: rank_places
+    query: Rank the surveillance sites by cumulative COVID-19 hospitalisation rate in the 2024-25 season.
+    kind: value_by
+    group_by: State
+    expect: answer
+  - id: rsp-network-006
+    family: rank_places
+    query: Which network (influenza, RSV or COVID-19) had the highest cumulative hospitalisation rate in adults 75 and older in 2024-25?
+    kind: value_by
+    group_by: Surveillance Network
+    expect: answer
+  - id: rsp-peak-007
+    family: trend
+    query: What was the peak weekly influenza hospitalisation rate in each season?
+    kind: value_by
+    group_by: Season
+    expect: answer
+  - id: rsp-before-after-008
+    family: before_after
+    query: Was the cumulative influenza hospitalisation rate in adults 65 and older higher in 2022-23 than in 2018-19?
+    kind: value_by
+    group_by: Season
+    expect: answer
+    held_out: true
+  - id: rsp-under5-009
+    family: trend
+    query: What is the trend in the cumulative combined respiratory hospitalisation rate among children under 5?
+    kind: value_by
+    group_by: Season
+    expect: answer
+  - id: rsp-icu-010
+    family: share
+    query: What percentage of patients hospitalised with influenza were admitted to intensive care, by season?
+    kind: value_by
+    group_by: Season
+    expect: answer
+    held_out: true
+  - id: rsp-rate-types-011
+    family: data_shape
+    query: How many rows are observed rates and how many are age-adjusted rates?
+    kind: value_by
+    group_by: Rate Type
+    expect: answer
+  - id: rsp-howsure-012
+    family: how_sure
+    query: How sure are the site rates? Are the differences between sites real or within noise?
+    kind: values
+    expect: held
+  - id: rsp-pooled-013
+    family: pooled_overlap
+    query: What is the average COVID-19 hospitalisation rate across all the rows?
+    kind: values
+    expect: held
+    held_out: true
+  - id: rsp-agesex-014
+    family: by_age_sex
+    query: Break down the RSV hospitalisation rate in adults 65 and older by sex.
+    kind: values
+    expect: held
+    held_out: true

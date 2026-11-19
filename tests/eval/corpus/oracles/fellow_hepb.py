@@ -14,6 +14,9 @@ assert _spec is not None and _spec.loader is not None
 _shared = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_shared)
 
+# This dataset's oracles by question id, as every oracle module exposes them.
+ORACLES = _shared.ORACLES["fellow_hepb"]
+
 
 def answers(csv_path: Path) -> dict[str, OracleAnswer]:
     return _shared.answers(csv_path, "fellow_hepb")

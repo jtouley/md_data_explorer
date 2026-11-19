@@ -43,7 +43,14 @@ from typing import Any, Final, Literal
 import polars as pl
 import structlog
 
-from clinical_analytics.contracts.config import MISSING_VALUE_TOKENS
+from clinical_analytics.contracts.config import (
+    MISSING_VALUE_TOKENS,
+    SOURCE_NOT_APPLICABLE_TOKENS,
+    SOURCE_SUPPRESSED_TOKENS,
+    SOURCE_UNRELIABLE_PATTERN,
+    SUPPRESSED_FLAG_SUFFIX,
+    UNRELIABLE_FLAG_SUFFIX,
+)
 
 logger = structlog.get_logger()
 
@@ -64,26 +71,16 @@ NoteReason = Literal[
     "missing_tokens",
     "shared_column_type",
     "from_file_names",
-    "source_suppressed",
 ]
-
-# Markers a data source writes in place of a value it withholds or does not give (CDC WONDER:
-# "Suppressed" for counts it hides, "Unreliable" for rates it will not stand behind, alone or
-# after the number as "2.1 (Unreliable)", "Not Applicable" where there is no value). In a column
-# that types as numbers they are stored as missing and reported (``source_suppressed``): never
-# 0, never a number. In any other column they stay text ("Reliable"/"Unreliable" is a category).
-SOURCE_SUPPRESSED_TOKENS: Final[tuple[str, ...]] = ("suppressed", "unreliable", "not applicable")
-_FLAGGED_UNRELIABLE: Final = r"(?i)^\s*-?[\d.,]+\s*\(unreliable\)\s*$"
 
 # CDC WONDER exports put a notes block under the data: a line "---" starts it, and every line
 # from there is one quoted field (dataset, query, citation, footnotes). Split off only in that
 # shape (first header "Notes", no separator in any notes line), so a "---" line in any other
 # file never hides the rows below it.
 _EXPORT_NOTES_START: Final = re.compile(rb'(?m)^[ \t]*"?---"?[ \t]*\r?$')
-# CDC WONDER's first column: "Notes". A row whose Notes cell is "Total" is a subtotal of the rows
-# above it; kept, it would be counted twice in every sum or count.
+# CDC WONDER's first column: "Notes". Its "Total" rows stay in the data: aggregate mode reads them
+# as total rows (core/estimates.py).
 EXPORT_NOTES_COLUMN: Final = "notes"
-EXPORT_TOTAL_LABEL: Final = "total"
 
 # Column separator by file extension (``.gz`` stripped first). Text tables in a ZIP use the same.
 DELIMITERS: Final[dict[str, str]] = {".csv": ",", ".tsv": "\t", ".psv": "|"}
@@ -236,8 +233,8 @@ class StagedTable:
     notes: tuple[ColumnTypeNote, ...] = ()
     units: dict[str, str] = field(default_factory=dict)
     sheets: ExcelSheets | None = None  # Excel only: the sheet read and the sheets skipped
-    # Text exports with a notes block (CDC WONDER): the block as documentation text, and
-    # sentences for the user about rows left out of the data (subtotal rows).
+    # Text exports with a notes block (CDC WONDER): the block as documentation text, and a
+    # sentence for the user saying it was kept as documentation, not as rows.
     export_notes: str = ""
     table_notes: tuple[str, ...] = ()
 
@@ -482,6 +479,170 @@ def _reject_empty_rows(df: pl.DataFrame, first_row_number: int) -> None:
 # --- entry points ---------------------------------------------------------------------------
 
 
+# "401.63 (390.33, 412.62)": an estimate and its interval packed in one cell (IHME Excel tables).
+_NUM = r"(-?\d[\d,]*\.?\d*)"
+PACKED_INTERVAL = rf"^\s*{_NUM}\s*\(\s*{_NUM}\s*(?:,|to|–|—|;)\s*{_NUM}\s*\)\s*$"
+_YEAR_IN_HEADER = re.compile(r"(?<!\d)(1[89]\d\d|20\d\d|2100)(?!\d)")
+MIN_YEAR_COLUMNS = 3  # a table with years as columns has at least this many
+
+
+def _packed(df: pl.DataFrame, col: str) -> bool:
+    """Every non-empty cell of a text column is a value with its interval in brackets."""
+    cleaned = df.select(_clean_tokens(col).alias(col)).get_column(col).drop_nulls()
+    return cleaned.len() > 0 and bool(cleaned.str.contains(PACKED_INTERVAL).all())
+
+
+def _header_year(col: str) -> tuple[str, int] | None:
+    """(header without its year, the year) when the header names exactly one year."""
+    years = _YEAR_IN_HEADER.findall(col)
+    if len(years) != 1:
+        return None
+    stem = re.sub(r"[\s,;:*()\-–]+$", "", _YEAR_IN_HEADER.sub("", col)).strip(" ,;:*()-–")
+    return stem, int(years[0])
+
+
+def _years_to_rows(df: pl.DataFrame) -> pl.DataFrame:
+    """Unpivot packed estimate columns that are one per year ("Mortality Rate, 1980*") into rows:
+    the other columns, then ``year`` and one value column per header stem (several stems: a
+    ``measure`` column and ``value``). Returns ``df`` unchanged when there are not enough."""
+    by_year = {c: found for c in df.columns if (found := _header_year(c)) is not None and _packed(df, c)}
+    if len(by_year) < MIN_YEAR_COLUMNS:
+        return df
+    ids = [c for c in df.columns if c not in by_year]
+    if {"year", "measure", "value"} & set(ids):
+        # The unpivot would add a column the file already has: leave the years as columns.
+        logger.info("staging_years_unpivot_skipped", reason="name_taken", year_columns=len(by_year))
+        return df
+    stems = sorted({stem for stem, _year in by_year.values()})
+    value = stems[0] if len(stems) == 1 and stems[0] else "value"
+    long = df.unpivot(on=list(by_year), index=ids, variable_name="__column", value_name=value)
+    mapping = pl.DataFrame(
+        {
+            "__column": list(by_year),
+            "measure": [stem for stem, _ in by_year.values()],
+            "year": [str(year) for _, year in by_year.values()],
+        }
+    )
+    long = long.join(mapping, on="__column", how="left").drop("__column")
+    keep = [*ids, *(["measure"] if len(stems) > 1 else []), "year", value]
+    logger.info("staging_years_unpivoted", year_columns=len(by_year), measures=len(stems))
+    return long.select(keep)
+
+
+# "45.1 to 48.3" under a header that names an interval (FluVaxView's "95% CI (%)"): the bounds
+# packed in one cell without the estimate.
+RANGE_CELL = rf"^\s*{_NUM}\s*(?:to|–|—)\s*{_NUM}\s*$"
+_INTERVAL_HEADER = re.compile(r"(\bci\b|confidence|interval)", re.IGNORECASE)
+
+
+def _range_column(df: pl.DataFrame, col: str) -> bool:
+    if df.schema[col] != pl.String or not _INTERVAL_HEADER.search(col):
+        return False
+    cleaned = df.select(_clean_tokens(col).alias(col)).get_column(col).drop_nulls()
+    return cleaned.len() > 0 and bool(cleaned.str.contains(RANGE_CELL).all())
+
+
+def split_interval_ranges(df: pl.DataFrame) -> pl.DataFrame:
+    """Columns named for an interval whose every non-empty cell is "lo to hi" become ``<col> lower``
+    and ``<col> upper``. Others are left as they are."""
+    ranges = [c for c in df.columns if _range_column(df, c)]
+    if not ranges:
+        return df
+    parts: list[pl.Expr] = []
+    order: list[str] = []
+    for col in df.columns:
+        if col not in ranges:
+            order.append(col)
+            continue
+        groups = _clean_tokens(col).str.extract_groups(RANGE_CELL)
+        for index, name in enumerate((f"{col} lower", f"{col} upper"), start=1):
+            parts.append(groups.struct.field(str(index)).str.replace_all(",", "").alias(name))
+            order.append(name)
+    logger.info("staging_interval_ranges_split", columns=len(ranges))
+    return df.with_columns(parts).select(order)
+
+
+def unpack_intervals(df: pl.DataFrame) -> pl.DataFrame:
+    """Text frame with packed "value (lower, upper)" cells split into three columns (``x``,
+    ``x lower``, ``x upper``), after any years laid out as columns are turned into rows. Only a
+    column whose every non-empty cell is packed is split; others are left as they are."""
+    df = split_interval_ranges(_years_to_rows(df))
+    packed = [c for c in df.columns if df.schema[c] == pl.String and _packed(df, c)]
+    if not packed:
+        return df
+    parts: list[pl.Expr] = []
+    for col in packed:
+        groups = _clean_tokens(col).str.extract_groups(PACKED_INTERVAL)
+        for index, name in enumerate((col, f"{col} lower", f"{col} upper"), start=1):
+            parts.append(groups.struct.field(str(index)).str.replace_all(",", "").alias(name))
+    order: list[str] = []
+    for col in df.columns:
+        order += [col, f"{col} lower", f"{col} upper"] if col in packed else [col]
+    logger.info("staging_intervals_unpacked", columns=len(packed))
+    return df.with_columns(parts).select(order)
+
+
+def _flag_masks(cleaned: pl.Series) -> tuple[pl.Series, pl.Series, pl.Series] | None:
+    """(suppressed, unreliable, not-applicable) masks for a column that holds numbers plus source
+    markers only, or None when any other text is present (the column is left to the typing rules)."""
+    folded = cleaned.str.strip_chars().str.to_lowercase()
+    suppressed = folded.is_in(list(SOURCE_SUPPRESSED_TOKENS)).fill_null(False)
+    unreliable = folded.str.contains(SOURCE_UNRELIABLE_PATTERN).fill_null(False)
+    not_applicable = folded.is_in(list(SOURCE_NOT_APPLICABLE_TOKENS)).fill_null(False)
+    if not bool(suppressed.any() or unreliable.any()):
+        return None
+    numbers = folded.str.replace(SOURCE_UNRELIABLE_PATTERN, "").str.strip_chars()
+    rest = numbers.filter(~(suppressed | not_applicable) & numbers.is_not_null())
+    rest = rest.filter(~rest.is_in(list(MISSING_VALUE_TOKENS)))
+    if rest.len() == 0 or not bool(rest.str.contains(_FLOAT_RE).all()):
+        return None
+    return suppressed, unreliable, not_applicable
+
+
+def split_source_flags(df: pl.DataFrame) -> pl.DataFrame:
+    """Text frame with each source's own suppression markers moved out of its numbers (ADR014 §10).
+
+    CDC WONDER writes "Suppressed" for deaths of 1-9 (and for rates built on them), "12.3
+    (Unreliable)" for a rate on fewer than 20 deaths and "Not Applicable" where there is no rate.
+    A column whose other cells are all numbers keeps its numbers; a "Suppressed" cell becomes empty
+    and ``<column> suppressed`` is true there, and an unreliable value keeps its number and
+    ``<column> unreliable`` is true. A suppressed cell is never a zero and never a missing value
+    the answer could fill in: answers name it as suppressed at the source.
+    """
+    added: list[pl.Expr] = []
+    order: list[str] = []
+    for col in df.columns:
+        order.append(col)
+        if df.schema[col] != pl.String or is_id_column_name(col):
+            continue
+        cleaned = df.select(_clean(col)).to_series()
+        masks = _flag_masks(cleaned)
+        if masks is None:
+            continue
+        suppressed, unreliable, not_applicable = masks
+        flag_names = [f"{col}{suffix}" for suffix in (SUPPRESSED_FLAG_SUFFIX, UNRELIABLE_FLAG_SUFFIX)]
+        if any(name in df.columns for name in flag_names):
+            # A flag column of that name exists already: splitting would lose which cells were
+            # suppressed, so the column stays text (fail closed: no number is read from it).
+            logger.info("staging_source_flags_skipped", column_index=df.columns.index(col), reason="name_taken")
+            continue
+        value = cleaned.str.replace(SOURCE_UNRELIABLE_PATTERN, "").str.strip_chars()
+        value = value.set(suppressed | not_applicable, None)
+        added.append(pl.lit(value).alias(col))
+        for suffix, mask in ((SUPPRESSED_FLAG_SUFFIX, suppressed), (UNRELIABLE_FLAG_SUFFIX, unreliable)):
+            name = f"{col}{suffix}"
+            if bool(mask.any()):
+                added.append(pl.lit(pl.Series(name, mask.cast(pl.String).str.to_lowercase())).alias(name))
+                order.append(name)
+        logger.info(
+            "staging_source_flags_split",
+            column_index=df.columns.index(col),
+            suppressed=int(suppressed.sum()),
+            unreliable=int(unreliable.sum()),
+        )
+    return df.with_columns(added).select(order) if added else df
+
+
 def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1) -> StagedTable:
     """Type an all-text frame (one row per data line). ``header_row_number``: the header's file row.
 
@@ -499,7 +660,7 @@ def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1) -> StagedT
     body = df.slice(1) if units else df
     first_data_row = header_row_number + (2 if units else 1)
     _reject_empty_rows(body, first_data_row)
-    typed, notes = _type_columns(body)
+    typed, notes = _type_columns(split_source_flags(unpack_intervals(body)))
     log = logger.bind(rows=typed.height, columns=typed.width)
     for note in notes:
         log.info("staging_column_note", column_index=df.columns.index(note.column), reason=note.reason)
@@ -545,9 +706,9 @@ def _reject_case_twin_headers(df: pl.DataFrame) -> None:
 def read_csv_typed(file_bytes: bytes, separator: str = ",") -> StagedTable:
     """Read delimited text (CSV; ``separator`` for TSV/PSV) as text over the whole file, then stage.
 
-    A notes block under the data (a "---" line, as CDC WONDER writes) is split off as
-    documentation; subtotal rows (Notes = "Total") are left out and counted; source-suppressed
-    values ("Suppressed", "Unreliable") in number columns are stored as missing and reported.
+    A CDC WONDER notes block under the data (from its "---" line) is split off as documentation,
+    never rows. Source markers ("Suppressed", "12.3 (Unreliable)") become flag columns in
+    ``stage_text_frame`` (``split_source_flags``).
 
     Raises:
         StagingError: the file cannot be parsed, or a row has no ID and no values.
@@ -557,27 +718,15 @@ def read_csv_typed(file_bytes: bytes, separator: str = ",") -> StagedTable:
         text = pl.read_csv(io.BytesIO(data_bytes), separator=separator, infer_schema=False)
     except (pl.exceptions.ComputeError, pl.exceptions.NoDataError) as e:
         raise StagingError(f"The {_delimited_kind(separator)} file could not be read: {type(e).__name__}") from e
-    text = _drop_trailing_blank_rows(text)
-    text, totals = _drop_export_totals(text)
-    nulled, suppressed = _null_source_suppressed(text)
-    staged = stage_text_frame(nulled)
-    # Markers become missing only where the column ends up numeric (the typing rule decides,
-    # not a looser test): elsewhere they are kept as the text they are.
-    kept_text = [col for col, _n, _c in suppressed if not staged.data.schema[col].is_numeric()]
-    if kept_text:
-        suppressed = [item for item in suppressed if item[0] not in kept_text]
-        staged = stage_text_frame(nulled.with_columns(text.select(kept_text)))
-    schema = staged.data.schema
-    notes = tuple(
-        ColumnTypeNote(col, str(schema[col]), "source_suppressed", count, checked) for col, count, checked in suppressed
+    staged = stage_text_frame(_drop_trailing_blank_rows(text))
+    if not export_notes.strip():
+        return staged
+    lines = sum(1 for line in export_notes.splitlines() if line.strip().strip('"').strip() not in ("", "---"))
+    note = (
+        f"The notes under the data ({lines} line{'s' if lines != 1 else ''}: dataset, query, citation) "
+        "were kept as the dataset's documentation, not as rows."
     )
-    table_notes: tuple[str, ...] = ()
-    if totals:
-        table_notes = (
-            f"{totals} subtotal row{'s' if totals != 1 else ''} (Notes: Total) "
-            f"{'were' if totals != 1 else 'was'} left out, so no row is counted twice.",
-        )
-    return replace(staged, notes=(*staged.notes, *notes), export_notes=export_notes, table_notes=table_notes)
+    return replace(staged, export_notes=export_notes, table_notes=(note,))
 
 
 def is_notes_export(file_bytes: bytes, separator: str) -> bool:
@@ -600,52 +749,6 @@ def split_export_notes(file_bytes: bytes, separator: str = "\t") -> tuple[bytes,
     if separator.encode() in block:
         return file_bytes, ""  # data-shaped lines below "---": not a notes block, never hidden
     return file_bytes[: match.start()], block.decode("utf-8", errors="replace")
-
-
-def _drop_export_totals(df: pl.DataFrame) -> tuple[pl.DataFrame, int]:
-    """Leave out CDC WONDER subtotal rows (first column "Notes" holding "Total"); drop the Notes
-    column when nothing else is in it. Returns the frame and how many rows were left out."""
-    if df.width == 0 or df.columns[0].strip().lower() != EXPORT_NOTES_COLUMN:
-        return df, 0
-    notes = df.columns[0]
-    total = _clean(notes).str.to_lowercase() == EXPORT_TOTAL_LABEL
-    dropped = int(df.select(total.sum()).item() or 0)
-    kept = df.filter(~total.fill_null(False))
-    if kept.select(_clean(notes).is_null().all()).item():
-        kept = kept.drop(notes)
-    if dropped:
-        logger.info("staging_export_total_rows_dropped", rows=dropped)
-    return kept, dropped
-
-
-def _null_source_suppressed(df: pl.DataFrame) -> tuple[pl.DataFrame, list[tuple[str, int, int]]]:
-    """Store source-suppressed markers as missing in columns whose other values are all numbers.
-
-    Returns the frame and (column, suppressed values, non-empty values) per column changed.
-    """
-    found: list[tuple[str, int, int]] = []
-    exprs: list[pl.Expr] = []
-    for col in df.columns:
-        s = df.select(_clean(col)).to_series().drop_nulls()
-        marker = s.str.to_lowercase().is_in(list(SOURCE_SUPPRESSED_TOKENS)) | s.str.contains(_FLAGGED_UNRELIABLE)
-        count = int(marker.sum())
-        if not count:
-            continue
-        rest = s.filter(~marker & ~_token_mask(s))
-        numbers = rest.str.replace_all(",", "").cast(pl.Float64, strict=False)
-        if rest.len() == 0 or numbers.null_count() > 0:
-            continue  # not a number column: the markers are its categories, kept as text
-        found.append((col, count, s.len()))
-        exprs.append(
-            pl.when(
-                _clean(col).str.to_lowercase().is_in(list(SOURCE_SUPPRESSED_TOKENS))
-                | _clean(col).str.contains(_FLAGGED_UNRELIABLE)
-            )
-            .then(None)
-            .otherwise(pl.col(col))
-            .alias(col)
-        )
-    return (df.with_columns(exprs) if exprs else df), found
 
 
 def _delimited_kind(separator: str) -> str:
@@ -1018,10 +1121,6 @@ _NOTE_TEXT: Final[dict[str, str]] = {
     "date_values_unparsed": "read as dates; {n} values matched no date format and count as missing",
     "int_overflow": "kept as text: {n} whole numbers are too large to store as numbers without losing digits",
     "missing_tokens": "{n} values were missing-value markers (like NA, . or #N/A) and are stored as missing",
-    "source_suppressed": (
-        "{n} values were withheld or not given by the data source (Suppressed, Unreliable, Not "
-        "Applicable) and are stored as missing, never as 0; sums and counts leave them out"
-    ),
     "shared_column_type": "type changed to match the same column in another table, so the tables join",
     "ambiguous_dates": "kept as text: dates could be day/month or month/day and nothing in the file settles which",
     "not_dates": "kept as text: {n} values are not dates",

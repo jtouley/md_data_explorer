@@ -90,8 +90,8 @@ def split_file_sets(members: list[TextMember]) -> tuple[list[FileSet], list[Text
 
     for member in members:
         match = _NUMBERED_STEM.match(member.stem)
-        # A CDC WONDER-shaped export is read on its own (subtotal rows, notes block, suppressed
-        # values): never joined into a set, where those rows would become data.
+        # A CDC WONDER-shaped export is read on its own (its notes block, its Total rows), never
+        # joined into a set, where its notes lines and Total rows would become data.
         if match and not is_notes_export(member.content, member.separator):
             prefix = match["prefix"].rstrip("_-").lower()
             suffix = PurePosixPath(member.path).name.split(".", 1)[1].lower()
