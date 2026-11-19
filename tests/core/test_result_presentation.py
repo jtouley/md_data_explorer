@@ -136,6 +136,7 @@ class TestPresentAnalysisClaims:
                     "std": 14.4,
                     "min": 83.0,
                     "max": 159.0,
+                    "table_min_cell": NO_COUNT_TABLE,  # ldl is a measurement
                     "non_null_count": 300,
                 },
                 "Mean ldl was 121.49 (SD 14.40; median 121.50; n=300).",
@@ -680,6 +681,7 @@ def _numeric_descriptive(cells: tuple[int, ...]) -> dict[str, Any]:
         "std": 14.4,
         "min": 83.0,
         "max": 159.0,
+        "table_min_cell": NO_COUNT_TABLE,  # ldl is a measurement
         "non_null_count": n,
     }
 
@@ -882,6 +884,7 @@ class TestHiddenNStatistics:
             "std": 14.4,
             "min": 83.0,
             "max": 159.0,
+            "table_min_cell": NO_COUNT_TABLE,  # ldl is a measurement
             "non_null_count": n,
         }
 
@@ -912,6 +915,7 @@ class TestHiddenNStatistics:
             "std": 14.4,
             "min": 83.0,
             "max": 159.0,
+            "table_min_cell": NO_COUNT_TABLE,  # ldl is a measurement
             "non_null_count": 11,
             "null_count": missing,
             "n_filtered_out": 20,
@@ -1180,6 +1184,7 @@ class TestMissingCountsFailClosed:
             "std": 14.4,
             "min": 83.0,
             "max": 159.0,
+            "table_min_cell": NO_COUNT_TABLE,  # ldl is a measurement
             "non_null_count": n,
         }
 
