@@ -81,12 +81,15 @@ NO_VALUE_LABEL = "(no value)"
 
 class PatientRowsUnconfirmedError(SqlRefusedError):
     """Rows can be counted as patients only once the user confirms one row per patient (no ID
-    column, or rows without an ID). ``rows`` is what a confirmation is made on; never shown."""
+    column, or rows without an ID). ``rows`` is what a confirmation is made on; never shown.
+    ``confirmation``: the token a confirmation must send back (set by ``sql.service``, which knows
+    the dataset version), so it applies only to the data the user was asked about."""
 
-    def __init__(self, reason: str, *, key: str | None, rows: int) -> None:
+    def __init__(self, reason: str, *, key: str | None, rows: int, confirmation: str | None = None) -> None:
         super().__init__(reason)
         self.key = key
         self.rows = rows
+        self.confirmation = confirmation
 
 
 @dataclass(frozen=True)

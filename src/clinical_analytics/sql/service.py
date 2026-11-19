@@ -9,11 +9,15 @@ a version without a contract, is refused rather than guessed.
 A dataset whose rows can't be shown to be patients by their IDs (no ID column, or rows without
 one) is refused until the user confirms one row per patient. The confirmation is the dataset's
 grain declaration (``contracts/declarations.py``, grain ``patient``): kept per dataset version and
-row count, so a re-upload asks again.
+row count, so a re-upload asks again. The refusal carries a confirmation token bound to the dataset
+version, ID column and row count it asked about; only that token is accepted (ADR013 section 6.3), so
+a confirmation never lands on data the user was not asked about (a re-upload in between, or a
+client that always sends one).
 """
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +41,11 @@ NO_CONTRACT = (
 )
 NOT_STORED = "This dataset is not stored as Parquet yet, so SQL cannot run on it. Upload it again."
 DECLARATIONS_UNREADABLE = "This dataset's saved confirmations can't be read or saved, so SQL can't run on it now."
+CONFIRMATION_TOKEN_CHARS = 32
+CONFIRMATION_STALE = (
+    "The dataset changed after you were asked to confirm one row per patient. "
+    "Check that each row is still one patient, then confirm again."
+)
 
 
 def run_governed_sql(
@@ -46,12 +55,13 @@ def run_governed_sql(
     dataset_id: str,
     data_dir: Path,
     declarations: DeclarationStore,
-    confirm_one_row_per_patient: bool = False,
+    confirm_one_row_per_patient: str | None = None,
 ) -> SqlAnswer:
     """Validate ``sql`` against the contract of the layer's dataset version and answer it.
 
-    ``confirm_one_row_per_patient``: the user confirms, for this dataset version, that each row is
-    one patient. Stored (and used) only when the IDs can't show it and the query is valid.
+    ``confirm_one_row_per_patient``: the confirmation token from an earlier refusal; the user
+    confirms that each row is one patient. Stored (and used) only when the IDs can't show it, the
+    query is valid and the token matches this dataset version, ID column and row count.
 
     Raises:
         PatientRowsUnconfirmedError: rows can't be shown to be patients and are not confirmed.
@@ -83,8 +93,12 @@ def run_governed_sql(
         try:
             return answer_query(query, sandbox, catalog, confirmed_patient_rows=_confirmed_rows(declared, catalog))
         except PatientRowsUnconfirmedError as e:
-            if not confirm_one_row_per_patient:
-                raise
+            token = confirmation_token(version, e.key, e.rows)
+            if confirm_one_row_per_patient is None:
+                raise PatientRowsUnconfirmedError(e.reason, key=e.key, rows=e.rows, confirmation=token) from e
+            if confirm_one_row_per_patient != token:
+                log.info("governed_sql_patient_grain_confirmation_stale")
+                raise PatientRowsUnconfirmedError(CONFIRMATION_STALE, key=e.key, rows=e.rows, confirmation=token) from e
             grain = GrainDeclaration(grain="patient", key=e.key, rows=e.rows, patients=e.rows, dataset_version=version)
             try:
                 declarations.update(dataset_id, lambda current: current.with_grain(grain))
@@ -93,6 +107,13 @@ def run_governed_sql(
                 raise SqlRefusedError(DECLARATIONS_UNREADABLE) from store_error
             log.info("governed_sql_patient_grain_confirmed", dataset_version=version)
             return answer_query(query, sandbox, catalog, confirmed_patient_rows=e.rows)
+
+
+def confirmation_token(version: str, key: str | None, rows: int) -> str:
+    """Names what a one-row-per-patient confirmation is about: this dataset version, its ID
+    column (or none) and its row count. Opaque: the row count is not shown."""
+    digest = hashlib.sha256(f"{version}\x00{key or ''}\x00{rows}".encode()).hexdigest()
+    return digest[:CONFIRMATION_TOKEN_CHARS]
 
 
 def _confirmed_rows(declared: Declarations, catalog: SqlCatalog) -> int | None:

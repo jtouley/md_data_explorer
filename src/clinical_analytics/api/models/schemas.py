@@ -102,11 +102,14 @@ class SqlQueryRequest(BaseModel):
     sql: str = Field(
         ..., min_length=1, max_length=sql_config.MAX_SQL_REQUEST_CHARS, description="One SELECT over the table unified"
     )
-    confirm_one_row_per_patient: bool = Field(
-        False,
+    confirm_one_row_per_patient: str | None = Field(
+        None,
+        min_length=1,
+        max_length=64,
         description=(
             "The user confirms each row is one patient (asked when the dataset has no patient ID column, "
-            "or rows without one). Stored for this dataset version."
+            "or rows without one): the `confirmation` token of that refusal, sent back with the query. "
+            "Accepted only for the dataset version it was given for; stored for that version."
         ),
     )
 
@@ -122,6 +125,9 @@ class SqlQueryResult(BaseModel):
     reason: str | None = Field(None, description="Why the query was refused (plain language)")
     needs_confirmation: Literal["one_row_per_patient"] | None = Field(
         None, description="What the user can confirm to have the query answered (send it with the query again)"
+    )
+    confirmation: str | None = Field(
+        None, description="With needs_confirmation: the token to send back as confirm_one_row_per_patient"
     )
 
 

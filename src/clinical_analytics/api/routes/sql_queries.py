@@ -59,10 +59,18 @@ def run_sql_query(request: SqlQueryRequest) -> SqlQueryResult:
             ) from e
         except PatientRowsUnconfirmedError as e:
             log.info("governed_sql_needs_patient_grain")
-            return SqlQueryResult(status="refused", sql=None, reason=e.reason, needs_confirmation="one_row_per_patient")
+            return SqlQueryResult(
+                status="refused",
+                sql=None,
+                reason=e.reason,
+                needs_confirmation="one_row_per_patient",
+                confirmation=e.confirmation,
+            )
         except SqlRefusedError as e:
             log.info("governed_sql_refused")
-            return SqlQueryResult(status="refused", sql=None, reason=e.reason, needs_confirmation=None)
+            return SqlQueryResult(
+                status="refused", sql=None, reason=e.reason, needs_confirmation=None, confirmation=None
+            )
     return SqlQueryResult(
         status="answered",
         sql=answer.sql,
@@ -71,4 +79,5 @@ def run_sql_query(request: SqlQueryRequest) -> SqlQueryResult:
         notes=answer.notes,
         reason=None,
         needs_confirmation=None,
+        confirmation=None,
     )

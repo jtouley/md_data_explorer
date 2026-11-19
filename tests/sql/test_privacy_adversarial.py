@@ -8,6 +8,7 @@ independently with Polars, and against what a reader could subtract from other s
 from __future__ import annotations
 
 import dataclasses
+import random
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import date
@@ -935,6 +936,57 @@ def test_privacy_whereRemovesFewInOneGroupOnly_thatGroupHidden(
         assert wide["F"] - (total_narrow[""] - narrow["M"]) not in SMALL
 
 
+def _one_filter_few_in_one_group_cohort() -> pl.DataFrame:
+    """150 women, 150 men, 100 of each with a = 1. Among them b = 0 for 4 women and 30 men, so
+    "a and b" removes 54 women and 80 men from the whole table (both 11 or more), but adding b
+    to "a" removes only 4 women."""
+    rows = []
+    for sex, b_fails in (("F", 4), ("M", 30)):
+        rows += [(sex, 1, 0 if i < b_fails else 1) for i in range(100)]
+        rows += [(sex, 0, i % 2) for i in range(50)]
+    return pl.DataFrame(
+        {
+            "patient_id": [f"P{i:04d}" for i in range(len(rows))],
+            "sex": [r[0] for r in rows],
+            "a": [r[1] for r in rows],
+            "b": [r[2] for r in rows],
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("narrow", "wide"),
+    [
+        (
+            "SELECT sex, count(*) AS n FROM unified WHERE a = 1 AND b = 1 GROUP BY sex",
+            "SELECT sex, count(*) AS n FROM unified WHERE a = 1 GROUP BY sex",
+        ),
+        (
+            "SELECT sex, count_if(a = 1 AND b = 1) AS n FROM unified GROUP BY sex",
+            "SELECT sex, count_if(a = 1) AS n FROM unified GROUP BY sex",
+        ),
+        (
+            "SELECT sex, count(*) FILTER (WHERE b = 1) AS n FROM unified WHERE a = 1 GROUP BY sex",
+            "SELECT sex, count(*) AS n FROM unified WHERE a = 1 GROUP BY sex",
+        ),
+    ],
+)
+def test_privacy_oneOfSeveralFiltersRemovesFewInOneGroup_neverShownForThatGroup(
+    make_sql_catalog: Callable[..., SqlCatalog], ask_sql: Ask, narrow: str, wide: str
+) -> None:
+    # Arrange: the whole WHERE removes 11 or more in every group; b alone removes 4 women
+    catalog = make_sql_catalog(_one_filter_few_in_one_group_cohort())
+
+    # Act
+    with_b = _numbers(_shown(ask_sql, narrow, catalog), "n")
+    without_b = _numbers(_shown(ask_sql, wide, catalog), "n")
+
+    # Assert: the women's count with b is never shown beside their count without it
+    assert "F" not in with_b.keys() & without_b.keys()
+    for label in with_b.keys() & without_b.keys():
+        assert without_b[label] - with_b[label] not in SMALL
+
+
 def _old_age_cohort(old_women: int, old_men: int, n: int = 300) -> pl.DataFrame:
     """Half women; ``old_women`` women and ``old_men`` men are over 65, everyone else is 50."""
     half = n // 2
@@ -1016,3 +1068,129 @@ def test_privacy_moreConditionsThanChecked_refused(ask_sql: Ask, terms: int) -> 
     # Act / Assert
     with pytest.raises(SqlRefusedError, match="more than 4 conditions"):
         ask_sql(f"SELECT count(*) AS n FROM unified WHERE {where}")
+
+
+# ---------------------------------------------------------------------------------------------
+# The 2^k property: every count a reader can work out from all the nested answers is 0 or >= 11
+# ---------------------------------------------------------------------------------------------
+
+_PROPERTY_CONDITIONS = ("c1 = 1", "c2 = 1", "c3 = 1")
+_PROPERTY_GROUPS = ("A", "B", "C", "D")
+
+
+def _planted_cohort(seed: int, n: int = 300) -> pl.DataFrame:
+    """Random flags with rare and near-universal ones (small cells in some groups, not in
+    others) and a few NULLs, so a condition and its NOT don't cover every patient."""
+    rng = random.Random(seed)
+    rates = [rng.choice([0.02, 0.05, 0.5, 0.95, 0.98]) for _ in _PROPERTY_CONDITIONS]
+    group_weights = [rng.choice([1, 2, 10, 30]) for _ in _PROPERTY_GROUPS]
+
+    def flag(rate: float) -> int | None:
+        return None if rng.random() < 0.01 else int(rng.random() < rate)
+
+    rows = [[flag(rate) for rate in rates] for _ in range(n)]
+    return pl.DataFrame(
+        {
+            "patient_id": [f"P{i:04d}" for i in range(n)],
+            "grp": rng.choices(_PROPERTY_GROUPS, weights=group_weights, k=n),
+            **{f"c{j + 1}": [row[j] for row in rows] for j in range(len(_PROPERTY_CONDITIONS))},
+        },
+        schema_overrides={f"c{j + 1}": pl.Int64 for j in range(len(_PROPERTY_CONDITIONS))},
+    )
+
+
+def _subsets(k: int) -> list[frozenset[int]]:
+    return [frozenset(j for j in range(k) if mask >> j & 1) for mask in range(1 << k)]
+
+
+def _where(subset: frozenset[int]) -> str:
+    return " AND ".join(_PROPERTY_CONDITIONS[j] for j in sorted(subset))
+
+
+def _known_counts(ask: Ask, catalog: SqlCatalog) -> dict[tuple[str, frozenset[int]], int]:
+    """Every count shown by any of the answers over subsets of the conditions, keyed by (group
+    label, subset); "" is the whole table. Asked as WHERE (grouped and not) and as count_if."""
+    known: dict[tuple[str, frozenset[int]], int] = {}
+
+    def record(answer: SqlAnswer | None, columns: dict[str, frozenset[int]]) -> None:
+        if answer is None:
+            return
+        for column, subset in columns.items():
+            for label, value in _numbers(answer, column).items():
+                if label not in FOLD_LABELS and isinstance(value, int):
+                    known[(label, subset)] = value
+
+    for subset in _subsets(len(_PROPERTY_CONDITIONS)):
+        where = f" WHERE {_where(subset)}" if subset else ""
+        record(_shown(ask, f"SELECT count(*) AS n FROM unified{where}", catalog), {"n": subset})
+        record(_shown(ask, f"SELECT grp, count(*) AS n FROM unified{where} GROUP BY grp", catalog), {"n": subset})
+    measures = {f"s{i}": s for i, s in enumerate(_subsets(len(_PROPERTY_CONDITIONS))) if s}
+    listed = ", ".join(f"count_if({_where(s)}) AS {name}" for name, s in measures.items())
+    record(_shown(ask, f"SELECT {listed} FROM unified", catalog), measures)
+    record(_shown(ask, f"SELECT grp, {listed} FROM unified GROUP BY grp", catalog), measures)
+    return known
+
+
+def _with_group_differences(
+    known: dict[tuple[str, frozenset[int]], int], labels: set[str]
+) -> dict[tuple[str, frozenset[int]], int]:
+    """Add what subtraction across groups gives: with the total and every group but one shown,
+    the last one; the rest of the table ("rest") is the total minus the shown groups."""
+    derived = dict(known)
+    for subset in _subsets(len(_PROPERTY_CONDITIONS)):
+        if ("", subset) not in known:
+            continue
+        shown = {g for g in labels if (g, subset) in known}
+        rest = known[("", subset)] - sum(known[(g, subset)] for g in shown)
+        derived[(f"rest:{','.join(sorted(shown))}", subset)] = rest
+        if len(labels - shown) == 1:
+            derived[(next(iter(labels - shown)), subset)] = rest
+    return derived
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_privacy_everySubsetOfConditions_noDerivableCountIsSmall(
+    make_sql_catalog: Callable[..., SqlCatalog], ask_sql: Ask, seed: int
+) -> None:
+    # Arrange: a random cohort, and every answer over every subset of 3 conditions (ADR013 4.5)
+    df = _planted_cohort(seed)
+    catalog = make_sql_catalog(df)
+
+    # Act
+    known = _with_group_differences(_known_counts(ask_sql, catalog), set(_PROPERTY_GROUPS))
+
+    # Assert: inclusion-exclusion between any two nested sets T <= U of conditions gives the
+    # patients meeting all of T and none of U - T; never 1 to 10, for any group or the table
+    labels = {label for label, _ in known}
+    subsets = _subsets(len(_PROPERTY_CONDITIONS))
+    derived, small = 0, []
+    for label in sorted(labels):
+        for upper in subsets:
+            for lower in (s for s in subsets if s <= upper):
+                between = [s for s in subsets if lower <= s <= upper]
+                if all((label, s) in known for s in between):
+                    count = sum((-1) ** len(s - lower) * known[(label, s)] for s in between)
+                    derived += 1
+                    if count in SMALL:
+                        small.append((label, sorted(lower), sorted(upper - lower), count))
+    assert derived > 0
+    assert not small, small
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_privacy_everySubsetOfConditions_shownCountsMatchTheData(
+    make_sql_catalog: Callable[..., SqlCatalog], ask_sql: Ask, seed: int
+) -> None:
+    # Arrange
+    df = _planted_cohort(seed)
+    catalog = make_sql_catalog(df)
+
+    # Act
+    known = _known_counts(ask_sql, catalog)
+
+    # Assert: whatever is shown is the true count (a wrong answer is worse than none)
+    for (label, subset), value in known.items():
+        rows = df.filter(pl.col("grp") == label) if label else df
+        for j in subset:
+            rows = rows.filter(pl.col(f"c{j + 1}") == 1)
+        assert value == rows.height, (seed, label, sorted(subset))

@@ -41,7 +41,7 @@ User-typed SQL runs through `src/clinical_analytics/sql/`. What it guarantees fo
 - **The group-count limit** (`MAX_GROUPS`) refuses a query by how many groups it has, which a crafted grouping can make depend on a few patients; it is the same cross-query class as above.
 - **Means of continuous columns** (more than 20 distinct values) reveal sums; many quantiles across queries trace values. Quantiles are limited to 0.1, 0.25, 0.5, 0.75 and 0.9.
 - **Visit-level data** (an ID on more than one row) is refused, not supported.
-- **Rows that IDs can't show to be patients** (no ID column, or rows without an ID) are refused until the user confirms one row per patient. The confirmation is the dataset's grain declaration (`contracts/declarations.py`, grain `patient`), kept per dataset version and row count. Suppression then rests on the user's word: if rows were in fact visits, a shown count of 11 or more rows could be fewer patients.
+- **Rows that IDs can't show to be patients** (no ID column, or rows without an ID) are refused until the user confirms one row per patient. The confirmation is the dataset's grain declaration (`contracts/declarations.py`, grain `patient`), kept per dataset version and row count. The refusal carries a token for that version, ID column and row count, and only that token is accepted, so a confirmation never lands on data the user wasn't asked about (a re-upload in between, or a client that sends one unasked: ADR013 section 6.3). Suppression then rests on the user's word: if rows were in fact visits, a shown count of 11 or more rows could be fewer patients.
 
 ## Electron-specific notes
 

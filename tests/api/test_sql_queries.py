@@ -18,7 +18,13 @@ from clinical_analytics.core.data_home import uploads_dir
 from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED
 from clinical_analytics.sql import config as sql_config
 from clinical_analytics.sql import sandbox as sql_sandbox
-from clinical_analytics.sql.service import DECLARATIONS_UNREADABLE, NO_CONTRACT, NOT_STORED
+from clinical_analytics.sql.service import (
+    CONFIRMATION_STALE,
+    DECLARATIONS_UNREADABLE,
+    NO_CONTRACT,
+    NOT_STORED,
+    confirmation_token,
+)
 from tests.api.conftest import FakeLayer
 from tests.sql.conftest import synthetic_cohort
 
@@ -166,12 +172,14 @@ def test_sqlRoute_noIdColumn_refusedUntilConfirmedThenRemembered(
 
     # Act
     refused = _post(test_client, sql).json()
-    confirmed = _post(test_client, sql, confirm_one_row_per_patient=True).json()
+    confirmed = _post(test_client, sql, confirm_one_row_per_patient=refused["confirmation"]).json()
     remembered = _post(test_client, sql).json()
 
     # Assert: refused with what to confirm; the confirmation is the version's patient grain
     assert refused["status"] == "refused"
     assert refused["needs_confirmation"] == "one_row_per_patient"
+    assert refused["confirmation"] == confirmation_token(VERSION, None, 300)
+    assert "300" not in refused["confirmation"]
     assert confirmed["status"] == "answered"
     assert "ICU" not in {row["ward"] for row in confirmed["rows"]}
     assert remembered["status"] == "answered"
@@ -188,11 +196,40 @@ def test_sqlRoute_confirmationWithRefusedQuery_notStored(
     # Arrange: an invalid query, so nothing was asked of the data
 
     # Act
-    body = _post(test_client, "SELECT * FROM unified", confirm_one_row_per_patient=True).json()
+    body = _post(
+        test_client, "SELECT * FROM unified", confirm_one_row_per_patient=confirmation_token(VERSION, None, 300)
+    ).json()
 
     # Assert
     assert body["status"] == "refused"
     assert body["needs_confirmation"] is None
+    assert FileDeclarationStore(uploads_dir().parent).load(DATASET).grains == ()
+
+
+@pytest.mark.parametrize("stored_dataset", ["no_id"], indirect=True)
+@pytest.mark.parametrize(
+    "token",
+    [
+        confirmation_token("v0", None, 300),  # asked about an earlier version (re-uploaded since)
+        confirmation_token(VERSION, None, 299),  # asked when the table had another row count
+        confirmation_token(VERSION, "patient_id", 300),  # asked about an ID column the data no longer has
+        "0" * 32,  # a client that sends a confirmation without asking
+    ],
+)
+def test_sqlRoute_confirmationForOtherData_refusedAndNotStored(
+    test_client: TestClient, layer_cache: LayerCache[FakeLayer], sql_enabled: None, token: str
+) -> None:
+    # Arrange: a confirmation that was not given for this version's rows (ADR013 section 6.3)
+    sql = "SELECT ward, count(*) AS n FROM unified GROUP BY ward"
+
+    # Act
+    body = _post(test_client, sql, confirm_one_row_per_patient=token).json()
+
+    # Assert: asked again, with the token for the data as it is now; nothing stored
+    assert body["status"] == "refused"
+    assert body["reason"] == CONFIRMATION_STALE
+    assert body["needs_confirmation"] == "one_row_per_patient"
+    assert body["confirmation"] == confirmation_token(VERSION, None, 300)
     assert FileDeclarationStore(uploads_dir().parent).load(DATASET).grains == ()
 
 
