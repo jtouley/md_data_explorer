@@ -28,9 +28,9 @@ from clinical_analytics.analysis.variable_types import short_name
 Rollup: TypeAlias = Literal["any", "all"]
 UnitKind: TypeAlias = Literal["patients", "encounters"]
 
-PATIENT_NOUNS: frozenset[str] = frozenset(
-    {"patient", "patients", "people", "person", "persons", "individuals", "adults", "children", "women", "men"}
-)
+# Only nouns that limit nothing: "women", "adults" or "children" also limit the patients, so they
+# are left to the parser and the checks that a limit was applied.
+PATIENT_NOUNS: frozenset[str] = frozenset({"patient", "patients", "people", "person", "persons", "individuals"})
 # Nouns that count encounters: a distinct encounter ID when the data has one.
 ENCOUNTER_NOUNS: frozenset[str] = frozenset(
     {
@@ -45,16 +45,17 @@ _HEAD = re.compile(
 )
 _WORD = re.compile(r"[a-z][a-z0-9]*")
 _OCCASION = r"(?:visit|visits|check|checks|test|tests|time|times|row|rows|admission|admissions|encounter|encounters)"
+# Roll-up phrases that attach to the value ("ever screened", "positive on any check"). A bare "at
+# least one admission" or "every visit" can name the population instead, so it is not read here
+# and stays with word accounting.
 _ANY_PHRASES = (
     r"\bever\b",
-    r"\bat least (?:one|once)\b",
+    r"\bat least once\b",
     rf"\b(?:on|at|in|from) any (?:of (?:their|his|her) )?{_OCCASION}\b",
-    rf"\bany {_OCCASION}\b",
 )
 _ALL_PHRASES = (
     r"\balways\b",
     rf"\b(?:on|at|in) (?:every|all(?: of)?(?: (?:their|his|her))?) {_OCCASION}\b",
-    rf"\bevery {_OCCASION}\b",
 )
 _ORDER_PHRASE = re.compile(
     r"\b(?:first|last|latest|earliest|most recent|initial|final) "
@@ -154,8 +155,8 @@ def encounter_spans_patients(layer: Any, encounter: str, patient: str) -> bool:
 
 def no_encounter_key_reason(noun: str) -> str:
     return (
-        f"This data has no column that identifies each of the {noun}, so {noun} can't be told apart from rows. "
-        f"Ask for patients, or for rows."
+        f"This data has no column that identifies each of the {noun}, so {noun} can't be counted apart from "
+        f"patients or rows. Ask for patients, or name the column that identifies them."
     )
 
 
@@ -205,7 +206,9 @@ ENCOUNTER_ALL_REASON = (
     "least one row ('on any'), or count patients instead."
 )
 
-# The name words that identify each encounter noun's column when more than one could.
+# Name words of a column that identifies any kind of encounter.
+_GENERIC_ENCOUNTER_WORDS = frozenset({"encounter", "enc", "csn"})
+# The name words that identify each encounter noun's column.
 _NOUN_COLUMN_WORDS: dict[str, frozenset[str]] = {
     "admission": frozenset({"admission", "admit", "adm", "hadm"}),
     "hospitalization": frozenset({"admission", "admit", "adm", "hadm"}),
@@ -225,10 +228,19 @@ def singular(noun: str | None) -> str:
 
 
 def pick_encounter_key(candidates: list[str], noun: str) -> str | None:
-    """The one encounter ID column for ``noun``: the only candidate, else the only one whose name
-    says the same kind of encounter ("tests" -> test_id beside encounter_id); None when unsure."""
-    if len(candidates) == 1:
-        return candidates[0]
-    words = _NOUN_COLUMN_WORDS.get(singular(noun), frozenset())
-    named = [c for c in candidates if words & set(re.split(r"[^a-z0-9]+", c.lower()))]
+    """The one encounter ID column for ``noun``, or None when no column or more than one fits.
+
+    A column fits when its name says the same kind of encounter ("tests" -> test_id), or names
+    an encounter in general (encounter_id, csn); a column named for another kind never does (a
+    share of tests counted by hadm_id would be a share of admissions). A column named for the
+    kind wins over a general one."""
+    kind = singular(noun)
+    words = _NOUN_COLUMN_WORDS.get(kind, frozenset())
+
+    def parts(column: str) -> set[str]:
+        return set(re.split(r"[^a-z0-9]+", column.lower()))
+
+    named = [c for c in candidates if words & parts(c)]
+    if not named:
+        named = [c for c in candidates if _GENERIC_ENCOUNTER_WORDS & parts(c)]
     return named[0] if len(named) == 1 else None

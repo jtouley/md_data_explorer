@@ -387,7 +387,15 @@ class TestReadUnits:
                 "what share of tests in patients 65 and older were positive?", "encounters", "tests", None, id="head"
             ),
             pytest.param("in patients 70+, how many admissions?", "encounters", "admissions", None, id="after_head"),
-            pytest.param("how many adults have ever been screened?", "patients", "adults", "any", id="ever"),
+            pytest.param("how many patients have ever been screened?", "patients", "patients", "any", id="ever"),
+            pytest.param("how many women were screened?", None, None, None, id="limiting_noun_not_a_unit"),
+            pytest.param(
+                "what share of patients with at least one admission had diabetes?",
+                "patients",
+                "patients",
+                None,
+                id="population_phrase_not_a_rollup",
+            ),
             pytest.param("share with protective igg on any check", None, None, "any", id="on_any"),
             pytest.param("share always screened", None, None, "all", id="always"),
             pytest.param("how many tested positive?", None, None, None, id="none"),
@@ -418,7 +426,10 @@ class TestReadUnits:
         [
             pytest.param(["patient_id", "encounter_id", "age"], "admissions", "encounter_id", id="one"),
             pytest.param(["patient_id", "hadm_id", "test_id"], "tests", "test_id", id="named_by_noun"),
-            pytest.param(["patient_id", "visit_id", "encounter_id"], "admissions", None, id="ambiguous"),
+            pytest.param(["patient_id", "visit_id", "encounter_id"], "visits", "visit_id", id="named_beats_generic"),
+            pytest.param(["patient_id", "hadm_id"], "tests", None, id="admission_id_never_counts_tests"),
+            pytest.param(["patient_id", "visit_id", "stay_id"], "encounters", None, id="no_fit"),
+            pytest.param(["patient_id", "hadm_id", "admission_id"], "admissions", None, id="two_fit_ambiguous"),
             pytest.param(["patient_id", "age"], "admissions", None, id="none"),
         ],
     )
@@ -468,3 +479,117 @@ class TestPlanContract:
 
         # Assert
         assert validation == {"valid": False, "error": "Column 'admission_id' not found in dataset"}
+
+
+def _admission_share_frame() -> pl.DataFrame:
+    """Vaccination per admission by year. 2023: 30 admissions with vaccination recorded, all of 3
+    patients, and 50 unrecorded admissions of 40 other patients; 2024: 40 recorded admissions of
+    40 patients."""
+    rows: list[dict[str, Any]] = []
+    for i in range(30):
+        rows.append(
+            {
+                "patient_id": f"R{i % 3}",
+                "encounter_id": f"A{i:03d}",
+                "year": "2023",
+                "vaccine": "yes" if i % 2 else "no",
+            }
+        )
+    for i in range(50):
+        rows.append({"patient_id": f"U{i % 40:02d}", "encounter_id": f"B{i:03d}", "year": "2023", "vaccine": None})
+    for i in range(40):
+        rows.append(
+            {
+                "patient_id": f"C{i:02d}",
+                "encounter_id": f"C{i:03d}",
+                "year": "2024",
+                "vaccine": "yes" if i % 2 else "no",
+            }
+        )
+    return pl.DataFrame(rows, schema={c: pl.String for c in ("patient_id", "encounter_id", "year", "vaccine")})
+
+
+def _two_groups_shared_by_two_patients() -> pl.DataFrame:
+    """Admissions in two wards: 85 only in A, 80 only in B (one patient each), and 35 in both,
+    all of two patients. A=120 and B=115 of 200 would show the 35 shared admissions."""
+    rows: list[dict[str, Any]] = []
+    for i in range(85):
+        rows.append({"patient_id": f"A{i:03d}", "encounter_id": f"EA{i:03d}", "ward": "A"})
+    for i in range(80):
+        rows.append({"patient_id": f"B{i:03d}", "encounter_id": f"EB{i:03d}", "ward": "B"})
+    for i in range(35):
+        for ward in ("A", "B"):
+            rows.append({"patient_id": f"S{i % 2}", "encounter_id": f"ES{i:03d}", "ward": ward})
+    return pl.DataFrame(rows, schema={c: pl.String for c in ("patient_id", "encounter_id", "ward")})
+
+
+class TestEncounterPatientCells:
+    def test_ask_rateByAdmission_recordedAdmissionsOfFewPatients_groupHidden(self, make_semantic_layer: Any) -> None:
+        # Arrange: 2023's 30 recorded admissions are 3 patients' (43 patients with unrecorded ones)
+        service = QueryService(make_semantic_layer(data=_admission_share_frame()))
+        plan = QueryPlan(
+            intent="COUNT", proportion_column="vaccine", proportion_value="yes", group_by="year", confidence=0.99
+        )
+
+        # Act
+        result = _ask(service, "what share of admissions had a vaccine by year?", plan)
+
+        # Assert: 2023 is never shown, by label, rate or n
+        table = present_analysis(result.analysis)["table"]
+        assert table is not None
+        assert display_level("year", "2023") not in {str(row["year"]) for row in table["rows"]}
+
+    def test_ask_admissionCount_fewPatientsBehindTotal_totalHidden(self, make_semantic_layer: Any) -> None:
+        # Arrange: 30 admissions, 3 patients
+        frame = _admission_share_frame().filter(pl.col("patient_id").str.starts_with("R"))
+        service = QueryService(make_semantic_layer(data=frame))
+
+        # Act
+        result = _ask(service, "how many admissions were there?", QueryPlan(intent="COUNT", confidence=0.99))
+
+        # Assert
+        assert result.claim == "Total count hidden."
+
+    def test_ask_admissionsInTwoWardsOfTwoPatients_everyWardHidden(self, make_semantic_layer: Any) -> None:
+        # Arrange
+        service = QueryService(make_semantic_layer(data=_two_groups_shared_by_two_patients()))
+        plan = QueryPlan(intent="COUNT", group_by="ward", confidence=0.99)
+
+        # Act
+        result = _ask(service, "how many admissions were there by ward?", plan)
+
+        # Assert: without suppression A=120, B=115 and 200 in all would show the 2 patients' 35
+        table = present_analysis(result.analysis)["table"]
+        assert table is not None
+        assert all(row["count"] == SECONDARY_SUPPRESSED for row in table["rows"])
+
+    def test_ask_testsWithOnlyAnAdmissionId_refused(self, make_semantic_layer: Any) -> None:
+        # Arrange: the only encounter ID is the admission's
+        frame = _admissions_frame().rename({"encounter_id": "hadm_id"})
+        service = QueryService(make_semantic_layer(data=frame))
+        plan = QueryPlan(intent="COUNT", confidence=0.99)
+
+        # Act
+        result = _ask(service, "how many tests were there?", plan)
+
+        # Assert
+        assert result.claim is None
+        assert result.failure_reason.startswith("This data has no column that identifies each of the tests")
+
+    def test_ask_partitionHiddenWardsOfFewPatients_everyWardHidden(self, make_semantic_layer: Any) -> None:
+        # Arrange: wards C (12 admissions, 2 patients) and D (13 admissions, 3 patients) are hidden;
+        # the total minus A and B would give their 25 admissions, all of 5 patients
+        rows: list[dict[str, Any]] = []
+        for ward, admissions, patients in (("A", 50, 50), ("B", 40, 40), ("C", 12, 2), ("D", 13, 3)):
+            for i in range(admissions):
+                rows.append({"patient_id": f"{ward}{i % patients:02d}", "encounter_id": f"{ward}{i:03d}", "ward": ward})
+        service = QueryService(make_semantic_layer(data=pl.DataFrame(rows)))
+        plan = QueryPlan(intent="COUNT", group_by="ward", confidence=0.99)
+
+        # Act
+        result = _ask(service, "how many admissions were there by ward?", plan)
+
+        # Assert
+        table = present_analysis(result.analysis)["table"]
+        assert table is not None
+        assert all(row["count"] == SECONDARY_SUPPRESSED for row in table["rows"])

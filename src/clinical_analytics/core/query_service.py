@@ -814,11 +814,15 @@ class QueryService:
             return _CountingUnit(plan=named, words=words, named=True, candidate=offered)
         if words.unit == "encounters" and words.noun is not None:
             chosen = counting_unit.pick_encounter_key(candidates, words.noun)
-            if not candidates:
-                # No encounter ID: rows stand for the encounters, as before; the grain is asked.
-                return _CountingUnit(plan=dataclasses.replace(plan, rollup=rollup), words=words)
             if chosen is None:
-                reason = counting_unit.ambiguous_encounter_reason(words.noun, candidates)
+                # No column identifies these encounters (or more than one could): counting
+                # patients or rows instead would answer another question.
+                fits = [c for c in candidates if counting_unit.pick_encounter_key([c], words.noun)]
+                reason = (
+                    counting_unit.ambiguous_encounter_reason(words.noun, fits)
+                    if len(fits) > 1
+                    else counting_unit.no_encounter_key_reason(words.noun)
+                )
                 return _CountingUnit(plan=plan, words=words, refusal=reason)
             if counting_unit.encounter_spans_patients(layer, chosen, grain.key):
                 reason = counting_unit.encounter_spans_reason(chosen, grain.key, words.noun)
