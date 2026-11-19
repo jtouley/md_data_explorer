@@ -1902,6 +1902,58 @@ def all_nulls_patient_df(make_patient_value_df):
 
 
 # ============================================================================
+# Local HTTPS source for the URL fetcher (no real internet in tests)
+# ============================================================================
+
+
+@pytest.fixture(scope="session")
+def https_test_certificate(tmp_path_factory):
+    """Throwaway self-signed certificate for the made-up *.example.test sites."""
+    from fixtures.https_server import make_certificate
+
+    return make_certificate(tmp_path_factory.mktemp("https-cert"))
+
+
+@pytest.fixture
+def local_https_source(https_test_certificate, monkeypatch):
+    """A running LocalHttpsSource; the URL fetcher's DNS, TCP connect and trust store point at it.
+
+    Fake names resolve per ``FAKE_DNS``; the fetcher's own public-address check still runs, and
+    a connection to anything but a fake public address fails the test.
+    """
+    import ipaddress
+    import socket
+
+    from fixtures.https_server import FAKE_DNS, LocalHttpsSource
+
+    from clinical_analytics.storage import url_fetch
+
+    source = LocalHttpsSource(*https_test_certificate)
+    public = {a for addrs in FAKE_DNS.values() for a in addrs if ipaddress.ip_address(a).is_global}
+    real_getaddrinfo = socket.getaddrinfo
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        if host in FAKE_DNS:
+            return [
+                (socket.AF_INET6 if ":" in a else socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (a, port))
+                for a in FAKE_DNS[host]
+            ]
+        return real_getaddrinfo(host, port, *args, **kwargs)
+
+    def fake_open_tcp(address, port, timeout):
+        source.connections.append(address)
+        assert address in public, f"fetcher connected to non-public address {address}"
+        return socket.create_connection(("127.0.0.1", source.port), timeout=timeout)
+
+    monkeypatch.setattr(url_fetch.socket, "getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr(url_fetch, "_open_tcp", fake_open_tcp)
+    monkeypatch.setattr(url_fetch, "_tls_context", source.client_context)
+    source.start()
+    yield source
+    source.stop()
+
+
+# ============================================================================
 
 
 # Import performance plugin to register pytest_addoption hook
