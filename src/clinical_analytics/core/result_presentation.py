@@ -10,15 +10,17 @@ the same answer. A clause whose inputs are missing is left out rather than guess
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import date, datetime
-from typing import Any, Final, TypedDict, TypeGuard
+from typing import Any, Final, Literal, TypeAlias, TypedDict, TypeGuard
 
 import numpy as np
 
 from clinical_analytics.analysis.grouping import (
     HIDDEN_GROUPS_LABEL,
     MAX_GROUP_LEVELS,
+    NO_COUNT_TABLE,
     OTHER_LABEL,
     SMALL_CELL_TEST_REFUSAL,
     is_small_level,
@@ -954,6 +956,12 @@ def _present_descriptive(analysis: Mapping[str, Any]) -> Presentation:
                 stats = {k: _mask(v) for k, v in stats.items()}
                 reason = "n is hidden (n hidden)" if _is_count(n) else "n is missing"
                 claim = f"Statistics for {name} are not shown because {reason}."
+            elif _value_statistic_withheld(analysis, n_hidden):
+                # A column that behaves like categories: its mean is a share of the patients at
+                # each value, so its statistics follow the share rule (``_value_statistic_withheld``).
+                stats = {k: _mask(v) for k, v in stats.items()}
+                reason = "n is hidden (n hidden)" if n_hidden else VALUE_CELL_REASON
+                claim = f"Statistics for {name} are not shown because {reason}."
             elif n_hidden and stats["min"] == 0 and stats["max"] == 1:
                 # Values from 0 to 1 may be a 0/1 flag, whose mean is a share events/n (compute
                 # lists such a flag's frequencies instead, so only a payload that skipped that
@@ -1020,6 +1028,32 @@ def _present_descriptive(analysis: Mapping[str, Any]) -> Presentation:
     cols = analysis.get("column_count")
     claim = f"The dataset has {rows_n} rows and {cols} columns." if rows_n is not None and cols is not None else None
     return {"claim": claim, "table": _table(list(analysis.get("summary_stats") or []))}
+
+
+# Why a statistic of a column that behaves like categories is withheld; one wording for a small
+# value cell and for cells that were not recorded, so the reason does not say which.
+VALUE_CELL_REASON: Final = (
+    f"fewer than {SMALL_CELL_THRESHOLD} patients have one of its values, or that was not checked, "
+    f"and with n it would let their number be worked out"
+)
+
+
+def _value_statistic_withheld(cells: Mapping[str, Any], n_hidden: bool) -> bool:
+    """Whether a statistic (mean, sum, SD, median, minimum, maximum) of a column is withheld
+    because the column behaves like categories (``grouping.behaves_like_categories``).
+
+    Such a column's mean is a share: for died coded 0/1, "F 0.06, n=100" is 6 women who died,
+    and with a few values a mean is one equation in the patients at each value. So it follows
+    the share rule (``_share_withheld``): withheld when n is hidden, or when the fewest patients
+    holding one value (``cells["table_min_cell"]``, recorded for the whole answer or for one
+    group, counted in patients at visit grain) is 1 to threshold-1 (``table_statistic_refusal``).
+    ``NO_COUNT_TABLE`` marks a measurement, which rests on no such table and follows the size
+    rules alone. Anything else (not recorded, not a count) is withheld (fail closed).
+    """
+    min_cell = cells.get("table_min_cell")
+    if isinstance(min_cell, str) and min_cell == NO_COUNT_TABLE:
+        return False
+    return n_hidden or table_statistic_refusal(min_cell) is not None
 
 
 def _present_count(analysis: Mapping[str, Any]) -> Presentation:
@@ -1231,25 +1265,38 @@ def _present_rate(analysis: Mapping[str, Any]) -> Presentation:
 
 def _present_grouped_statistic(analysis: Mapping[str, Any]) -> Presentation:
     """One statistic per group. A group's value is hidden with its size: the median, minimum or
-    maximum of a few patients is one patient's value."""
+    maximum of a few patients is one patient's value. Of a metric that behaves like categories
+    every statistic is a share and is withheld as one: by the group's ``table_min_cell``
+    (``_value_statistic_withheld``), and with the group's size and its rows without a value as
+    a line (``_group_parts``), as for a rate. A metric is taken to behave like categories unless
+    every group records ``NO_COUNT_TABLE`` (fail closed)."""
     statistic = str(analysis.get("statistic") or "mean")
     metric = short_name(str(analysis.get("metric") or "value"))
     group_col = str(analysis.get("group_col") or "group")
     groups = list(analysis.get("groups") or [])
     if len(groups) > MAX_GROUP_LEVELS:
         return _too_many_levels(group_col, len(groups))
-    sizes = {str(g.get("group")): g.get("n") for g in groups}
-    hidden = suppress_with_exclusions(analysis, sizes)
+    share_like = any(g.get("table_min_cell") != NO_COUNT_TABLE for g in groups)
+    if share_like:
+        analysis = _checked_exclusions(analysis)
+        sizes, cells, lines = _group_parts(analysis, groups)
+        hidden = suppress_with_exclusions(analysis, cells, lines)
+    else:
+        sizes = {str(g.get("group")): g.get("n") for g in groups}
+        hidden = suppress_with_exclusions(analysis, sizes)
     n_clause = _n_clause(analysis, hidden)
     value_column = f"{statistic} {metric}"
     small_groups = _small_parts(sizes, hidden)
-    rows, parts = [], []
+    rows, parts, by_cell = [], [], False
     for g in groups:
         key, value = str(g.get("group")), _num(g.get("value"))
         label = _group_label(group_col, g.get("group"))
-        shown = SECONDARY_SUPPRESSED if _unchecked(key, g.get("n"), hidden) else value
+        size_hidden = _unchecked(key, g.get("n"), hidden)
+        cell_hidden = value is not None and _value_statistic_withheld(g, N_USED in hidden)
+        by_cell = by_cell or (cell_hidden and not size_hidden)
+        withheld = size_hidden or cell_hidden
+        shown = SECONDARY_SUPPRESSED if withheld else value
         rows.append({group_col: label, value_column: shown, "n": SECONDARY_SUPPRESSED if key in hidden else g.get("n")})
-        withheld = shown == SECONDARY_SUPPRESSED
         if key not in small_groups:  # a small group's label is folded into Other
             parts.append(f"{label} {'not shown' if withheld else ('no values' if value is None else _fmt(value))}")
     if small_groups:
@@ -1258,6 +1305,8 @@ def _present_grouped_statistic(analysis: Mapping[str, Any]) -> Presentation:
     claim = _with_details(f"{label} {metric} by {group_col}: {', '.join(parts)}", [n_clause]) + ". Unadjusted."
     if any(key in hidden for key in sizes):
         claim += " Values are not shown for groups whose size is hidden to protect privacy."
+    if by_cell:
+        claim += f" A value is not shown where {VALUE_CELL_REASON}."
     fold = {_group_label(group_col, g.get("group")) for g in groups if str(g.get("group")) in small_groups}
     return {"claim": claim, "table": _fold_rows(_table(rows), fold, small_groups.label)}
 
@@ -1296,7 +1345,9 @@ def present_analysis(analysis: Mapping[str, Any] | None) -> Presentation:
     """Claim sentence and statistics table for a formatted analysis result.
 
     Returns an empty presentation for missing, failed or unknown results so callers
-    never show a claim that the analysis did not support.
+    never show a claim that the analysis did not support. The data notes are added after the
+    claim, each count in them checked against the counts the claim and table show
+    (``_note_sentence``).
     """
     if not analysis or analysis.get("error"):
         return {"claim": None, "table": None}
@@ -1307,22 +1358,144 @@ def present_analysis(analysis: Mapping[str, Any] | None) -> Presentation:
     claim = presentation["claim"]
     if claim is None:
         return presentation
-    notes = [_implausible_note(analysis.get("implausible")), *[str(n) for n in analysis.get("data_notes") or []]]
-    kept = [note for note in notes if note]
+    shown = _shown_counts(claim, presentation["table"])
+    notes: list[Any] = [_implausible_note(analysis.get("implausible")), *(analysis.get("data_notes") or [])]
+    kept: list[str] = []
+    for note in notes:
+        sentence = _note_sentence(note, shown)
+        if sentence:
+            kept.append(sentence)
     if kept:
         claim = " ".join([claim, *kept])
     return {"claim": claim, "table": presentation["table"]}
 
 
-def _implausible_note(implausible: Any) -> str | None:
+NoteForm: TypeAlias = Literal["number", "percent"]
+# Where a counted note's count goes in its text. Replaced with ``str.replace``, never
+# ``str.format``: a column name with braces in it must not break or reshape the sentence.
+AMOUNT: Final = "{amount}"
+# The words a count is shown as when it is withheld; claims nothing about its size.
+WITHHELD_AMOUNT: Final = "some"
+
+
+class CountedNote(TypedDict):
+    """A data note that carries a count: the text with ``AMOUNT`` where the count goes, the count,
+    the total of its line (the count plus the rest; None when it has no known line) and how the
+    count is written (a number, or a percent of ``total``). Notes carry their count apart from
+    their text so the presenter can check it against what the answer shows."""
+
+    text: str
+    count: int
+    total: int | None
+    form: NoteForm
+
+
+DataNote: TypeAlias = str | CountedNote
+
+
+def counted_note(text: str, count: int, total: int | None, form: NoteForm = "number") -> CountedNote:
+    """A note whose ``count`` is written where ``text`` has ``AMOUNT`` (once, and only there)."""
+    if text.count(AMOUNT) != 1:
+        raise ValueError("A counted note's text must hold its amount placeholder exactly once")
+    if form == "percent" and not (_is_count(total) and int(total) > 0):
+        raise ValueError("A percent note needs the positive total it is a percent of")
+    return {"text": text, "count": count, "total": total, "form": form}
+
+
+def note_text(note: DataNote) -> str:
+    """The note's text as written by its producer (the count still a placeholder): for matching."""
+    return note if isinstance(note, str) else str(note.get("text") or "")
+
+
+# An integer as a sentence writes it: not part of a decimal, a percent, a word or a code.
+_SHOWN_INTEGER = re.compile(r"(?<![\w.])\d+(?![\w%]|\.\d)")
+
+
+def _shown_counts(claim: str, table: TablePayload | None) -> set[int]:
+    """Every count the answer shows or gives away, read from what it shows (fail closed: any
+    integer counts, years and bounds included, so a note is withheld more often, never less).
+
+    The integers in the claim and in the table, plus, for a table row with a count (``n`` or
+    ``count``) beside a fraction (a share, a rate, a mean from 0 to 1), the two counts the
+    fraction and the count give back (with the value, without it).
+    """
+    found = {int(token) for token in _SHOWN_INTEGER.findall(claim)}
+    for row in table["rows"] if table is not None else []:
+        n = row.get("n", row.get("count"))
+        for value in row.values():
+            if _is_count(value):
+                found.add(int(value))
+            elif _is_count(n) and isinstance(value, float) and 0.0 <= value <= 1.0:
+                events = round(value * int(n))
+                found |= {events, int(n) - events}
+    # A count of 1 to threshold-1 is never shown, so such an integer is a code or a label
+    # ("died=1"), not a count; 0 needs no entry (a note count near 0 is small itself).
+    return {value for value in found if value >= _limit(None)}
+
+
+def _note_count_withheld(count: int, total: int | None, shown: set[int]) -> bool:
+    """Whether a note's count may not be written: it, or the rest of its line, is from 1 to
+    threshold-1, or lies 1 to threshold-1 from a count the answer shows (the note and the
+    answer together would give that difference back: 20 patients over 110, 15 values over 122
+    say 5 patients are 111-122)."""
+    limit = _limit(None)
+    parts = [count, *([total - count] if total is not None else [])]
+    if any(part < 0 or 0 < part < limit for part in parts):
+        return True
+    return any(part > 0 and 0 < abs(part - other) < limit for part in parts for other in shown)
+
+
+def _note_sentence(note: Any, shown: set[int]) -> str | None:
+    """A data note as it is shown, or None when it is dropped. ``shown``: the counts the answer
+    shows so far, to which each written count is added (a later note is checked against it).
+
+    A counted note writes its count, or ``WITHHELD_AMOUNT`` when ``_note_count_withheld``. A note
+    with a count must be a ``CountedNote``; a plain text note should carry none. Its integers
+    cannot be told from counts, so each is checked as one (a count with no known line): when any
+    is 1 to threshold-1 or that close to a shown count, the note is dropped (fail closed: a
+    count written into free text by mistake never ships; a range such as 0–9 goes with it). A
+    malformed counted note, or anything else, is dropped.
+    """
+    if note is None:
+        return None
+    if isinstance(note, str):
+        integers = [int(token) for token in _SHOWN_INTEGER.findall(note)]
+        return None if not note or any(_note_count_withheld(i, None, shown) for i in integers) else note
+    if not isinstance(note, Mapping):
+        return None
+    text, count, total, form = note.get("text"), note.get("count"), note.get("total"), note.get("form", "number")
+    if (
+        not isinstance(text, str)
+        or text.count(AMOUNT) != 1
+        or not _is_count(count)
+        or form not in ("number", "percent")
+    ):
+        return None
+    if total is not None and not _is_count(total):
+        return None
+    count, total = int(count), (int(total) if total is not None else None)
+    if form == "percent" and not (total and total > 0):
+        return None
+    if _note_count_withheld(count, total, shown):
+        return text.replace(AMOUNT, WITHHELD_AMOUNT)
+    shown |= {count, *([total - count] if total is not None else [])}
+    amount = f"{100 * count / total:.1f}%" if form == "percent" and total else str(count)
+    return text.replace(AMOUNT, amount)
+
+
+def _implausible_note(implausible: Any) -> CountedNote | None:
     """'Includes 12 values of age outside 0–122 years (likely entry errors).' The count is "some"
-    when it, or the rest of the values the statistic used, is from 1 to 10."""
+    when it, or the rest of the values the statistic used, is from 1 to 10, or when it is that
+    close to a count the answer shows (``_note_sentence``)."""
     if not isinstance(implausible, Mapping):
         return None
     count, total = implausible.get("count"), implausible.get("line_total")
-    if not _is_count(count) or int(count) <= 0:
-        return None
-    amount = line_count_text(int(count), [int(total) - int(count)] if _is_count(total) else [1])
-    column = short_name(str(implausible.get("column") or "this column"))
-    bounds = implausible.get("bounds") or "its plausible range"
-    return f"Includes {amount} values of {column} outside {bounds} (likely entry errors)."
+    if not _is_count(count) or int(count) <= 0 or not _is_count(total):
+        return None  # nothing to disclose, or a count whose line is unknown: dropped (fail closed)
+    column = short_name(str(implausible.get("column") or "this column")).replace(AMOUNT, "")
+    bounds = str(implausible.get("bounds") or "its plausible range").replace(AMOUNT, "")
+    return counted_note(
+        f"Includes {AMOUNT} values of {column} outside {bounds} (likely entry errors).",
+        int(count),
+        int(total),
+    )

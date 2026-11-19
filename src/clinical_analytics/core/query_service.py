@@ -37,7 +37,7 @@ from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRE
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 from clinical_analytics.core.plan_values import absent_value_reason, plan_values
 from clinical_analytics.core.query_plan import CohortStepError, QueryPlan
-from clinical_analytics.core.result_presentation import present_analysis
+from clinical_analytics.core.result_presentation import note_text, present_analysis
 from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.core.word_accounting import (
     coded_grouping_reason,
@@ -858,7 +858,9 @@ class QueryService:
         column whose implausible values the analysis already discloses gets no second note.
         """
         disclosed = (analysis.get("implausible") or {}).get("column")
-        notes = [n for n in findings.notes if not (disclosed and n.startswith(f"{short_name(disclosed)} has "))]
+        notes = [
+            n for n in findings.notes if not (disclosed and note_text(n).startswith(f"{short_name(disclosed)} has "))
+        ]
         # Without a patient key every n counts rows (the upload's row number is never a key).
         unit = _unit_of(analysis, plan, findings)
         extra: dict[str, Any] = {"unit": unit} if unit else {}

@@ -25,6 +25,7 @@ import pandas as pd
 import polars as pl
 from ibis import _
 
+from clinical_analytics.analysis.grouping import NO_COUNT_TABLE, behaves_like_categories
 from clinical_analytics.analysis.numeric_text import is_missing_token, is_numeric_text, missing_token_sql
 from clinical_analytics.core import nl_query_config
 from clinical_analytics.core.execution_gate import evaluate_execution_gate
@@ -314,7 +315,8 @@ def _format_share_result(frame: pl.DataFrame, plan: "QueryPlan", group: str | No
 
 
 def _format_grouped_statistic(frame: pl.DataFrame, plan: "QueryPlan", base_rows: int) -> dict[str, Any]:
-    """One statistic of the metric per group, as the plan computed it."""
+    """One statistic of the metric per group, as the plan computed it. ``n_rows``: the group's
+    rows, so the presenter suppresses its rows without a value with its n (as for a rate)."""
     statistic = grouped_statistic(plan) or "mean"
     group = str(plan.group_by)
     return {
@@ -323,7 +325,8 @@ def _format_grouped_statistic(frame: pl.DataFrame, plan: "QueryPlan", base_rows:
         "metric": plan.metric,
         "group_col": group,
         "groups": [
-            {"group": row[group], "value": row[statistic], "n": int(row["n"])} for row in frame.iter_rows(named=True)
+            {"group": row[group], "value": row[statistic], "n": int(row["n"]), "n_rows": int(row["n_rows"])}
+            for row in frame.iter_rows(named=True)
         ],
         **_sample_counts(frame, base_rows),
     }
@@ -2406,6 +2409,7 @@ class SemanticLayer:
             formatted = _format_share_result(result_df_pl, query_plan, query_plan.group_by, share_base)
         elif grouped_statistic(query_plan) is not None:
             formatted = _format_grouped_statistic(result_df_pl, query_plan, self.get_base_row_count())
+            formatted["groups"] = self._with_value_cells(formatted["groups"], query_plan)
         elif query_plan.intent == "COUNT":
             formatted = self._format_count_result(result_df_pl, query_plan, context)
             # What the filters removed, in the unit the total is counted in: distinct entities
@@ -2979,6 +2983,37 @@ class SemanticLayer:
         if not isinstance(frame_out, pl.DataFrame):
             raise TypeError("DuckDB aggregate did not return a table")
         return frame_out
+
+    def _with_value_cells(self, groups: list[dict[str, Any]], plan: "QueryPlan") -> list[dict[str, Any]]:
+        """``groups`` of a grouped statistic, each with ``table_min_cell``: the fewest patients in the
+        group holding one value of the metric when the metric behaves like categories
+        (``grouping.behaves_like_categories``, decided on the patients per value over every
+        group), else ``NO_COUNT_TABLE``.
+
+        A mean of such a column is a share (died 0/1: a group's mean times its n is its deaths),
+        so the presenter withholds it as a share when a cell holds 1-10 patients. Counted in
+        DuckDB over the plan's filtered rows, one GROUPING SETS scan; patients are distinct keys
+        once rows are visits, as the share SQL counts them (a row with no key is still one
+        patient, never none). A group with no recorded value has no cell and no ``table_min_cell``.
+        """
+        metric, group = _quote_ident(str(plan.metric)), _quote_ident(str(plan.group_by))
+        entity = self.count_entity_key
+        patients = f"greatest(count(DISTINCT {_quote_ident(entity)}), 1)" if entity else "count(*)"
+        sql = (
+            f"SELECT {group} AS g, {metric} AS v, GROUPING({group}) AS overall, {patients} AS n "
+            f"FROM _cohort_in WHERE {metric} IS NOT NULL "
+            f"GROUP BY GROUPING SETS (({group}, {metric}), ({metric}))"
+        )
+        with self._cohort_views_dropped():
+            cells = self._duck_aggregate(self._filtered_view(plan), sql)
+        overall = cells.filter(pl.col("overall") == 1)
+        per_value = dict(zip(overall.get_column("v").to_list(), overall.get_column("n").to_list(), strict=True))
+        if not behaves_like_categories(per_value):
+            return [{**g, "table_min_cell": NO_COUNT_TABLE} for g in groups]
+        least: dict[Any, int] = {}
+        for g, n in cells.filter(pl.col("overall") == 0).select("g", "n").iter_rows():
+            least[g] = min(int(n), least.get(g, int(n)))
+        return [{**g, "table_min_cell": least[g["group"]]} if g["group"] in least else dict(g) for g in groups]
 
     def _share_sql(self, view: Any, column: str, value: Any, group: str | None) -> str:
         """Share of patients whose ``column`` equals ``value``, among those with it recorded.
