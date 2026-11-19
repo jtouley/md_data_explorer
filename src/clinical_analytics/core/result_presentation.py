@@ -1057,11 +1057,28 @@ def _group_label(column: str, level: Any) -> str:
 def _counts_small(events: Any, n: Any) -> bool:
     """A share events/n reveals both counts (with and without the value) once n is known.
 
-    True when either is from 1 to threshold-1, or when the counts are missing (fail closed).
+    True when either is from 1 to threshold-1, or when the counts are missing, not counts or
+    inconsistent (negative, events above n): fail closed with the shared ``is_small_level`` rule.
     """
     if not _is_count(events) or not _is_count(n):
         return True
-    return any(0 < count < _limit(None) for count in (int(events), int(n) - int(events)))
+    return any(is_small_level(count) for count in (int(events), int(n) - int(events)))
+
+
+def _share_withheld(events: Any, n: Any, n_key: Any, hidden: set[Any]) -> bool:
+    """Whether a share events/n (a proportion, or one group's rate) is withheld.
+
+    Withheld when n is hidden (``n_key`` in ``hidden``) or not a count, and when either count
+    (with, without) is small (``_counts_small``). A hidden n is never a reason to round instead:
+    the reader knows the cohort from other answers, so a hidden n lies in a window of at most ten
+    values (cohort - 10 to cohort - 1), and a COUNT with the same filter can show the events
+    (``events`` patients have the value). A share at any precision a clinician would read then
+    has one n in that window that gives it, and n gives back the 1-10 patients excluded. With n
+    hidden every (n, events) pair of the window shows the same thing: nothing.
+    """
+    # N_USED as well: when the answer's overall n is hidden, no share of it is shown, whichever
+    # key a caller passes for the share's own n.
+    return N_USED in hidden or _unchecked(n_key, n, hidden) or _counts_small(events, n)
 
 
 def _percent(value: float) -> str:
@@ -1069,8 +1086,8 @@ def _percent(value: float) -> str:
 
 
 def _present_proportion(analysis: Mapping[str, Any]) -> Presentation:
-    """Share of patients with a value. Hidden when either of its counts (with, without) is small:
-    the share and n together give both counts."""
+    """Share of patients with a value. Hidden when either of its counts (with, without) is small
+    (the share and n together give both counts), and whenever n is hidden (``_share_withheld``)."""
     column = str(analysis.get("column") or "value")
     event = _event_phrase(column, analysis.get("value"))
     share = _num(analysis.get("proportion"))
@@ -1082,11 +1099,12 @@ def _present_proportion(analysis: Mapping[str, Any]) -> Presentation:
             "table": None,
         }
     n_used = analysis.get("n_used")
-    # Hidden too when n is hidden and that narrows it (as for any whole-sample statistic).
-    withheld = _counts_small(analysis.get("events"), n_used) or not _overall_statistics_shown(
-        n_used, N_USED in hidden_n, _cohort(analysis), 0
-    )
-    if withheld:
+    withheld = _share_withheld(analysis.get("events"), n_used, N_USED, hidden_n)
+    if withheld and N_USED in hidden_n:
+        # One wording for every hidden n, whatever the events: the reason must not tell the
+        # (n, events) pairs of the window apart.
+        claim = _with_details(f"The share with {event} is not shown because n is hidden", [n_clause])
+    elif withheld:
         claim = _with_details(
             f"The share with {event} is not shown because one of its counts is fewer than {_limit(None)} patients",
             [n_clause],
@@ -1104,7 +1122,7 @@ def _present_proportion(analysis: Mapping[str, Any]) -> Presentation:
 
 def _present_rate(analysis: Mapping[str, Any]) -> Presentation:
     """Rate of a value in each group. A group's n is suppressed as group sizes are; its rate is
-    hidden with its n, or when either of its counts (with, without) is small."""
+    hidden with its n, or when either of its counts (with, without) is small (``_share_withheld``)."""
     column = str(analysis.get("column") or "value")
     group_col = str(analysis.get("group_col") or "group")
     event = _event_phrase(column, analysis.get("value"))
@@ -1120,7 +1138,7 @@ def _present_rate(analysis: Mapping[str, Any]) -> Presentation:
         key, n, events = str(g.get("group")), g.get("n"), g.get("events")
         rate = _num(g.get("rate"))
         label = _group_label(group_col, g.get("group"))
-        rate_hidden = _unchecked(key, n, hidden) or _counts_small(events, n)
+        rate_hidden = _share_withheld(events, n, key, hidden)
         withheld = withheld or rate_hidden
         rows.append(
             {
@@ -1136,7 +1154,9 @@ def _present_rate(analysis: Mapping[str, Any]) -> Presentation:
         parts.append(f"{small_groups.label} not shown")
     claim = _with_details(f"{event} by {group_col}: {', '.join(parts)}", [n_clause]) + ". Unadjusted."
     if withheld:
-        claim += f" A rate is not shown when one of its counts is fewer than {_limit(None)} patients."
+        claim += (
+            f" A rate is not shown when its n is hidden or one of its counts is fewer than {_limit(None)} patients."
+        )
     fold = {_group_label(group_col, g.get("group")) for g in groups if str(g.get("group")) in small_groups}
     return {"claim": claim, "table": _fold_rows(_table(rows), fold, small_groups.label)}
 
