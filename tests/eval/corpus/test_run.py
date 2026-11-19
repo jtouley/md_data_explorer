@@ -69,7 +69,7 @@ class TestAskAll:
         assert results[1].grade == "RIGHT"
         assert results[1].llm == "ran"
 
-    def test_askAll_timedOutQueryStillRunning_nextQuestionWaitsThenErrors(self, make_fake_api):
+    def test_askAll_timedOutQueryStillRunning_nextQuestionWaitsGraceThenErrors(self, make_fake_api):
         # Arrange: the first query outlives both its timeout and the wait after it.
         api = make_fake_api(finish_at={"how many": 1000.0}, falls_back={"how many"})
 

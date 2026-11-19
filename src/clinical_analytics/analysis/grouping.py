@@ -16,7 +16,7 @@ another group's 0 pins those patients. So:
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Final
 
 import numpy as np
@@ -51,6 +51,14 @@ SMALL_CELL_MODEL_REFUSAL: Final = (
     f"so this model can't be shown without letting their number be worked out. Try a broader predictor or "
     f"a more common outcome."
 )
+# A model whose fitted terms are not exactly the terms its sizes were counted for: two predictors
+# give the same term name (a column "site_West" beside "site" with level West), so one term's size
+# would stand for the other's. Withheld (fail closed); names neither column, since one of them
+# may be the label of a small level.
+TERM_NAME_CLASH_MODEL_REFUSAL: Final = (
+    "Two predictors give this model the same term name, so it can't be checked for small groups and "
+    "is not shown. Rename one of the columns or leave it out."
+)
 # A stored model whose group sizes are missing (a payload from before they were recorded): it is
 # withheld (fail closed), but no value is small, so none is blamed.
 UNRECORDED_SIZES_MODEL_REFUSAL: Final = (
@@ -78,12 +86,45 @@ def grouping_problem(column: str, levels: int) -> str | None:
 def is_small_level(count: object) -> bool:
     """A level whose own patient count must not be shown under its label (1..threshold-1).
 
-    A count that is missing or not an integer is treated as small (fail closed). Zero is not
-    a level anyone has, so it is not small.
+    A count that is missing, not an integer or negative is treated as small (fail closed). Zero
+    is not a level anyone has, so it is not small.
     """
     if isinstance(count, bool) or not isinstance(count, int | np.integer):
         return True
-    return 0 < int(count) < SMALL_CELL_THRESHOLD
+    return int(count) != 0 and int(count) < SMALL_CELL_THRESHOLD
+
+
+def predictor_model_refusal(terms: Iterable[object], term_sizes: object, cell_sizes: object) -> str | None:
+    """Why a logistic model with ``terms`` may not be shown, or None when it may.
+
+    The one decision behind both ``compute_predictor_analysis`` (which refuses the model) and the
+    presenter (which withholds a payload that skipped that refusal), so the two cannot disagree.
+    ``term_sizes`` maps each term to the patients behind the level it names and its reference;
+    ``cell_sizes`` to the fewest patients in one of those levels with one outcome value. Both
+    are None for a slope, which names no level. A model is withheld when:
+
+    * the sizes are not recorded for every term, or a term is a slope in one and not the other
+      (a payload from before they were recorded, or a malformed one): ``UNRECORDED_SIZES_MODEL_REFUSAL``;
+    * a term's level holds 1-10 patients: ``SMALL_VALUE_MODEL_REFUSAL``;
+    * a term's level holds 1-10 patients with one outcome value: ``SMALL_CELL_MODEL_REFUSAL``.
+
+    A size that is not a count is small (``is_small_level``).
+    """
+    listed = list(terms)
+    if not listed:
+        return None
+    if (
+        not isinstance(term_sizes, Mapping)
+        or not isinstance(cell_sizes, Mapping)
+        or any(not isinstance(term, str) or term not in term_sizes or term not in cell_sizes for term in listed)
+        or any((term_sizes[term] is None) != (cell_sizes[term] is None) for term in listed)
+    ):
+        return UNRECORDED_SIZES_MODEL_REFUSAL
+    if any(term_sizes[term] is not None and is_small_level(term_sizes[term]) for term in listed):
+        return SMALL_VALUE_MODEL_REFUSAL
+    if any(cell_sizes[term] is not None and is_small_level(cell_sizes[term]) for term in listed):
+        return SMALL_CELL_MODEL_REFUSAL
+    return None
 
 
 def normalised_level(text: str) -> str:
