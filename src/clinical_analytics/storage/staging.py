@@ -67,15 +67,19 @@ NoteReason = Literal[
     "source_suppressed",
 ]
 
-# Markers a data source writes in place of a value it withholds (CDC WONDER: "Suppressed" for
-# counts it hides, "Unreliable" for rates it will not stand behind). In a column whose other
-# values are all numbers they are stored as missing and reported (``source_suppressed``): never
+# Markers a data source writes in place of a value it withholds or does not give (CDC WONDER:
+# "Suppressed" for counts it hides, "Unreliable" for rates it will not stand behind, alone or
+# after the number as "2.1 (Unreliable)", "Not Applicable" where there is no value). In a column
+# that types as numbers they are stored as missing and reported (``source_suppressed``): never
 # 0, never a number. In any other column they stay text ("Reliable"/"Unreliable" is a category).
-SOURCE_SUPPRESSED_TOKENS: Final[tuple[str, ...]] = ("suppressed", "unreliable")
+SOURCE_SUPPRESSED_TOKENS: Final[tuple[str, ...]] = ("suppressed", "unreliable", "not applicable")
+_FLAGGED_UNRELIABLE: Final = r"(?i)^\s*-?[\d.,]+\s*\(unreliable\)\s*$"
 
-# Exports that put a notes block under the data (CDC WONDER): a line "---" starts it. Everything
-# from that line on is documentation (dataset, query, citation, footnotes), never data rows.
-_EXPORT_NOTES_START: Final = re.compile(r'^\s*"?---"?\s*$')
+# CDC WONDER exports put a notes block under the data: a line "---" starts it, and every line
+# from there is one quoted field (dataset, query, citation, footnotes). Split off only in that
+# shape (first header "Notes", no separator in any notes line), so a "---" line in any other
+# file never hides the rows below it.
+_EXPORT_NOTES_START: Final = re.compile(rb'(?m)^[ \t]*"?---"?[ \t]*\r?$')
 # CDC WONDER's first column: "Notes". A row whose Notes cell is "Total" is a subtotal of the rows
 # above it; kept, it would be counted twice in every sum or count.
 EXPORT_NOTES_COLUMN: Final = "notes"
@@ -548,19 +552,24 @@ def read_csv_typed(file_bytes: bytes, separator: str = ",") -> StagedTable:
     Raises:
         StagingError: the file cannot be parsed, or a row has no ID and no values.
     """
-    data_bytes, export_notes = split_export_notes(file_bytes)
+    data_bytes, export_notes = split_export_notes(file_bytes, separator)
     try:
         text = pl.read_csv(io.BytesIO(data_bytes), separator=separator, infer_schema=False)
     except (pl.exceptions.ComputeError, pl.exceptions.NoDataError) as e:
         raise StagingError(f"The {_delimited_kind(separator)} file could not be read: {type(e).__name__}") from e
     text = _drop_trailing_blank_rows(text)
     text, totals = _drop_export_totals(text)
-    text, suppressed = _null_source_suppressed(text)
-    staged = stage_text_frame(text)
+    nulled, suppressed = _null_source_suppressed(text)
+    staged = stage_text_frame(nulled)
+    # Markers become missing only where the column ends up numeric (the typing rule decides,
+    # not a looser test): elsewhere they are kept as the text they are.
+    kept_text = [col for col, _n, _c in suppressed if not staged.data.schema[col].is_numeric()]
+    if kept_text:
+        suppressed = [item for item in suppressed if item[0] not in kept_text]
+        staged = stage_text_frame(nulled.with_columns(text.select(kept_text)))
     schema = staged.data.schema
     notes = tuple(
-        ColumnTypeNote(col, str(schema.get(col, pl.String())), "source_suppressed", count, checked)
-        for col, count, checked in suppressed
+        ColumnTypeNote(col, str(schema[col]), "source_suppressed", count, checked) for col, count, checked in suppressed
     )
     table_notes: tuple[str, ...] = ()
     if totals:
@@ -571,15 +580,26 @@ def read_csv_typed(file_bytes: bytes, separator: str = ",") -> StagedTable:
     return replace(staged, notes=(*staged.notes, *notes), export_notes=export_notes, table_notes=table_notes)
 
 
-def split_export_notes(file_bytes: bytes) -> tuple[bytes, str]:
-    """(the data lines, the notes block as text) of an export with a "---" line under its data;
-    (``file_bytes``, "") when there is none."""
-    lines = file_bytes.splitlines(keepends=True)
-    for at, line in enumerate(lines):
-        if _EXPORT_NOTES_START.match(line.decode("utf-8", errors="replace")):
-            block = b"".join(lines[at:]).decode("utf-8", errors="replace")
-            return b"".join(lines[:at]), block
-    return file_bytes, ""
+def is_notes_export(file_bytes: bytes, separator: str) -> bool:
+    """True when the first header is "Notes" (CDC WONDER's layout): read the file on its own, so
+    its subtotal rows, notes block and suppressed values are handled (never as a numbered set)."""
+    first_header = file_bytes.split(b"\n", 1)[0].split(separator.encode(), 1)[0].strip().strip(b'"').strip()
+    return first_header.lower() == EXPORT_NOTES_COLUMN.encode()
+
+
+def split_export_notes(file_bytes: bytes, separator: str = "\t") -> tuple[bytes, str]:
+    """(the data lines, the notes block as text) of a CDC WONDER-shaped export; (``file_bytes``,
+    "") for any other file. WONDER-shaped: the first header is "Notes", a "---" line follows
+    the data, and no line from there on holds the separator (each is one quoted note)."""
+    if not is_notes_export(file_bytes, separator):
+        return file_bytes, ""
+    match = _EXPORT_NOTES_START.search(file_bytes)
+    if match is None:
+        return file_bytes, ""
+    block = file_bytes[match.start() :]
+    if separator.encode() in block:
+        return file_bytes, ""  # data-shaped lines below "---": not a notes block, never hidden
+    return file_bytes[: match.start()], block.decode("utf-8", errors="replace")
 
 
 def _drop_export_totals(df: pl.DataFrame) -> tuple[pl.DataFrame, int]:
@@ -607,7 +627,7 @@ def _null_source_suppressed(df: pl.DataFrame) -> tuple[pl.DataFrame, list[tuple[
     exprs: list[pl.Expr] = []
     for col in df.columns:
         s = df.select(_clean(col)).to_series().drop_nulls()
-        marker = s.str.to_lowercase().is_in(list(SOURCE_SUPPRESSED_TOKENS))
+        marker = s.str.to_lowercase().is_in(list(SOURCE_SUPPRESSED_TOKENS)) | s.str.contains(_FLAGGED_UNRELIABLE)
         count = int(marker.sum())
         if not count:
             continue
@@ -617,7 +637,10 @@ def _null_source_suppressed(df: pl.DataFrame) -> tuple[pl.DataFrame, list[tuple[
             continue  # not a number column: the markers are its categories, kept as text
         found.append((col, count, s.len()))
         exprs.append(
-            pl.when(_clean(col).str.to_lowercase().is_in(list(SOURCE_SUPPRESSED_TOKENS)))
+            pl.when(
+                _clean(col).str.to_lowercase().is_in(list(SOURCE_SUPPRESSED_TOKENS))
+                | _clean(col).str.contains(_FLAGGED_UNRELIABLE)
+            )
             .then(None)
             .otherwise(pl.col(col))
             .alias(col)
@@ -996,8 +1019,8 @@ _NOTE_TEXT: Final[dict[str, str]] = {
     "int_overflow": "kept as text: {n} whole numbers are too large to store as numbers without losing digits",
     "missing_tokens": "{n} values were missing-value markers (like NA, . or #N/A) and are stored as missing",
     "source_suppressed": (
-        "{n} values were withheld by the data source (Suppressed or Unreliable) and are stored as "
-        "missing, never as 0; sums and counts leave them out"
+        "{n} values were withheld or not given by the data source (Suppressed, Unreliable, Not "
+        "Applicable) and are stored as missing, never as 0; sums and counts leave them out"
     ),
     "shared_column_type": "type changed to match the same column in another table, so the tables join",
     "ambiguous_dates": "kept as text: dates could be day/month or month/day and nothing in the file settles which",

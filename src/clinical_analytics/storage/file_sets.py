@@ -86,9 +86,13 @@ class FileSet:
 def split_file_sets(members: list[TextMember]) -> tuple[list[FileSet], list[TextMember]]:
     """Group the members that form file sets; return the sets and the other members, in order."""
     groups: dict[tuple[str, str, str, bytes], list[TextMember]] = defaultdict(list)
+    from clinical_analytics.storage.staging import is_notes_export
+
     for member in members:
         match = _NUMBERED_STEM.match(member.stem)
-        if match:
+        # A CDC WONDER-shaped export is read on its own (subtotal rows, notes block, suppressed
+        # values): never joined into a set, where those rows would become data.
+        if match and not is_notes_export(member.content, member.separator):
             prefix = match["prefix"].rstrip("_-").lower()
             suffix = PurePosixPath(member.path).name.split(".", 1)[1].lower()
             groups[(prefix, suffix, member.separator, _header_line(member.content))].append(member)

@@ -579,6 +579,10 @@ def read_zip_tables(file_bytes: bytes, budget: ZipExpansionBudget | None = None)
         try:
             staged = load_single_file_staged(content, f"{name}{ext}")
             staged_tables.append((name, staged))
+            # A notes block under the data (CDC WONDER) is documentation; rows left out are said.
+            if staged.export_notes.strip():
+                as_docs.append(DocFile(name=f"{name}_notes.txt", path=entry, content=staged.export_notes.encode()))
+            notes.extend(f"{Path(entry).name}: {note}" for note in staged.table_notes)
             # Each workbook's own sheet note, naming the file: in a ZIP of several workbooks, a
             # sheet left unread in any of them must never look fully loaded.
             if sheet_note := describe_sheets(staged.sheets.as_dict() if staged.sheets is not None else None):
@@ -658,6 +662,29 @@ def _detect_excel_header_row(file_bytes: bytes, max_rows_to_check: int = 5) -> i
     return detect_header_row(rows, max_rows_to_check)
 
 
+# UTF-16 and UTF-32 byte-order marks: Excel's "Unicode Text (*.txt)" export writes UTF-16.
+_WIDE_TEXT_BOMS: Final = (b"\xff\xfe", b"\xfe\xff", b"\x00\x00\xfe\xff")
+_TXT_HOW_TO_FIX: Final = (
+    "Save the data as CSV, or as tab-separated text in UTF-8 (one row per line, columns separated "
+    "by tabs), and upload it again."
+)
+
+
+def _check_tab_separated_text(file_bytes: bytes) -> None:
+    """Refuse a .txt that is not a UTF-8 tab-separated table (CDC WONDER exports are).
+
+    Raises:
+        StagingError: UTF-16/32 text (Excel's "Unicode Text"), or not a table: the header and the
+            first data line must both hold the same number of tab-separated columns (two or more).
+    """
+    if file_bytes.startswith(_WIDE_TEXT_BOMS) or b"\x00" in file_bytes[:4096]:
+        raise StagingError(f"This .txt file is saved as UTF-16 (Unicode) text, which cannot be read. {_TXT_HOW_TO_FIX}")
+    lines = [line for line in file_bytes.splitlines()[:2] if line.strip()]
+    widths = {line.count(b"\t") for line in lines}
+    if len(lines) < 2 or len(widths) != 1 or 0 in widths:
+        raise StagingError(f"This .txt file is not tab-separated, so it cannot be read as a table. {_TXT_HOW_TO_FIX}")
+
+
 def load_single_file_staged(file_bytes: bytes, filename: str) -> StagedTable:
     """
     Load a single file (CSV/TSV/PSV, Excel, SAS transport, SPSS) as one typed table with its notes.
@@ -674,13 +701,7 @@ def load_single_file_staged(file_bytes: bytes, filename: str) -> StagedTable:
     if file_ext in DELIMITERS:
         return read_csv_typed(file_bytes, separator=DELIMITERS[file_ext])
     if file_ext == ".txt":
-        # A data .txt is tab-separated text (CDC WONDER exports); anything else is not a table.
-        first_line = file_bytes.split(b"\n", 1)[0]
-        if b"\t" not in first_line:
-            raise StagingError(
-                "This .txt file is not tab-separated, so it cannot be read as a table. Save the data as "
-                "CSV or tab-separated text (one row per line, columns separated by tabs) and upload it again."
-            )
+        _check_tab_separated_text(file_bytes)
         return read_csv_typed(file_bytes, separator="\t")
     if file_ext in {".xlsx", ".xls"}:
         # The workbook's bytes decide the reader: openpyxl for .xlsx, xlrd for BIFF .xls.

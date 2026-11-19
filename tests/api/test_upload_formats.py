@@ -507,7 +507,7 @@ def test_uploadDataset_wonderExport_readyNotesAsDocsSuppressedMissing(
     assert frame["Deaths"].min() > 0
     assert frame["Deaths"].null_count() == 5
     assert "Query Parameters" in meta.get("doc_context", "")
-    assert any("withheld by the data source" in note for note in body["type_notes"])
+    assert any("withheld or not given by the data source" in note for note in body["type_notes"])
     assert "1 subtotal row (Notes: Total) was left out, so no row is counted twice." in body["cohort_notes"]
 
 
@@ -521,3 +521,53 @@ def test_uploadDataset_txtNotTabSeparated_refused400SaysHowToFix(test_client: Te
     # Assert
     assert body["_status_code"] == 400, body
     assert "not tab-separated" in body["detail"]
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param("patient_id\tage\nP1\t40\nP2\t50\n".encode("utf-16") * 40, id="utf16_unicodeText"),
+        pytest.param(
+            b"Study protocol\tversion 2\n" + b"This study enrolled adults with a long history. " * 40, id="prose"
+        ),
+    ],
+)
+def test_uploadDataset_txtNotUtf8Table_refused400(test_client: TestClient, isolated_data_home, data: bytes):
+    # Act
+    body = _upload(test_client, "export.txt", data, "export")
+
+    # Assert: never stored as a garbled or prose "table"
+    assert body["_status_code"] == 400, body
+    assert "upload it again" in body["detail"]
+
+
+def test_uploadDataset_zipOfNumberedWonderExports_neverJoinedAsOneSet(
+    test_client: TestClient, isolated_data_home, make_wonder_export
+):
+    # Arrange: numbered WONDER files are read one by one; joined as a file set (review of #123),
+    # their Total rows and notes lines became data rows and sums doubled
+    data = _zip({"deaths_1.tsv": make_wonder_export(states=29), "deaths_2.tsv": make_wonder_export(states=29)})
+
+    # Act
+    body = _upload(test_client, "wonder.zip", data, "wonderzip")
+
+    # Assert: two separate tables share no ID, so the ZIP is refused plainly, never mixed
+    assert body["_status_code"] == 400, body
+    assert "Upload the table you want to ask about as its own file." in body["detail"]
+
+
+def test_uploadDataset_zipOfOneWonderExport_notesAsDocsTotalsSaid(
+    test_client: TestClient, isolated_data_home, make_wonder_export
+):
+    # Arrange
+    data = _zip({"deaths.tsv": make_wonder_export(states=29)})
+
+    # Act
+    body = _upload(test_client, "wonder1.zip", data, "wonder1")
+    frame, meta = _stored(body["upload_id"])
+
+    # Assert
+    assert body["_status_code"] == 200, body
+    assert frame.height == 29
+    assert "Query Parameters" in meta.get("doc_context", "")
+    assert "deaths.tsv: 1 subtotal row (Notes: Total) was left out, so no row is counted twice." in body["cohort_notes"]

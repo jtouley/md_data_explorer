@@ -384,6 +384,67 @@ def test_describeColumnTypes_sourceSuppressed_smallCountNeverShown() -> None:
 
     # Assert
     assert lines == [
-        "Deaths: fewer than 11 values were withheld by the data source (Suppressed or Unreliable) and are "
-        "stored as missing, never as 0; sums and counts leave them out."
+        "Deaths: fewer than 11 values were withheld or not given by the data source (Suppressed, Unreliable, "
+        "Not Applicable) and are stored as missing, never as 0; sums and counts leave them out."
     ]
+
+
+def test_readCsvTyped_dashLineInOrdinaryCsv_neverHidesRows() -> None:
+    # Arrange: a "---" line in a file that is not a WONDER export (review of #123, finding 1)
+    data = b"patient_id,age,comment\n1,40,ok\n2,50,x\n---\n3,60,y\n4,70,z\n"
+
+    # Act
+    staged = read_csv_typed(data)
+
+    # Assert: every row is data; nothing goes to documentation
+    assert staged.data.height == 5
+    assert staged.export_notes == ""
+
+
+def test_readCsvTyped_notesHeaderButDataBelowDashes_neverHidesRows(make_wonder_export) -> None:
+    # Arrange: WONDER header, but tab-separated (data-shaped) lines under "---"
+    data = make_wonder_export(states=12, total_row=False).replace(
+        b'"---"\n"Dataset', b'"---"\n\t"State 99"\t"99"\t5\t1\t1.0\n"Dataset', 1
+    )
+
+    # Act
+    staged = read_csv_typed(data, separator="\t")
+
+    # Assert: not split; the rows below stay in the file the user sees as data
+    assert staged.export_notes == ""
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        pytest.param("2.1 (Unreliable)", id="flaggedNumber"),
+        pytest.param("Not Applicable", id="notApplicable"),
+        pytest.param("unreliable", id="lowercase"),
+    ],
+)
+def test_readCsvTyped_wonderMarkerForms_storedMissingNeverText(marker: str) -> None:
+    # Arrange
+    rows = [f"P{i:02d}\t{marker if i % 4 == 0 else f'{10 + i}.5'}" for i in range(24)]
+    data = ("\n".join(["patient_id\tCrude Rate", *rows]) + "\n").encode()
+
+    # Act
+    staged = read_csv_typed(data, separator="\t")
+
+    # Assert
+    assert staged.data.schema["Crude Rate"] == pl.Float64
+    assert staged.data["Crude Rate"].null_count() == 6
+    assert [n.reason for n in staged.notes if n.column == "Crude Rate"] == ["source_suppressed"]
+
+
+def test_readCsvTyped_suppressedInColumnThatStaysText_markerKept() -> None:
+    # Arrange: thousands separators keep the column text, so "Suppressed" must stay as written
+    rows = [f"P{i:02d}\t{'Suppressed' if i % 5 == 0 else '1,234'}" for i in range(20)]
+    data = ("\n".join(["patient_id\tDeaths", *rows]) + "\n").encode()
+
+    # Act
+    staged = read_csv_typed(data, separator="\t")
+
+    # Assert
+    assert staged.data.schema["Deaths"] == pl.String
+    assert staged.data["Deaths"].null_count() == 0
+    assert not [n for n in staged.notes if n.reason == "source_suppressed"]
