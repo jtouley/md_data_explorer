@@ -55,6 +55,8 @@ _AGE_BAND = re.compile(
 _OPEN_AGE_TOP: Final = 200
 # Columns the semantic layer adds for patient cohorts; skipped when detecting an estimate table.
 APP_ADDED_COLUMNS: Final = ("time_zero", "outcome_label", "features_json", ROW_NUMBER_COLUMN)
+_ID_LIKE_VALUE: Final = re.compile(r"^([A-Za-z]{0,6}[-_ #]?\d+[A-Za-z]?|[0-9a-fA-F]{8,}(-[0-9a-fA-F]{4,})*)$")
+_SEX_WORDS: Final = frozenset({"female", "male", "both", "f", "m", "women", "men", "all", "total", "both sexes"})
 _CI_STEM: Final = re.compile(r"(^|_)(ci|confidence|interval)($|_)")
 
 
@@ -100,6 +102,9 @@ class EstimateTable:
     # Metric-like columns (a key, an attribute or a one-value column) -> level -> what that level
     # makes a row's value: "rate" (Rate, Percent, Prevalence) or "count" (Number, anything else).
     metric_levels: Mapping[str, Mapping[Any, str]] = field(default_factory=dict)
+    # Location dimension -> county-like level -> the level of its own state in that dimension, from
+    # a five-digit FIPS alias or a ", CO"/", Colorado" suffix: counties nest under their own state.
+    nesting: Mapping[str, Mapping[Any, Any]] = field(default_factory=dict)
 
     @property
     def count_levels(self) -> dict[str, tuple[Any, ...]]:
@@ -198,11 +203,11 @@ def _flag(column: str, suffix: str, flags: set[str]) -> str | None:
 
 
 def value_kind(column: str) -> ValueKind:
-    """Rate or count, from the column name. Fail closed: only a name that positively reads as a
-    rate, ratio or percent ("Rate per 100000", "e_inc_100k", "Estimate (%)") is a rate; every other
-    column is a count and keeps the small-cell rule ("val", "Hospitalizations", "Patients",
-    "Persons living with HIV"), unless a metric level on its row says rate or percent
-    (``is_count_row``)."""
+    """Rate or count, from the column name, for comparing tables (a rate is never compared with a
+    count). Only a name that reads as a rate, ratio or percent ("Rate per 100000", "Age-adjusted
+    Death Rate", "e_inc_100k", "Estimate (%)") is a rate; a metric level on the row can say so too
+    (``estimate_join.measure_of``). Kind decides comparisons only: published values are shown as
+    published (owner's decision, ADR014 §7)."""
     if config.ESTIMATE_RATE_NAME.search(_norm(column)) or "%" in column:
         return "rate"
     return "count"
@@ -211,6 +216,8 @@ def value_kind(column: str) -> ValueKind:
 def metric_level_kind(level: Any) -> Literal["rate", "count"]:
     """What a metric level says its row's value is: a rate ("Rate", "Percent", "Crude Prevalence",
     "Age-adjusted Rate") or, for anything else ("Number", "Mean", an unknown label), a count."""
+    if "%" in str(level):
+        return "rate"  # "%" is a percent
     norm = _norm(str(level))
     if norm in config.ESTIMATE_COUNT_LEVELS:
         return "count"
@@ -292,11 +299,127 @@ def is_metric_column(column: str) -> bool:
     return bool(config.ESTIMATE_METRIC_DIMENSION.search(_norm(column)))
 
 
+def _name_tokens(column: str) -> list[str]:
+    """Lowercase word tokens of a column name, camelCase split ("ClientID" -> client, id)."""
+    spaced = re.sub(r"([a-z])([A-Z])", r"\1 \2", column)
+    return re.findall(r"[a-z]+|\d+", spaced.casefold())
+
+
 def is_patient_key_name(column: str) -> bool:
-    """A column named as a patient ID (mrn, patient_id, subject, pid, id, ...)."""
+    """A column named as a person or encounter ID or a person's name: mrn, patient_id, person,
+    member_no, enc, encounter, Client, case_number, record_id, name, first_name, dob, ...
+    Token-based, so spellings a fixed list misses still match."""
     from clinical_analytics.core.schema_inference import PATIENT_KEY_NAMES
 
-    return re.sub(r"[^a-z0-9]", "", column.casefold()) in PATIENT_KEY_NAMES
+    tokens = _name_tokens(column)
+    joined = "".join(tokens)
+    if not tokens:
+        return False
+    if joined in PATIENT_KEY_NAMES or joined in config.ESTIMATE_PERSON_NAMES:
+        return True
+    if set(tokens) & config.ESTIMATE_PERSON_TOKENS:
+        return True
+    if set(tokens) & config.ESTIMATE_RECORD_TOKENS and set(tokens) & config.ESTIMATE_ID_SUFFIX_TOKENS:
+        return True  # case_number, record_id, visit_no, stay_id, claim_id
+    return all(t in config.ESTIMATE_NAME_TOKENS for t in tokens)  # name, first_name, full name
+
+
+def _recognised_dimension(column: str, levels: Sequence[Any]) -> bool:
+    """A key column a public table is keyed by: named for a place, time, age, sex, race, cause,
+    measure or category, or holding places, years, age bands or sex levels."""
+    if set(_name_tokens(column)) & config.ESTIMATE_DIMENSION_TOKENS:
+        return True
+    return _recognised_values(column, levels)
+
+
+def _id_like(levels: Sequence[Any], count: int) -> bool:
+    """Most levels look like record IDs (MRN0007, 10045, P12) over enough levels."""
+    present = [str(v).strip() for v in levels if v is not None]
+    if count < config.ESTIMATE_ID_LIKE_MIN_LEVELS or not present:
+        return False
+    if all(v.isdigit() and int(v) <= config.ESTIMATE_SMALL_CODE_MAX for v in present):
+        return False  # week 1-53, month 1-12, single years of age: small numbers, not record IDs
+    return sum(bool(_ID_LIKE_VALUE.match(v)) for v in present) * 5 >= len(present) * 4
+
+
+def _year_value(level: Any) -> bool:
+    """A year (1800-2200) or a season ("2022-23"), by value, whatever the column is called."""
+    text = str(level).strip()
+    if text.isdigit():
+        return 1800 <= int(text) <= 2200
+    return bool(re.fullmatch(r"(18|19|20|21)\d\d\s*[-–/]\s*(\d\d|\d{4})", text))
+
+
+def _recognised_values(column: str, levels: Sequence[Any]) -> bool:
+    """The levels themselves are places, years, dates, sexes or age bands."""
+    present = [level for level in levels if level is not None]
+    if not present:
+        return False
+    if _mostly_places(present, column) or all(_year_value(v) for v in present):
+        return True
+    if all(_DATE_LIKE.match(str(v)) for v in present):
+        return True
+    if all(isinstance(v, str) and v.strip().casefold() in _SEX_WORDS for v in present):
+        return True
+    return sum(_age_band(v) is not None for v in present) * 2 >= len(present)
+
+
+_DATE_LIKE: Final = re.compile(r"^\d{4}[-/]\d{1,2}([-/]\d{1,2})?")
+
+
+def _is_time(column: str, levels: Sequence[Any]) -> bool:
+    """A key column for time: years, or named for a date, month, week, quarter or period, or
+    holding dates ("2024-01")."""
+    if _is_year(column, levels) or set(_name_tokens(column)) & config.ESTIMATE_TIME_TOKENS:
+        return True
+    present = [str(v) for v in levels if v is not None]
+    return bool(present) and all(_DATE_LIKE.match(v) for v in present)
+
+
+def _looks_like_people(column: str, count: int, listed: Sequence[Any], timed: bool) -> bool:
+    """A key column that is not a recognised dimension and looks like it identifies people or
+    records: many levels, ID-like values (MRN0007, 10045, P12), free text, or more than a few
+    levels repeated across a time dimension (visits)."""
+    if count > config.ESTIMATE_UNRECOGNISED_MAX_LEVELS:
+        return True
+    present = [str(v) for v in listed if v is not None]
+    if present and sorted(len(v) for v in present)[len(present) // 2] > config.ESTIMATE_FREE_TEXT_LENGTH:
+        return count > config.ESTIMATE_FREE_TEXT_MIN_LEVELS
+    return timed and count > config.ESTIMATE_REPEATED_OVER_TIME_LEVELS
+
+
+def _county_states(view: Any, dimension: Dimension) -> dict[Any, Any]:
+    """County-like level -> its state's level in the same dimension (empty when unknown)."""
+    from clinical_analytics.contracts.geography import classify, is_geo_code_column
+
+    states = {}
+    for level in dimension.values:
+        place = classify(level)
+        if place.kind == "state" and place.state is not None:
+            states[place.state.fips] = level
+    counties = [
+        v for v in dimension.values if isinstance(v, str) and config.ESTIMATE_SUBAREA_NAME.search(v.split(",")[0])
+    ]
+    if not states or not counties:
+        return {}
+    found: dict[Any, Any] = {}
+    for alias in dimension.aliases:
+        if not is_geo_code_column(alias):
+            continue
+        pairs = view.select(dimension.name, alias).distinct().to_polars()
+        for level, code in pairs.iter_rows():
+            digits = str(code).strip()
+            if level in counties and digits.isdigit() and len(digits) in (4, 5):
+                state = states.get(digits.zfill(5)[:2])
+                if state is not None:
+                    found[level] = state
+    for level in counties:
+        if level in found or "," not in level:
+            continue
+        suffix = classify(level.rsplit(",", 1)[1].strip())
+        if suffix.kind == "state" and suffix.state is not None and suffix.state.fips in states:
+            found[level] = states[suffix.state.fips]
+    return found
 
 
 def _place_kind(level: Any, column: str) -> str:
@@ -349,8 +472,8 @@ def detect_estimate_table(view: Any, rows: int, skip: Sequence[str] = ()) -> Est
         return None
     schema = view.schema()
     columns = [c for c in view.columns if c not in skip and c not in APP_ADDED_COLUMNS]
-    if any(is_patient_key_name(c) for c in columns):
-        return None  # a column named as a patient ID: patient data, never an estimate table
+    if any(is_patient_key_name(c) for c in columns if not schema[c].is_floating()):
+        return None  # a column named as a person or encounter ID: patient data, never estimates
     numeric = {c for c in columns if schema[c].is_numeric() and not schema[c].is_boolean()}
     pairs = _bound_pairs(columns, numeric)
     bound_columns = {c for pair in pairs.values() for c in pair}
@@ -384,7 +507,9 @@ def detect_estimate_table(view: Any, rows: int, skip: Sequence[str] = ()) -> Est
             for level in view.select(column).distinct().to_polars().get_column(column).drop_nulls().to_list()
         }
         for column in candidates
-        if is_metric_column(column)
+        # The named metric only (metric_name, DataValueType): a numeric code beside it (metric_id
+        # 1/2/3) says nothing a reader can check, so it never decides a value's kind.
+        if is_metric_column(column) and schema[column].is_string()
     }
     counts = view.aggregate(**{f"c{i}": view[c].nunique() for i, c in enumerate(candidates)}).to_polars().row(0)
     levels = {column: int(count) for column, count in zip(candidates, counts, strict=True)}
@@ -429,6 +554,32 @@ def detect_estimate_table(view: Any, rows: int, skip: Sequence[str] = ()) -> Est
     # exception: it has at most 51 levels, and one row per state is an aggregate table.
     if any(levels[c] * 2 > rows and not _mostly_states(listed_by[c], c) for c in key):
         return None
+    # Structural guard (fail closed): a key column that is not a recognised public dimension and
+    # looks like it identifies people or records makes this patient-level data, whatever it was
+    # declared. Its values are never listed anywhere.
+    timed = any(_is_time(c, listed_by[c]) for c in key)
+    for column in key:
+        listed = listed_by[column]
+        # ID-like values refuse whatever the column is called ("location" holding MRN0007): only
+        # values that are themselves places, years, dates or age bands vouch for a column.
+        id_like = not _recognised_values(column, listed) and _id_like(listed, levels[column])
+        if id_like or (
+            not _recognised_dimension(column, listed) and _looks_like_people(column, levels[column], listed, timed)
+        ):
+            logger.info("estimate_table_refused_people_like_key", key_columns=len(key))
+            return None
+    # Rows that are single people described only by categories (sex x age group x race x county,
+    # no ID column) look like a grid too. Public tables carry a time column, intervals or a total;
+    # three or more key columns with none of them is treated as patient data (fail closed).
+    any_time = timed  # a key that varies over time; a one-value year column proves nothing
+    any_total = any(
+        level is not None and str(level).strip().casefold() in config.ESTIMATE_TOTAL_LEVELS
+        for column in key
+        for level in listed_by[column]
+    )
+    if len(key) >= 3 and not any_time and not pairs and not any_total:
+        logger.info("estimate_table_refused_categories_only", key_columns=len(key))
+        return None
     dimensions = []
     for column in key:
         listed = listed_by[column]
@@ -452,8 +603,14 @@ def detect_estimate_table(view: Any, rows: int, skip: Sequence[str] = ()) -> Est
     if not (has_totals or by_place or any(v.lower or v.kind == "rate" for v in values)):
         return None  # no interval, rate, total or state key: nothing says these rows are estimates
     attributes = tuple(c for c in kept if c not in key)
+    nesting = {d.name: found for d in dimensions if (found := _county_states(view, d))}
     table = EstimateTable(
-        rows=rows, dimensions=tuple(dimensions), values=values, attributes=attributes, metric_levels=metric_levels
+        rows=rows,
+        dimensions=tuple(dimensions),
+        values=values,
+        attributes=attributes,
+        metric_levels=metric_levels,
+        nesting=nesting,
     )
     logger.info(
         "estimate_table_detected",
@@ -612,133 +769,12 @@ def _overlap(a: Mapping[str, Any], b: Mapping[str, Any]) -> bool | None:
     return bool(a["lower"] <= b["upper"] and b["lower"] <= a["upper"])
 
 
-def is_count_row(value: ValueColumn, table: EstimateTable, record: Mapping[str, Any]) -> bool:
-    """The row's value is a count (fail closed). A metric level that says count ("Number") makes
-    it a count whatever the column is called; otherwise it is a rate only when its column name or
-    a metric level on the row says rate or percent."""
-    if _count_named(value.name):
-        return True  # a column named as a count stays one, whatever a metric level says
-    kinds = [levels.get(record.get(column)) for column, levels in table.metric_levels.items()]
-    if "count" in kinds:
-        return True
-    return not (value.kind == "rate" or "rate" in kinds)
-
-
-def count_row_expr(value: ValueColumn, table: EstimateTable) -> pl.Expr:
-    """``is_count_row`` as a Polars expression over the table's own columns."""
-    count_hit = [
-        pl.col(c).is_in([lv for lv, k in levels.items() if k == "count"]) for c, levels in table.metric_levels.items()
-    ]
-    rate_hit = [
-        pl.col(c).is_in([lv for lv, k in levels.items() if k == "rate"]) for c, levels in table.metric_levels.items()
-    ]
-    is_count = pl.any_horizontal(count_hit).fill_null(False) if count_hit else pl.lit(False)
-    if _count_named(value.name):
-        return pl.lit(True)
-    is_rate = pl.lit(value.kind == "rate")
-    if rate_hit:
-        is_rate = is_rate | pl.any_horizontal(rate_hit).fill_null(False)
-    return is_count | ~is_rate
-
-
-def _count_named(column: str) -> bool:
-    return bool(config.ESTIMATE_COUNT_NAME.search(_norm(column)))
-
-
-def _sum_totals(frame: pl.DataFrame, table: EstimateTable, dimension: Dimension) -> list[Any]:
-    """Levels of ``dimension`` whose count equals the sum of the other levels' counts in every
-    group that has them all: totals the names didn't reveal ("Statewide", "All races combined")."""
-    others = [d.name for d in table.dimensions if d.name != dimension.name]
-    found: set[Any] = set()
-    for value in table.values:
-        if not _count_named(value.name) and value.kind == "rate":
-            continue
-        column = pl.col(value.name).cast(pl.Float64, strict=False)
-        sums = (
-            frame.with_columns(column.alias("__v"))
-            .with_columns(
-                (pl.col("__v").sum().over(others) if others else pl.col("__v").sum()).alias("__all"),
-                (pl.col("__v").count().over(others) if others else pl.col("__v").count()).alias("__n"),
-            )
-            .filter(pl.col("__v").is_not_null() & (pl.col("__n") >= 3))
-            .with_columns(((pl.col("__all") - pl.col("__v") - pl.col("__v")).abs() <= 0.5).alias("__is_total"))
-        )
-        per_level = sums.group_by(dimension.name).agg(pl.col("__is_total").all().alias("all"), pl.len().alias("n"))
-        found |= set(per_level.filter(pl.col("all") & (pl.col("n") > 0)).get_column(dimension.name).to_list())
-    return [level for level in found if level is not None]
-
-
-def _small_expr(column: str) -> pl.Expr:
-    value = pl.col(column).cast(pl.Float64, strict=False)
-    return ((value != 0) & (value.abs() < config.MIN_CELL_SIZE)).fill_null(False)
-
-
-def withheld_mask(frame: pl.DataFrame, table: EstimateTable) -> pl.Series:
-    """Rows of the whole table whose values are never shown, in any answer (fail closed):
-
-    * a row with a count of 1-10, or a cell the source suppressed, in any of its value columns:
-      the whole row is withheld, so its rate and population can't give the count back
-      (rate x population = count);
-    * a total row (Both, All ages, the nation, a state over its counties) when any of its parts is
-      withheld, so the total minus the parts shown in another answer can't give a part back.
-
-    ``frame`` holds the table's rows with every key, metric and value column.
-    """
-    base = pl.lit(False)
-    for value in table.values:
-        hidden = _small_expr(value.name)
-        if value.suppressed:
-            hidden = hidden | pl.col(value.suppressed).fill_null(False)
-        base = base | (count_row_expr(value, table) & hidden)
-        if value.suppressed:
-            base = base | pl.col(value.suppressed).fill_null(False)
-    marked = frame.with_row_index("__row").with_columns(base.alias("__withheld"))
-    keys = [d.name for d in table.dimensions]
-    totals_of: dict[str, tuple[list[Any], bool]] = {}
-    for dimension in table.dimensions:
-        named = [level for level in dimension.parents if level is not None]
-        named += [level for level in _sum_totals(frame, table, dimension) if level not in named]
-        totals_of[dimension.name] = (named, None in dimension.parents)
-    for _ in range(2):  # a total of totals (Both x All ages) needs a second pass
-        for dimension in table.dimensions:
-            named, empty_total = totals_of[dimension.name]
-            if not named and not empty_total:
-                continue
-            others = [k for k in keys if k != dimension.name]
-            is_total = pl.col(dimension.name).is_in(named)
-            if empty_total:
-                is_total = is_total | pl.col(dimension.name).is_null()
-            hidden_parts = marked.filter(pl.col("__withheld") & ~is_total).select(others).unique()
-            if hidden_parts.height == 0:
-                continue
-            totals = marked.filter(is_total)
-            if others:
-                totals = totals.join(hidden_parts, on=others, how="semi", nulls_equal=True)
-            ids = totals.get_column("__row")
-            marked = marked.with_columns((pl.col("__withheld") | pl.col("__row").is_in(ids)).alias("__withheld"))
-    return marked.get_column("__withheld")
-
-
-def withheld_keys(frame: pl.DataFrame, table: EstimateTable) -> set[tuple[Any, ...]]:
-    """Key tuples (in ``table.dimensions`` order) of the rows ``withheld_mask`` withholds."""
-    keys = [d.name for d in table.dimensions]
-    mask = withheld_mask(frame, table)
-    return {tuple(row) for row in frame.filter(mask).select(keys).iter_rows()}
-
-
-def small_count(value: float | None) -> bool:
-    """A count of 1-10 stays hidden even on a declared dataset (the small-cell rule for counts).
-    A count below 1 that is not 0 (a modelled 0.4 deaths) is hidden too: it rounds into 1-10."""
-    return value is not None and value != 0 and abs(value) < config.MIN_CELL_SIZE
-
-
 def estimate_rows(
     view: Any,
     check: EstimateCheck,
     table: EstimateTable,
     *,
     lowest_first: bool,
-    withheld: set[tuple[Any, ...]] | None = None,
 ) -> list[dict[str, Any]]:
     """One row per group: label, value, lower, upper (bounds None when the file has none).
 
@@ -781,15 +817,13 @@ def estimate_rows(
                 "value": _num(record[value.name]),
                 "lower": _num(record[value.lower]) if value.lower else None,
                 "upper": _num(record[value.upper]) if value.upper else None,
-                "count": is_count_row(value, table, record),
                 "suppressed": bool(value.suppressed and record[value.suppressed]),
                 "unreliable": bool(value.unreliable and record[value.unreliable]),
-                "withheld": withheld is not None and tuple(record[k] for k in key_columns) in withheld,
             }
         )
     for row in rows:
-        if row["withheld"]:
-            # Never shown, and never ordered by its true value: the order would leak it.
+        if row["suppressed"]:
+            # Suppressed at the source: never shown, never ordered by a value it doesn't have.
             row["value"] = row["lower"] = row["upper"] = None
     for row in rows:
         # lower <= value <= upper, or the interval is not the value's: dropped and named, never used
@@ -827,27 +861,21 @@ def estimate_answer(
     rows: list[dict[str, Any]], check: EstimateCheck, *, compare: bool, lowest_first: bool
 ) -> dict[str, Any]:
     """The analysis dict for an estimate answer (``type: estimates``): claim and table ready to
-    show. Small counts are hidden; intervals are compared, never tested."""
+    show. Values are shown as published; cells the source suppressed stay hidden; intervals are
+    compared, never tested."""
     value = check.value
     assert value is not None  # noqa: S101 - check_plan returned a value or a refusal
     name = short_name(value.name)
     has_bounds = bool(value.lower and value.upper)
-    hidden = 0
     table_rows: list[dict[str, Any]] = []
     group_header = " · ".join(check.group_dims) or "estimate"
     source_suppressed = 0
-    withheld = 0
     for row in rows:
         shown: dict[str, Any] = {group_header: row["label"] or name}
-        # The row's own kind (its metric level can make a "val" a rate or a count), else the column's.
-        is_count = bool(row["count"]) if "count" in row else value.kind == "count"
-        if row.get("withheld") or row.get("suppressed") or (is_count and small_count(row["value"])):
-            if row.get("withheld"):
-                withheld += 1
-            elif row.get("suppressed"):
-                source_suppressed += 1
-            else:
-                hidden += 1
+        # Published estimates are shown as published (owner's decision, ADR014 §7); only what the
+        # source itself suppressed stays hidden, and is never turned into a number.
+        if row.get("suppressed"):
+            source_suppressed += 1
             shown |= {name: SECONDARY_SUPPRESSED}
             if has_bounds:
                 shown |= {"lower": SECONDARY_SUPPRESSED, "upper": SECONDARY_SUPPRESSED}
@@ -863,10 +891,6 @@ def estimate_answer(
         notes.append(config.ESTIMATE_TOTAL_LEFT_OUT.format(levels=listed, column=column))
     for column, level in check.chosen.items():
         notes.append(config.ESTIMATE_SAVED_CHOICE_NOTE.format(column=column, level=level))
-    if hidden:
-        notes.append(config.ESTIMATE_SMALL_COUNT_NOTE)
-    if withheld:
-        notes.append(config.ESTIMATE_WITHHELD_NOTE)
     if source_suppressed:
         notes.append(config.ESTIMATE_SOURCE_SUPPRESSED_NOTE)
     unreliable = [str(r["label"] or name) for r in rows if r.get("unreliable") and r["value"] is not None]
@@ -1033,11 +1057,16 @@ def ground_plan(plan: QueryPlan, table: EstimateTable, question: str) -> QueryPl
         if dimension.levels < 2 or (grouped is not None and dimension.name == grouped.name):
             continue
         named = _named_levels(dimension, words) if not dimension.yearlike else []
-        if group_by is None and _ranks_subareas(dimension, named, question, words):
-            # "Which Colorado county had the highest ...": rank the counties, not the state row.
+        if group_by is None and _ranks_subareas(dimension, named, question, words, table):
+            # "Which Colorado county had the highest ...": rank Colorado's own counties, not the
+            # state row, and never another state's counties.
             group_by = dimension.name
             filters = [f for f in filters if table.dimension(f.column) is not dimension]
             steps = [st for st in steps if table.dimension(st.column) is not dimension]
+            nested = table.nesting.get(dimension.name, {})
+            own = [county for county, state in nested.items() if state in named]
+            if own:
+                filters.append(FilterSpec(column=dimension.name, operator="IN", value=sorted(own, key=str)))
             continue
         if dimension.name in limited:
             if named and not _limits_within(plan, table, dimension, named):
@@ -1102,7 +1131,9 @@ def _ranks_by_name(dimension: Dimension, question: str, words: list[str]) -> boo
     return bool(name) and _phrase_in(" ".join(name), words) and bool(_RANK_WORDS.search(question))
 
 
-def _ranks_subareas(dimension: Dimension, named: list[Any], question: str, words: list[str]) -> bool:
+def _ranks_subareas(
+    dimension: Dimension, named: list[Any], question: str, words: list[str], table: EstimateTable
+) -> bool:
     """The question ranks the county-like levels under a total it names."""
     return (
         bool(named)
@@ -1110,9 +1141,12 @@ def _ranks_subareas(dimension: Dimension, named: list[Any], question: str, words
         and any(w in _SUBAREA_WORDS for w in words)
         and bool(_RANK_WORDS.search(question))
         and any(isinstance(v, str) and config.ESTIMATE_SUBAREA_NAME.search(v) for v in dimension.values)
-        # Counties of one state only: a national county file can't tell Colorado's counties from
-        # Texas's by name, so ranking "Colorado counties" there would rank every state's.
-        and sum(_place_kind(v, dimension.name) == "state" for v in dimension.parents) <= 1
+        # Counties of one state only, or counties known to nest under their state: otherwise a
+        # national county file would rank every state's counties under "Colorado".
+        and (
+            sum(_place_kind(v, dimension.name) == "state" for v in dimension.parents) <= 1
+            or bool(table.nesting.get(dimension.name))
+        )
     )
 
 

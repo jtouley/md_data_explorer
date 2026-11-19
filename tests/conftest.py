@@ -1109,6 +1109,10 @@ def make_public_table():
     from clinical_analytics.contracts.geography import STATES
 
     all_states = tuple(s.name for s in STATES)
+    GBD_MEASURE_IDS = {"Deaths": 1, "DALYs (Disability-Adjusted Life Years)": 2, "Prevalence": 5, "Incidence": 6}
+    GBD_SEX_IDS = {"Male": 1, "Female": 2, "Both": 3}
+    GBD_AGE_IDS = {"All ages": 22, "Age-standardized": 27, "70+ years": 37}
+    GBD_METRIC_IDS = {"Number": 1, "Percent": 2, "Rate": 3}
 
     def gbd(
         locations: tuple[str, ...] = all_states + ("United States",),
@@ -1137,14 +1141,20 @@ def make_public_table():
                                         if metric == "Number":
                                             val *= rng.choice((2, 40, 400))
                                     half = val * rng.uniform(0.05, 0.7)
+                                    # IHME GBD Results Tool export: every name beside its numeric id,
+                                    # in the tool's column order (ids are GBD's own codes, not FIPS).
                                     row = {
+                                        "measure_id": GBD_MEASURE_IDS.get(measure, 99),
                                         "measure_name": measure,
-                                        "location_id": 500 + li,  # GBD's own id: never a FIPS code
+                                        "location_id": 500 + li,
                                         "location_name": location,
+                                        "sex_id": GBD_SEX_IDS[sex],
                                         "sex_name": sex,
+                                        "age_id": GBD_AGE_IDS.get(age, 99),
                                         "age_name": age,
-                                        "cause_name": cause,
                                         "cause_id": 400 + ci,
+                                        "cause_name": cause,
+                                        "metric_id": GBD_METRIC_IDS[metric],
                                         "metric_name": metric,
                                         "year": year,
                                         "val": round(val, 4),
@@ -1152,7 +1162,7 @@ def make_public_table():
                                         "lower": round(max(val - half, 0.0), 4),
                                     }
                                     if rei is not None:
-                                        row = {"rei_name": rei} | row
+                                        row = {"rei_id": 99, "rei_name": rei} | row
                                     rows.append(row)
         return pl.DataFrame(rows)
 
@@ -1383,7 +1393,7 @@ def make_public_source(make_public_table):
     def _make(shape: str, name: str | None = None, declared: bool = True, saved_choices=None, **options):
         buffer = io.BytesIO()
         make_public_table(shape, **options).write_csv(buffer)
-        frame = read_csv_typed(buffer.getvalue()).data
+        frame = read_csv_typed(buffer.getvalue(), public=declared).data
         label = name or shape
         return SourceInput(
             dataset_id=label,

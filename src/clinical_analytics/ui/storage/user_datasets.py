@@ -236,7 +236,9 @@ def normalize_upload_to_table_list(
         logger.info("zip_documentation_files", files=len(doc_files), tables_read_as_docs=len(read.as_docs))
     else:
         # Single-file: wrap in list (becomes multi-table with 1 table)
-        staged = load_single_file_staged(file_bytes, filename)
+        # A declared public table's own suppression markers ("<10", "(D)", "*") are read as such.
+        public = bool(metadata and metadata.get("population_estimates") is True)
+        staged = load_single_file_staged(file_bytes, filename, public=public)
         table_name = Path(filename).stem  # Use original filename stem
         tables = [
             {
@@ -697,7 +699,7 @@ def _check_tab_separated_text(file_bytes: bytes) -> None:
         raise StagingError(f"This .txt file is not tab-separated, so it cannot be read as a table. {_TXT_HOW_TO_FIX}")
 
 
-def load_single_file_staged(file_bytes: bytes, filename: str) -> StagedTable:
+def load_single_file_staged(file_bytes: bytes, filename: str, *, public: bool = False) -> StagedTable:
     """
     Load a single file (CSV/TSV/PSV, Excel, SAS transport, SPSS) as one typed table with its notes.
 
@@ -711,13 +713,13 @@ def load_single_file_staged(file_bytes: bytes, filename: str) -> StagedTable:
     """
     file_ext = Path(filename).suffix.lower()
     if file_ext in DELIMITERS:
-        return read_csv_typed(file_bytes, separator=DELIMITERS[file_ext])
+        return read_csv_typed(file_bytes, separator=DELIMITERS[file_ext], public=public)
     if file_ext == ".txt":
         _check_tab_separated_text(file_bytes)
-        return read_csv_typed(file_bytes, separator="\t")
+        return read_csv_typed(file_bytes, separator="\t", public=public)
     if file_ext in {".xlsx", ".xls"}:
         # The workbook's bytes decide the reader: openpyxl for .xlsx, xlrd for BIFF .xls.
-        return read_excel_typed(file_bytes)
+        return read_excel_typed(file_bytes, public=public)
     if file_ext == ".xpt":
         return read_xport_typed(file_bytes)
     if file_ext == ".sav":

@@ -12,8 +12,8 @@ from polars.testing import assert_frame_equal
 from clinical_analytics.storage.staging import read_csv_typed
 
 
-def _stage(text: str) -> pl.DataFrame:
-    return read_csv_typed(text.encode()).data
+def _stage(text: str, public: bool = False) -> pl.DataFrame:
+    return read_csv_typed(text.encode(), public=public).data
 
 
 class TestSourceFlags:
@@ -88,3 +88,34 @@ class TestIntervalRanges:
         # Assert
         assert frame.columns == ["Geography", "Age group", "Estimate"]
         assert frame.get_column("Age group").to_list() == ["18 to 64", "65 to 74"]
+
+
+@pytest.mark.parametrize(
+    "marker",
+    ["Suppressed", "<10", "< 5", "<=10", "≤10", "(D)", "D", "*", "**", "(S)", "1-9", "1–10", "Data suppressed"],
+)
+def test_readCsvTyped_sourceSuppressionMarker_flaggedNeverANumber(marker):
+    # Arrange: the source's own marker in an otherwise numeric column
+    rows = "\n".join(f"x{i},{marker if i % 5 == 0 else 20 + i}" for i in range(30))
+
+    # Act: a table declared public estimates
+    frame = _stage(f"key,deaths\n{rows}\n", public=True)
+
+    # Assert
+    assert frame.schema["deaths"] == pl.Int64
+    suppressed = frame.filter(pl.col("deaths suppressed"))
+    assert suppressed.height == 6
+    assert suppressed.get_column("deaths").null_count() == 6
+
+
+@pytest.mark.parametrize("marker", ["<5", "<10", "*", "(D)", "1-9"])
+def test_readCsvTyped_markerInUndeclaredFile_notSuppression(marker):
+    # Arrange: in a patient file "<5" is a censored lab value, never a suppressed cell
+    rows = "\n".join(f"x{i},{marker if i % 5 == 0 else 20 + i}" for i in range(30))
+
+    # Act
+    frame = _stage(f"key,value\n{rows}\n")
+
+    # Assert
+    assert "value suppressed" not in frame.columns
+    assert frame.schema["value"] == pl.String

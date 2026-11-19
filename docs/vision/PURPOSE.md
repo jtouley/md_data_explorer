@@ -8,7 +8,7 @@ This is a local data analyst for anyone in medicine who has a dataset and a ques
 
 - **Any question.** They ask in their own words, about anything a capable data tool such as TextQL could answer.
 - **Right answer, method shown.** They get the right answer and see the method, from a local model (Ollama).
-- **Privacy.** Data never leaves the machine. No answer shows a count of 1–10 patients, or a count that can be worked out from that answer and its filters in any combination. See [What privacy does not cover yet](#what-privacy-does-not-cover-yet).
+- **Privacy.** Data never leaves the machine. No answer shows a count of 1–10 patients, or a count that can be worked out from that answer and its filters in any combination. See [What privacy does not cover yet](#what-privacy-does-not-cover-yet). Declared public estimate tables (GBD, CDC WONDER, AtlasPlus and similar) are the exception, by the owner's decision of 2026-11-19 ("trust the source"): they are shown as published, counts included, and only the source's own suppressed cells stay hidden. A file with patient-level structure can never be declared into this exception ([ADR014 §7](../implementation/ADR/ADR014.md#7-the-declaration-flow-approved-privacy-decision)).
 - **Any data.** Public datasets, registry exports, and hospital extracts with their dictionaries.
 
 Use cases such as the ID-fellow research guide are examples, not the scope. The product is not narrowed to one specialty, one workflow or a fixed list of question types.
