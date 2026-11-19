@@ -18,6 +18,7 @@ import duckdb
 import polars as pl
 import structlog
 
+from clinical_analytics.analysis.compute import _apply_context_filters
 from clinical_analytics.analysis.grouping import grouping_problem
 from clinical_analytics.analysis.variable_types import short_name
 from clinical_analytics.contracts.declarations import (
@@ -31,18 +32,19 @@ from clinical_analytics.contracts.quality import QualityReport
 from clinical_analytics.contracts.store import latest_report
 from clinical_analytics.core import answer_checks
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
-from clinical_analytics.core.answer_sets import ShownCountMismatchError, answer_sets, layer_universe
+from clinical_analytics.core.answer_sets import Refine, ShownCountMismatchError, answer_sets, layer_universe
 from clinical_analytics.core.conversation_manager import ConversationManager
 from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line, plan_fingerprint
 from clinical_analytics.core.log_redaction import error_fields
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD, MODEL_STEP_FAILED_REASON
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 from clinical_analytics.core.plan_values import absent_value_reason, plan_values
-from clinical_analytics.core.query_plan import CohortStepError, QueryPlan
+from clinical_analytics.core.query_plan import CohortStepError, QueryPlan, grouped_statistic
 from clinical_analytics.core.result_presentation import Presentation, present_with_counts
 from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.core.shown_counts import (
-    UNAVAILABLE_REASON,
+    NOT_CHECKED_REASON,
+    Condition,
     FileShownCountLog,
     MemoryShownCountLog,
     ShownCount,
@@ -194,6 +196,24 @@ def all_null_statistics_reason(result: Any, plan: QueryPlan) -> str | None:
     if plan.metric:
         return f"Every patient who matched is missing '{plan.metric}', so there is no value to report."
     return "The patients who matched have no recorded values to report."
+
+
+def _compute_cohort(plan: QueryPlan, context: AnalysisContext) -> Refine | None:
+    """For an answer computed by ``analysis.compute`` (not one SQL aggregate), the filters it
+    applies again to the plan's cohort (``_apply_context_filters``: the plan's filters, a filter on
+    the grouping column included, or the legacy ``context.filters``), with the columns they read.
+    A frequency over visit rows counts the plan's cohort as it is (``_entity_frequency``)."""
+    if plan.proportion_column or (plan.rate_column and plan.group_by) or plan.intent == "COUNT":
+        return None
+    if grouped_statistic(plan) is not None:
+        return None
+    filters = (context.query_plan.filters if context.query_plan and context.query_plan.filters else None) or (
+        context.filters or []
+    )
+    if not filters:
+        return None
+    columns = tuple(str(f.column) for f in filters)
+    return Refine(columns=columns, apply=lambda frame: _apply_context_filters(frame, context)[0])
 
 
 def _to_polars(result: Any) -> pl.DataFrame | None:
@@ -667,7 +687,9 @@ class QueryService:
                         else:
                             analysis = self._with_findings(analysis, findings, query_plan)
                             presentation, shown = present_with_counts(analysis)
-                            verdict = self._admit_shown(prepared, query_plan, analysis, presentation, shown)
+                            verdict = self._admit_shown(
+                                prepared, query_plan, context, analysis, presentation, shown, findings
+                            )
                             if verdict.shown:
                                 claim = presentation.get("claim")
                             else:
@@ -679,8 +701,10 @@ class QueryService:
             # Already plain language: say why the limit could not be applied.
             failure_reason = str(e)
             issues.append({"message": failure_reason, "severity": "error"})
+            analysis, result, claim = None, None, None  # never an answer the log did not admit
         except Exception as e:
             issues.append({"message": f"Execution failed: {str(e)}", "severity": "error"})
+            analysis, result, claim = None, None, None  # never an answer the log did not admit
 
         return QueryResult(
             plan=query_plan,
@@ -701,9 +725,11 @@ class QueryService:
         self,
         prepared: _Prepared,
         plan: QueryPlan,
+        context: AnalysisContext,
         analysis: dict[str, Any],
         presentation: Presentation,
         shown: list[ShownCount] | None,
+        findings: answer_checks.Findings,
     ) -> Verdict:
         """Check the answer's shown counts against the counts already shown for this dataset
         version, and log them if it may be shown (``core.shown_counts``). Locked (``_finish``).
@@ -716,17 +742,26 @@ class QueryService:
         log = logger.bind(dataset_key=prepared.declaration_key, analysis_type=analysis.get("type"))
         if shown is None:
             log.error("shown_counts_not_listed")
-            return Verdict(shown=False, reason=UNAVAILABLE_REASON)
+            return Verdict(shown=False, reason=NOT_CHECKED_REASON)
         if not shown:
             return Verdict(shown=True)
-        if plan.entity_key and analysis.get("unit") is None:
+        entity = plan.entity_key if plan.intent == "COUNT" else None
+        if entity and findings.key is not None and entity != findings.key:
             return Verdict(shown=True)  # distinct values of another entity (wards), not patients
         try:
             universe = layer_universe(self.semantic_layer)
-            sets = answer_sets(self.semantic_layer, plan, shown, universe)
+            if entity and universe.patient_key is None:
+                # Distinct IDs over rows that are patients: a row with no ID is not counted.
+                shown = [
+                    dataclasses.replace(c, conditions=(*c.conditions, Condition("notnull", entity)))
+                    if c.unit == "counted"
+                    else c
+                    for c in shown
+                ]
+            sets = answer_sets(self.semantic_layer, plan, shown, universe, refine=_compute_cohort(plan, context))
         except (ShownCountMismatchError, CohortStepError, duckdb.Error, pl.exceptions.PolarsError) as e:
             log.error("shown_counts_not_rebuilt", **error_fields(e))
-            return Verdict(shown=False, reason=UNAVAILABLE_REASON)
+            return Verdict(shown=False, reason=NOT_CHECKED_REASON)
         key = prepared.declaration_key or "unsaved"
         return self.shown_log.admit(key, prepared.dataset_version, universe, sets)
 

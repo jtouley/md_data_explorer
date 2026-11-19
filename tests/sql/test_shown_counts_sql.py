@@ -119,3 +119,37 @@ class TestAcrossPaths:
             _sql("SELECT count(*) AS n FROM unified WHERE age >= 65", catalog, log)
         assert shown.claim is not None
         assert refused.value.reason == WITHHELD_REASON
+
+
+class TestLimit:
+    def test_answerQuery_groupCutByLimit_notLogged(
+        self, make_sql_catalog: Callable[..., SqlCatalog], make_semantic_layer: Any
+    ) -> None:
+        # Arrange: wards A (70), B (30, 5 of them aged 20) and C (20); LIMIT 1 shows ward A only
+        frame = pl.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(120)],
+                "ward": ["A"] * 70 + ["B"] * 30 + ["C"] * 20,
+                "age": [50] * 70 + [20] * 5 + [50] * 45,
+            }
+        )
+        catalog, log = make_sql_catalog(frame), MemoryShownCountLog()
+        layer = make_semantic_layer(
+            data=frame, config_overrides={"init_params": {"source_path": str(catalog.parquet_path)}}
+        )
+        top = _sql("SELECT ward, count(*) AS n FROM unified GROUP BY ward ORDER BY n DESC LIMIT 1", catalog, log)
+
+        # Act: ward B over 30 (25) would differ by 5 from ward B, which was never shown
+        answer = _ask_box(
+            QueryService(layer, shown_log=log),
+            QueryPlan(
+                intent="COUNT",
+                cohort_steps=[CohortStep("eq", "ward", "B"), CohortStep("gt", "age", 30)],
+                confidence=0.99,
+            ),
+        )
+
+        # Assert
+        assert [row["ward"] for row in top.rows] == ["A"]
+        assert answer.failure_reason is None
+        assert answer.claim is not None

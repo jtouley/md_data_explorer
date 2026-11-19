@@ -588,7 +588,15 @@ def _present(
         rows=table["rows"] if table is not None else [],
         notes=notes,
     )
-    shown_groups = [g for g in displayed if g not in hidden_groups_at and g not in folded_groups]
+    # Only rows the table still holds after LIMIT: a group cut by LIMIT shows nothing.
+    kept_rows = table["rows"] if table is not None else []
+    if grouped:
+        assert query.dimension_name is not None
+        kept = {str(row.get(query.dimension_name)) for row in kept_rows}
+        kept_groups = [g for g in displayed if _label(records[g]["__d"]) in kept]
+    else:
+        kept_groups = displayed if kept_rows else []
+    shown_groups = [g for g in kept_groups if g not in hidden_groups_at and g not in folded_groups]
     return answer, shown_groups
 
 

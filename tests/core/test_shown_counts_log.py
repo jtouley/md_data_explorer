@@ -331,3 +331,52 @@ class TestDatasetDeletion:
         # Assert
         assert not (tmp_path / shown_counts.SHOWN_COUNTS_DIRNAME / "d1").exists()
         assert (tmp_path / shown_counts.SHOWN_COUNTS_DIRNAME / "d2").is_dir()
+
+
+class TestExactCheckBounds:
+    def test_admit_aboveWorkBound_usesTheStricterPairwiseRule(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Arrange: an overlap of 5 that can't be derived; the exact check would show it
+        monkeypatch.setattr(shown_counts, "MAX_SPAN_WORK", 0)
+        log = MemoryShownCountLog()
+
+        # Act
+        verdict = log.admit("d", "v1", UNIVERSE, [_rows(0, 60), _rows(55, 100)])
+
+        # Assert: withheld, never shown unchecked
+        assert (verdict.shown, verdict.reason) == (False, WITHHELD_REASON)
+
+    def test_admit_checkFails_withheldAsNotChecked(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Arrange
+        def fail(*_args: object) -> None:
+            raise np.linalg.LinAlgError("SVD did not converge")
+
+        monkeypatch.setattr(shown_counts, "find_conflict", fail)
+
+        # Act
+        verdict = MemoryShownCountLog().admit("d", "v1", UNIVERSE, [_rows(0, 50)])
+
+        # Assert
+        assert (verdict.shown, verdict.reason) == (False, shown_counts.NOT_CHECKED_REASON)
+
+    def test_admit_patientSetsWithoutPatientMap_withheldAsUnavailable(self) -> None:
+        # Arrange: patient sets logged while rows were declared visits; the map is gone now
+        patient_of_row = np.concatenate([np.arange(150), np.full(50, -1)])
+        visits = Universe(rows=ROWS, fingerprint="200:1", patient_key="pid", patient_of_row=patient_of_row)
+        log = MemoryShownCountLog()
+        log.admit("d", "v1", visits, [ShownSet(unit="patients:pid", positions=np.arange(60))])
+
+        # Act
+        verdict = log.admit("d", "v1", UNIVERSE, [ShownSet(unit="patients:pid", positions=np.arange(70))])
+
+        # Assert
+        assert (verdict.shown, verdict.reason) == (False, UNAVAILABLE_REASON)
+
+    def test_admit_tooManyCountsInOneAnswer_ownReason(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Arrange
+        monkeypatch.setattr(shown_counts, "MAX_NEW_SETS", 1)
+
+        # Act
+        verdict = MemoryShownCountLog().admit("d", "v1", UNIVERSE, [_rows(0, 50), _rows(100, 150)])
+
+        # Assert
+        assert (verdict.shown, verdict.reason) == (False, shown_counts.TOO_MANY_COUNTS_REASON)

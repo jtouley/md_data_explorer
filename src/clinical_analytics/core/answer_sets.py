@@ -11,7 +11,8 @@ disagree on what was counted, and the answer is withheld (``ShownCountMismatchEr
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -21,6 +22,15 @@ from clinical_analytics.analysis.numeric_text import is_numeric_text, missing_to
 from clinical_analytics.core.query_plan import QueryPlan
 from clinical_analytics.core.semantic import ROW_POSITION
 from clinical_analytics.core.shown_counts import ROWS_UNIT, Condition, ShownCount, ShownSet, Universe
+
+
+@dataclass(frozen=True)
+class Refine:
+    """Filters an answer applied again after reading the plan's cohort (``analysis.compute``):
+    the columns they read and the function that applies them to the cohort's rows."""
+
+    columns: tuple[str, ...]
+    apply: Callable[[pl.DataFrame], pl.DataFrame]
 
 
 class ShownCountMismatchError(RuntimeError):
@@ -68,8 +78,11 @@ def _expression(layer: Any, frame: pl.DataFrame, condition: Condition) -> pl.Exp
     raise ShownCountMismatchError(f"unknown condition kind {condition.kind!r}")
 
 
-def answer_sets(layer: Any, plan: QueryPlan, counts: Sequence[ShownCount], universe: Universe) -> list[ShownSet]:
-    """The set behind each count, in the log's units.
+def answer_sets(
+    layer: Any, plan: QueryPlan, counts: Sequence[ShownCount], universe: Universe, refine: Refine | None = None
+) -> list[ShownSet]:
+    """The set behind each count, in the log's units. ``refine``: filters the answer applied
+    again to the cohort (an answer from ``analysis.compute``).
 
     Raises:
         ShownCountMismatchError: a set's size differs from the count shown, or a condition can't
@@ -81,7 +94,11 @@ def answer_sets(layer: Any, plan: QueryPlan, counts: Sequence[ShownCount], unive
     columns = [c.column for count in counts for c in count.conditions]
     if universe.patient_key is not None:
         columns.append(universe.patient_key)
+    if refine is not None:
+        columns.extend(refine.columns)
     frame = layer.shown_rows(plan, columns)
+    if refine is not None:
+        frame = refine.apply(frame)
     positions = frame.get_column(ROW_POSITION).to_numpy()
     sets: list[ShownSet] = []
     for count in counts:

@@ -72,6 +72,13 @@ UNAVAILABLE_REASON: Final = (
     "This answer is not shown: the record of counts already shown for this dataset can't be read or "
     "saved, so it can't be checked against them."
 )
+NOT_CHECKED_REASON: Final = (
+    "This answer is not shown: its counts could not be checked against the counts already shown for this dataset."
+)
+TOO_MANY_COUNTS_REASON: Final = (
+    "This answer is not shown: it holds too many counts to check against the counts already shown. "
+    "Ask with a coarser grouping."
+)
 FULL_REASON: Final = (
     "This answer is not shown: so many different counts have already been shown for this dataset "
     "that new ones can't be checked against them. Ask questions that reuse limits and groups already shown."
@@ -317,30 +324,44 @@ def find_conflict(state: _State, new: Sequence[_Entry], universe: Universe) -> s
     each shown set either holds or not. A count a reader can work out by adding and subtracting
     shown counts is a combination of atoms in the row space of the sets' atom matrix. The answer
     is withheld when a region of 1 to threshold-1 units is in that row space, for each atom and
-    each region of a pair of shown sets (intersection, either difference). Beyond
-    ``MAX_SPAN_WORK`` the stricter pairwise rule is used instead: every pair region of 1 to
-    threshold-1 withholds, derivable or not.
+    each region of a pair of shown sets (intersection, either difference). Only the units the
+    answer adds sets to are checked: the others' atoms do not change. Beyond ``MAX_SPAN_WORK`` the
+    stricter pairwise rule is used instead: every pair region of 1 to threshold-1 withholds,
+    derivable or not.
+
+    Raises:
+        ShownLogUnavailableError: the log holds patient sets but the rows have no patient map now.
     """
     totals = _universe_sets(universe)
-    units = {e.unit for e in new} | {e.unit for e in state.entries}
-    for unit in sorted(units):
-        entries = [e for e in state.entries if e.unit == unit] + [e for e in new if e.unit == unit]
-        words = [e.words for e in entries] + ([totals[unit]] if unit in totals else [])
+    for unit in sorted({e.unit for e in new}):
         member = totals.get(unit)
-        if member is None:  # a patients unit logged before, with no patient map now: fail closed
-            return "derivable"
-        atoms = _Atoms.of(words, from_bitmap(member, universe.rows), universe.rows)
-        if atoms.work > MAX_SPAN_WORK:
-            logger.info("shown_count_span_too_large", sets=len(words), atoms=atoms.count)
-            if _pairwise_conflict(entries, new, totals.get(unit)):
+        if member is None:
+            raise ShownLogUnavailableError("patient sets without a patient map for these rows")
+        entries = [e for e in state.entries if e.unit == unit] + [e for e in new if e.unit == unit]
+        try:
+            atoms = _Atoms.of([*(e.words for e in entries), member], from_bitmap(member, universe.rows), universe.rows)
+            if atoms.work > MAX_SPAN_WORK:
+                raise _TooLargeError
+        except _TooLargeError:
+            logger.info("shown_count_span_too_large", sets=len(entries) + 1)
+            if _pairwise_conflict(entries, new, member):
                 return "overlap"
-        elif atoms.small_region_derivable():
+            continue
+        if atoms.small_region_derivable():
             return "derivable"
     return _visits_conflict(state, new, universe)
 
 
-# Above this many operations (sets^2 x atoms) the exact check is replaced by the pairwise rule.
+# Above this many operations the exact check is replaced by the pairwise rule: the SVD and the
+# pair overlaps (sets^2 x atoms) and the small regions tested (regions x atoms).
 MAX_SPAN_WORK: Final = 4_000_000_000
+# Floats one block of regions may hold while it is tested (200 MB), and the sets x atoms matrix.
+_REGION_BLOCK_FLOATS: Final = 25_000_000
+_MAX_MATRIX_FLOATS: Final = 25_000_000
+
+
+class _TooLargeError(Exception):
+    """The exact check would exceed its memory or work bound: the stricter rule applies."""
 
 
 @dataclass(frozen=True)
@@ -362,6 +383,8 @@ class _Atoms:
             chunks.append(np.packbits(bits[:, members], axis=0))
         signatures = np.vstack(chunks).T
         unique, sizes = np.unique(signatures, axis=0, return_counts=True)
+        if len(words) * unique.shape[0] > _MAX_MATRIX_FLOATS:
+            raise _TooLargeError
         matrix = np.unpackbits(unique, axis=1, count=len(words)).T.astype(np.float64)
         return cls(matrix=matrix, sizes=sizes.astype(np.int64))
 
@@ -369,34 +392,54 @@ class _Atoms:
     def count(self) -> int:
         return int(self.sizes.size)
 
+    def _pairs(self) -> tuple[np.ndarray, np.ndarray]:
+        """Units in set i and set j, and in set i but not set j."""
+        weighted = self.matrix * self.sizes
+        both = self.matrix @ weighted.T
+        return both, weighted.sum(axis=1)[:, None] - both
+
     @property
     def work(self) -> int:
-        return int(self.matrix.shape[0]) ** 2 * max(self.count, 1)
+        """Operations of the exact check, at most: the SVD and pair overlaps (sets^2 x atoms) and
+        testing every pair region (2 x sets^2 regions x atoms)."""
+        sets = int(self.matrix.shape[0])
+        return 3 * sets * sets * max(self.count, 1)
 
     def small_region_derivable(self) -> bool:
         """Whether an atom or a pair region of 1 to threshold-1 units is a combination of sets."""
         sets = self.matrix
-        weighted = sets * self.sizes
-        both = sets @ weighted.T  # units in set i and set j
-        only = weighted.sum(axis=1)[:, None] - both  # units in set i, not in set j
+        basis = _row_space(sets)
+        # An atom is a combination of the sets exactly when its unit vector lies in their row
+        # space: its leverage (squared norm of its column of the orthonormal basis) is 1.
+        leverage = (basis * basis).sum(axis=0)
+        if np.any(_small(self.sizes) & (1.0 - leverage < SPAN_TOLERANCE)):
+            return True
+        both, only = self._pairs()
         other = ~np.eye(sets.shape[0], dtype=bool)
         first, second = np.nonzero(_small(both) & other)
         left, right = np.nonzero(_small(only) & other)
-        regions = np.vstack(
-            [
-                np.eye(self.count, dtype=np.float64)[_small(self.sizes)],
-                sets[first] * sets[second],
-                sets[left] * (1.0 - sets[right]),
-            ]
-        )
-        return bool(regions.shape[0]) and _in_span(regions, sets)
+        pairs = [(sets[first], sets[second], False), (sets[left], sets[right], True)]
+        block = max(1, _REGION_BLOCK_FLOATS // max(self.count, 1))
+        for a, b, minus in pairs:
+            for start in range(0, a.shape[0], block):
+                x, y = a[start : start + block], b[start : start + block]
+                regions = x * (1.0 - y) if minus else x * y
+                if _in_basis(regions, basis):
+                    return True
+        return False
 
 
-def _in_span(regions: np.ndarray, sets: np.ndarray) -> bool:
-    """Whether any row of ``regions`` is a linear combination of the rows of ``sets``."""
+def _row_space(sets: np.ndarray) -> np.ndarray:
+    """An orthonormal basis (rows) of the row space of ``sets``."""
     _, singular, basis = np.linalg.svd(sets, full_matrices=False)
     tolerance = singular.max(initial=0.0) * max(sets.shape) * np.finfo(np.float64).eps
-    basis = basis[singular > tolerance]
+    return basis[singular > tolerance]
+
+
+def _in_basis(regions: np.ndarray, basis: np.ndarray) -> bool:
+    """Whether any row of ``regions`` lies in the row space spanned by ``basis``."""
+    if regions.shape[0] == 0:
+        return False
     residual = regions - (regions @ basis.T) @ basis
     return bool(np.any(np.abs(residual).max(axis=1) < SPAN_TOLERANCE))
 
@@ -420,23 +463,29 @@ def _pairwise_conflict(entries: Sequence[_Entry], new: Sequence[_Entry], total: 
 
 def _visits_conflict(state: _State, new: Sequence[_Entry], universe: Universe) -> str | None:
     """Visit rows next to their patients: a set of visit rows with 1 to threshold-1 more rows than
-    patients is withheld once the count of its patients can be worked out from shown patient
-    counts (it is a combination of them). Checked whenever a set of either kind is new."""
+    patients is withheld once the count of its patients is a combination of shown patient counts
+    (the extra visits then follow). Checked whenever the answer adds a set of either kind."""
     unit = universe.patients_unit
     if unit is None or universe.patient_of_row is None:
         return None
     if not any(e.unit in (unit, ROWS_UNIT) for e in new):
         return None
-    patients = [e.words for e in [*state.entries, *new] if e.unit == unit]
-    patients.append(_universe_sets(universe)[unit])
-    members = from_bitmap(patients[-1], universe.rows)
-    for entry in [*state.entries, *new]:
-        if entry.unit != ROWS_UNIT or entry.excess is None or not (1 <= entry.excess <= SMALL_CELL_THRESHOLD - 1):
-            continue
-        reps = to_bitmap(_patients_of(from_bitmap(entry.words, universe.rows), universe), universe.rows)
-        atoms = _Atoms.of([*patients, reps], members, universe.rows)
-        if _in_span(atoms.matrix[-1:], atoms.matrix[:-1]):
-            return "visits"
+    entries = [*state.entries, *new]
+    visits = [
+        e for e in entries if e.unit == ROWS_UNIT and e.excess is not None and 1 <= e.excess <= SMALL_CELL_THRESHOLD - 1
+    ]
+    if not visits:
+        return None
+    total = _universe_sets(universe)[unit]
+    patients = [*(e.words for e in entries if e.unit == unit), total]
+    targets = [to_bitmap(_patients_of(from_bitmap(e.words, universe.rows), universe), universe.rows) for e in visits]
+    try:
+        atoms = _Atoms.of([*patients, *targets], from_bitmap(total, universe.rows), universe.rows)
+    except _TooLargeError:
+        return "visits"  # can't be checked exactly: withheld (never shown unchecked)
+    known = atoms.matrix[: len(patients)]
+    if _in_basis(atoms.matrix[len(patients) :], _row_space(known)):
+        return "visits"
     return None
 
 
@@ -490,10 +539,17 @@ class ShownCountLog:
                 new = [e for e in _entries(sets, universe) if _identity(e.unit, e.words) not in state.index]
                 if not new:
                     return Verdict(shown=True)
-                if len(new) > MAX_NEW_SETS or len(state.entries) + len(new) > MAX_LOGGED_SETS:
+                if len(new) > MAX_NEW_SETS:
+                    log.warning("shown_count_answer_too_large", new=len(new))
+                    return Verdict(shown=False, reason=TOO_MANY_COUNTS_REASON)
+                if len(state.entries) + len(new) > MAX_LOGGED_SETS:
                     log.warning("shown_count_log_full", logged=len(state.entries), new=len(new))
                     return Verdict(shown=False, reason=FULL_REASON)
-                conflict = find_conflict(state, new, universe)
+                try:
+                    conflict = find_conflict(state, new, universe)
+                except (MemoryError, np.linalg.LinAlgError, ValueError) as e:
+                    log.error("shown_count_check_failed", error_type=type(e).__name__)
+                    return Verdict(shown=False, reason=NOT_CHECKED_REASON)
                 if conflict is not None:
                     # Never the counts: the region found is a count of 1 to 10 patients.
                     log.info("shown_count_withheld", check=conflict, logged=len(state.entries), new=len(new))

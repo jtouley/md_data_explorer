@@ -20,6 +20,7 @@ import pytest
 from clinical_analytics.core.query_plan import CohortStep, QueryPlan
 from clinical_analytics.core.query_service import QueryService
 from clinical_analytics.core.shown_counts import (
+    NOT_CHECKED_REASON,
     SHOWN_COUNTS_DIRNAME,
     UNAVAILABLE_REASON,
     WITHHELD_REASON,
@@ -245,3 +246,89 @@ class TestAcrossRestartsAndVersions:
 
         # Assert
         assert isinstance(service.shown_log, FileShownCountLog)
+
+
+class TestReviewFollowUps:
+    def test_ask_comparisonFilteredOnItsOwnGroup_answered(self, make_semantic_layer: Any) -> None:
+        # Arrange: compute applies the filter on the grouping column again (the SQL cohort skips
+        # it); the rebuilt cohort must do the same, or the answer is withheld as unchecked
+        from clinical_analytics.core.query_plan import FilterSpec
+
+        frame = pl.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "arm": ["A", "B", "C"] * 50,
+                "score": [float(10 + (i * 7) % 23) for i in range(150)],
+            }
+        )
+        service = QueryService(make_semantic_layer(data=frame))
+        plan = QueryPlan(
+            intent="COMPARE_GROUPS",
+            metric="score",
+            group_by="arm",
+            filters=[FilterSpec("arm", "IN", ["A", "B"])],
+            scope="filtered",
+            confidence=0.99,
+        )
+
+        # Act
+        result = _ask(service, plan)
+
+        # Assert
+        assert result.failure_reason is None
+        assert result.claim is not None
+
+    @pytest.mark.parametrize(("missing", "withheld"), [(3, True), (30, False)])
+    def test_ask_distinctIdsWithMissingIds_rebuiltWithoutThem(
+        self, make_semantic_layer: Any, missing: int, withheld: bool
+    ) -> None:
+        # Arrange: one row per patient, some rows with no ID; a count of distinct IDs leaves them
+        # out. Beside the row count the app shows, 3 missing IDs are a small count (withheld);
+        # 30 are not, and the rebuilt set must match the count shown (no "can't be checked")
+        frame = pl.DataFrame(
+            {"patient_id": [f"P{i:03d}" for i in range(100 - missing)] + [None] * missing, "age": list(range(100))},
+            schema={"patient_id": pl.String, "age": pl.Int64},
+        )
+        service = QueryService(make_semantic_layer(data=frame))
+
+        # Act
+        result = _ask(service, QueryPlan(intent="COUNT", entity_key="patient_id", confidence=0.99))
+
+        # Assert
+        assert _withheld(result) is withheld
+        assert (result.claim is not None) is not withheld
+
+    def test_ask_logRaises_nothingOfTheAnswerReturned(self, make_semantic_layer: Any) -> None:
+        # Arrange: the check fails in a way no handler names
+        service = QueryService(make_semantic_layer(data=_patients()))
+
+        def broken(*_args: object) -> None:
+            raise RuntimeError("unexpected")
+
+        service.shown_log.admit = broken  # type: ignore[method-assign]
+
+        # Act
+        result = _ask(service, _count(group_by="sex"))
+
+        # Assert
+        assert (result.analysis, result.result, result.claim) == (None, None, None)
+
+    def test_ask_presenterListsNoCounts_withheldAsNotChecked(
+        self, make_semantic_layer: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Arrange: a presenter that does not say what it shows
+        from clinical_analytics.core import query_service, result_presentation
+
+        def unlisted(analysis: Any) -> Any:
+            presentation, _counts = result_presentation.present_with_counts(analysis)
+            return presentation, None
+
+        monkeypatch.setattr(query_service, "present_with_counts", unlisted)
+        service = QueryService(make_semantic_layer(data=_patients()))
+
+        # Act
+        result = _ask(service, _count(group_by="sex"))
+
+        # Assert
+        assert result.analysis is None
+        assert result.failure_reason == NOT_CHECKED_REASON
