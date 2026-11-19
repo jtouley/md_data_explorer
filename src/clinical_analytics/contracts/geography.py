@@ -142,20 +142,32 @@ class Place:
     state: State | None = None
 
 
-def classify(level: object) -> Place:
-    """Classify one location level (name, USPS code, or FIPS as text or number).
+# A column whose bare numbers are place codes (FIPS), by its name. Elsewhere 26 is just 26 (a
+# patient number, a week): numbers are read as FIPS only in a column named for a place.
+GEO_CODE_COLUMN: Final = re.compile(r"fips|state|county|location|geo|area|place|jurisdiction", re.IGNORECASE)
 
-    Integers are FIPS codes: 26 and "26" are Michigan; 26000 is Michigan written as a place code.
-    A five-digit code other than ``NN000`` is a county, so it is part of a state, never a state.
+
+def is_geo_code_column(column: str) -> bool:
+    return bool(GEO_CODE_COLUMN.search(column))
+
+
+def classify(level: object, codes: bool = False) -> Place:
+    """Classify one location level (name, USPS code, or, with ``codes``, FIPS as text or number).
+
+    With ``codes`` (the column is named for a place), numbers are FIPS codes: 26 and "26" are
+    Michigan; 26000 is Michigan written as a place code; any other five-digit code is a county,
+    part of a state, never a state. Without it a bare number is unknown, never a state.
     """
     if level is None or isinstance(level, bool):
         return Place("unknown")
     if isinstance(level, int):
+        if not codes:
+            return Place("unknown")
         text = f"{level:02d}" if 0 < level < 100 else str(level)
     elif isinstance(level, float):
         if level != level or not level.is_integer():
             return Place("unknown")
-        return classify(int(level))
+        return classify(int(level), codes)
     else:
         text = str(level).strip()
     folded = _STATE_SUFFIX.sub("", text).strip().casefold()
@@ -166,6 +178,8 @@ def classify(level: object) -> Place:
     if len(folded) == 2 and folded in _BY_USPS:
         return Place("state", _BY_USPS[folded])
     if folded.isdigit():
+        if not codes:
+            return Place("unknown")
         if len(folded) <= 2:
             state = _BY_FIPS.get(folded.zfill(2))
             return Place("state", state) if state else Place("unknown")

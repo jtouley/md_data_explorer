@@ -428,3 +428,89 @@ class TestIntervalConsistency:
         assert ("doesn't contain the estimate" in answer["claim"]) is (
             lower is not None and shown_bounds == (None, None)
         )
+
+
+class TestReviewRegressions:
+    """Detection must never misread patient data, and claims must match the row order."""
+
+    def test_detectFrame_visitFileKeyedByPatient_detectedButPatientKeyed(self):
+        # Arrange: three visits per patient; 'heart_rate' sounds like a rate
+        frame = pl.DataFrame(
+            {
+                "patient_id": [f"P{i:02d}" for i in range(20) for _ in range(3)],
+                "visit": ["baseline", "week4", "week12"] * 20,
+                "heart_rate": [60.0 + (i % 17) for i in range(60)],
+            }
+        )
+
+        # Act
+        table = _detect(frame)
+
+        # Assert: whatever detection says, the patient key is a dimension, which the question path
+        # treats as patient data (QueryService._estimate_table drops it)
+        assert table is None or table.dimension("patient_id") is not None
+
+    def test_detectFrame_integerPatientIds_notReadAsStateFips(self):
+        # Arrange: 40 patients numbered 1..40 (all valid FIPS numbers)
+        frame = pl.DataFrame(
+            {
+                "patient_id": list(range(1, 41)),
+                "sex": ["F", "M"] * 20,
+                "age": [30 + i for i in range(40)],
+                "bmi_rate": [20.0 + i / 10 for i in range(40)],
+            }
+        )
+
+        # Act
+        table = _detect(frame)
+
+        # Assert
+        assert table is None
+
+    def test_detectFrame_allKeyColumnsEmpty_noneNotError(self):
+        # Arrange: an integer ID and an empty text column
+        frame = pl.DataFrame(
+            {"patient_id": list(range(30)), "score": [float(i) for i in range(30)], "notes": [None] * 30},
+            schema_overrides={"notes": pl.String},
+        )
+
+        # Act
+        table = _detect(frame.drop("patient_id"))
+
+        # Assert
+        assert table is None
+
+    def test_estimateAnswer_textSeasonsOrderedByKey_claimFirstAndLastNotHighest(self):
+        # Arrange: seasons in order; the highest value is not the first season
+        check = estimates.EstimateCheck(value=estimates.ValueColumn("rate", None, None, "rate"), group_dims=("season",))
+        rows = [
+            {**_row(season, value, None, None), "key": (season,), "ordered_by_key": True}
+            for season, value in (("2019-20", 10.0), ("2020-21", 2.0), ("2021-22", 30.0), ("2022-23", 5.0))
+        ]
+
+        # Act
+        answer = estimates.estimate_answer(rows, check, compare=False, lowest_first=False)
+
+        # Assert
+        assert "Highest" not in answer["claim"]
+        assert "in 2019-20 and 5.00 in 2022-23" in answer["claim"]
+
+    def test_groundPlan_countiesOfSeveralStates_notRankedUnderOneState(self, make_estimate_frame):
+        # Arrange: a national county file (two states with their counties)
+        colorado = make_estimate_frame(state="Colorado")
+        texas = (
+            make_estimate_frame(state="Texas")
+            .with_columns(
+                pl.col("location_name").str.replace(r"^Place", "TexPlace"), (pl.col("FIPS") + 40000).alias("FIPS")
+            )
+            .with_columns(pl.col("FIPS").alias("location_id"))
+        )
+        table = _detect(pl.concat([colorado, texas]))
+        assert table is not None
+        plan = QueryPlan(intent="DESCRIBE", filters=[FilterSpec("location_name", "==", "Colorado")])
+
+        # Act
+        grounded = estimates.ground_plan(plan, table, "Which Colorado county had the highest mx in 2014?")
+
+        # Assert: not regrouped across every state's counties
+        assert grounded.group_by != "location_name"

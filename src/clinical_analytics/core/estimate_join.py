@@ -72,6 +72,8 @@ _PER: Final = re.compile(r"per[\s_]*([\d,]+)\s*(k?)", re.IGNORECASE)
 _KEYS: Final = ("state", "year", "sex", "age")
 _STATE_NAME: Final = "state"
 _STATE_FIPS: Final = "state_fips"
+# Per table on each harmonized row: value, lower, upper, suppressed at source, unreliable, a count.
+_VALUE_COLUMNS: Final = ("_v", "_lo", "_hi", "_sup", "_unr", "_cnt")
 
 
 class JoinRefusedError(Exception):
@@ -146,7 +148,7 @@ class Prepared:
     source: SourceInput
     value: ValueColumn
     measure: Measure
-    frame: pl.DataFrame  # harmonized: keys + _v/_lo/_hi/_sup/_unr
+    frame: pl.DataFrame  # harmonized: keys + _VALUE_COLUMNS
     keys: list[str]
     groups: list[str]  # non-role dimensions grouped (one-table questions only)
     pinned: dict[str, Any]
@@ -253,7 +255,8 @@ def role_of(dimension: Dimension) -> Role | None:
     if "age" in parts or norm.startswith("age"):
         return "age"
     if levels:
-        kinds = [geography.classify(v).kind for v in levels]
+        codes = geography.is_geo_code_column(dimension.name)
+        kinds = [geography.classify(v, codes).kind for v in levels]
         if kinds.count("state") >= max(1, len(levels) // 2):
             return "state"
     return None
@@ -534,7 +537,7 @@ def _state_map(levels: Sequence[Any]) -> tuple[pl.DataFrame, dict[str, list[Any]
     rows: list[dict[str, Any]] = []
     others: dict[str, list[Any]] = {}
     for level in levels:
-        place = geography.classify(level)
+        place = geography.classify(level, codes=True)  # the state role is already established
         if place.kind == "state" and place.state is not None:
             rows.append({"__level": str(level), _STATE_FIPS: place.state.fips, _STATE_NAME: place.state.name})
         elif place.kind == "nation":
@@ -544,6 +547,16 @@ def _state_map(levels: Sequence[Any]) -> tuple[pl.DataFrame, dict[str, list[Any]
             others.setdefault(place.kind, []).append(level)
     schema = {"__level": pl.String, _STATE_FIPS: pl.String, _STATE_NAME: pl.String}
     return pl.DataFrame(rows, schema=schema), others
+
+
+def _count_expr(source: SourceInput, value: ValueColumn) -> pl.Expr:
+    """True on rows whose value is a count: a count column, or a row whose metric level is a
+    count (GBD "Number"), checked per row as the single-table path does."""
+    table = source.table
+    if value.kind == "count" or table is None:
+        return pl.lit(value.kind == "count")
+    checks = [pl.col(dim).is_in(list(levels)) for dim, levels in table.count_levels.items()]
+    return pl.any_horizontal(checks).fill_null(False) if checks else pl.lit(False)
 
 
 def _harmonize(
@@ -583,7 +596,8 @@ def _harmonize(
             )
         keys += [_STATE_FIPS, _STATE_NAME]
     elif "state" in pins.constants:
-        place = geography.classify(pins.constants["state"][1])
+        column, level = pins.constants["state"]
+        place = geography.classify(level, geography.is_geo_code_column(column))
         if place.kind == "state" and place.state is not None:
             exprs += [pl.lit(place.state.fips).alias(_STATE_FIPS), pl.lit(place.state.name).alias(_STATE_NAME)]
             keys += [_STATE_FIPS, _STATE_NAME]
@@ -622,8 +636,10 @@ def _harmonize(
         (pl.col(value.upper).cast(pl.Float64, strict=False) if value.upper else pl.lit(None, pl.Float64)).alias("_hi"),
         (pl.col(value.suppressed).fill_null(False) if value.suppressed else pl.lit(False)).alias("_sup"),
         (pl.col(value.unreliable).fill_null(False) if value.unreliable else pl.lit(False)).alias("_unr"),
+        _count_expr(source, value).alias("_cnt"),
     ]
-    frame = lazy.with_columns(exprs).select([*keys, "_v", "_lo", "_hi", "_sup", "_unr"]).collect()
+    frame = lazy.with_columns(exprs).select([*keys, *_VALUE_COLUMNS]).collect()
+    count = count or bool(frame.get_column("_cnt").any())
     # Filters from the question's roles.
     before = frame.height
     null_keys = frame.filter(pl.any_horizontal([pl.col(k).is_null() for k in keys])) if keys else frame.clear()
@@ -688,7 +704,9 @@ def _resolve_roles(source: SourceInput, pins: _Pins, asked: Asked, choices: Mapp
         dimension = table.dimension(year_col)
         assert dimension is not None  # noqa: S101
         available = [v for v in dimension.values if v is not None]
-        chosen = _choice(source, choices, year_col)
+        # A year or season choice pairs one table's year with the asked year: it holds for this
+        # request only, never saved and reused for another year.
+        chosen = choices.get(year_col)
         season = pins.roles.get("season") == year_col
         if len(asked.years) == 1 and not asked.trend:
             year = asked.years[0]
@@ -728,7 +746,7 @@ def _resolve_roles(source: SourceInput, pins: _Pins, asked: Asked, choices: Mapp
     elif "year" in pins.constants and len(asked.years) == 1 and not asked.trend:
         column, constant = pins.constants["year"]
         if int(constant) != asked.years[0]:
-            if _choice(source, choices, column) == constant:
+            if choices.get(column) == constant:
                 pins.year_aligned = asked.years[0]
             else:
                 pins.holds.append(
@@ -930,7 +948,8 @@ def _county_column(source: SourceInput) -> str | None:
     for dimension in table.dimensions:
         for column in (dimension.name, *dimension.aliases):
             levels = source.frame.get_column(column).drop_nulls().unique().head(config.ESTIMATE_MAX_LISTED_LEVELS)
-            kinds = [geography.classify(v).kind for v in levels.to_list()]
+            codes = geography.is_geo_code_column(column)
+            kinds = [geography.classify(v, codes).kind for v in levels.to_list()]
             if kinds and kinds.count("substate") * 2 >= len(kinds):
                 return dimension.name
     return None
@@ -948,10 +967,10 @@ def _join(prepared: Sequence[Prepared]) -> tuple[pl.DataFrame, list[str], list[s
     notes: list[str] = []
     joined_on: list[str] = []
     first = prepared[0]
-    joined = first.frame.rename({c: f"{c}0" for c in ("_v", "_lo", "_hi", "_sup", "_unr")})
+    joined = first.frame.rename({c: f"{c}0" for c in _VALUE_COLUMNS})
     keys = list(first.keys)
     for index, part in enumerate(prepared[1:], start=1):
-        renamed = part.frame.rename({c: f"{c}{index}" for c in ("_v", "_lo", "_hi", "_sup", "_unr")})
+        renamed = part.frame.rename({c: f"{c}{index}" for c in _VALUE_COLUMNS})
         shared = [k for k in keys if k in part.keys and k != _STATE_NAME]
         if not shared:
             raise JoinRefusedError(config.ESTIMATE_JOIN_NO_SHARED_KEY.format(a=first.source.name, b=part.source.name))
@@ -997,7 +1016,7 @@ def _cell(
     value, lower, upper = row[f"_v{index}"], row[f"_lo{index}"], row[f"_hi{index}"]
     if row[f"_sup{index}"]:
         return None, None, None, "source"
-    if measure.kind == "count" and estimates.small_count(value):
+    if (measure.kind == "count" or row[f"_cnt{index}"]) and estimates.small_count(value):
         return None, None, None, "small"
     if value is not None and lower is not None and upper is not None and not lower <= value <= upper:
         return value, None, None, "interval"
@@ -1396,6 +1415,23 @@ def _precision(
 # ---------------------------------------------------------------------------- entry point
 
 
+def savable_choices(source: SourceInput, choices: Mapping[str, Any]) -> dict[str, Any]:
+    """The request's choices worth saving for later questions on ``source``: everything except a
+    year or season pairing, which is only right for the year it was confirmed with."""
+    table = source.table
+    if table is None:
+        return {}
+    kept: dict[str, Any] = {}
+    for column, value in choices.items():
+        dimension = table.dimension(column)
+        if dimension is not None and role_of(dimension) in ("year", "season"):
+            continue
+        if dimension is None and column not in (VALUE_CHOICE, STANDARDIZATION_CHOICE):
+            continue  # a one-value column (a constant year) chosen for one pairing
+        kept[column] = value
+    return kept
+
+
 def choice_problem(source: SourceInput, choices: Mapping[str, Any]) -> str | None:
     """Why ``choices`` can't apply to ``source`` (an unknown column or level), or None."""
     table = source.table
@@ -1436,7 +1472,7 @@ def answer(
         if len(prepared) > 1:
             joined, keys, joined_on, join_notes = _join(prepared)
         else:
-            joined = prepared[0].frame.rename({c: f"{c}0" for c in ("_v", "_lo", "_hi", "_sup", "_unr")})
+            joined = prepared[0].frame.rename({c: f"{c}0" for c in _VALUE_COLUMNS})
             keys, joined_on, join_notes = prepared[0].keys, [], []
         if joined.height == 0:
             raise JoinRefusedError(config.ESTIMATE_JOIN_NOTHING_MATCHED)

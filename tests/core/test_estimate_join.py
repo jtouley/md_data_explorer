@@ -529,3 +529,51 @@ class TestAnalysesAgainstOracles:
         )
         assert len(result.table["rows"]) == oracle.height == 51 * len(causes)
         assert result.table["rows"][0]["relative width"] == oracle.get_column("w")[0]
+
+
+@pytest.mark.slow
+@pytest.mark.integration
+class TestReviewRegressions:
+    def test_answer_savedYearChoice_notReusedForAnotherYear(self, make_public_source):
+        # Arrange: a pairing saved earlier (2022 shown beside 2023) must not pin a 2021 question
+        gbd = make_public_source("gbd", name="GBD", causes=("HIV/AIDS",), years=(2021, 2022, 2023))
+        aidsvu = make_public_source("aidsvu", name="AIDSVu", years=(2021, 2022), saved_choices={"Year": 2022})
+
+        # Act
+        result = ej.answer([gbd, aidsvu], "HIV death rate and AIDSVu PrEP rate in Michigan, 2021, both sexes, all ages")
+
+        # Assert
+        assert result.status == "answered", result.message
+        mi = result.table["rows"][0]
+        oracle = aidsvu.frame.filter((pl.col("State Abbreviation") == "MI") & (pl.col("Year") == 2021))
+        assert mi["year"] == 2021
+        assert mi["AIDSVu: PrEP Rate"] == oracle.get_column("PrEP Rate").item()
+
+    def test_savableChoices_yearPairingDropped(self, make_public_source):
+        # Arrange
+        flu = make_public_source("fluvaxview", name="FluVaxView")
+
+        # Act
+        kept = ej.savable_choices(flu, {"Season/Survey Year": "2022-23", "Dimension": "≥18 Years"})
+
+        # Assert
+        assert kept == {"Dimension": "≥18 Years"}
+
+    def test_answer_metricGroupedNumberRows_smallCountsHidden(self, make_public_source):
+        # Arrange: metric left as a breakdown, so 'Number' rows sit beside 'Rate' rows
+        gbd = make_public_source("gbd", name="GBD", years=(2023,), locations=("Michigan", "Ohio"), seed=2)
+
+        # Act
+        result = ej.answer([gbd], "GBD HCV deaths by metric in Michigan, 2023, both sexes, all ages")
+
+        # Assert
+        assert result.status == "answered", result.message
+        number = gbd.frame.filter(
+            (pl.col("location_name") == "Michigan")
+            & (pl.col("sex_name") == "Both")
+            & (pl.col("age_name") == "All ages")
+            & (pl.col("metric_name") == "Number")
+        ).row(0, named=True)
+        shown = next(r for r in result.table["rows"] if r["metric_name"] == "Number")["GBD: val"]
+        assert 0 < number["val"] < config.MIN_CELL_SIZE  # this seed's modelled count is small
+        assert shown == SECONDARY_SUPPRESSED

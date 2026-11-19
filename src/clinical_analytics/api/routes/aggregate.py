@@ -10,7 +10,8 @@ answer is synchronous: the tables are small public extracts, read once each.
 
 A held answer lists ``options``; the client re-asks with ``choices`` set to the confirmed values
 ({dataset_id: {column: level}}). Confirmed choices on an answered question are saved per dataset
-version, so the same question is not held twice.
+version, so the same question is not held twice, except a year or season pairing, which holds for
+that request only.
 """
 
 from __future__ import annotations
@@ -159,8 +160,13 @@ def ask_aggregate(request: AggregateQuestionRequest) -> AggregateAnswerResponse:
     sources = [load_source(storage, store, dataset_id) for dataset_id in request.dataset_ids]
     _check_choices(sources, request.choices)
     result = estimate_join.answer(sources, request.question, request.choices)
-    if result.status == "answered" and request.choices:
-        unsaved = _save_choices(store, storage, request.choices)
+    savable = {
+        s.dataset_id: kept
+        for s in sources
+        if (kept := estimate_join.savable_choices(s, request.choices.get(s.dataset_id, {})))
+    }
+    if result.status == "answered" and savable:
+        unsaved = _save_choices(store, storage, savable)
         if unsaved:
             result.notes.append(CHOICES_NOT_SAVED.format(datasets=", ".join(unsaved)))
     log.info("aggregate_question_done", status=result.status, choices=len(request.choices))

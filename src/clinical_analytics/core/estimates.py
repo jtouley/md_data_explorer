@@ -249,7 +249,7 @@ def parent_levels(levels: Sequence[Any], column: str = "") -> tuple[tuple[Any, .
     areas = [
         level
         for level in texts
-        if counties and level not in counties and level not in named and _place_kind(level) != "substate"
+        if counties and level not in counties and level not in named and _place_kind(level, column) != "substate"
     ]
     parents = tuple(dict.fromkeys([*named, *containing, *areas]))
     top: Any = None
@@ -278,22 +278,20 @@ def _count_levels(column: str, levels: Sequence[Any]) -> tuple[Any, ...]:
     return tuple(level for level in levels if isinstance(level, str) and _norm(level) in config.ESTIMATE_COUNT_LEVELS)
 
 
-def _place_kind(level: Any) -> str:
-    from clinical_analytics.contracts.geography import classify
+def _place_kind(level: Any, column: str) -> str:
+    from clinical_analytics.contracts.geography import classify, is_geo_code_column
 
-    return classify(level).kind
+    return classify(level, is_geo_code_column(column)).kind
 
 
-def _mostly_places(levels: Sequence[Any]) -> bool:
+def _mostly_places(levels: Sequence[Any], column: str) -> bool:
     present = [level for level in levels if level is not None]
-    return len(present) >= 2 and sum(_place_kind(level) != "unknown" for level in present) * 2 >= len(present)
+    return len(present) >= 2 and sum(_place_kind(level, column) != "unknown" for level in present) * 2 >= len(present)
 
 
-def _mostly_states(levels: Sequence[Any]) -> bool:
-    from clinical_analytics.contracts.geography import classify
-
+def _mostly_states(levels: Sequence[Any], column: str) -> bool:
     present = [level for level in levels if level is not None]
-    return len(present) >= 2 and sum(classify(level).kind == "state" for level in present) * 2 >= len(present)
+    return len(present) >= 2 and sum(_place_kind(level, column) == "state" for level in present) * 2 >= len(present)
 
 
 def _is_dimension_name(column: str) -> bool:
@@ -360,6 +358,8 @@ def detect_estimate_table(view: Any, rows: int, skip: Sequence[str] = ()) -> Est
     counts = view.aggregate(**{f"c{i}": view[c].nunique() for i, c in enumerate(candidates)}).to_polars().row(0)
     levels = {column: int(count) for column, count in zip(candidates, counts, strict=True)}
     candidates = [c for c in candidates if levels[c] > 0]
+    if not candidates:
+        return None  # every key-like column is empty: nothing keys the rows
     if _distinct_rows(view, candidates) != rows:
         return None
     # A column with the same levels as another one, row for row (sex_id beside sex), is an alias.
@@ -389,7 +389,7 @@ def detect_estimate_table(view: Any, rows: int, skip: Sequence[str] = ()) -> Est
     }
     # One value per row (or nearly) is a record ID, so rows are records. A state column is the
     # exception: it has at most 51 levels, and one row per state is an aggregate table.
-    if any(levels[c] * 2 > rows and not _mostly_states(listed_by[c]) for c in key):
+    if any(levels[c] * 2 > rows and not _mostly_states(listed_by[c], c) for c in key):
         return None
     dimensions = []
     for column in key:
@@ -409,7 +409,7 @@ def detect_estimate_table(view: Any, rows: int, skip: Sequence[str] = ()) -> Est
     has_totals = any(d.top is not None or d.parents for d in dimensions)
     # One row per state, county or local jurisdiction (and year...): rows keyed by place are
     # aggregates by construction; a patient file is never unique by place.
-    by_place = any(_mostly_places(d.values) for d in dimensions)
+    by_place = any(_mostly_places(d.values, d.name) for d in dimensions)
     if not (has_totals or by_place or any(v.lower or v.kind == "rate" for v in values)):
         return None  # no interval, rate, total or state key: nothing says these rows are estimates
     attributes = tuple(c for c in kept if c not in key)
@@ -633,7 +633,9 @@ def estimate_rows(view: Any, check: EstimateCheck, table: EstimateTable, *, lowe
             row["lower"] = row["upper"] = None
     if len({row["key"] for row in rows}) != len(rows):
         raise EstimateGrainError(config.ESTIMATE_DUPLICATE_ROWS)
-    yearlike = all(d.yearlike for d in table.dimensions if d.name in check.group_dims) and check.group_dims
+    yearlike = bool(check.group_dims) and all(d.yearlike for d in table.dimensions if d.name in check.group_dims)
+    for row in rows:
+        row["ordered_by_key"] = yearlike  # the claim reads first and last, never "highest"
     if yearlike:
         rows.sort(key=lambda r: tuple(str(k) for k in r["key"]))
     else:
@@ -728,8 +730,10 @@ def _claim(
         row = rows[0]
         return f"{name}{scope}: {_fmt(row['value'])}{_interval(row['lower'], row['upper'])}."
     by = " · ".join(check.group_dims)
-    yearlike = rows and all(isinstance(k, int) for k in rows[0]["key"])
-    if yearlike or (not compare and len(rows) > 2 and check.group_dims and _years(rows)):
+    # The same year-like flag the rows were ordered by (a text season is year-like; an integer
+    # code that is not a year is not), so the claim never calls the earliest row the highest.
+    yearlike = bool(rows[0].get("ordered_by_key")) if "ordered_by_key" in rows[0] else _years(rows)
+    if yearlike:
         first, last = rows[0], rows[-1]
         return (
             f"{name} by {by}{scope}: {_fmt(first['value'])}{_interval(first['lower'], first['upper'])} in "
@@ -925,6 +929,9 @@ def _ranks_subareas(dimension: Dimension, named: list[Any], question: str, words
         and any(w in _SUBAREA_WORDS for w in words)
         and bool(_RANK_WORDS.search(question))
         and any(isinstance(v, str) and config.ESTIMATE_SUBAREA_NAME.search(v) for v in dimension.values)
+        # Counties of one state only: a national county file can't tell Colorado's counties from
+        # Texas's by name, so ranking "Colorado counties" there would rank every state's.
+        and sum(_place_kind(v, dimension.name) == "state" for v in dimension.parents) <= 1
     )
 
 

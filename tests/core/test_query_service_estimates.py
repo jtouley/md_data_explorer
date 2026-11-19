@@ -160,3 +160,23 @@ class TestEstimateQuestions:
         # Assert
         assert result.analysis is None
         assert "Wayne County excluding Detroit" in (result.failure_reason or "")
+
+    def test_estimateTable_visitFileKeyedByPatientId_neverEstimates(self, make_semantic_layer):
+        # Arrange: repeated visits per patient, with a column that sounds like a rate
+        import polars as pl
+
+        frame = pl.DataFrame(
+            {
+                "patient_id": [f"P{i:02d}" for i in range(20) for _ in range(3)],
+                "visit": ["baseline", "week4", "week12"] * 20,
+                "heart_rate": [60.0 + (i % 17) for i in range(60)],
+            }
+        )
+        layer = make_semantic_layer(dataset_name=DATASET, data=frame)
+        service = QueryService(layer, declarations=MemoryDeclarationStore())
+
+        # Act
+        table = service._estimate_table()
+
+        # Assert
+        assert table is None

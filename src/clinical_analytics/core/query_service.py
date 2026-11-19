@@ -665,8 +665,8 @@ class QueryService:
                             issues.append({"message": str(analysis["error"]), "severity": "error"})
                         else:
                             analysis = self._with_findings(analysis, findings, query_plan)
-                            if self._estimate_table() is not None:
-                                # Rows of an estimate file are estimates: a count of them is rows.
+                            if self._declared_estimates(declarations, dataset_version):
+                                # Rows of a declared estimate file are estimates: a count is rows.
                                 analysis = {**analysis, "unit": "rows"}
                             claim = present_analysis(analysis).get("claim")
         except CohortStepError as e:
@@ -691,12 +691,17 @@ class QueryService:
             plan_hash=plan_hash,
         )
 
-    def _grain(self) -> answer_checks.Grain:
-        """The layer's grain. Rows of an estimate table are estimates, so no column is a patient
-        key there (an ID the upload synthesized would make every count a patient count)."""
-        if self._estimate_table() is not None:
+    def _grain(self, declarations: Declarations, dataset_version: str | None) -> answer_checks.Grain:
+        """The layer's grain. Rows of a declared estimate table are estimates, so no column is a
+        patient key there (an ID the upload synthesized would make every count a patient count).
+        Detection alone never changes the grain: an undeclared table keeps its patient key."""
+        if self._declared_estimates(declarations, dataset_version):
             return answer_checks.Grain(key=None, rows=int(self.semantic_layer._base_count(None)), patients=None)
         return answer_checks.grain_of(self.semantic_layer)
+
+    def _declared_estimates(self, declarations: Declarations, dataset_version: str | None) -> bool:
+        """The layer is an estimate table and was declared public estimates for this version."""
+        return declarations.population_estimates_for(dataset_version) is not None and self._estimate_table() is not None
 
     def _estimate_table(self) -> estimates.EstimateTable | None:
         """The layer's estimate structure (ADR014), detected once per layer state (a level merge
@@ -714,10 +719,17 @@ class QueryService:
         # are never part of an estimate table.
         skip = [c for c in estimates.APP_ADDED_COLUMNS if c in view.columns]
         table = estimates.detect_estimate_table(view, rows, skip) if rows else None
-        try:
+        if table is not None:
+            # A table keyed by its own patient ID is patient data (visits, repeated measures),
+            # whatever its column names say: never an estimate table.
+            patient_key = answer_checks.grain_of(self.semantic_layer).key
+            if patient_key is not None and table.dimension(patient_key) is not None:
+                logger.info("estimate_table_patient_keyed", dimensions=len(table.dimensions))
+                table = None
+        if hasattr(self.semantic_layer, "estimate_table_cache"):
             self.semantic_layer.estimate_table_cache = (generation, table)
-        except (AttributeError, TypeError):
-            pass  # a stand-in layer that cannot hold it detects again next time
+        else:
+            logger.debug("estimate_table_not_cached", reason="layer has no cache slot")
         return table
 
     def _finish_estimates(
@@ -865,7 +877,7 @@ class QueryService:
         """
         findings = answer_checks.Findings()
         layer = self.semantic_layer
-        grain = self._grain()
+        grain = self._grain(declarations, dataset_version)
         visits = grain.repeated and answer_checks.declared_visits(grain, declarations, dataset_version)
         findings.keyed, findings.visits = grain.key is not None, visits
         findings.key, findings.rows_are_patients = grain.key, grain.rows_are_patients
@@ -903,7 +915,7 @@ class QueryService:
     def _sync_layer_state(self, stored: Declarations, dataset_version: str | None) -> None:
         """Set what the layer counts by (patients once rows are declared visits) from the
         dataset's STORED declarations. Locked; never called with a question's stale copy."""
-        grain = self._grain()
+        grain = self._grain(stored, dataset_version)
         visits = grain.repeated and answer_checks.declared_visits(grain, stored, dataset_version)
         self.semantic_layer.count_entity_key = grain.key if visits else None
 

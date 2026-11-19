@@ -41,12 +41,28 @@ class TestClassify:
         ],
     )
     def test_classify_level_kindAndFips(self, level, kind, fips):
-        # Act
-        place = geography.classify(level)
+        # Act: a column named for a place (codes allowed)
+        place = geography.classify(level, codes=True)
 
         # Assert
         assert place.kind == kind
         assert (place.state.fips if place.state else None) == fips
+
+    @pytest.mark.parametrize("level", [26, "26", 6, "26000", "26163", 26.0])
+    def test_classify_bareNumberOutsidePlaceColumn_neverAPlace(self, level):
+        # Act: a patient number or a week is not a FIPS code
+        place = geography.classify(level)
+
+        # Assert
+        assert place.kind == "unknown"
+
+    @pytest.mark.parametrize(
+        ("column", "codes"),
+        [("FIPS", True), ("State Code", True), ("LocationID", True), ("patient_id", False), ("week", False)],
+    )
+    def test_isGeoCodeColumn_byName(self, column, codes):
+        # Act / Assert
+        assert geography.is_geo_code_column(column) is codes
 
 
 class TestQuestionWords:
