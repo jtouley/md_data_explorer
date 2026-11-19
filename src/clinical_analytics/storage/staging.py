@@ -192,7 +192,7 @@ class ExcelSheets:
 
     ``skipped`` names the other sheets that hold data; ``empty`` counts the other sheets with no
     values. ``footnote_rows`` counts the rows below the data, after a blank row, that were read
-    as notes ("Source: ..."), not patients.
+    as notes ("Source: ..."), not data.
     """
 
     read: str
@@ -699,6 +699,10 @@ def _read_first_sheet(file_bytes: bytes) -> tuple[list[list[object]], ExcelSheet
         wb.close()
 
 
+# What openpyxl raises on a cell it cannot parse (a date serial out of range, a bad number).
+_SHEET_CELL_ERRORS: Final = (ValueError, OverflowError, KeyError, TypeError)
+
+
 def _read_first_xls_sheet(file_bytes: bytes) -> tuple[list[list[object]], ExcelSheets]:
     """``_read_first_sheet`` for a legacy .xls workbook (BIFF2-8, raw or in an OLE2 file), via xlrd.
 
@@ -738,7 +742,17 @@ def _read_first_xls_sheet(file_bytes: bytes) -> tuple[list[list[object]], ExcelS
 
 
 def _xls_sheet_has_values(sheet: Any) -> bool:
-    return _rows_have_values((_xls_value(cell, 0) for cell in row) for row in sheet.get_rows())
+    """``_sheet_has_values`` for an unread .xls sheet: one that cannot be scanned counts as
+    holding data (named as not read), never failing the upload of the sheet that is read."""
+    import struct
+
+    import xlrd
+
+    try:
+        return _rows_have_values((_xls_value(cell, 0) for cell in row) for row in sheet.get_rows())
+    except (xlrd.XLRDError, struct.error, IndexError, UnicodeDecodeError, *_SHEET_CELL_ERRORS) as e:
+        logger.warning("staging_excel_other_sheet_unscannable", error_type=type(e).__name__)
+        return True
 
 
 def _xls_value(cell: Any, datemode: int) -> object:
@@ -771,8 +785,16 @@ def _rows_have_values(rows: Iterable[Iterable[object]]) -> bool:
 
 
 def _sheet_has_values(sheet: Any) -> bool:
-    """True when any cell of the sheet holds a value (stops at the first one)."""
-    return _rows_have_values(sheet.iter_rows(values_only=True))
+    """True when any cell of the sheet holds a value (stops at the first one).
+
+    Only the first sheet is read. Another sheet that cannot even be scanned counts as holding
+    data: it is named as not read, and it never fails the upload of the sheet that is read.
+    """
+    try:
+        return _rows_have_values(sheet.iter_rows(values_only=True))
+    except _SHEET_CELL_ERRORS as e:
+        logger.warning("staging_excel_other_sheet_unscannable", error_type=type(e).__name__)
+        return True
 
 
 def read_excel_typed(file_bytes: bytes, header_row: int | None = None) -> StagedTable:
@@ -790,10 +812,16 @@ def read_excel_typed(file_bytes: bytes, header_row: int | None = None) -> Staged
         header_row = detect_header_row(rows)
     if len(rows) <= header_row:
         raise StagingError("The Excel sheet has no header row")
-    headers = _unique_headers(rows[header_row])
-    width = len(headers)
-    body = [[_cell_text(v) for v in (r + [None] * width)[:width]] for r in rows[header_row + 1 :]]
+    # Each row comes back as long as its last stored cell (reset_dimensions), so the table is as
+    # wide as its widest row: a column with data under a blank header cell is kept as
+    # column_N, never cut off. Footnote rows are split off first, so a note written further
+    # right never adds a column.
+    span = max(len(row) for row in rows[header_row:])
+    body = [[_cell_text(v) for v in (r + [None] * span)[:span]] for r in rows[header_row + 1 :]]
     body, footnote_rows = _split_footnotes(body)
+    width = max([len(rows[header_row])] + [_last_filled(row) for row in body])
+    headers = _unique_headers((rows[header_row] + [None] * width)[:width])
+    body = [row[:width] for row in body]
     if footnote_rows:
         logger.info("staging_excel_footnote_rows_dropped", rows=footnote_rows)
     # Trailing all-empty rows are sheet formatting, not data lines (unlike in a CSV).
@@ -806,14 +834,30 @@ def _filled(row: list[str | None]) -> list[str]:
     return [value for value in row if value is not None and value.strip()]
 
 
-def _is_footnote(row: list[str | None]) -> bool:
-    """One filled cell holding several words ("Source: ...", "Note: rates per 100,000").
+def _last_filled(row: list[str | None]) -> int:
+    """How far into the row its last filled cell is (0 for a blank row)."""
+    return max((at + 1 for at, value in enumerate(row) if value is not None and value.strip()), default=0)
 
-    An ID or a number has no space, so a row that names a patient is never read as a footnote.
-    A footnote row leaves the data, so the upload always reports how many rows it read as notes.
+
+def _is_footnote(row: list[str | None]) -> bool:
+    """One filled cell, in a table of two or more columns, that reads as prose: two or more
+    words, and either two of them with letters or a sentence ending ("Source: ...", "Note:
+    rates per 100,000", "Generated 2026.").
+
+    In a one-column table every row has one filled cell, so none is a footnote there. An ID
+    such as "MRN 0012" has one word with letters and no sentence ending, and a number has no
+    space, so a row that names a patient is never read as a footnote. A footnote row leaves
+    the data, so the upload always reports how many rows it read as notes.
     """
     filled = _filled(row)
-    return len(filled) == 1 and len(filled[0].split()) > 1
+    if len(row) < 2 or len(filled) != 1:
+        return False
+    text = filled[0].strip()
+    words = text.split()
+    if len(words) < 2:
+        return False
+    lettered = sum(1 for word in words if any(char.isalpha() for char in word))
+    return lettered >= 2 or (lettered >= 1 and text[-1] in ".:;")
 
 
 def _split_footnotes(body: list[list[str | None]]) -> tuple[list[list[str | None]], int]:
@@ -889,13 +933,10 @@ def describe_sheets(sheets: Mapping[str, object] | None) -> str:
             "To use another sheet, save it as its own file and upload it."
         )
     if footnotes == 1:
-        lines.append(
-            "1 row below the data, after a blank row, was read as a note, not a patient, and is not in the data."
-        )
+        lines.append("1 row below the data, after a blank row, was read as a note and left out of the data.")
     elif footnotes > 1:
         lines.append(
-            f"{footnotes} rows below the data, after a blank row, were read as notes, not patients, "
-            "and are not in the data."
+            f"{footnotes} rows below the data, after a blank row, were read as notes and left out of the data."
         )
     return " ".join(lines)
 

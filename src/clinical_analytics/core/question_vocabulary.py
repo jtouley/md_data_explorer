@@ -55,11 +55,56 @@ QUANTITY_WORDS: frozenset[str] = frozenset(
 # Words that split the answer into groups ("by sex", "per site", "in each region").
 GROUPING_WORDS: frozenset[str] = frozenset({"by", "each", "per"})
 
+# "standard" and "deviation" ask for a statistic only together, as "standard deviation".
+# Alone each is an ordinary word that can name a stored value: a trial arm "Standard", an
+# event "Protocol deviation". STATISTIC_WORDS keeps both so the word-accounting gate can
+# still use them when the phrase is asked.
+STATISTIC_PHRASE: re.Pattern[str] = re.compile(r"\bstandard[\s_-]+deviations?\b", re.IGNORECASE)
+STANDALONE_STATISTIC_WORDS: frozenset[str] = frozenset(STATISTIC_WORDS) - {"standard", "deviation"}
+
 # The question's own grammar: what to compute (QUANTITY_WORDS and the statistic words of
 # query_plan.STATISTIC_WORDS: "average", "mean", "median", ...) and how to split it
 # (GROUPING_WORDS). Such a word is never read as a stored value: "count by sex" must not
-# select location_name = "Count Lake", and "total" must not select sex = "Total".
-QUESTION_FORM_WORDS: frozenset[str] = QUANTITY_WORDS | GROUPING_WORDS | frozenset(STATISTIC_WORDS)
+# select location_name = "Count Lake", and "total" must not select sex = "Total". "standard"
+# is grammar only inside STATISTIC_PHRASE (see without_statistic_phrases).
+QUESTION_FORM_WORDS: frozenset[str] = QUANTITY_WORDS | GROUPING_WORDS | STANDALONE_STATISTIC_WORDS
+
+# Adjective endings that turn a value word into a word about it: "asthma" -> "asthmatic",
+# "alcohol" -> "alcoholic", "cancer" -> "cancerous", "europe" -> "european". A question word
+# that is a stored value word plus one of these (optionally plural) names that value; any
+# other extension is a different word ("count"/"county", "head"/"headache", "live"/"liver",
+# "control"/"controlled", "north"/"northern"). After a value word ending in "a", "n" and "c"
+# also derive ("africa" -> "african", "insomnia" -> "insomniac").
+DERIVED_ADJECTIVE_SUFFIXES: frozenset[str] = frozenset({"ic", "tic", "ous", "tous", "an"})
+DERIVED_ADJECTIVE_SUFFIXES_AFTER_A: frozenset[str] = frozenset({"n", "c"})
+
+
+# Inflections that leave a grammar word grammar: "counts", "counted", "counting", "totals",
+# "averages", "maxes". "patient counts by county" must not select "Count Lake".
+_GRAMMAR_INFLECTIONS: tuple[str, ...] = ("s", "es", "ed", "ing")
+
+
+def is_question_form_word(word: str) -> bool:
+    """True when ``word`` is a QUESTION_FORM_WORDS word or one of its inflections."""
+    if word in QUESTION_FORM_WORDS:
+        return True
+    return any(word.endswith(ending) and word[: -len(ending)] in QUESTION_FORM_WORDS for ending in _GRAMMAR_INFLECTIONS)
+
+
+def statistic_phrases_as_std(text: str) -> str:
+    """``text`` with each "standard deviation" written "std", for reading which statistic is
+    asked; positions are not kept (see without_statistic_phrases)."""
+    return STATISTIC_PHRASE.sub("std", text)
+
+
+def without_statistic_phrases(text: str) -> str:
+    """``text`` with each "standard deviation" blanked to spaces of the same length.
+
+    The statistic phrase is grammar and never names a value, while a lone "standard" may.
+    Positions in the result are positions in ``text``.
+    """
+    return STATISTIC_PHRASE.sub(lambda match: " " * len(match.group()), text)
+
 
 # Words that turn "<value>" into "everyone except <value>" when they stand right before it.
 NEGATION_WORDS: frozenset[str] = frozenset(

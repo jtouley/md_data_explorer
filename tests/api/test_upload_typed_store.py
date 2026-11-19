@@ -179,7 +179,7 @@ def test_uploadDataset_xlsxFootnoteBelowBlankRow_readyAndNoteCountsIt(
     assert response.status_code == 200, body
     assert body["status"] == "ready"
     assert body["sheet_note"] == (
-        "1 row below the data, after a blank row, was read as a note, not a patient, and is not in the data."
+        "1 row below the data, after a blank row, was read as a note and left out of the data."
     )
     assert frame.height == 120
     dependencies.invalidate_semantic_layer_cache(body["upload_id"])

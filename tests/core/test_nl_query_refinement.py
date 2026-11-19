@@ -528,3 +528,44 @@ def test_parseQuery_columnNamedExactlyAfterEarlierQuestion_groupsByThatColumn(
     # Assert
     assert result.intent_type == "COUNT"
     assert result.grouping_variable == expected
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_primary"),
+    [
+        pytest.param("exclude statin users", None, id="refinementPhrase_extractionSkipped"),
+        pytest.param("only statin users", None, id="onlyPhrase_extractionSkipped"),
+    ],
+)
+def test_parseQuery_confidentRefinementPhrase_filteredWordNeverBecomesTheMeasure(
+    make_semantic_layer,
+    mock_llm_calls,
+    nl_query_engine_with_cached_model,
+    query: str,
+    expected_primary: str | None,
+) -> None:
+    """A refinement the parser read with confidence ("exclude statin users") must not turn the
+    word it filters out into the measure: "compare statin by statin" is never planned."""
+    from unittest.mock import patch
+
+    from clinical_analytics.core.nl_query_engine import QueryIntent
+
+    # Arrange
+    semantic = make_semantic_layer(
+        dataset_name="refine",
+        data={"patient_id": ["P1", "P2", "P3", "P4"], "ldl": [100.0, 150.0, 120.0, 90.0], "statin": [0, 1, 1, 0]},
+    )
+    engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
+    history = [{"query": "compare ldl by statin", "intent": "COMPARE_GROUPS", "group_by": "statin", "metric": "ldl"}]
+    parsed = QueryIntent(intent_type="COMPARE_GROUPS", grouping_variable="statin", confidence=0.9)
+
+    # Act
+    with (
+        patch.object(engine, "_pattern_match", return_value=None),
+        patch.object(engine, "_semantic_match", return_value=None),
+        patch.object(engine, "_llm_parse", return_value=parsed),
+    ):
+        result = engine.parse_query(query=query, conversation_history=history)
+
+    # Assert
+    assert result.primary_variable == expected_primary

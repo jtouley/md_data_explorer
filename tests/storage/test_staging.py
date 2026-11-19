@@ -584,7 +584,7 @@ def _with_declared_dimension(xlsx: bytes, ref: str) -> bytes:
 
 
 @pytest.mark.parametrize("declared", ["A1:A1", "A1:B2", "A1:C4"])  # C4: true size, a no-regression case
-def test_read_excel_typed_wrongDeclaredDimension_readsEveryColumn(declared):
+def test_read_excel_typed_wrongDeclaredDimension_readsEveryColumn(declared: str) -> None:
     # Arrange: a title row above the header, and a sheet that declares itself smaller than it is
     rows = [
         ("Cardiovascular diseases", None, None),
@@ -714,14 +714,14 @@ _ANOTHER = "To use another sheet, save it as its own file and upload it."
         ),
         pytest.param(
             {"read": "Deaths", "skipped": [], "footnote_rows": 1},
-            "1 row below the data, after a blank row, was read as a note, not a patient, and is not in the data.",
+            "1 row below the data, after a blank row, was read as a note and left out of the data.",
             id="one_footnote",
         ),
         pytest.param(
             {"read": "Deaths", "skipped": ["Notes"], "footnote_rows": 2},
             _READ_DEATHS.format(total=2, names="“Notes”")
             + _ANOTHER
-            + " 2 rows below the data, after a blank row, were read as notes, not patients, and are not in the data.",
+            + " 2 rows below the data, after a blank row, were read as notes and left out of the data.",
             id="skipped_and_footnotes",
         ),
     ],
@@ -784,3 +784,91 @@ def test_readExcelTyped_noteWithoutBlankRowAbove_staysData() -> None:
     assert staged.data.height == 25
     assert staged.sheets is not None
     assert staged.sheets.footnote_rows == 0
+
+
+@pytest.mark.parametrize(
+    ("rows", "columns"),
+    [
+        pytest.param(
+            [("patient_id", "age", "dx"), ("P1", 40, "Asthma", None, "note a"), ("P2", 51, "Cancer", None, "note b")],
+            ["patient_id", "age", "dx", "column_3", "column_4"],
+            id="dataBeyondHeader_keptAsColumnN",
+        ),
+        pytest.param(
+            [("patient_id", "age", "dx"), ("P1", 40, "Asthma"), ("P2", 51, "Cancer")],
+            ["patient_id", "age", "dx"],
+            id="noDataBeyondHeader_noExtraColumn",
+        ),
+        pytest.param(
+            [
+                ("patient_id", "age", "dx"),
+                ("P1", 40, "Asthma"),
+                ("P2", 51, "Cancer"),
+                (),
+                (None, None, None, None, "Source: notes."),
+            ],
+            ["patient_id", "age", "dx"],
+            id="footnoteFurtherRight_addsNoColumn",
+        ),
+    ],
+)
+def test_readExcelTyped_cellsBeyondHeader_columnsKeptNeverCut(
+    rows: list[tuple[object, ...]], columns: list[str]
+) -> None:
+    # Arrange
+    data = _xlsx(rows)
+
+    # Act
+    staged = read_excel_typed(data)
+
+    # Assert
+    assert staged.data.columns == columns
+    assert staged.data.height == 2
+
+
+def test_readExcelTyped_oneColumnSheet_multiWordRowsAreDataNotFootnotes() -> None:
+    # Arrange: in a one-column table every row has one filled cell; a gap still fails loudly
+    data = _xlsx([("diagnosis",), ("Type 2 diabetes",), ("Heart failure",), (), ("Chronic kidney disease",)])
+
+    # Act / Assert
+    with pytest.raises(StagingError, match="empty line"):
+        read_excel_typed(data)
+
+
+@pytest.mark.parametrize(
+    ("cell", "is_note"),
+    [
+        pytest.param("MRN 0012", False, id="idWithSpace_isData"),
+        pytest.param("12 345", False, id="numberWithSpace_isData"),
+        pytest.param("Generated 2026.", True, id="sentenceEnding_isNote"),
+        pytest.param("Source: synthetic rates", True, id="prose_isNote"),
+        pytest.param("Asthma", False, id="oneWord_isData"),
+    ],
+)
+def test_readExcelTyped_oneCellRowBelowBlank_footnoteOnlyWhenProse(cell: str, is_note: bool) -> None:
+    # Arrange
+    data = _xlsx([_HEADER, *_geo_rows(), (), (cell,)])
+
+    # Act / Assert
+    if is_note:
+        staged = read_excel_typed(data)
+        assert staged.sheets is not None
+        assert staged.sheets.footnote_rows == 1
+    else:
+        with pytest.raises(StagingError, match="empty line"):
+            read_excel_typed(data)
+
+
+def test_sheetHasValues_otherSheetCannotBeScanned_countsAsNotReadNeverFails() -> None:
+    # Arrange: an unread sheet whose cells openpyxl cannot parse
+    from clinical_analytics.storage.staging import _sheet_has_values
+
+    class _BrokenSheet:
+        def iter_rows(self, values_only: bool = True) -> object:
+            raise OverflowError("date value out of range")
+
+    # Act
+    has_values = _sheet_has_values(_BrokenSheet())
+
+    # Assert
+    assert has_values is True
