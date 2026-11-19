@@ -232,3 +232,34 @@ def test_stageTextFrame_blankHeaderBesideColumn0_getsUnclashedName() -> None:
 
     # Assert
     assert staged.data.columns == ["column_0_unnamed", "column_0"]
+
+
+def test_stageTextFrame_blankHeaderBesideUpperCaseColumn0_getsUnclashedName() -> None:
+    # Arrange: the query engine ignores case, so "COLUMN_0" already takes "column_0"
+    text = pl.DataFrame({"": ["1", "2"], "COLUMN_0": ["a", "b"]})
+
+    # Act
+    staged = stage_text_frame(text)
+
+    # Assert
+    assert staged.data.columns == ["column_0_unnamed", "COLUMN_0"]
+
+
+@pytest.mark.parametrize(
+    ("headers", "named"),
+    [
+        pytest.param(["Age", "age"], "'Age' and 'age'", id="two"),
+        pytest.param(["ID", "x", "Id", "id"], "'ID' and 'Id' and 'id'", id="three"),
+        pytest.param(["ALB", "alb", "Sex", "SEX"], "'ALB' and 'alb'; 'Sex' and 'SEX'", id="two_pairs"),
+    ],
+)
+def test_stageTextFrame_headersDifferOnlyInCase_failsNamingThem(headers: list[str], named: str) -> None:
+    # Arrange
+    text = pl.DataFrame({h: ["1", "2"] for h in headers})
+
+    # Act
+    with pytest.raises(StagingError) as raised:
+        stage_text_frame(text)
+
+    # Assert
+    assert f"Columns {named} differ only in upper and lower case" in str(raised.value)

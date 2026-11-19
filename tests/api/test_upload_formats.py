@@ -8,6 +8,7 @@ inside a ZIP (UCI), SAS transport (.xpt, NHANES) and legacy .xls. Every file is 
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import io
 import zipfile
 from pathlib import Path
@@ -147,8 +148,8 @@ def test_uploadDataset_zipWithCorruptSav_failsWithReadableReason(test_client: Te
     # Act
     body = _upload(test_client, "sav.zip", data, "sav")
 
-    # Assert: a user message, not an unhandled error
-    assert body["_status_code"] == 500
+    # Assert: the user's file to fix (400) with a user message, not a server fault
+    assert body["_status_code"] == 400
     assert "SPSS (.sav) file could not be read" in body["detail"]
 
 
@@ -160,8 +161,8 @@ def test_uploadDataset_zipOfTablesWithNoSharedKey_saysWhyInPlainWords(test_clien
     # Act
     body = _upload(test_client, "two.zip", _zip({"primary.csv": cohort, "validation.csv": cohort}), "two")
 
-    # Assert
-    assert body["_status_code"] == 500
+    # Assert: the files cannot be combined: the user's to fix (400), never a server fault
+    assert body["_status_code"] == 400
     assert "cannot be joined into one cohort" in body["detail"]
 
 
@@ -173,7 +174,7 @@ def test_uploadDataset_zipWithoutTables_rejectedWithAcceptedFormats(test_client:
     body = _upload(test_client, "docs_only.zip", data, "docs")
 
     # Assert
-    assert body["_status_code"] == 500
+    assert body["_status_code"] == 400
     assert "No table files in ZIP" in body["detail"]
     assert ".xpt" in body["detail"]
 
@@ -252,3 +253,160 @@ def test_uploadDataset_legacyXls_ready(test_client: TestClient, isolated_data_ho
     assert frame.height == 40
     assert frame.schema["sdate"] == pl.Int64
     assert frame.schema["visit"] == pl.Date
+
+
+# --- Upload failures the user can fix: 400 with what to do, never a 500 ---------------------------
+
+
+def test_uploadDataset_csvWithBlankHeader_readyWithNamedColumn(test_client: TestClient, isolated_data_home):
+    # Arrange: R's write.csv row-name column under a "" header (UCI hcvdat0.csv shape). It used to
+    # fail the query-view probe ("column types differ ... (, C0)") with a 500.
+    rows = [f'"{i}",P{i:03d},{30 + i % 40},{38.5 + i % 7}' for i in range(1, 121)]
+    data = ("\n".join(['"","patient_id","Age","ALB"', *rows]) + "\n").encode()
+
+    # Act
+    body = _upload(test_client, "hcvdat0.csv", data, "hcv")
+    frame, _meta = _stored(body["upload_id"])
+
+    # Assert
+    assert body["_status_code"] == 200, body
+    assert body["status"] == "ready"
+    assert frame.height == 120
+    assert "column_0" in frame.columns
+    assert "" not in frame.columns
+
+
+def _no_id_cohort(n: int = 150) -> bytes:
+    """UCI sepsis_survival shape: age, sex, episode and outcome; no column identifies a patient."""
+    rows = [f"{40 + i % 50},{i % 2},{i % 5 + 1},{i % 2}" for i in range(n)]
+    return (
+        "\n".join(["age_years,sex_0male_1female,episode_number,hospital_outcome_1alive_0dead", *rows]) + "\n"
+    ).encode()
+
+
+@pytest.mark.parametrize("as_zip", [False, True], ids=["csv", "zip_of_one_csv"])
+def test_uploadDataset_noPatientIdColumn_refused400SaysToAddOne(
+    test_client: TestClient, isolated_data_home, as_zip: bool
+):
+    # Arrange: before, "Error saving upload: ValueError" with a 500
+    data = _zip({"primary_cohort.csv": _no_id_cohort()}) if as_zip else _no_id_cohort()
+    name = "sepsis.zip" if as_zip else "sepsis.csv"
+
+    # Act
+    body = _upload(test_client, name, data, "sepsis")
+
+    # Assert: refused rather than counting rows as patients; says what to add
+    assert body["_status_code"] == 400, body
+    assert "No column in this file identifies a patient" in body["detail"]
+    assert "Add a column with one ID for each patient" in body["detail"]
+
+
+def test_uploadDataset_headersDifferOnlyInCase_refused400NamesBoth(test_client: TestClient, isolated_data_home):
+    # Arrange: the query engine reads column names without case, so "Age" and "age" would be one
+    rows = [f"P{i:03d},{30 + i % 40},{31 + i % 40}" for i in range(120)]
+    data = ("\n".join(["patient_id,Age,age", *rows]) + "\n").encode()
+
+    # Act
+    body = _upload(test_client, "twins.csv", data, "twins")
+
+    # Assert
+    assert body["_status_code"] == 400, body
+    assert "'Age' and 'age' differ only in upper and lower case" in body["detail"]
+
+
+def _deflated_zip(files: dict[str, bytes]) -> bytearray:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, content in files.items():
+            zf.writestr(name, content)
+    return bytearray(buf.getvalue())
+
+
+def _set_central_field(data: bytearray, offset: int, value: int, *, local_offset: int | None = None) -> bytes:
+    """Overwrite a 2-byte field of every central-directory entry (and the local header's)."""
+    start = 0
+    while (i := data.find(b"PK\x01\x02", start)) != -1:
+        data[i + offset : i + offset + 2] = value.to_bytes(2, "little")
+        start = i + 4
+    if local_offset is not None:
+        start = 0
+        while (i := data.find(b"PK\x03\x04", start)) != -1:
+            data[i + local_offset : i + local_offset + 2] = value.to_bytes(2, "little")
+            start = i + 4
+    return bytes(data)
+
+
+def _damaged_member(files: dict[str, bytes], member: str) -> bytes:
+    """Flip bytes inside one member's compressed data (its CRC or inflate then fails)."""
+    data = _deflated_zip(files)
+    header = data.find(b"PK\x03\x04")  # first local header
+    while header != -1:
+        name_len = int.from_bytes(data[header + 26 : header + 28], "little")
+        extra_len = int.from_bytes(data[header + 28 : header + 30], "little")
+        name = bytes(data[header + 30 : header + 30 + name_len]).decode()
+        body = header + 30 + name_len + extra_len
+        if name == member:
+            for k in range(body + 2, body + 12):
+                data[k] ^= 0xFF
+            return bytes(data)
+        header = data.find(b"PK\x03\x04", header + 4)
+    raise AssertionError(f"{member} not in the ZIP")
+
+
+# Hex digests barely compress, so the deflated ZIP stays above the route's 1 KB minimum.
+_TABLE_AND_DOC = {
+    "cohort.csv": _cohort_csv(),
+    "README.txt": _README + b"".join(hashlib.sha256(str(i).encode()).hexdigest().encode() for i in range(40)),
+}
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        pytest.param(
+            _set_central_field(_deflated_zip(_TABLE_AND_DOC), 8, 0x1, local_offset=6),
+            "is password-protected",
+            id="encrypted",
+        ),
+        pytest.param(
+            _set_central_field(_deflated_zip(_TABLE_AND_DOC), 10, 9, local_offset=8),
+            "compression method this app cannot read",
+            id="deflate64",
+        ),
+        pytest.param(_damaged_member(_TABLE_AND_DOC, "cohort.csv"), "cohort.csv in the ZIP is damaged", id="bad_table"),
+        pytest.param(_damaged_member(_TABLE_AND_DOC, "README.txt"), "README.txt in the ZIP is damaged", id="bad_doc"),
+        pytest.param(
+            _set_central_field(_deflated_zip(_TABLE_AND_DOC), 6, 140), "Corrupted ZIP file", id="unknown_zip_version"
+        ),
+    ],
+)
+def test_uploadDataset_damagedOrLockedZip_refused400NamesTheFix(
+    test_client: TestClient, isolated_data_home, data: bytes, expected: str
+):
+    # Arrange: done in the parameters (each case used to end in a 500, or for a damaged README,
+    # in a "ready" upload whose documentation was dropped in silence)
+
+    # Act
+    body = _upload(test_client, "package.zip", data, "package")
+
+    # Assert
+    assert body["_status_code"] == 400, body
+    assert expected in body["detail"]
+    assert "upload the new ZIP" in body["detail"]
+
+
+def test_uploadDataset_zipWithTooManyEntries_refused400(
+    test_client: TestClient, isolated_data_home, monkeypatch: pytest.MonkeyPatch
+):
+    # Arrange: a low cap stands in for an archive of millions of empty entries
+    import clinical_analytics.ui.storage.user_datasets as user_datasets
+
+    monkeypatch.setattr(user_datasets, "MAX_ZIP_ENTRIES", 3)
+    data = _zip({"cohort.csv": _cohort_csv(), **{f"empty_{i}.txt": b"" for i in range(4)}})
+
+    # Act
+    body = _upload(test_client, "many.zip", data, "many")
+
+    # Assert
+    assert body["_status_code"] == 400, body
+    assert "The ZIP holds more than 3 files" in body["detail"]

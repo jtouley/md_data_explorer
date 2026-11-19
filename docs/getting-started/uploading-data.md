@@ -104,13 +104,17 @@ The app runs locally after setup. It is **not a compliance certification**; chec
 
 ## Troubleshooting
 
-### "Could not detect patient ID"
+### "No column in this file identifies a patient"
 
-**Problem:** The platform can't find a unique identifier for each patient.
+**Problem:** No column has one ID per patient, so the app cannot count patients. It refuses the upload rather than count rows as patients.
 
 **Solution:**
-- Make sure you have a column with a unique value for each patient (like patient ID, subject ID, or MRN)
-- If your data doesn't have one, add a simple row number column in Excel before uploading
+- Add a column with one ID for each patient (patient ID, subject ID or MRN), with the same ID on each of that patient's rows.
+- Add a row number only if each row really is a different patient. When a patient can have several rows (visits, episodes), a row number would count each row as a new patient, and answers would be wrong.
+
+### Other upload errors
+
+A file the app cannot use as sent is refused with a message that says what to fix (the API answers 400): a damaged or password-protected ZIP, a ZIP packed with a compression method other than Deflate (Windows' Deflate64), more than 100,000 files in one ZIP, or two columns whose names differ only in upper and lower case (`Age` and `age`), which the query engine reads as one name.
 
 ### "No outcome variables detected"
 

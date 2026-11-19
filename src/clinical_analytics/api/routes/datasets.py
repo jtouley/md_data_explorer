@@ -44,6 +44,7 @@ from clinical_analytics.storage.dataset_deletion import (
     validate_dataset_id,
 )
 from clinical_analytics.ui.storage.user_datasets import (
+    USER_FILE_ERRORS,
     UploadSecurityValidator,
     UserDatasetStorage,
 )
@@ -534,12 +535,19 @@ async def upload_dataset(
 
     storage = UserDatasetStorage()
     # Parsing, DuckDB and Parquet writes block: keep them off the event loop.
-    success, message, upload_id = await asyncio.to_thread(
-        storage.save_upload,
-        file_bytes=file_bytes,
-        original_filename=filename,
-        metadata=metadata,
-    )
+    try:
+        success, message, upload_id = await asyncio.to_thread(
+            storage.save_upload,
+            file_bytes=file_bytes,
+            original_filename=filename,
+            metadata=metadata,
+            raise_user_errors=True,
+        )
+    except USER_FILE_ERRORS as e:
+        # The file cannot be used as sent (unreadable, no patient ID, a damaged ZIP): the user's
+        # to fix, not a server fault. These messages are written for the user and quote no cells.
+        log.warning("dataset_upload_refused", error_type=type(e).__name__)
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     if not success or upload_id is None:
         # Never "ready" unless the stored version answered the upload-time query-view probe.

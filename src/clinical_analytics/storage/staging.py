@@ -470,6 +470,7 @@ def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1) -> StagedT
     if not_text:
         raise TypeError(f"stage_text_frame needs text columns; got non-text {not_text}")
     df = _name_blank_headers(df)
+    _reject_case_twin_headers(df)
 
     units = _units_row(df)
     body = df.slice(1) if units else df
@@ -490,10 +491,32 @@ def _name_blank_headers(df: pl.DataFrame) -> pl.DataFrame:
     A column with no name cannot be queried (the query view needs a name for every column).
     """
     renames = {c: f"column_{i}" for i, c in enumerate(df.columns) if not c.strip()}
-    taken = set(df.columns) - set(renames)
-    if any(name in taken for name in renames.values()):
+    taken = {c.casefold() for c in df.columns if c not in renames}  # the query engine ignores case
+    if any(name.casefold() in taken for name in renames.values()):
         renames = {c: f"column_{i}_unnamed" for i, c in enumerate(df.columns) if not c.strip()}
     return df.rename(renames) if renames else df
+
+
+def _reject_case_twin_headers(df: pl.DataFrame) -> None:
+    """Refuse headers that differ only in letter case (``Age`` and ``age``).
+
+    The query engine (DuckDB) reads column names without regard to case, so it would rename one
+    of the two and its answers could read the wrong column. Header names are not cell values, so
+    the message may quote them.
+
+    Raises:
+        StagingError: two or more headers are the same apart from case.
+    """
+    by_folded: dict[str, list[str]] = {}
+    for name in df.columns:
+        by_folded.setdefault(name.casefold(), []).append(name)
+    twins = [names for names in by_folded.values() if len(names) > 1]
+    if twins:
+        listed = "; ".join(" and ".join(f"'{n}'" for n in names) for names in twins)
+        raise StagingError(
+            f"Columns {listed} differ only in upper and lower case, which this app reads as one name. "
+            "Rename one of them and upload the file again."
+        )
 
 
 def read_csv_typed(file_bytes: bytes, separator: str = ",") -> StagedTable:

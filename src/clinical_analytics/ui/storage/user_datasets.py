@@ -120,6 +120,26 @@ class UploadError(Exception):
     pass
 
 
+class UploadFileError(UploadError):
+    """The uploaded file itself cannot be used as sent (a broken, locked or unsupported archive,
+    a table that cannot be read, no column that identifies a patient). The user fixes the file;
+    the API answers 400 with this message, which is written for the user and quotes no cell values.
+    """
+
+
+class NoPatientIdError(UploadFileError):
+    """A single-table upload has no column that identifies a patient, so patients cannot be counted."""
+
+
+def no_patient_id_message(columns: int) -> str:
+    """Why a table with no patient ID is refused, and what to add (names no values)."""
+    return (
+        f"No column in this file identifies a patient (checked {columns} columns), so patients cannot be "
+        "counted and answers could be wrong. Add a column with one ID for each patient (the same ID on "
+        "each of that patient's rows) and upload the file again."
+    )
+
+
 class DatasetChangedError(UploadError):
     """Another save changed the dataset's active version while this one ran (retry the upload)."""
 
@@ -247,7 +267,8 @@ def extract_documentation_files(zip_file: Any, budget: "ZipExpansionBudget | Non
         budget: Bytes the archive may still expand to (``ZipExpansionBudget``); a new one if None
 
     Raises:
-        UploadError: the documents expand past the budget
+        UploadFileError: the ZIP cannot be opened, a document cannot be read, or the documents
+            expand past the budget
 
     Returns:
         List of documentation file info objects with .name attribute
@@ -277,9 +298,11 @@ def extract_documentation_files(zip_file: Any, budget: "ZipExpansionBudget | Non
 
         return doc_files
 
-    except zipfile.BadZipFile as e:
-        logger.warning(f"Failed to extract documentation files from ZIP: {e}")
-        return []
+    except (zipfile.BadZipFile, NotImplementedError, EOFError, ValueError) as e:
+        # Never drop the documentation in silence: the dictionary is what the answers lean on.
+        raise UploadFileError(
+            "The documentation files in this ZIP could not be read. Zip the files again and upload the new ZIP."
+        ) from e
 
 
 # Table files read from a ZIP (``.gz`` allowed on delimited text). Docs: ``extract_documentation_files``.
@@ -289,6 +312,10 @@ ZIP_TABLE_EXTENSIONS: Final = frozenset({*DELIMITERS, ".xlsx", ".xls", ".xpt", "
 # a nested ZIP together. The upload itself is capped at 100 MB, but a ZIP of repeated bytes can
 # expand a thousandfold and exhaust memory. The largest corpus upload (eICU demo) expands to ~310 MB.
 MAX_ZIP_EXPANDED_BYTES: Final = 1024**3
+# At most this many entries in a ZIP (each nested ZIP counted on its own). Sepsis 2019, the largest
+# file set in the corpus, has 40,336 files; the cap stops an archive of millions of empty entries
+# from exhausting memory before the expansion budget is ever charged.
+MAX_ZIP_ENTRIES: Final = 100_000
 
 
 @dataclass
@@ -303,22 +330,47 @@ class ZipExpansionBudget:
 
     def _take(self, n: int) -> None:
         if n > self.left:
-            raise UploadError(
+            raise UploadFileError(
                 f"The ZIP expands to more than {MAX_ZIP_EXPANDED_BYTES // 1024**3} GB once unpacked. "
                 "Upload fewer or smaller tables in each ZIP."
             )
         self.left -= n
 
     def read(self, z: zipfile.ZipFile, entry: str) -> bytes:
-        """The entry's bytes, charged at its declared size."""
-        self._take(z.getinfo(entry).file_size)
-        return z.read(entry)
+        """The entry's bytes, charged at its declared size.
+
+        Raises:
+            UploadFileError: past the budget, or the entry cannot be read: password-protected,
+                packed with a method ``zipfile`` does not read (Deflate64, from Windows), or
+                damaged (a bad CRC or compressed stream).
+        """
+        import zlib
+
+        info = z.getinfo(entry)
+        self._take(info.file_size)
+        name = Path(entry).name
+        if info.flag_bits & 0x1:
+            raise UploadFileError(
+                f"{name} in the ZIP is password-protected. Zip the files again without a password "
+                "and upload the new ZIP."
+            )
+        try:
+            return z.read(entry)
+        except NotImplementedError as e:
+            raise UploadFileError(
+                f"{name} in the ZIP is packed with a compression method this app cannot read. "
+                "Zip the files again with standard compression (Deflate) and upload the new ZIP."
+            ) from e
+        except (zipfile.BadZipFile, zlib.error, EOFError, ValueError) as e:
+            raise UploadFileError(
+                f"{name} in the ZIP is damaged and could not be read. Zip the files again and upload the new ZIP."
+            ) from e
 
     def gunzip(self, data: bytes, name: str) -> bytes:
         """``gzip.decompress`` that stops once the output passes the budget.
 
         Raises:
-            UploadError: not a readable gzip stream, or it expands past the budget.
+            UploadFileError: not a readable gzip stream, or it expands past the budget.
         """
         import zlib
 
@@ -333,7 +385,7 @@ class ZipExpansionBudget:
                     raise zlib.error("truncated")
                 data = inflater.unused_data
         except zlib.error as e:
-            raise UploadError(
+            raise UploadFileError(
                 f"{name} in the ZIP is not a readable .gz file. Compress it again, or add it unzipped, "
                 "and upload the ZIP again."
             ) from e
@@ -367,8 +419,14 @@ def _zip_members(z: zipfile.ZipFile, nested: bool, budget: ZipExpansionBudget) -
 
     Raises:
         SecurityError: a path climbs out of the archive.
-        UploadError: the archive expands past ``budget``, or a ``.gz`` member cannot be read.
+        UploadFileError: more than ``MAX_ZIP_ENTRIES`` entries, the archive expands past
+            ``budget``, or a member cannot be read.
     """
+    if len(z.infolist()) > MAX_ZIP_ENTRIES:
+        raise UploadFileError(
+            f"The ZIP holds more than {MAX_ZIP_ENTRIES:,} files. Split it into smaller ZIPs, "
+            "or combine the files into fewer tables, and upload again."
+        )
     for entry in z.namelist():
         if ".." in entry or entry.startswith("/"):
             raise SecurityError(
@@ -381,8 +439,8 @@ def _zip_members(z: zipfile.ZipFile, nested: bool, budget: ZipExpansionBudget) -
             try:
                 with zipfile.ZipFile(io.BytesIO(budget.read(z, entry))) as inner:
                     members.extend((f"{entry}/{path}", n, e, b) for path, n, e, b in _zip_members(inner, False, budget))
-            except zipfile.BadZipFile as e:
-                raise UploadError(
+            except (zipfile.BadZipFile, NotImplementedError, EOFError, ValueError) as e:
+                raise UploadFileError(
                     f"The ZIP inside this ZIP ({Path(entry).name}) cannot be opened. "
                     "Unzip it, then upload its files in a new ZIP."
                 ) from e
@@ -433,18 +491,18 @@ def read_zip_tables(file_bytes: bytes, budget: ZipExpansionBudget | None = None)
 
     Raises:
         SecurityError: If path traversal or invalid paths detected
-        UploadError: If no table files, corrupted ZIP, a table that cannot be staged, or the
+        UploadFileError: If no table files, corrupted ZIP, a table that cannot be staged, or the
             archive expands past the budget
     """
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
             members = _zip_members(z, nested=True, budget=budget or ZipExpansionBudget())
-    except zipfile.BadZipFile as e:
-        raise UploadError(
+    except (zipfile.BadZipFile, NotImplementedError, EOFError, ValueError) as e:
+        raise UploadFileError(
             "Corrupted ZIP file: it could not be opened. Zip the files again and upload the new ZIP."
         ) from e
     if not members:
-        raise UploadError(
+        raise UploadFileError(
             "No table files in ZIP. Add the data as "
             + ", ".join(sorted(ZIP_TABLE_EXTENSIONS))
             + " (or .gz of a .csv, .tsv or .psv) and upload the ZIP again."
@@ -461,14 +519,14 @@ def read_zip_tables(file_bytes: bytes, budget: ZipExpansionBudget | None = None)
         for fs in file_sets:
             staged_tables.append((fs.name, read_file_set(fs)))
     except StagingError as e:
-        raise UploadError(str(e)) from e
+        raise UploadFileError(str(e)) from e
     singles = [(entry, name, ext, content) for entry, name, ext, content in members if entry not in in_set]
     for entry, name, ext, content in singles:
         try:
             staged_tables.append((name, load_single_file_staged(content, f"{name}{ext}")))
         except StagingError as e:
             if ext not in DELIMITERS or len(singles) + len(file_sets) < 2:
-                raise UploadError(f"Table '{name}': {e}") from e
+                raise UploadFileError(f"Table '{name}': {e}") from e
             as_docs.append(DocFile(name=f"{name}.txt", path=entry, content=content))
             # Says why, so a data table that fails is never mistaken for a codebook in silence.
             notes.append(
@@ -478,7 +536,7 @@ def read_zip_tables(file_bytes: bytes, budget: ZipExpansionBudget | None = None)
             )
             logger.info("zip_table_read_as_documentation", error_type=type(e).__name__)
     if not staged_tables:
-        raise UploadError(
+        raise UploadFileError(
             "No file in the ZIP could be read as a table. Each table needs one header row followed by "
             "rows of data; fix the files and upload the ZIP again."
         )
@@ -487,7 +545,7 @@ def read_zip_tables(file_bytes: bytes, budget: ZipExpansionBudget | None = None)
     tables: list[dict[str, Any]] = []
     for name, staged in staged_tables:
         if name in seen:
-            raise UploadError(
+            raise UploadFileError(
                 f"Duplicate table name: two files in the ZIP are named {name}. "
                 "Rename one of them and upload the ZIP again."
             )
@@ -1109,7 +1167,7 @@ def _check_unique_table_names(tables: list[dict[str, Any]]) -> None:
     """Fail fast when two tables would be stored under one file name (``Lab Results``, ``lab-results``).
 
     Raises:
-        UploadError: names that sanitize alike, listed so the user can rename one.
+        UploadFileError: names that sanitize alike, listed so the user can rename one.
     """
     from clinical_analytics.storage.datastore import _sanitize_table_name
 
@@ -1119,7 +1177,7 @@ def _check_unique_table_names(tables: list[dict[str, Any]]) -> None:
     clashes = [names for names in by_file.values() if len(names) > 1]
     if clashes:
         listed = "; ".join(" and ".join(f"'{n}'" for n in names) for names in clashes)
-        raise UploadError(f"Tables {listed} would be stored under the same name. Rename one and upload again.")
+        raise UploadFileError(f"Tables {listed} would be stored under the same name. Rename one and upload again.")
 
 
 def _discard_uncommitted(storage: "UserDatasetStorage", upload_id: str, created: list[Path]) -> None:
@@ -1171,6 +1229,10 @@ def _cast_id_columns(df: pl.DataFrame) -> pl.DataFrame:
 # Exceptions whose messages this project writes for the user (never with cell values).
 _USER_MESSAGE_ERRORS: Final = (StagingError, UploadError, SecurityError, DataQualityError, NoCohortAnchorError)
 
+# Errors that mean the uploaded file cannot be used as sent: the user fixes the file (API 400).
+# Every other failure is the app's (API 500). Each keeps a message written for the user.
+USER_FILE_ERRORS: Final = (UploadFileError, StagingError, SecurityError, DataQualityError, NoCohortAnchorError)
+
 
 def _upload_failure_reason(e: BaseException) -> str:
     """A reason for the user that never quotes cell values.
@@ -1192,6 +1254,7 @@ def save_table_list(
     metadata: dict[str, Any],
     progress_cb: Callable[[int, str], None] | None = None,
     raw_bytes: bytes | None = None,
+    raise_user_errors: bool = False,
 ) -> tuple[bool, str]:
     """
     Save normalized tables as one new dataset version (unified persistence for every upload type).
@@ -1215,9 +1278,16 @@ def save_table_list(
         metadata: Upload metadata
         progress_cb: Optional progress callback
         raw_bytes: The uploaded file as received (raw landing); None when there is none
+        raise_user_errors: If True, tables that cannot be used as sent (``USER_FILE_ERRORS``)
+            raise instead of returning a failure; a ``DataQualityError`` becomes an
+            ``UploadFileError`` that says the tables could not be combined.
 
     Returns:
         (success, message)
+
+    Raises:
+        UploadFileError, StagingError, SecurityError, NoCohortAnchorError: only with
+            ``raise_user_errors``.
     """
     log = logger.bind(upload_id=upload_id, table_count=len(tables))
     created: list[Path] = []  # data files this call wrote; removed if the save does not commit
@@ -1502,9 +1572,16 @@ def save_table_list(
         KeyError,
         pl.exceptions.PolarsError,
     ) as e:
+        combine_failed = f"The tables could not be combined into one row per patient: {e}"
+        if raise_user_errors and isinstance(e, USER_FILE_ERRORS):
+            # The files, not the app: the caller answers 400 with this message (see save_upload).
+            log.warning("save_tables_file_refused", error_type=type(e).__name__)
+            if isinstance(e, DataQualityError):
+                raise UploadFileError(combine_failed) from e
+            raise
         log.error("save_tables_failed", error_type=type(e).__name__)
         if isinstance(e, DataQualityError):
-            return False, f"The tables could not be combined into one row per patient: {e}"
+            return False, combine_failed
         return False, f"Error saving tables: {_upload_failure_reason(e)}"
     finally:
         # Runs on every exit, whatever the exception type: nothing uncommitted stays on disk.
@@ -1791,6 +1868,7 @@ class UserDatasetStorage:
         metadata: dict[str, Any],
         progress_cb: Callable[[int, str], None] | None = None,
         overwrite: bool = False,
+        raise_user_errors: bool = False,
     ) -> tuple[bool, str, str | None]:
         """
         Save uploaded file with security validation.
@@ -1804,9 +1882,16 @@ class UserDatasetStorage:
                 Progress callbacks are best-effort: a failing callback is logged (``_notify_progress``)
                 and never breaks the save.
             overwrite: If True, allow overwriting existing dataset with same name (Phase 4.2)
+            raise_user_errors: If True, a file that cannot be used as sent raises one of
+                ``USER_FILE_ERRORS`` (its message is written for the user) instead of returning a
+                failure, so the API can answer 400 and keep 500 for the app's own faults.
 
         Returns:
             Tuple of (success, message, upload_id)
+
+        Raises:
+            UploadFileError, StagingError, SecurityError, DataQualityError, NoCohortAnchorError:
+                only with ``raise_user_errors``, when the file cannot be used as sent.
         """
         # Security validation
         # Progress callback is best-effort: don't let UI errors break storage
@@ -1815,6 +1900,8 @@ class UserDatasetStorage:
         valid, error = UploadSecurityValidator.validate(original_filename, file_bytes)
         if not valid:
             _notify_progress(progress_cb, 100, f"❌ Validation failed: {error}")
+            if raise_user_errors:
+                raise UploadFileError(error)
             return False, error, None
 
         try:
@@ -1965,12 +2052,11 @@ class UserDatasetStorage:
                 # Update table with patient_id
                 tables[0]["data"] = df_with_id
 
-                # Verify patient_id exists before saving
+                # No patient ID: refuse rather than count rows as patients (a wrong answer is
+                # worse than none). Says what to add; names no values.
                 if "patient_id" not in df_with_id.columns:
-                    logger.error(
-                        f"patient_id column missing after ensure_patient_id! Columns: {list(df_with_id.columns)}"
-                    )
-                    raise ValueError("Failed to create patient_id column")
+                    logger.warning("upload_no_patient_id", columns=df_with_id.width)
+                    raise NoPatientIdError(no_patient_id_message(df_with_id.width))
                 logger.info(
                     f"Successfully ensured patient_id exists. DataFrame shape: {df_with_id.shape}, "
                     f"columns: {list(df_with_id.columns)}"
@@ -2106,7 +2192,15 @@ class UserDatasetStorage:
             # Save using unified save_table_list() function
             _notify_progress(progress_cb, 85, "Saving dataset files and metadata...")
 
-            success, message = save_table_list(self, tables, upload_id, metadata, progress_cb, raw_bytes=file_bytes)
+            success, message = save_table_list(
+                self,
+                tables,
+                upload_id,
+                metadata,
+                progress_cb,
+                raw_bytes=file_bytes,
+                raise_user_errors=raise_user_errors,
+            )
 
             if not success:
                 return False, message, None
@@ -2139,7 +2233,19 @@ class UserDatasetStorage:
 
             return True, success_message, upload_id
 
-        except (UploadError, SecurityError, OSError, RuntimeError, ValueError, pl.exceptions.PolarsError) as e:
+        except (
+            UploadError,
+            SecurityError,
+            DataQualityError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            pl.exceptions.PolarsError,
+        ) as e:
+            if raise_user_errors and isinstance(e, USER_FILE_ERRORS):
+                logger.warning("save_upload_file_refused", error_type=type(e).__name__)
+                _notify_progress(progress_cb, 100, f"Error: {_upload_failure_reason(e)}")
+                raise
             logger.error("save_upload_failed", error_type=type(e).__name__)
             _notify_progress(progress_cb, 100, f"Error: {_upload_failure_reason(e)}")
             return False, f"Error saving upload: {_upload_failure_reason(e)}", None
