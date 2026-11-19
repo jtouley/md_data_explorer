@@ -20,7 +20,8 @@ import pytest
 
 from clinical_analytics.analysis.compute import _value_min_cell
 from clinical_analytics.analysis.grouping import NO_COUNT_TABLE
-from clinical_analytics.core.answer_checks import Grain, missing_key_note
+from clinical_analytics.contracts.quality import QualityCheckResult
+from clinical_analytics.core.answer_checks import Grain, _report_note, missing_key_note
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 from clinical_analytics.core.result_presentation import (
     AMOUNT,
@@ -28,6 +29,7 @@ from clinical_analytics.core.result_presentation import (
     _shown_counts,
     counted_note,
     present_analysis,
+    text_note,
 )
 from tests.core.test_answer_data_checks import _ask, _service, _shown
 
@@ -523,3 +525,156 @@ class TestShareLikeStatistics:
         assert result.analysis["table_min_cell"] == rare
         row = present_analysis(result.analysis)["table"]["rows"][0]
         assert (row["mean"] != SECONDARY_SUPPRESSED) == shown
+
+
+# --- Review round: holds, report notes, text notes, per-group shares, date groups --------------
+
+
+class TestNoteSourcesAfterReview:
+    def test_ask_heldImplausibleQuestion_holdNamesNoCount(self, make_semantic_layer: Any) -> None:
+        # Arrange: the hold is followed by the answer once confirmed; its count beside that
+        # answer's 20 would give back the 5 patients aged 111-122
+        ages = [40 + i % 50 for i in range(200)]
+        ages[:5] = [115] * 5
+        ages[5:20] = [150 + i for i in range(15)]
+        service = _service(make_semantic_layer, pl.DataFrame({"patient_id": IDS, "age": ages}))
+        plan = QueryPlan(
+            intent="COUNT",
+            filters=[FilterSpec(column="age", operator=">", value=110)],
+            scope="filtered",
+            confidence=0.99,
+        )
+
+        # Act
+        held = _ask(service, plan)
+
+        # Assert
+        assert held.requires_confirmation
+        assert "age has some values outside 0–122 years" in str(held.failure_reason)
+        assert "15" not in str(held.failure_reason)
+
+    @pytest.mark.parametrize(
+        ("check", "expected"),
+        [
+            pytest.param(
+                {"metric": "rowCount", "column": None, "count": 320, "percent": None, "message": "320 rows"},
+                "Data check: the number of rows does not meet the dataset's contract.",
+                id="row_count_kept_without_number",
+            ),
+            pytest.param(
+                {
+                    "metric": "nullValues",
+                    "column": "ldl",
+                    "count": 40,
+                    "percent": 10.0,
+                    "message": "ldl: 10.0% missing",
+                },
+                "Data check: ldl: 10.0% missing.",
+                id="percent_far_from_answer_shown",
+            ),
+            pytest.param(
+                {
+                    "metric": "range",
+                    "column": "age",
+                    "count": 15,
+                    "percent": 3.8,
+                    "message": "age: 15 values outside 0–122",
+                },
+                "Data check: age: some values outside 0–122.",
+                id="count_near_answer_some",
+            ),
+            pytest.param(
+                {
+                    "metric": "invalidValues",
+                    "column": "Visit 2 code",
+                    "count": "hidden",
+                    "percent": None,
+                    "message": "Visit 2 code: some values are not in the codebook (1, 2)",
+                },
+                "Data check: Visit 2 code: some values are not in the codebook (1, 2).",
+                id="hidden_count_text_note_kept_with_digits",
+            ),
+        ],
+    )
+    def test_reportNote_check_checkedAgainstAnswer(self, check: dict[str, Any], expected: str) -> None:
+        # Arrange: a report of 400 rows; the answer shows 20
+        result = QualityCheckResult(id="r1", severity="warning", status="warning", dimension=None, **check)
+
+        # Act
+        note = _report_note(result, 400)
+        claim = present_analysis(_count_answer(20, [note]))["claim"]
+
+        # Assert
+        assert claim == f"Total count: 20 patients. {expected}"
+
+    def test_reportNote_countNotFoundInMessage_dropped(self) -> None:
+        # Arrange
+        result = QualityCheckResult(
+            id="r1", severity="warning", status="warning", metric="custom", column="x", count=40, message="x: odd"
+        )
+
+        # Act / Assert
+        assert _report_note(result, 400) is None
+
+    def test_textNote_withPlaceholder_raises(self) -> None:
+        # Arrange / Act / Assert
+        with pytest.raises(ValueError):
+            text_note(f"x has {AMOUNT} rows")
+
+    def test_shownCounts_nBesideExcluded_addsCohort(self) -> None:
+        # Arrange / Act
+        shown = _shown_counts("Mean ldl was 121.41 (n=206 patients; 13 excluded for missing data).", None)
+
+        # Assert
+        assert shown == {206, 13, 219}
+
+    def test_presentAnalysis_implausibleWithoutLine_disclosedAsSome(self) -> None:
+        # Arrange
+        analysis = {
+            **_described(NO_COUNT_TABLE),
+            "implausible": {"column": "age", "count": 15, "bounds": "0–122 years"},
+        }
+
+        # Act
+        claim = str(present_analysis(analysis)["claim"])
+
+        # Assert
+        assert claim.endswith("Includes some values of age outside 0–122 years (likely entry errors).")
+
+    def test_ask_shareInOneGroupMeasureInAnother_shareWithheld(self, make_semantic_layer: Any) -> None:
+        # Arrange: F holds only 0 and 1 (6 at 1); M spreads over 50 values, so pooled the metric
+        # looks like a measurement
+        score = [1.0] * 6 + [0.0] * 94 + [float(10 + i % 50) for i in range(100)]
+        frame = pl.DataFrame({"patient_id": IDS, "sex": ["F"] * 100 + ["M"] * 100, "score": score})
+        service = _service(make_semantic_layer, frame)
+        plan = QueryPlan(intent="DESCRIBE", metric="score", group_by="sex", confidence=0.99)
+        held = _ask(service, plan)
+
+        # Act
+        result = _ask(service, plan, confirm_hash=held.plan_hash if held.requires_confirmation else None)
+
+        # Assert
+        groups = {g["group"]: g.get("table_min_cell") for g in result.analysis["groups"]}
+        assert groups == {"F": 6, "M": NO_COUNT_TABLE}
+        rows = {row["sex"]: row for row in present_analysis(result.analysis)["table"]["rows"]}
+        assert rows["F"]["mean score"] == SECONDARY_SUPPRESSED
+        assert rows["M"]["mean score"] != SECONDARY_SUPPRESSED
+
+    def test_ask_meanByDateColumn_largeCellsShown(self, make_semantic_layer: Any) -> None:
+        # Arrange: two admission dates, each with 20 deaths and 80 survivors
+        died = ([1] * 20 + [0] * 80) * 2
+        dates = ["2020-01-01"] * 100 + ["2020-02-01"] * 100
+        frame = pl.DataFrame({"patient_id": IDS, "admitted": dates, "died": died}).with_columns(
+            pl.col("admitted").str.to_date()
+        )
+        service = _service(make_semantic_layer, frame)
+        plan = QueryPlan(intent="DESCRIBE", metric="died", group_by="admitted", confidence=0.99)
+        held = _ask(service, plan)
+
+        # Act
+        result = _ask(service, plan, confirm_hash=held.plan_hash if held.requires_confirmation else None)
+
+        # Assert: each group's cells are found whatever type the date comes back as
+        assert [g.get("table_min_cell") for g in result.analysis["groups"]] == [20, 20]
+        values = [row["mean died"] for row in present_analysis(result.analysis)["table"]["rows"]]
+        assert values == [0.2, 0.2]

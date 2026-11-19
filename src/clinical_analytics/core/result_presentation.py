@@ -1390,7 +1390,24 @@ class CountedNote(TypedDict):
     form: NoteForm
 
 
-DataNote: TypeAlias = str | CountedNote
+class TextNote(TypedDict):
+    """A data note its producer wrote with no count in it (a hidden count already written as
+    "some"): any digits in it are names, codes or bounds ("Visit 2 date", "outside 0–9"), so it
+    is shown as written. Made only with ``text_note``, by a producer that controls the text."""
+
+    text: str
+    counted: Literal[False]
+
+
+# A plain ``str`` note is of unknown provenance: its integers are checked as counts (fail closed).
+DataNote: TypeAlias = str | CountedNote | TextNote
+
+
+def text_note(text: str) -> TextNote:
+    """A note that carries no count. Never wrap text that holds a count: use ``counted_note``."""
+    if AMOUNT in text:
+        raise ValueError("A text note has no amount; a note with a count is a counted note")
+    return {"text": text, "counted": False}
 
 
 def counted_note(text: str, count: int, total: int | None, form: NoteForm = "number") -> CountedNote:
@@ -1409,15 +1426,18 @@ def note_text(note: DataNote) -> str:
 
 # An integer as a sentence writes it: not part of a decimal, a percent, a word or a code.
 _SHOWN_INTEGER = re.compile(r"(?<![\w.])\d+(?![\w%]|\.\d)")
+# An n clause with exclusions (``_n_clause``): "n=206 patients; 13 excluded".
+_N_CLAUSE = re.compile(r"\bn=(\d+)[^;()]*; (\d+) excluded")
 
 
 def _shown_counts(claim: str, table: TablePayload | None) -> set[int]:
     """Every count the answer shows or gives away, read from what it shows (fail closed: any
     integer counts, years and bounds included, so a note is withheld more often, never less).
 
-    The integers in the claim and in the table, plus, for a table row with a count (``n`` or
+    The integers in the claim and in the table; for a table row with a count (``n`` or
     ``count``) beside a fraction (a share, a rate, a mean from 0 to 1), the two counts the
-    fraction and the count give back (with the value, without it).
+    fraction and the count give back (with the value, without it); and the cohort an n clause
+    gives (n=206 with 13 excluded is a cohort of 219).
     """
     found = {int(token) for token in _SHOWN_INTEGER.findall(claim)}
     for row in table["rows"] if table is not None else []:
@@ -1430,6 +1450,7 @@ def _shown_counts(claim: str, table: TablePayload | None) -> set[int]:
                 found |= {events, int(n) - events}
     # A count of 1 to threshold-1 is never shown, so such an integer is a code or a label
     # ("died=1"), not a count; 0 needs no entry (a note count near 0 is small itself).
+    found |= {int(n) + int(excluded) for n, excluded in _N_CLAUSE.findall(claim)}
     return {value for value in found if value >= _limit(None)}
 
 
@@ -1449,12 +1470,12 @@ def _note_sentence(note: Any, shown: set[int]) -> str | None:
     """A data note as it is shown, or None when it is dropped. ``shown``: the counts the answer
     shows so far, to which each written count is added (a later note is checked against it).
 
-    A counted note writes its count, or ``WITHHELD_AMOUNT`` when ``_note_count_withheld``. A note
-    with a count must be a ``CountedNote``; a plain text note should carry none. Its integers
-    cannot be told from counts, so each is checked as one (a count with no known line): when any
-    is 1 to threshold-1 or that close to a shown count, the note is dropped (fail closed: a
-    count written into free text by mistake never ships; a range such as 0–9 goes with it). A
-    malformed counted note, or anything else, is dropped.
+    A counted note writes its count, or ``WITHHELD_AMOUNT`` when ``_note_count_withheld``. A
+    ``TextNote`` carries no count and is shown as written. A plain ``str`` should carry none, but
+    its integers cannot be told from counts, so each is checked as one (a count with no known
+    line): when any is 1 to threshold-1 or that close to a shown count, the note is dropped (fail
+    closed: a count written into free text by mistake never ships). A malformed note, or
+    anything else, is dropped.
     """
     if note is None:
         return None
@@ -1463,6 +1484,9 @@ def _note_sentence(note: Any, shown: set[int]) -> str | None:
         return None if not note or any(_note_count_withheld(i, None, shown) for i in integers) else note
     if not isinstance(note, Mapping):
         return None
+    if note.get("counted") is False:
+        text = note.get("text")
+        return text if isinstance(text, str) and text and AMOUNT not in text else None
     text, count, total, form = note.get("text"), note.get("count"), note.get("total"), note.get("form", "number")
     if (
         not isinstance(text, str)
@@ -1483,19 +1507,19 @@ def _note_sentence(note: Any, shown: set[int]) -> str | None:
     return text.replace(AMOUNT, amount)
 
 
-def _implausible_note(implausible: Any) -> CountedNote | None:
+def _implausible_note(implausible: Any) -> DataNote | None:
     """'Includes 12 values of age outside 0–122 years (likely entry errors).' The count is "some"
     when it, or the rest of the values the statistic used, is from 1 to 10, or when it is that
     close to a count the answer shows (``_note_sentence``)."""
     if not isinstance(implausible, Mapping):
         return None
     count, total = implausible.get("count"), implausible.get("line_total")
-    if not _is_count(count) or int(count) <= 0 or not _is_count(total):
-        return None  # nothing to disclose, or a count whose line is unknown: dropped (fail closed)
+    if not _is_count(count) or int(count) <= 0:
+        return None
     column = short_name(str(implausible.get("column") or "this column")).replace(AMOUNT, "")
     bounds = str(implausible.get("bounds") or "its plausible range").replace(AMOUNT, "")
-    return counted_note(
-        f"Includes {AMOUNT} values of {column} outside {bounds} (likely entry errors).",
-        int(count),
-        int(total),
-    )
+    text = f"Includes {AMOUNT} values of {column} outside {bounds} (likely entry errors)."
+    if not _is_count(total):
+        # The line is unknown, so the count cannot be checked; the disclosure is still made.
+        return text_note(text.replace(AMOUNT, WITHHELD_AMOUNT))
+    return counted_note(text, int(count), int(total))

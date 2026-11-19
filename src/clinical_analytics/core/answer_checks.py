@@ -14,10 +14,10 @@ Every check is a DuckDB aggregate over the layer's base view (counts, a median, 
 one column): no column is copied into Python per question. Row and patient counts reuse the
 layer's cached base counts.
 
-Counts in hold sentences follow the small-cell rule (``line_count_text``): a count from 1 to 10,
-or one whose neighbour in its line is, reads "some". A note added to an answer carries its count
-apart from its text (``result_presentation.counted_note``), so the presenter also checks it
-against the counts that answer shows. Sentences name columns, ranges and category labels held by
+A hold sentence names no count of the data checked (the answer that follows a confirmation
+would show counts beside it). A note added to an answer carries its count apart from its text
+(``result_presentation.counted_note``), so the presenter checks it, by the small-cell rule,
+against its own line and the counts that answer shows. Sentences name columns, ranges and category labels held by
 at least ``MIN_CELL_SIZE`` rows, never a patient's value.
 """
 
@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import polars as pl
+import structlog
 
 from clinical_analytics.analysis.grouping import level_variants
 from clinical_analytics.analysis.numeric_text import all_missing_message, statistic_refusal
@@ -40,8 +41,10 @@ from clinical_analytics.contracts.quality import RANGE_METRIC, QualityCheckResul
 from clinical_analytics.core.identifier_rules import ROW_KEY_CONFIG_FLAG
 from clinical_analytics.core.plan_values import plan_values
 from clinical_analytics.core.query_plan import QueryPlan
-from clinical_analytics.core.result_presentation import AMOUNT, DataNote, counted_note, line_count_text
+from clinical_analytics.core.result_presentation import AMOUNT, DataNote, counted_note, text_note
 from clinical_analytics.core.schema_inference import patient_key_by_name
+
+logger = structlog.get_logger(__name__)
 
 _STATISTIC_INTENTS = frozenset({"DESCRIBE", "COMPARE_GROUPS"})
 # Report checks an answer already handles itself (hold or disclosure), so not repeated as notes.
@@ -226,18 +229,19 @@ def implausible_in_layer(layer: Any, column: str) -> Implausible | None:
 
 
 def implausible_sentences(plan: QueryPlan, layer: Any) -> list[tuple[str, str, DataNote]]:
-    """(column, hold sentence, note) for each plan column with implausible values. The hold is
-    shown alone (no answer yet), so its count follows its own line; the note's count is checked
-    by the presenter against the answer it is added to."""
+    """(column, hold sentence, note) for each plan column with implausible values. The hold names
+    no count: the same question's answer follows it once confirmed, and the hold's count beside
+    that answer's count would give back the difference (20 patients over 110 and 15 values over
+    122: 5 patients aged 111-122). The note's count is checked by the presenter against the
+    answer it is added to."""
     found: list[tuple[str, str, DataNote]] = []
     for column in plan_columns(plan):
         result = implausible_in_layer(layer, column)
         if result is None:
             continue
-        amount = line_count_text(result.count, [result.present - result.count])
         name = short_name(column)
         hold = (
-            f"{name} has {amount} values outside {result.bounds}, which are likely entry errors. "
+            f"{name} has some values outside {result.bounds}, which are likely entry errors. "
             f"Correct them in the file, or confirm to include them in the answer."
         )
         note = counted_note(
@@ -388,10 +392,13 @@ def _report_note(check: QualityCheckResult, rows: int | str) -> DataNote | None:
     """One report check as a note. The report suppressed its counts against the report's own
     lines only, so a count it shows is carried apart from the text (the presenter checks it
     against the answer). A hidden count is already "some", and its message is shown as written.
-    A shown count whose place in the message cannot be found is not shown at all (fail closed).
+    A row-count check names no count (the app shows the row count). A shown count whose place in
+    the message cannot be found is not shown at all (fail closed, logged).
     """
-    if not isinstance(check.count, int) or check.count == 0:
-        return f"Data check: {check.message}."  # hidden ("some"), or none: no count to check
+    if check.metric == "rowCount":
+        return text_note("Data check: the number of rows does not meet the dataset's contract.")
+    if not isinstance(check.count, int) or isinstance(check.count, bool) or check.count == 0:
+        return text_note(f"Data check: {check.message}.".replace(AMOUNT, ""))  # hidden ("some"), or no count
     total = rows if isinstance(rows, int) and rows > 0 else None
     head = f"{check.column or 'Table'}: "
     if not check.message.startswith(head):
@@ -404,6 +411,7 @@ def _report_note(check: QualityCheckResult, rows: int | str) -> DataNote | None:
     if body.startswith(f"{check.count} "):
         rest = body[len(str(check.count)) :].replace(AMOUNT, "")
         return counted_note(f"Data check: {head}{AMOUNT}{rest}.", check.count, total)
+    logger.warning("report_note_count_not_found", check_id=check.id, metric=check.metric)
     return None
 
 

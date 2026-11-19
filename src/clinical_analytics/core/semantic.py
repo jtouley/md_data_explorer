@@ -2409,7 +2409,8 @@ class SemanticLayer:
             formatted = _format_share_result(result_df_pl, query_plan, query_plan.group_by, share_base)
         elif grouped_statistic(query_plan) is not None:
             formatted = _format_grouped_statistic(result_df_pl, query_plan, self.get_base_row_count())
-            formatted["groups"] = self._with_value_cells(formatted["groups"], query_plan)
+            group_dtype = result_df_pl.schema[str(query_plan.group_by)]
+            formatted["groups"] = self._with_value_cells(formatted["groups"], query_plan, group_dtype)
         elif query_plan.intent == "COUNT":
             formatted = self._format_count_result(result_df_pl, query_plan, context)
             # What the filters removed, in the unit the total is counted in: distinct entities
@@ -2984,36 +2985,56 @@ class SemanticLayer:
             raise TypeError("DuckDB aggregate did not return a table")
         return frame_out
 
-    def _with_value_cells(self, groups: list[dict[str, Any]], plan: "QueryPlan") -> list[dict[str, Any]]:
+    def _with_value_cells(
+        self, groups: list[dict[str, Any]], plan: "QueryPlan", group_dtype: pl.DataType
+    ) -> list[dict[str, Any]]:
         """``groups`` of a grouped statistic, each with ``table_min_cell``: the fewest patients in the
         group holding one value of the metric when the metric behaves like categories
-        (``grouping.behaves_like_categories``, decided on the patients per value over every
-        group), else ``NO_COUNT_TABLE``.
+        (``grouping.behaves_like_categories``) over every group, or when the group itself holds
+        at most two values, else ``NO_COUNT_TABLE``.
 
         A mean of such a column is a share (died 0/1: a group's mean times its n is its deaths),
-        so the presenter withholds it as a share when a cell holds 1-10 patients. Counted in
-        DuckDB over the plan's filtered rows, one GROUPING SETS scan; patients are distinct keys
-        once rows are visits, as the share SQL counts them (a row with no key is still one
-        patient, never none). A group with no recorded value has no cell and no ``table_min_cell``.
+        so the presenter withholds it as a share when a cell holds 1-10 patients. A group whose
+        own values are 0 and 1 is a share even when another group's values spread like a
+        measurement. (Only the two-value test is made per group: a group's integer ages are
+        decided with the pooled column, as a comparison's are.) Counted in DuckDB over the plan's
+        filtered rows, one GROUPING SETS scan, over the finite values the statistic uses;
+        patients are distinct keys once rows are visits, as the share SQL counts them (a row
+        with no key is still one patient, never none). The group values are cast to
+        ``group_dtype`` (the statistic frame's), so a group is found whatever type each path
+        returns; a group not found, or with no recorded value, gets no ``table_min_cell`` (the
+        presenter withholds a value without one).
         """
         metric, group = _quote_ident(str(plan.metric)), _quote_ident(str(plan.group_by))
         entity = self.count_entity_key
         patients = f"greatest(count(DISTINCT {_quote_ident(entity)}), 1)" if entity else "count(*)"
-        sql = (
-            f"SELECT {group} AS g, {metric} AS v, GROUPING({group}) AS overall, {patients} AS n "
-            f"FROM _cohort_in WHERE {metric} IS NOT NULL "
-            f"GROUP BY GROUPING SETS (({group}, {metric}), ({metric}))"
-        )
         with self._cohort_views_dropped():
-            cells = self._duck_aggregate(self._filtered_view(plan), sql)
+            view = self._filtered_view(plan)
+            finite = f" AND isfinite({metric})" if view[str(plan.metric)].type().is_floating() else ""
+            sql = (
+                f"SELECT {group} AS g, {metric} AS v, GROUPING({group}) AS overall, {patients} AS n "
+                f"FROM _cohort_in WHERE {metric} IS NOT NULL{finite} "
+                f"GROUP BY GROUPING SETS (({group}, {metric}), ({metric}))"
+            )
+            cells = self._duck_aggregate(view, sql)
         overall = cells.filter(pl.col("overall") == 1)
-        per_value = dict(zip(overall.get_column("v").to_list(), overall.get_column("n").to_list(), strict=True))
-        if not behaves_like_categories(per_value):
-            return [{**g, "table_min_cell": NO_COUNT_TABLE} for g in groups]
-        least: dict[Any, int] = {}
-        for g, n in cells.filter(pl.col("overall") == 0).select("g", "n").iter_rows():
-            least[g] = min(int(n), least.get(g, int(n)))
-        return [{**g, "table_min_cell": least[g["group"]]} if g["group"] in least else dict(g) for g in groups]
+        pooled = behaves_like_categories(
+            dict(zip(overall.get_column("v").to_list(), overall.get_column("n").to_list(), strict=True))
+        )
+        per_group: dict[Any, dict[Any, int]] = {}
+        grouped = cells.filter(pl.col("overall") == 0).with_columns(pl.col("g").cast(group_dtype, strict=False))
+        for g, v, n in grouped.select("g", "v", "n").iter_rows():
+            per_group.setdefault(g, {})[v] = int(n)
+        out = []
+        for g in groups:
+            sizes = per_group.get(g["group"])
+            if not sizes:
+                out.append(dict(g))
+            elif pooled or len(sizes) <= 2:
+                out.append({**g, "table_min_cell": min(sizes.values())})
+            else:
+                out.append({**g, "table_min_cell": NO_COUNT_TABLE})
+        return out
 
     def _share_sql(self, view: Any, column: str, value: Any, group: str | None) -> str:
         """Share of patients whose ``column`` equals ``value``, among those with it recorded.
