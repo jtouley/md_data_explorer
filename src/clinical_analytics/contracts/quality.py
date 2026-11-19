@@ -618,13 +618,14 @@ def type_results(
     return results
 
 
-def _is_id_property(prop: SchemaProperty) -> bool:
-    """The identifier column: the builder marks it critical and required (also for tiny tables,
-    where it states neither uniqueness nor a primary key)."""
+def is_id_property(prop: SchemaProperty) -> bool:
+    """The identifier column (also governed SQL's, ``sql/catalog.py``): the builder marks it
+    critical and required (also for tiny tables, where it states neither uniqueness nor a key)."""
     return bool(prop.primaryKey or prop.criticalDataElement or prop.required)
 
 
-def _is_restricted(prop: SchemaProperty) -> bool:
+def is_restricted_property(prop: SchemaProperty) -> bool:
+    """PHI or otherwise restricted (also governed SQL's rule for coarsen-only columns)."""
     return prop.classification == "restricted" or "phi" in (prop.tags or [])
 
 
@@ -643,7 +644,7 @@ def level_variant_results(lf: pl.LazyFrame, contract: OpenDataContractStandard) 
     props = {p.physicalName or p.name: p for p in contract.schema_[0].properties or []}
     # Never scanned: the ID column (marked by role, whatever its uniqueness) and restricted/PHI
     # columns, whose values the report must not echo (a clinician or ward name).
-    skipped = {column for column, p in props.items() if _is_id_property(p) or _is_restricted(p)}
+    skipped = {column for column, p in props.items() if is_id_property(p) or is_restricted_property(p)}
     text = [c for c, dtype in schema.items() if dtype == pl.String and c not in skipped and c in props]
     if not text:
         return []
