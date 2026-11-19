@@ -580,6 +580,36 @@ class TestVisitGrainUnits:
         # Assert
         assert _shown(result) == "ANSWER 23.5% of patients had died=1 (n=170 patients)."
 
+    @pytest.mark.parametrize(
+        ("missing", "expected"),
+        [
+            pytest.param(3, "ANSWER The share with died=1 is not shown because n is hidden (n hidden).", id="3"),
+            pytest.param(10, "ANSWER The share with died=1 is not shown because n is hidden (n hidden).", id="10"),
+            pytest.param(
+                11,
+                "ANSWER 25.2% of patients had died=1 (n=159 patients; 11 excluded for missing data). "
+                "Data check: died has 5.5% of its values missing.",
+                id="11",
+            ),
+        ],
+    )
+    def test_ask_shareAtVisitGrain_fewPatientsMissing_shareWithheldWithN(
+        self, make_semantic_layer: Any, missing: int, expected: str
+    ) -> None:
+        # Arrange: died missing on every visit of ``missing`` patients who did not die (P160 on;
+        # P160-P169 have one visit, P000-P029 two), so n is 170 - missing patients, 40 died
+        frame = visits_died().with_columns(
+            pl.when(pl.col("patient_id") >= f"P{170 - missing:03d}").then(None).otherwise(pl.col("died")).alias("died")
+        )
+        service = _visit_service(make_semantic_layer, frame)
+        plan = QueryPlan(intent="COUNT", proportion_column="died", proportion_value=1, confidence=0.99)
+
+        # Act
+        result = _ask(service, plan)
+
+        # Assert: counted in patients, never visit rows; withheld whenever n is hidden
+        assert _shown(result) == expected
+
     def test_ask_describeCategoricalAtVisitGrain_countsDistinctPatientsPerLevel(self, make_semantic_layer: Any) -> None:
         # Arrange: each sex is 85 patients; Male has 100 visits (the row count the old line showed)
         service = _visit_service(make_semantic_layer, visits_died())
