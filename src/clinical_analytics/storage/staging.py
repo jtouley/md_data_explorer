@@ -545,9 +545,10 @@ def _reject_case_twin_headers(df: pl.DataFrame) -> None:
 def read_csv_typed(file_bytes: bytes, separator: str = ",") -> StagedTable:
     """Read delimited text (CSV; ``separator`` for TSV/PSV) as text over the whole file, then stage.
 
-    A notes block under the data (a "---" line, as CDC WONDER writes) is split off as
-    documentation; subtotal rows (Notes = "Total") are left out and counted; source-suppressed
-    values ("Suppressed", "Unreliable") in number columns are stored as missing and reported.
+    Only in a CDC WONDER-shaped export (first header "Notes"): the notes block under the data
+    (from its "---" line) is split off as documentation; subtotal rows (Notes = "Total") are
+    left out and counted; source markers ("Suppressed", "Unreliable") in number columns are
+    stored as missing and reported, never 0. Every other file is read as before.
 
     Raises:
         StagingError: the file cannot be parsed, or a row has no ID and no values.
@@ -559,7 +560,12 @@ def read_csv_typed(file_bytes: bytes, separator: str = ",") -> StagedTable:
         raise StagingError(f"The {_delimited_kind(separator)} file could not be read: {type(e).__name__}") from e
     text = _drop_trailing_blank_rows(text)
     text, totals = _drop_export_totals(text)
-    nulled, suppressed = _null_source_suppressed(text)
+    # Source markers are read only in a CDC WONDER-shaped export (first header "Notes"). In any
+    # other file "Suppressed" or "<5" is the text it says, exactly as typed by the typing rules.
+    if is_notes_export(file_bytes, separator):
+        nulled, suppressed = _null_source_suppressed(text)
+    else:
+        nulled, suppressed = text, []
     staged = stage_text_frame(nulled)
     # Markers become missing only where the column ends up numeric (the typing rule decides,
     # not a looser test): elsewhere they are kept as the text they are.

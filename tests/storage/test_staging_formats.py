@@ -424,8 +424,9 @@ def test_readCsvTyped_notesHeaderButDataBelowDashes_neverHidesRows(make_wonder_e
 )
 def test_readCsvTyped_wonderMarkerForms_storedMissingNeverText(marker: str) -> None:
     # Arrange
-    rows = [f"P{i:02d}\t{marker if i % 4 == 0 else f'{10 + i}.5'}" for i in range(24)]
-    data = ("\n".join(["patient_id\tCrude Rate", *rows]) + "\n").encode()
+    # WONDER-shaped: first header "Notes" (markers are read only in that shape)
+    rows = [f"\tS{i:02d}\t{marker if i % 4 == 0 else f'{10 + i}.5'}" for i in range(24)]
+    data = ("\n".join(["Notes\tState\tCrude Rate", *rows]) + "\n").encode()
 
     # Act
     staged = read_csv_typed(data, separator="\t")
@@ -438,8 +439,8 @@ def test_readCsvTyped_wonderMarkerForms_storedMissingNeverText(marker: str) -> N
 
 def test_readCsvTyped_suppressedInColumnThatStaysText_markerKept() -> None:
     # Arrange: thousands separators keep the column text, so "Suppressed" must stay as written
-    rows = [f"P{i:02d}\t{'Suppressed' if i % 5 == 0 else '1,234'}" for i in range(20)]
-    data = ("\n".join(["patient_id\tDeaths", *rows]) + "\n").encode()
+    rows = [f"\tS{i:02d}\t{'Suppressed' if i % 5 == 0 else '1,234'}" for i in range(20)]
+    data = ("\n".join(["Notes\tState\tDeaths", *rows]) + "\n").encode()
 
     # Act
     staged = read_csv_typed(data, separator="\t")
@@ -448,3 +449,23 @@ def test_readCsvTyped_suppressedInColumnThatStaysText_markerKept() -> None:
     assert staged.data.schema["Deaths"] == pl.String
     assert staged.data["Deaths"].null_count() == 0
     assert not [n for n in staged.notes if n.reason == "source_suppressed"]
+
+
+@pytest.mark.parametrize("separator", [",", "\t"], ids=["csv", "tsv"])
+@pytest.mark.parametrize("marker", ["<5", "Suppressed", "Unreliable", "Total"])
+def test_readCsvTyped_patientFileWithMarker_keptAsTextExactlyAsOnMain(separator: str, marker: str) -> None:
+    # Arrange: an ordinary patient file (no "Notes" first column); a marker in a number column
+    values = [marker if i % 6 == 0 else str(100 + i) for i in range(30)]
+    rows = [separator.join([f"P{i:03d}", value, str(30 + i)]) for i, value in enumerate(values)]
+    data = (separator.join(["patient_id", "viral_load", "age"]) + "\n" + "\n".join(rows) + "\n").encode()
+
+    # Act
+    staged = read_csv_typed(data, separator=separator)
+
+    # Assert: nothing is nulled, dropped or flagged; the column is the text the file holds
+    assert staged.data.height == 30
+    assert staged.data.schema["viral_load"] == pl.String
+    assert staged.data["viral_load"].to_list() == values
+    assert not [n for n in staged.notes if n.reason == "source_suppressed"]
+    assert staged.table_notes == ()
+    assert staged.export_notes == ""
