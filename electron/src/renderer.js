@@ -1927,7 +1927,8 @@ function openDatasetLinkForm(returnFocusTo) {
       try {
         raw = await window.clinicalAPI.loadDatasetFromUrl(url, name);
         result = normalizeUploadResponse(raw);
-        if (result.status !== 'ready' || !result.upload_id) {
+        // needs_review is loaded too: the cohort is stored; the message names the failed check.
+        if (!uploadIsUsable(result)) {
           throw new Error(result.message || '');
         }
       } catch (error) {
@@ -1942,13 +1943,14 @@ function openDatasetLinkForm(returnFocusTo) {
       // Loaded. From here on nothing may read as a failure to load.
       closeDatasetLinkForm(datasetLinkArea);
       const source = normalizeSource(raw?.source);
-      const headline = uploadStatusText(
-        readyHeadline(result.dataset_name),
+      const headline = uploadResultText(
+        result,
+        result.dataset_name,
         dataCheckStatusNote(result.quality)
       );
       setDatasetStatus(
         `${headline} ${linkSourceNote(source, raw?.source_recorded !== false)}`,
-        'ok',
+        result.unit_note || result.sheet_note || result.status === 'needs_review' ? 'note' : 'ok',
         {
           showDetails: true,
         }
