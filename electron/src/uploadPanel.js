@@ -4,6 +4,7 @@
  */
 
 import { normalizeQuality } from './dataCheckPanel.js';
+import { normalizePatientRowsQuestion } from './patientRowsPanel.js';
 
 const ALLOWED_EXTENSIONS = new Set(['.csv', '.xlsx', '.xls', '.sav']);
 
@@ -15,7 +16,7 @@ const ALLOWED_EXTENSIONS = new Set(['.csv', '.xlsx', '.xls', '.sav']);
 
 /**
  * @param {Record<string, unknown>|null|undefined} raw
- * @returns {{ upload_id: string, dataset_name: string, status: string, message: string, failed_checks: string[], quality: import('./dataCheckPanel.js').DataCheck | null, sheet_note: string, unit_note: string }}
+ * @returns {{ upload_id: string, dataset_name: string, status: string, message: string, failed_checks: string[], quality: import('./dataCheckPanel.js').DataCheck | null, sheet_note: string, unit_note: string, one_row_per_patient: { confirmation: string } | null }}
  */
 export function normalizeUploadResponse(raw) {
   if (!raw || typeof raw !== 'object') {
@@ -28,6 +29,7 @@ export function normalizeUploadResponse(raw) {
       quality: null,
       sheet_note: '',
       unit_note: '',
+      one_row_per_patient: null,
     };
   }
   return {
@@ -43,6 +45,8 @@ export function normalizeUploadResponse(raw) {
     sheet_note: typeof raw.sheet_note === 'string' ? raw.sheet_note.trim() : '',
     // No column identifies a patient: answers count rows, not patients. Shown at upload.
     unit_note: typeof raw.unit_note === 'string' ? raw.unit_note.trim() : '',
+    // "Is each row one patient?" still to answer (null: not asked, or already answered yes).
+    one_row_per_patient: normalizePatientRowsQuestion(raw.one_row_per_patient),
   };
 }
 
