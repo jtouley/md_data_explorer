@@ -122,6 +122,28 @@ def test_rate_groupedPlan_presentsRatePerGroup(share_layer) -> None:
     assert shown["table"]["rows"] == [{"site": "North", "rate": 0.5, "n": 60}, {"site": "South", "rate": None, "n": 0}]
 
 
+@pytest.mark.parametrize("group_by", ["site", "sex"])
+def test_proportion_groupedPlan_presentsShareForEachGroup_neverOverall(share_layer, group_by: str) -> None:
+    """ "What share of tests were positive, by gender?" parses to a share with a grouping. The
+    grouping used to be dropped at execution: one overall share answered a by-group question."""
+    # Arrange
+    plan = QueryPlan(
+        intent="COUNT", confidence=0.95, group_by=group_by, proportion_column="statin", proportion_value="taking"
+    )
+    rate_plan = QueryPlan(intent="COUNT", confidence=0.95, group_by=group_by, rate_column="statin", rate_value="taking")
+
+    # Act
+    _execution, shown = _present(share_layer, plan)
+    _rate_execution, expected = _present(share_layer, rate_plan)
+
+    # Assert: the same per-group table the rate plan gives, never a single overall share
+    assert shown["table"]["columns"][0] == group_by
+    assert shown["table"] == expected["table"]
+    assert shown["claim"] == expected["claim"]
+    assert "None" not in shown["claim"]
+    assert len(shown["table"]["rows"]) == 2
+
+
 def test_rate_smallCellInGroup_hidesThatRate(make_semantic_layer) -> None:
     # Arrange: South has 3 events of 40; North has 30 of 60.
     frame = _FRAME.with_columns(
@@ -442,3 +464,64 @@ def test_proportion_missingTokenUnicodeWhitespace_sameNAsPolars(
 
     # Assert
     assert execution["result"].row(0, named=True)["n"] == polars_n == 60
+
+
+class TestGroupedShareIsARatePlan:
+    def test_queryPlan_shareWithGroup_becomesRatePlan(self) -> None:
+        # Arrange / Act
+        plan = QueryPlan(intent="COUNT", group_by="sex", proportion_column="statin", proportion_value="taking")
+
+        # Assert
+        assert (plan.rate_column, plan.rate_value) == ("statin", "taking")
+        assert (plan.proportion_column, plan.proportion_value) == (None, None)
+
+    def test_queryPlan_shareWithoutGroup_staysAShare(self) -> None:
+        # Arrange / Act
+        plan = QueryPlan(intent="COUNT", proportion_column="statin", proportion_value="taking")
+
+        # Assert
+        assert (plan.proportion_column, plan.rate_column) == ("statin", None)
+
+    @pytest.mark.parametrize(
+        ("rate_column", "rate_value", "refused"),
+        [
+            pytest.param("statin", "taking", False, id="same_share_twice"),
+            pytest.param("statin", "stopped", True, id="other_value"),
+            pytest.param("diabetes", "1: Yes", True, id="other_column"),
+        ],
+    )
+    def test_queryPlan_shareAndDifferentRate_refusedBeforeRunning(
+        self, share_layer, rate_column: str, rate_value: str, refused: bool
+    ) -> None:
+        # Arrange
+        plan = QueryPlan(
+            intent="COUNT",
+            confidence=0.95,
+            group_by="site",
+            proportion_column="statin",
+            proportion_value="taking",
+            rate_column=rate_column,
+            rate_value=rate_value,
+        )
+
+        # Act
+        execution, _shown = _present(share_layer, plan)
+
+        # Assert
+        if refused:
+            assert execution["success"] is False
+            assert "a share of 'statin' and a rate of" in str(execution.get("failure_reason"))
+        else:
+            assert execution["success"] is True
+            assert plan.rate_column == "statin"
+
+    def test_rate_groupedByItsOwnColumn_refused(self, share_layer) -> None:
+        # Arrange: "share with sex = F, by sex" is 100% or 0% by construction
+        plan = QueryPlan(intent="COUNT", confidence=0.95, group_by="sex", proportion_column="sex", proportion_value="F")
+
+        # Act
+        execution, _shown = _present(share_layer, plan)
+
+        # Assert
+        assert execution["success"] is False
+        assert "always 100% or 0%" in str(execution.get("failure_reason"))

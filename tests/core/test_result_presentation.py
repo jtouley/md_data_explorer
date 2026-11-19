@@ -87,6 +87,7 @@ class TestPresentAnalysisClaims:
                         {"variable": "age", "odds_ratio": 1.05, "ci_lower": 1.02, "ci_upper": 1.08, "p_value": 0.001}
                     ],
                     "term_sizes": {"age": None},
+                    "cell_sizes": {"age": None},
                 },
                 "age had the strongest evidence of association with outcome (OR 1.05; 95% CI 1.02 to 1.08; p=0.001). "
                 "Logistic regression of outcome on age; unadjusted.",
@@ -98,6 +99,7 @@ class TestPresentAnalysisClaims:
                     "summary": {"hdl": {"Odds Ratio": 1.0, "CI Lower": 0.9, "CI Upper": 1.1, "P-Value": 0.8}},
                     "significant_predictors": [],
                     "term_sizes": {"hdl": None},
+                    "cell_sizes": {"hdl": None},
                 },
                 "No predictor reached p<0.05 for outcome. Logistic regression of outcome on hdl; unadjusted.",
             ),
@@ -223,6 +225,7 @@ class TestPresentAnalysisTables:
             },
             "significant_predictors": [],
             "term_sizes": {"age": None},
+            "cell_sizes": {"age": None},
         }
 
         # Act
@@ -248,6 +251,7 @@ class TestPresentAnalysisTables:
                 }
             ],
             "term_sizes": {"treatment_placebo[T.True]": 40},
+            "cell_sizes": {"treatment_placebo[T.True]": 40},
         }
 
         # Act
@@ -581,6 +585,7 @@ def _predictor(cells: tuple[int, ...]) -> dict[str, Any]:
         "summary": {"hdl": {"Odds Ratio": 1.0, "CI Lower": 0.9, "CI Upper": 1.1, "P-Value": 0.8}},
         "significant_predictors": [],
         "term_sizes": {"hdl": None},
+        "cell_sizes": {"hdl": None},
         "n_used": n_used,
         "n_excluded": excluded,
     }
