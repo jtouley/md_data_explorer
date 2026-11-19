@@ -728,7 +728,9 @@ class QueryService:
                             # Declared public estimates are shown as published (ADR014 section 7): the
                             # log neither withholds nor records them (ADR013 section 12).
                             log = PUBLISHED_ESTIMATES_LOG if estimates_declared else self.shown_log
-                            verdict = self._admit_shown(prepared, query_plan, context, analysis, presentation, shown, log)
+                            verdict = self._admit_shown(
+                                prepared, query_plan, context, analysis, presentation, shown, log
+                            )
                             if verdict.shown:
                                 claim = presentation.get("claim")
                             else:
