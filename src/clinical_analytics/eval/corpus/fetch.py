@@ -2,6 +2,9 @@
 """Fetch a public corpus dataset into a cache outside the repo and package its upload ZIP.
 
 Every file is checked against the sha256 pinned in ``corpus.yaml``; a mismatch stops the run.
+A synthetic file (``synthetic:`` instead of ``url:``) is generated locally by the seeded
+``eval.corpus.synthetic_hospital`` and checked against its pin the same way, so a change to the
+generator cannot slip past the oracles unreviewed.
 A file already in the cache, or in a ``--seed`` directory (a corpus snapshot), is reused when
 its checksum matches, so nothing is downloaded twice. A documentation file taken from a live
 web page (``extract_section``) is stored and checked as the plain text of that one section, not
@@ -29,7 +32,9 @@ from typing import Literal
 
 import structlog
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
+from clinical_analytics.eval.corpus.synthetic_hospital import Extract, Part, SyntheticDataError, generate
 
 logger = structlog.get_logger()
 
@@ -57,14 +62,38 @@ class CorpusConfigError(CorpusFetchError):
     """corpus.yaml is missing, not YAML, or does not match the schema."""
 
 
+class SyntheticSource(BaseModel):
+    """A file made by ``synthetic_hospital.generate(extract, part, seed)``, never downloaded."""
+
+    model_config = ConfigDict(extra="forbid")
+    extract: Extract
+    part: Part
+    seed: int
+
+
 class CorpusFile(BaseModel):
     model_config = ConfigDict(extra="allow")
     path: str
-    url: str
+    # Exactly one of url (a public file) and synthetic (generated here).
+    url: str | None = None
+    synthetic: SyntheticSource | None = None
     kind: str
     sha256: str
     # The id of an HTML <h2> section: the file is that section's plain text, and sha256 pins it.
     extract_section: str | None = None
+
+    @model_validator(mode="after")
+    def _one_source(self) -> CorpusFile:
+        if (self.url is None) == (self.synthetic is None):
+            raise ValueError(f"{self.path}: give exactly one of url and synthetic")
+        return self
+
+    @property
+    def source(self) -> str:
+        """Where the bytes come from, for messages."""
+        if self.synthetic is not None:
+            return f"synthetic {self.synthetic.extract}/{self.synthetic.part} (seed {self.synthetic.seed})"
+        return str(self.url)
 
 
 class PackageEntry(BaseModel):
@@ -182,12 +211,23 @@ def fetch_file(
             shutil.copyfile(candidate, dest)
             log.info("corpus_file_seeded", seed=str(seed))
             return dest
-    body = download(item.url)
-    if item.extract_section is not None:
-        body = html_section_text(body, item.extract_section, item.url).encode("utf-8")
+    if item.synthetic is not None:
+        try:
+            body = generate(item.synthetic.extract, item.synthetic.part, item.synthetic.seed)
+        except SyntheticDataError as error:
+            raise CorpusFetchError(f"{item.path}: {error}") from error
+    else:
+        if item.url is None:  # unreachable after _one_source; keeps the type exact
+            raise CorpusConfigError(f"{item.path} has neither url nor synthetic")
+        body = download(item.url)
+        if item.extract_section is not None:
+            body = html_section_text(body, item.extract_section, item.url).encode("utf-8")
     actual = hashlib.sha256(body).hexdigest()
     if actual != item.sha256:
-        raise ChecksumMismatchError(f"{item.url} returned sha256 {actual}, expected {item.sha256}")
+        hint = (
+            " If the generator changed on purpose, review the oracles, then update the pin." if item.synthetic else ""
+        )
+        raise ChecksumMismatchError(f"{item.source} gave sha256 {actual}, expected {item.sha256}.{hint}")
     partial = dest.with_name(dest.name + ".part")
     partial.write_bytes(body)
     partial.replace(dest)

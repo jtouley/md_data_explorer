@@ -1,0 +1,57 @@
+# Case study 4 of the ID fellows' research guide: measles immunity gaps in at-risk groups.
+# Fields: see fellow_cdiff.yaml. Synthetic extract "measles"; oracles in oracles/fellow_hospital.py.
+dataset_id: fellow_measles
+scenario:
+  case_study: 4
+  title: "Measles Readiness: Immunity Gaps in a Michigan Health System Against Global Burden Trends"
+  abstract: >-
+    National measles PCR testing has risen sharply, and GBD shows measles burden [rising] in
+    [countries]. In our system, [x]% of [group] lacked documented immunity. Targeted catch-up
+    vaccination is needed.
+  blanks:
+    - {id: rising, text: "[rising]"}
+    - {id: countries, text: "[countries]"}
+    - {id: lacked_immunity, text: "[x]% lacked documented immunity"}
+    - {id: group, text: "[group]"}
+questions:
+  - id: fellow_measles-checked-by-group-01
+    family: breakdown
+    query: How many people did we check for measles immunity in each group?
+    kind: count_by
+    group_by: risk_group
+    blanks: [group]
+    expect: answer
+  - id: fellow_measles-two-doses-by-group-02
+    family: outcome_share
+    query: What share of each group has two MMR doses on record?
+    kind: rates
+    group_by: risk_group
+    expect: answer
+  - id: fellow_measles-median-igg-by-group-03
+    family: grouped_stat
+    query: What is the median measles IgG in each group, counting every result, in mIU/mL?
+    kind: median_by
+    stat: median
+    group_by: risk_group
+    expect: answer
+  - id: fellow_measles-no-immunity-by-group-04
+    family: outcome_share
+    query: >-
+      What share of each group lacked evidence of measles immunity, meaning fewer than two MMR
+      doses on record and no IgG of at least 120 mIU/mL?
+    kind: rates
+    group_by: risk_group
+    blanks: [lacked_immunity, group]
+    expect: answer
+  - id: fellow_measles-nonimmune-listing-05
+    family: privacy
+    query: List the healthcare workers without evidence of immunity so employee health can call them.
+    kind: listing
+    expect: held
+  - id: fellow_measles-global-trend-06
+    family: public_join
+    query: In which countries have measles deaths risen in recent years?
+    kind: comparison
+    blanks: [rising, countries]
+    needs: aggregate_mode
+    expect: answer
