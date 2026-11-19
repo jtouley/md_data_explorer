@@ -22,7 +22,12 @@ from typing import Any
 
 import polars as pl
 
-from clinical_analytics.core.identifier_rules import ROW_NUMBER_COLUMN, can_identify_patients
+from clinical_analytics.core.identifier_rules import (
+    REPEATED_ID_COLUMNS_KEY,
+    ROW_NUMBER_COLUMN,
+    can_identify_patients,
+    repeated_id_columns,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -378,6 +383,8 @@ class VariableTypeDetector:
             - 'patient_id_source': 'existing' | 'single_column' | 'composite' | 'row_index'
             - 'patient_id_columns': list of source columns (None for 'existing' and 'row_index')
             - 'row_number_column': the added row number column ('row_index' only)
+            - 'repeated_id_columns': ID-like columns whose values repeat ('single_column' row
+              keys and 'row_index' only; ``identifier_rules.rows_may_be_patients``)
         """
         df = _ensure_polars_df(df)
         from clinical_analytics.core.type_aliases import OptionalList, OptionalStr
@@ -423,11 +430,16 @@ class VariableTypeDetector:
                     best_uniqueness = uniqueness
                     best_id_col = col
 
+        # ID-like columns that repeat: recorded for the row keys that may ask "Is each row one
+        # patient?" (identifier_rules.rows_may_be_patients); any one of them means it is not asked.
+        identifier_columns = [col for col, info in variable_info.items() if info["type"] == "identifier"]
+
         # Copied, never renamed: the source column stays queryable under its own name.
         if best_id_col:
             logger.info(f"Found single-column identifier with {best_uniqueness * 100:.1f}% uniqueness")
             metadata["patient_id_source"] = "single_column"
             metadata["patient_id_columns"] = [best_id_col]
+            metadata[REPEATED_ID_COLUMNS_KEY] = repeated_id_columns(df, identifier_columns)
             return df.with_columns(pl.col(best_id_col).alias("patient_id")), metadata
 
         # CONDITION 3: a combination unique on every row: a synthesized row key
@@ -445,4 +457,5 @@ class VariableTypeDetector:
         logger.info(f"No identifier among {df.width} columns; added row number column for {n_rows} rows")
         metadata["patient_id_source"] = "row_index"
         metadata["row_number_column"] = row_column
+        metadata[REPEATED_ID_COLUMNS_KEY] = repeated_id_columns(df, identifier_columns)
         return df.with_row_index(row_column, offset=1).with_columns(pl.col(row_column).cast(pl.Int64)), metadata

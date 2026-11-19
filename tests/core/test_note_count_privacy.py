@@ -20,9 +20,12 @@ import pytest
 
 from clinical_analytics.analysis.compute import _value_min_cell
 from clinical_analytics.analysis.grouping import NO_COUNT_TABLE
+from clinical_analytics.contracts.declarations import GrainDeclaration, MemoryDeclarationStore
 from clinical_analytics.contracts.quality import QualityCheckResult
 from clinical_analytics.core.answer_checks import Grain, _report_note, missing_key_note
+from clinical_analytics.core.identifier_rules import PATIENT_ROWS_ASKABLE_CONFIG_FLAG
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
+from clinical_analytics.core.query_service import QueryService
 from clinical_analytics.core.result_presentation import (
     AMOUNT,
     SECONDARY_SUPPRESSED,
@@ -34,6 +37,16 @@ from clinical_analytics.core.result_presentation import (
 from tests.core.test_answer_data_checks import _ask, _service, _shown
 
 IDS = [f"P{i:03d}" for i in range(200)]
+
+
+def _ask_version(service: QueryService, plan: QueryPlan, version: str) -> Any:
+    """``_ask`` with a dataset version, so a stored declaration for that version applies."""
+    original = service.ask
+    service.ask = lambda q, **kw: original(q, **{**kw, "dataset_version": version})  # type: ignore[method-assign]
+    try:
+        return _ask(service, plan)
+    finally:
+        service.ask = original  # type: ignore[method-assign]
 
 
 def _count_answer(total: int, notes: list[Any]) -> dict[str, Any]:
@@ -678,3 +691,31 @@ class TestNoteSourcesAfterReview:
         assert [g.get("table_min_cell") for g in result.analysis["groups"]] == [20, 20]
         values = [row["mean died"] for row in present_analysis(result.analysis)["table"]["rows"]]
         assert values == [0.2, 0.2]
+
+
+class TestConfirmedPatientRowsNotes:
+    def test_ask_confirmedOneRowPerPatient_notesStayCountedUnitPatients(self, make_semantic_layer: Any) -> None:
+        # Arrange: no patient-ID column (a unique record code); the user confirmed one row per
+        # patient for this version (#145); ward is missing on 30 of 200 rows
+        frame = pl.DataFrame(
+            {
+                "record_code": [f"R{i:04d}" for i in range(200)],
+                "ward": [None] * 30 + [("A", "B", "C", "D")[i % 4] for i in range(170)],
+            }
+        )
+        layer = make_semantic_layer(data=frame, config_overrides={PATIENT_ROWS_ASKABLE_CONFIG_FLAG: True})
+        store = MemoryDeclarationStore()
+        declared = GrainDeclaration(grain="patient", key=None, rows=200, patients=200, dataset_version="v1")
+        store.update("probe", lambda d: d.with_grain(declared))
+        service = QueryService(layer, declarations=store)
+        plan = QueryPlan(intent="COUNT", group_by="ward", confidence=0.99)
+
+        # Act
+        result = _ask_version(service, plan, "v1")
+
+        # Assert: counted in patients; every note that carries a count is a counted note
+        assert result.analysis["unit"] == "patients"
+        notes = result.analysis["data_notes"]
+        assert notes and all(isinstance(n, dict) and n.get("counted") is not False for n in notes)
+        assert [(n["count"], n["total"], n["form"]) for n in notes] == [(30, 200, "percent")]
+        assert str(result.claim).endswith("Data check: ward has 15.0% of its values missing.")
