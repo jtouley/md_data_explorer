@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from types import TracebackType
 
 import duckdb
@@ -40,6 +41,8 @@ UNREADABLE = (
     "This dataset's stored data can't be read as its data contract describes it. "
     "Upload it again, or open its quality report to refresh the contract."
 )
+# The clock the deadline is read from; tests swap it to step time without sleeping.
+_clock: Callable[[], float] = time.monotonic
 _SLOTS = threading.BoundedSemaphore(nl_query_config.SQL_SANDBOX_SLOTS)
 
 
@@ -90,7 +93,7 @@ class SandboxConnection:
         finally:
             if not opened:  # whatever stopped it (a refusal, an interrupt): the slot is freed
                 self._release()
-        self._deadline = time.monotonic() + timeout_s
+        self._deadline = _clock() + timeout_s
 
     @staticmethod
     def _open(catalog: SqlCatalog) -> duckdb.DuckDBPyConnection:
@@ -147,7 +150,7 @@ class SandboxConnection:
         statements = duckdb.extract_statements(sql)
         if len(statements) != 1 or statements[0].type != duckdb.StatementType.SELECT:
             raise SqlRefusedError("Only SELECT queries can run: the data is read-only.")
-        remaining = self._deadline - time.monotonic()
+        remaining = self._deadline - _clock()
         if remaining <= 0:
             raise SqlRefusedError(TIMED_OUT)
         timer = threading.Timer(remaining, self._con.interrupt)

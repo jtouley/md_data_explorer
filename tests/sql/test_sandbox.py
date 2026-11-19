@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
@@ -11,6 +12,7 @@ import pytest
 from open_data_contract_standard.model import OpenDataContractStandard
 
 from clinical_analytics.contracts.config import UNIFIED_OBJECT_NAME
+from clinical_analytics.sql import sandbox as sql_sandbox
 from clinical_analytics.sql.catalog import ColumnSpec, SqlCatalog
 from clinical_analytics.sql.errors import SqlRefusedError
 from clinical_analytics.sql.sandbox import (
@@ -104,14 +106,31 @@ def test_sandbox_slowQuery_interruptedAtTimeout(catalog: SqlCatalog) -> None:
         sandbox.run_unsuppressed(sql)
 
 
-def test_sandbox_manyStatements_shareOneDeadline(catalog: SqlCatalog) -> None:
-    # Arrange: each statement finishes well inside the limit, but together they pass it
-    sandbox = SandboxConnection(catalog, timeout_s=0.3)
+def test_sandbox_manyStatements_shareOneDeadline(catalog: SqlCatalog, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Arrange: a 10 s limit on a clock the test steps; each statement starts 4 s after the last,
+    # well inside the limit on its own, and every interrupt timer armed is recorded
+    now = [0.0]
+    monkeypatch.setattr(sql_sandbox, "_clock", lambda: now[0])
+    armed: list[float] = []
+    real_timer = sql_sandbox.threading.Timer
 
-    # Act / Assert: the slot is held for the limit at most, not the limit per statement
-    with sandbox, pytest.raises(SqlRefusedError, match=TIMED_OUT):
-        for _ in range(100):
-            sandbox.run_unsuppressed("SELECT count(*) AS n FROM range(20000000)")
+    def recording_timer(interval: float, function: Callable[[], object]) -> threading.Timer:
+        armed.append(interval)
+        return real_timer(interval, function)
+
+    monkeypatch.setattr(sql_sandbox.threading, "Timer", recording_timer)
+    sandbox = SandboxConnection(catalog, timeout_s=10.0)
+
+    # Act / Assert: statements at 4 s and 8 s run, armed with what is left of the one deadline;
+    # at 10 s it has passed, so the third is refused before it runs (the slot is held 10 s at most)
+    with sandbox:
+        for started_at in (4.0, 8.0):
+            now[0] = started_at
+            assert sandbox.run_unsuppressed("SELECT count(*) AS n FROM unified").item() == 300
+        now[0] = 10.0
+        with pytest.raises(SqlRefusedError, match=TIMED_OUT):
+            sandbox.run_unsuppressed("SELECT count(*) AS n FROM unified")
+    assert armed == [6.0, 2.0]
 
 
 @pytest.mark.parametrize("timeout_s", [0, -1.0, float("nan")])
