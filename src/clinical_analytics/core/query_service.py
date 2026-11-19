@@ -34,6 +34,7 @@ from clinical_analytics.core import answer_checks, estimates
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.core.conversation_manager import ConversationManager
 from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line, plan_fingerprint
+from clinical_analytics.core.identifier_rules import ROW_KEY_CONFIG_FLAG
 from clinical_analytics.core.log_redaction import error_fields
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD, MODEL_STEP_FAILED_REASON
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
@@ -727,22 +728,41 @@ class QueryService:
             return None  # a stand-in layer with no data to detect on
         rows = self._row_count()
         view = self.semantic_layer.get_base_view()
-        # Columns the app adds to the view for patient cohorts (survival time zero, outcome label)
-        # are never part of an estimate table.
-        skip = [c for c in estimates.APP_ADDED_COLUMNS if c in view.columns]
-        table = estimates.detect_estimate_table(view, rows, skip) if rows else None
-        if table is not None:
-            # A table keyed by its own patient ID is patient data (visits, repeated measures),
-            # whatever its column names say: never an estimate table.
-            patient_key = answer_checks.grain_of(self.semantic_layer).key
-            if patient_key is not None and table.dimension(patient_key) is not None:
-                logger.info("estimate_table_patient_keyed", dimensions=len(table.dimensions))
-                table = None
+        # A dataset with a real patient key (named or detected as one, not synthesized at upload)
+        # is patient data, whatever else its columns say: never an estimate table.
+        if answer_checks.patient_key(self.semantic_layer) is not None:
+            table = None
+        else:
+            # Columns the app adds (survival time zero, outcome label, a synthesized row key) are
+            # never part of an estimate table.
+            layer_config = getattr(self.semantic_layer, "config", None) or {}
+            added = list(estimates.APP_ADDED_COLUMNS)
+            if layer_config.get(ROW_KEY_CONFIG_FLAG):
+                added.append("patient_id")
+            skip = [c for c in added if c in view.columns]
+            table = estimates.detect_estimate_table(view, rows, skip) if rows else None
         if hasattr(self.semantic_layer, "estimate_table_cache"):
             self.semantic_layer.estimate_table_cache = (generation, table)
         else:
             logger.debug("estimate_table_not_cached", reason="layer has no cache slot")
         return table
+
+    def _withheld(self, table: estimates.EstimateTable) -> set[tuple[Any, ...]]:
+        """Keys of the rows never shown in any answer (``estimates.withheld_mask``), computed over
+        the whole table once per layer state: a count of 1-10 in the row, or in a part of a total."""
+        generation = self._state_generation()
+        cached = getattr(self, "_withheld_cache", None)
+        if isinstance(cached, tuple) and cached[0] == generation and cached[1] is table:
+            keys: set[tuple[Any, ...]] = cached[2]
+            return keys
+        view = self.semantic_layer.get_base_view()
+        needed = [d.name for d in table.dimensions] + list(table.metric_levels)
+        for value in table.values:
+            needed += [c for c in (value.name, value.suppressed) if c]
+        frame = view.select(*[c for c in dict.fromkeys(needed) if c in view.columns]).to_polars()
+        keys = estimates.withheld_keys(frame, table)
+        self._withheld_cache = (generation, table, keys)
+        return keys
 
     def _finish_estimates(
         self,
@@ -819,7 +839,7 @@ class QueryService:
                 return refused(check.refusal or check.hold or "")
         lowest = estimates.lowest_first(prepared.normalized_query)
         try:
-            rows = estimates.estimate_rows(view, check, table, lowest_first=lowest)
+            rows = estimates.estimate_rows(view, check, table, lowest_first=lowest, withheld=self._withheld(table))
         except estimates.EstimateGrainError as e:
             logger.error("estimate_rows_not_unique", group_dims=list(check.group_dims))
             return refused(str(e))

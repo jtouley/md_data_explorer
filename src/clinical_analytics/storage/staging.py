@@ -483,6 +483,10 @@ def _years_to_rows(df: pl.DataFrame) -> pl.DataFrame:
     if len(by_year) < MIN_YEAR_COLUMNS:
         return df
     ids = [c for c in df.columns if c not in by_year]
+    if {"year", "measure", "value"} & set(ids):
+        # The unpivot would add a column the file already has: leave the years as columns.
+        logger.info("staging_years_unpivot_skipped", reason="name_taken", year_columns=len(by_year))
+        return df
     stems = sorted({stem for stem, _year in by_year.values()})
     value = stems[0] if len(stems) == 1 and stems[0] else "value"
     long = df.unpivot(on=list(by_year), index=ids, variable_name="__column", value_name=value)
@@ -590,12 +594,18 @@ def split_source_flags(df: pl.DataFrame) -> pl.DataFrame:
         if masks is None:
             continue
         suppressed, unreliable, not_applicable = masks
+        flag_names = [f"{col}{suffix}" for suffix in (SUPPRESSED_FLAG_SUFFIX, UNRELIABLE_FLAG_SUFFIX)]
+        if any(name in df.columns for name in flag_names):
+            # A flag column of that name exists already: splitting would lose which cells were
+            # suppressed, so the column stays text (fail closed: no number is read from it).
+            logger.info("staging_source_flags_skipped", column_index=df.columns.index(col), reason="name_taken")
+            continue
         value = cleaned.str.replace(SOURCE_UNRELIABLE_PATTERN, "").str.strip_chars()
         value = value.set(suppressed | not_applicable, None)
         added.append(pl.lit(value).alias(col))
         for suffix, mask in ((SUPPRESSED_FLAG_SUFFIX, suppressed), (UNRELIABLE_FLAG_SUFFIX, unreliable)):
             name = f"{col}{suffix}"
-            if bool(mask.any()) and name not in df.columns:
+            if bool(mask.any()):
                 added.append(pl.lit(pl.Series(name, mask.cast(pl.String).str.to_lowercase())).alias(name))
                 order.append(name)
         logger.info(

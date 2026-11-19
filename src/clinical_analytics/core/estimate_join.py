@@ -73,7 +73,9 @@ _KEYS: Final = ("state", "year", "sex", "age")
 _STATE_NAME: Final = "state"
 _STATE_FIPS: Final = "state_fips"
 # Per table on each harmonized row: value, lower, upper, suppressed at source, unreliable, a count.
-_VALUE_COLUMNS: Final = ("_v", "_lo", "_hi", "_sup", "_unr", "_cnt")
+# Reasons a cell is never shown (a value with a bad interval is shown, without the interval).
+_HIDDEN: Final = ("source", "small", "withheld")
+_VALUE_COLUMNS: Final = ("_v", "_lo", "_hi", "_sup", "_unr", "_cnt", "_wh")
 
 
 class JoinRefusedError(Exception):
@@ -90,6 +92,7 @@ class SourceInput:
     table: EstimateTable | None
     declared: bool
     saved_choices: Mapping[str, Any] = field(default_factory=dict)
+    version: str | None = None  # the dataset version read: choices confirmed on it are saved to it
 
 
 @dataclass(frozen=True)
@@ -203,11 +206,8 @@ def read_question(question: str) -> Asked:
         if re.search(pattern, text, re.IGNORECASE)
     ]
     by_sex = _has(text, r"\bby (sex|gender)\b") or len(sexes) > 1
-    standardization: Literal["age-standardized", "crude"] | None = None
-    if _has(text, r"\bage[- ]?(standardi[sz]ed|adjusted)\b"):
-        standardization = "age-standardized"
-    elif _has(text, r"\b(crude|all ages)\b"):
-        standardization = "crude"
+    found = {std for _, std in _standardization_phrases(text)}
+    standardization: Literal["age-standardized", "crude"] | None = found.pop() if len(found) == 1 else None
     return Asked(
         text=text,
         words=words,
@@ -225,6 +225,43 @@ def read_question(question: str) -> Asked:
         standardization=standardization,
         lowest_first=estimates.lowest_first(text),
     )
+
+
+_STANDARDIZATION_PHRASE: Final = re.compile(
+    r"\b(?P<std>age[- ]?(?:standardi[sz]ed|adjusted))\b|\b(?P<crude>crude|all ages)\b", re.IGNORECASE
+)
+
+
+def _standardization_phrases(text: str) -> list[tuple[int, Literal["age-standardized", "crude"]]]:
+    return [
+        (m.start(), "age-standardized" if m.group("std") else "crude") for m in _STANDARDIZATION_PHRASE.finditer(text)
+    ]
+
+
+def standardization_by_source(
+    sources: Sequence[SourceInput], text: str
+) -> dict[str, Literal["age-standardized", "crude"] | None]:
+    """Which standardization the question asks of each table. "WONDER crude ... GBD
+    age-standardized" gives WONDER crude and GBD age-standardized: each phrase belongs to the table
+    named just before it (or, before any table is named, to the first one named after it). One kind
+    of phrase, or tables the question doesn't name, share it. A named table with no phrase of its
+    own gets none, so its age choice is held or refused, never borrowed from another table."""
+    phrases = _standardization_phrases(text)
+    kinds = {std for _, std in phrases}
+    mentions = sorted(
+        (m.start(), s.dataset_id)
+        for s in sources
+        for m in re.finditer(rf"(?<![\w]){re.escape(s.name)}(?![\w])", text, re.IGNORECASE)
+    )
+    if len(kinds) <= 1 or len(sources) < 2 or not mentions:
+        shared = next(iter(kinds)) if len(kinds) == 1 else None
+        return {s.dataset_id: shared for s in sources}
+    chosen: dict[str, Literal["age-standardized", "crude"] | None] = {s.dataset_id: None for s in sources}
+    for position, std in phrases:
+        before = [dataset_id for start, dataset_id in mentions if start <= position]
+        owner = before[-1] if before else mentions[0][1]
+        chosen[owner] = chosen[owner] or std
+    return chosen
 
 
 # ---------------------------------------------------------------------------- roles
@@ -275,19 +312,23 @@ def measure_of(source: SourceInput, value: ValueColumn, pinned: Mapping[str, Any
     """What kind of number the pinned value is: rate, count, percent; standardized or crude."""
     table = source.table
     assert table is not None  # noqa: S101 - callers refused undetected tables
-    kind: estimates.ValueKind | Literal["percent"] = value.kind
     pinned_text = {_norm(str(v)) for v in pinned.values()}
-    metric_levels = {
-        _norm(str(level)) for column, level in pinned.items() if config.ESTIMATE_METRIC_DIMENSION.search(_norm(column))
+    metric_levels = {_norm(str(level)) for column, level in pinned.items() if estimates.is_metric_column(column)}
+    # Fail closed, as on the chat path: a metric level that says count makes it a count; otherwise
+    # it is a rate (or a percent) only when its column name or a metric level positively says so.
+    level_kinds = {
+        estimates.metric_level_kind(level) for column, level in pinned.items() if estimates.is_metric_column(column)
     }
-    if metric_levels & config.ESTIMATE_COUNT_LEVELS or any(
-        pinned.get(dim) in levels for dim, levels in table.count_levels.items()
-    ):
+    kind: estimates.ValueKind | Literal["percent"]
+    if "count" in level_kinds:
         kind = "count"
-    elif metric_levels & {"percent", "percentage", "proportion"} or _has(value.name, r"(pct|percent|%|proportion)"):
-        kind = "percent"
-    elif metric_levels & {"rate"} or any("rate" in level or "prevalence" in level for level in metric_levels):
-        kind = "rate"
+    elif "rate" in level_kinds or value.kind == "rate":
+        percent = any(("percent" in t or "proportion" in t) for t in metric_levels) or _has(
+            value.name, r"(pct|percent|%|proportion)"
+        )
+        kind = "percent" if percent else "rate"
+    else:
+        kind = "count"
     name = _norm(value.name)
     chosen = source.saved_choices.get(STANDARDIZATION_CHOICE)
     standardization: Standardization = "unknown"
@@ -525,7 +566,9 @@ def _choose_value(
     if len(by_kind) == 1:
         return by_kind[0], None
     names = tuple(v.name for v in table.values)
-    default = next((v.name for v in table.values if v.lower and v.upper), names[0])
+    # The default offered is of the kind the question asks for (a rate when it says "rate").
+    fitting = by_kind or [v for v in table.values if v.lower and v.upper] or list(table.values)
+    default = fitting[0].name
     return None, HoldOption(source.dataset_id, source.name, VALUE_CHOICE, default, names)
 
 
@@ -533,10 +576,17 @@ def _choose_value(
 
 
 def _state_map(levels: Sequence[Any]) -> tuple[pl.DataFrame, dict[str, list[Any]]]:
-    """level -> (state_fips, state) for the levels that are states; the others by kind."""
+    """level -> (state_fips, state) for the levels that are states; the others by kind.
+
+    In a table that also lists countries (two or more levels that are neither states nor parts of
+    one), a state name that is also a country's ("Georgia") is ambiguous and left out, named."""
     rows: list[dict[str, Any]] = []
     others: dict[str, list[Any]] = {}
+    foreign = sum(geography.classify(level, codes=True).kind == "unknown" for level in levels)
     for level in levels:
+        if foreign >= 2 and str(level).strip().casefold() in geography.COUNTRY_NAMESAKES:
+            others.setdefault("ambiguous", []).append(level)
+            continue
         place = geography.classify(level, codes=True)  # the state role is already established
         if place.kind == "state" and place.state is not None:
             rows.append({"__level": str(level), _STATE_FIPS: place.state.fips, _STATE_NAME: place.state.name})
@@ -550,13 +600,11 @@ def _state_map(levels: Sequence[Any]) -> tuple[pl.DataFrame, dict[str, list[Any]
 
 
 def _count_expr(source: SourceInput, value: ValueColumn) -> pl.Expr:
-    """True on rows whose value is a count: a count column, or a row whose metric level is a
-    count (GBD "Number"), checked per row as the single-table path does."""
+    """True on rows whose value is a count, fail closed (``estimates.count_row_expr``)."""
     table = source.table
-    if value.kind == "count" or table is None:
-        return pl.lit(value.kind == "count")
-    checks = [pl.col(dim).is_in(list(levels)) for dim, levels in table.count_levels.items()]
-    return pl.any_horizontal(checks).fill_null(False) if checks else pl.lit(False)
+    if table is None:
+        return pl.lit(True)
+    return estimates.count_row_expr(value, table)
 
 
 def _harmonize(
@@ -568,7 +616,11 @@ def _harmonize(
         JoinRefusedError: a role the question needs can't be applied to this table.
     """
     notes: list[str] = []
-    lazy = source.frame.lazy()
+    table = source.table
+    assert table is not None  # noqa: S101 - callers refused undetected tables
+    # Withheld over the whole table, before any filter: a row with a small count anywhere in it, or
+    # a total with a withheld part, is never shown (estimates.withheld_mask).
+    lazy = source.frame.with_columns(estimates.withheld_mask(source.frame, table).alias("__withheld")).lazy()
     for column, level in pins.pinned.items():
         lazy = lazy.filter(pl.col(column) == level)
     for column, levels in pins.kept.items():
@@ -585,6 +637,8 @@ def _harmonize(
             .join(mapping.lazy(), on="__level", how="left")
             .drop("__level")
         )
+        for level in others.get("ambiguous", []):
+            notes.append(config.ESTIMATE_JOIN_AMBIGUOUS_PLACE.format(source=source.name, level=level))
         substate = others.get("substate", []) + others.get("unknown", [])
         if substate:
             notes.append(
@@ -637,6 +691,7 @@ def _harmonize(
         (pl.col(value.suppressed).fill_null(False) if value.suppressed else pl.lit(False)).alias("_sup"),
         (pl.col(value.unreliable).fill_null(False) if value.unreliable else pl.lit(False)).alias("_unr"),
         _count_expr(source, value).alias("_cnt"),
+        pl.col("__withheld").alias("_wh"),
     ]
     frame = lazy.with_columns(exprs).select([*keys, *_VALUE_COLUMNS]).collect()
     count = count or bool(frame.get_column("_cnt").any())
@@ -739,7 +794,7 @@ def _resolve_roles(source: SourceInput, pins: _Pins, asked: Asked, choices: Mapp
                 )
         elif season:
             pins.refusals.append(config.ESTIMATE_JOIN_SEASON_TREND.format(source=source.name, column=year_col))
-        elif not asked.years and asked.analysis in ("table", "rank", "disagree", "precision"):
+        elif not asked.years and not asked.trend and asked.analysis in ("table", "rank", "disagree", "precision"):
             pins.refusals.append(
                 config.ESTIMATE_JOIN_NAME_YEAR.format(source=source.name, first=min(available), last=max(available))
             )
@@ -842,8 +897,12 @@ def prepare(
     refusals: list[str] = []
     pinned_all: list[tuple[SourceInput, _Pins, ValueColumn]] = []
     sources_used = list(sources)
+    by_source = standardization_by_source(sources, asked.text)
+    asked_for = {s.dataset_id: dataclasses.replace(asked, standardization=by_source[s.dataset_id]) for s in sources}
+    question_asked = asked
     for index, source in enumerate(sources):
         own = choices.get(source.dataset_id, {})
+        asked = asked_for[source.dataset_id]
         # A choice made now is read like one saved earlier (the request's wins).
         source = dataclasses.replace(source, saved_choices={**source.saved_choices, **own})
         sources_used[index] = source
@@ -882,7 +941,7 @@ def prepare(
                 options=[option],
             )
         try:
-            frame, keys, notes = _harmonize(source, value, pins, asked, measure.kind == "count")
+            frame, keys, notes = _harmonize(source, value, pins, asked_for[source.dataset_id], measure.kind == "count")
         except JoinRefusedError as e:
             return asked, _refused(str(e))
         duplicated = frame.group_by(keys).len().filter(pl.col("len") > 1).height if keys else int(frame.height > 1)
@@ -910,8 +969,8 @@ def prepare(
             Prepared(source, value, measure, frame, keys, list(pins.groups), dict(pins.pinned), method, notes)
         )
     if all(p.frame.height == 0 for p in prepared):
-        return asked, _refused(config.ESTIMATE_NO_ROWS)
-    return asked, prepared
+        return question_asked, _refused(config.ESTIMATE_NO_ROWS)
+    return question_asked, prepared
 
 
 def _constant_attributes(source: SourceInput) -> dict[str, Any]:
@@ -1018,6 +1077,8 @@ def _cell(
         return None, None, None, "source"
     if (measure.kind == "count" or row[f"_cnt{index}"]) and estimates.small_count(value):
         return None, None, None, "small"
+    if row[f"_wh{index}"]:
+        return None, None, None, "withheld"
     if value is not None and lower is not None and upper is not None and not lower <= value <= upper:
         return value, None, None, "interval"
     return value, lower, upper, None
@@ -1029,7 +1090,7 @@ def _label(row: Mapping[str, Any], keys: Sequence[str]) -> str:
 
 
 def _value_text(value: float | None, lower: float | None, upper: float | None, hidden: str | None) -> str:
-    if hidden in ("source", "small"):
+    if hidden in _HIDDEN:
         return SECONDARY_SUPPRESSED
     return _fmt(value) + estimates._interval(lower, upper)
 
@@ -1040,6 +1101,8 @@ def _hidden_notes(counts: Mapping[str, int], unreliable: Sequence[str]) -> list[
         notes.append(config.ESTIMATE_SMALL_COUNT_NOTE)
     if counts.get("source"):
         notes.append(config.ESTIMATE_SOURCE_SUPPRESSED_NOTE)
+    if counts.get("withheld"):
+        notes.append(config.ESTIMATE_WITHHELD_NOTE)
     if counts.get("interval"):
         notes.append(config.ESTIMATE_BAD_INTERVAL_NOTE.format(groups=f"{counts['interval']} rows"))
     if unreliable:
@@ -1071,10 +1134,10 @@ def _table(
             if row[f"_unr{index}"] and why is None:
                 unreliable.append(_label(row, keys))
             name = f"{part.source.name}: {part.value.name}"
-            shown[name] = SECONDARY_SUPPRESSED if why in ("source", "small") else value
+            shown[name] = SECONDARY_SUPPRESSED if why in _HIDDEN else value
             if part.value.lower and part.value.upper:
-                shown[f"{name} lower"] = SECONDARY_SUPPRESSED if why in ("source", "small") else lower
-                shown[f"{name} upper"] = SECONDARY_SUPPRESSED if why in ("source", "small") else upper
+                shown[f"{name} lower"] = SECONDARY_SUPPRESSED if why in _HIDDEN else lower
+                shown[f"{name} upper"] = SECONDARY_SUPPRESSED if why in _HIDDEN else upper
         rows.append(shown)
     names = " and ".join(p.source.name for p in prepared)
     if len(rows) == 1:
@@ -1118,7 +1181,7 @@ def _change(
                 f"{first_year}": None,
                 f"{last_year}": None,
             }
-            if wa in ("source", "small") or wb in ("source", "small") or va is None or vb is None:
+            if wa in _HIDDEN or wb in _HIDDEN or va is None or vb is None:
                 for why in (wa, wb):
                     if why:
                         hidden[why] = hidden.get(why, 0) + 1
@@ -1135,7 +1198,9 @@ def _change(
             percent = (difference / va * 100) if va else None
             overlap = estimates._overlap({"lower": la, "upper": ua}, {"lower": lb, "upper": ub})
             verdict = (
-                config.ESTIMATE_JOIN_CHANGE_NO_BOUNDS
+                config.ESTIMATE_JOIN_CHANGE_BAD_INTERVAL
+                if "interval" in (wa, wb)
+                else config.ESTIMATE_JOIN_CHANGE_NO_BOUNDS
                 if overlap is None
                 else config.ESTIMATE_JOIN_CHANGE_OVERLAP
                 if overlap
@@ -1223,7 +1288,7 @@ def _rank(
     entries = []
     for row in joined.iter_rows(named=True):
         value, lower, upper, why = _cell(row, target, part.measure)
-        if why in ("source", "small") or value is None:
+        if why in _HIDDEN or value is None:
             hidden[why or "missing"] = hidden.get(why or "missing", 0) + 1
             continue
         entries.append((row[_STATE_NAME], row[_STATE_FIPS], value, lower, upper))
@@ -1310,7 +1375,7 @@ def _disagree(
         vm, lm, um, wm = _cell(row, model, m.measure)
         vo, lo, uo, wo = _cell(row, observed, o.measure)
         label = _label(row, keys)
-        if wm in ("source", "small") or wo in ("source", "small") or vm is None or vo is None:
+        if wm in _HIDDEN or wo in _HIDDEN or vm is None or vo is None:
             for why in (wm, wo):
                 if why:
                     hidden[why] = hidden.get(why, 0) + 1
@@ -1378,11 +1443,14 @@ def _precision(
         raise JoinRefusedError(config.ESTIMATE_JOIN_RANK_OPEN.format(columns=", ".join(varying)))
     hidden: dict[str, int] = {}
     rows: list[dict[str, Any]] = []
-    skipped = 0
+    skipped = bad = 0
     for row in joined.iter_rows(named=True):
         value, lower, upper, why = _cell(row, 0, part.measure)
-        if why in ("source", "small"):
+        if why in _HIDDEN:
             hidden[why] = hidden.get(why, 0) + 1
+            continue
+        if why == "interval":
+            bad += 1
             continue
         if value is None or lower is None or upper is None or value <= 0:
             skipped += 1
@@ -1409,6 +1477,8 @@ def _precision(
     notes = [config.ESTIMATE_JOIN_PRECISION_METHOD, *_hidden_notes(hidden, [])]
     if skipped:
         notes.append(config.ESTIMATE_JOIN_PRECISION_SKIPPED.format(count=skipped))
+    if bad:
+        notes.append(config.ESTIMATE_JOIN_PRECISION_BAD.format(count=bad))
     return claim, {"columns": list(rows[0]), "rows": rows}, notes
 
 

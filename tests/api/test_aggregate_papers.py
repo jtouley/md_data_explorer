@@ -332,3 +332,79 @@ def test_aggregateQuestion_choiceNotALevel_rejected(test_client, isolated_data_h
     # Assert
     assert response.status_code == 400
     assert "'Nobody' is not a value of sex_name" in response.json()["detail"]
+
+
+def _chat(upload_id: str, question: str):
+    """The chat path on the upload's real layer (the app's QueryService), confirming one hold."""
+    from clinical_analytics.api.dependencies import lease_semantic_layer
+    from clinical_analytics.contracts.declarations import FileDeclarationStore
+    from clinical_analytics.core.data_home import uploads_dir
+    from clinical_analytics.core.query_service import QueryService
+    from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage, active_version_id
+
+    version = active_version_id(UserDatasetStorage().get_upload_metadata(upload_id))
+    lease = lease_semantic_layer(upload_id)
+    try:
+        service = QueryService(
+            lease.layer, declarations=FileDeclarationStore(uploads_dir().parent), data_dir=uploads_dir().parent
+        )
+        result = service.ask(question, dataset_id=upload_id, dataset_version=version)
+        if result.requires_confirmation:
+            result = service.ask(
+                question,
+                dataset_id=upload_id,
+                dataset_version=version,
+                confirmed=True,
+                confirm_plan_hash=result.plan_hash,
+            )
+    finally:
+        lease.release()
+    return result
+
+
+def test_chat_declaredOneKeyStateTable_answeredAsEstimates(test_client, isolated_data_home):
+    # Arrange: finding 5, a declared table keyed only by state (one row per state)
+    from clinical_analytics.contracts.geography import STATES
+
+    frame = pl.DataFrame(
+        [
+            {
+                "State": s.name,
+                "Rate per 100000": 10.0 + i,
+                "Rate per 100000 lower": 8.0 + i,
+                "Rate per 100000 upper": 12.0 + i,
+            }
+            for i, s in enumerate(STATES)
+        ]
+    )
+    upload_id = _upload(test_client, frame, "onekey")
+
+    # Act
+    result = _chat(upload_id, "Which State had the highest Rate per 100000?")
+
+    # Assert: not refused by the patient 20-group rule; every state is an estimate group
+    assert result.analysis is not None, result.failure_reason
+    assert result.analysis.get("type") == "estimates"
+    assert len(result.analysis["table"]["rows"]) == len(STATES)
+
+
+def test_chat_declaredVisitFile_neverListsPatientsValues(test_client, isolated_data_home):
+    # Arrange: finding 4, repeated visits by MRN with a rate-named value, declared by mistake
+    rows = [
+        {
+            "mrn": f"MRN{p:04d}",
+            "visit_month": f"2024-0{v}",
+            "sex": "F" if p % 7 == 0 else "M",
+            "hiv_viral_load_rate": 55.0 + (p * 3 + v) % 50,
+        }  # fmt: skip
+        for p in range(1, 41)
+        for v in range(1, 4)
+    ]
+    upload_id = _upload(test_client, pl.DataFrame(rows), "visits")
+
+    # Act
+    result = _chat(upload_id, "Which mrn had the highest hiv_viral_load_rate?")
+
+    # Assert: answered under the patient rules (refused), never as one estimate per MRN
+    assert result.analysis is None or result.analysis.get("type") != "estimates"
+    assert result.failure_reason

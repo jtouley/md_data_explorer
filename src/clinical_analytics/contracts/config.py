@@ -322,6 +322,11 @@ POPULATION_ESTIMATES_PRIVACY_CLASS: Final = "public_aggregate"
 # The one form value that declares it (POST /datasets/upload, field population_estimates). Not a
 # boolean: "true", "on" or "1" from a checkbox default or a script flag is rejected, not read as yes.
 POPULATION_ESTIMATES_FORM_VALUE: Final = "public_population_estimates_no_patient_rows"
+# Upload saved, mark not: the dataset exists under its name, so "upload again" alone would be refused.
+POPULATION_ESTIMATES_NOT_SAVED: Final = (
+    "The dataset was saved, but its public-population-estimates mark wasn't, so it is answered under the "
+    "patient rules. Delete it, then upload it again with the box ticked."
+)
 POPULATION_ESTIMATES_NOT_DETECTED: Final = (
     "You marked this file public population estimates, but its rows don't look like estimates for groups "
     "(a column comes close to one value per row, like a record ID, or nothing marks a rate, interval or total). "
@@ -366,7 +371,7 @@ ESTIMATE_VALUE_NAMES: Final[tuple[str, ...]] = (
 )
 # A numeric column named for a rate, ratio or percent is an estimate even without bounds.
 ESTIMATE_RATE_NAME: Final = re.compile(
-    r"(^|_)(rate|rates|ratio|sir|pct|percent|percentage|prevalence|incidence|proportion|coverage|mx|"
+    r"(^|_)(rate|rates|ratio|sir|pct|percent|percentage|prevalence|proportion|coverage|mx|"
     r"per_?\d+k?|\d+k)($|_)"
 )
 # A value column named for a count: values of 1-10 stay hidden even on a declared dataset.
@@ -413,6 +418,11 @@ ESTIMATE_METRIC_DIMENSION: Final = re.compile(
     r"(^|_)(metric|unit|units|datavaluetype|data_value_type|metric_name)($|_)"
 )
 ESTIMATE_COUNT_LEVELS: Final = frozenset({"number", "count", "counts", "cases", "number_of_cases", "deaths"})
+# A metric level that positively says its value is a rate or a share ("Rate", "Percent", "Crude
+# Prevalence", "Age-adjusted Rate", "Per 100,000"). Any other level keeps the small-cell rule.
+ESTIMATE_RATE_LEVEL: Final = re.compile(
+    r"(^|_)(rate|rates|percent|percentage|pct|prevalence|proportion|ratio|coverage|per)($|_)"
+)
 ESTIMATE_SUBAREA_NAME: Final = re.compile(r"\b(county|parish|borough|census area|municipality)\s*$", re.IGNORECASE)
 ESTIMATE_MAX_LISTED_LEVELS: Final = 5000  # levels read to find totals; a key with more lists none
 ESTIMATE_LEVELS_IN_HOLD: Final = 6
@@ -454,6 +464,10 @@ ESTIMATE_UNDECLARED_REFUSAL: Final = (
 ESTIMATE_TOTAL_LEFT_OUT: Final = "{levels} is the total of the other {column} values, so it is left out."
 ESTIMATE_SAVED_CHOICE_NOTE: Final = "Uses {column} = {level}, the choice saved for this dataset."
 ESTIMATE_SMALL_COUNT_NOTE: Final = "Counts from 1 to 10 are hidden."
+ESTIMATE_WITHHELD_NOTE: Final = (
+    "Some rows are hidden in every answer: a count from 1 to 10 (or one the source suppressed) is in that row, "
+    "or in one of the groups it totals, so its other values could give the count back."
+)
 ESTIMATE_SOURCE_SUPPRESSED_NOTE: Final = (
     'Cells the source suppressed (marked "Suppressed") stay hidden; they are never read as zero or filled in.'
 )
@@ -568,6 +582,7 @@ ESTIMATE_JOIN_PRECISION_WORDS: Final = (
 )
 ESTIMATE_JOIN_DISAGREE_WORDS: Final = (
     r"\b(disagree|disagrees|disagreement|agree with|out of line|outside (the|its|their) interval|"
+    r"falls? (inside|outside|within)|lies? (inside|outside|within)|"
     r"model(led)? (vs\.?|versus) (surveillance|reported)|(surveillance|reported) (vs\.?|versus) model(led)?|"
     r"differ most|gap between)\b"
 )
@@ -698,6 +713,10 @@ ESTIMATE_JOIN_AGE_SUMMARIES_DROPPED: Final = (
     "{source}: summary ages (all ages, age-standardized, bands that contain other bands) are left out of a "
     "breakdown by age."
 )
+ESTIMATE_JOIN_AMBIGUOUS_PLACE: Final = (
+    "{source}: {level} was left out. This table also lists countries, so it can't say whether {level} is the US "
+    "state or the country."
+)
 ESTIMATE_JOIN_NATION_LEFT_OUT: Final = (
     "{source}: the national row is a total of the states, so it is left out of the comparison."
 )
@@ -755,6 +774,11 @@ ESTIMATE_JOIN_CHANGE_OVERLAP: Final = (
     "with its own interval is the test)."
 )
 ESTIMATE_JOIN_CHANGE_APART: Final = "The two years' intervals don't overlap."
+ESTIMATE_JOIN_CHANGE_BAD_INTERVAL: Final = (
+    "The file's interval for one of the years doesn't contain its estimate (the bounds look wrong), so no "
+    "interval is used."
+)
+ESTIMATE_JOIN_PRECISION_BAD: Final = "{count} rows whose interval doesn't contain the estimate are not ranked."
 ESTIMATE_JOIN_CHANGE_NO_BOUNDS: Final = (
     "The file gives no intervals, so whether this is more than noise can't be judged."
 )

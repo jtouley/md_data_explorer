@@ -31,7 +31,7 @@ from clinical_analytics.api.dependencies import (
 from clinical_analytics.api.models import database as db_models
 from clinical_analytics.api.routes.queries import forget_query_service
 from clinical_analytics.contracts.builder import logical_type
-from clinical_analytics.contracts.config import POPULATION_ESTIMATES_FORM_VALUE
+from clinical_analytics.contracts.config import POPULATION_ESTIMATES_FORM_VALUE, POPULATION_ESTIMATES_NOT_SAVED
 from clinical_analytics.contracts.errors import ContractDamagedError, ContractError
 from clinical_analytics.contracts.quality import QualityCheckResult, QualityNotRun, QualityReport
 from clinical_analytics.contracts.service import check_upload
@@ -497,9 +497,7 @@ def _declare_population_estimates(storage: UserDatasetStorage, upload_id: str) -
     metadata = storage.get_upload_metadata(upload_id)
     version = active_version_id(metadata)
     if metadata is None or version is None:
-        raise HTTPException(
-            status_code=500, detail="The dataset was saved, but its version can't be read. Upload it again."
-        )
+        raise HTTPException(status_code=500, detail=POPULATION_ESTIMATES_NOT_SAVED)
     declaration = PopulationEstimatesDeclaration(statement=POPULATION_ESTIMATES_STATEMENT, dataset_version=version)
     try:
         FileDeclarationStore(uploads_dir().parent).update(
@@ -507,9 +505,7 @@ def _declare_population_estimates(storage: UserDatasetStorage, upload_id: str) -
         )
     except ContractStoreError as e:
         logger.error("population_estimates_not_saved", upload_id=upload_id, error_type=type(e).__name__)
-        raise HTTPException(
-            status_code=500, detail="The dataset was saved, but its population-estimates mark wasn't. Upload it again."
-        ) from e
+        raise HTTPException(status_code=500, detail=POPULATION_ESTIMATES_NOT_SAVED) from e
     logger.info("population_estimates_declared", upload_id=upload_id, dataset_version=version)
     frame = storage.stored_dataset(upload_id, metadata).scan_cohort().collect()
     if detect_frame(frame) is None:

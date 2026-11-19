@@ -207,9 +207,17 @@ def state_named(text: str) -> list[State]:
 
 
 def groups_named(text: str) -> list[str]:
-    """Names of STATE_GROUPS the question uses ("Great Lakes", "Midwest")."""
-    folded = text.casefold()
+    """Names of STATE_GROUPS the question uses ("Great Lakes", "Midwest"). Whole state names are
+    read first, so "South Carolina" or "West Virginia" never names the South or the West."""
+    folded = " " + re.sub(r"[^a-z]+", " ", text.casefold()) + " "
+    for name in sorted(_BY_NAME, key=len, reverse=True):
+        folded = folded.replace(" " + re.sub(r"[^a-z]+", " ", name).strip() + " ", " ")
     return [name for name in STATE_GROUPS if re.search(rf"\b{re.escape(name)}\b", folded)]
+
+
+# State names that are also country names: in a table that lists countries too, the level alone
+# can't say which is meant.
+COUNTRY_NAMESAKES: Final = frozenset({"georgia"})
 
 
 def mentions_wayne(text: str) -> bool:

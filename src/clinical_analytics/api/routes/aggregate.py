@@ -104,6 +104,7 @@ def load_source(storage: UserDatasetStorage, store: FileDeclarationStore, datase
         table=table,
         declared=declared,
         saved_choices=declarations.choices_for(version),
+        version=version,
     )
 
 
@@ -124,13 +125,13 @@ def _check_choices(sources: list[estimate_join.SourceInput], choices: dict[str, 
 
 
 def _save_choices(
-    store: FileDeclarationStore, storage: UserDatasetStorage, choices: dict[str, dict[str, ChoiceValue]]
+    store: FileDeclarationStore, versions: dict[str, str | None], choices: dict[str, dict[str, ChoiceValue]]
 ) -> list[str]:
     """Save confirmed choices per dataset version; returns the datasets whose choices weren't
     saved. The answer still stands (it applied the choices explicitly); the caller says so."""
     failed: list[str] = []
     for dataset_id, own in choices.items():
-        version = active_version_id(storage.get_upload_metadata(dataset_id))
+        version = versions.get(dataset_id)  # the version answered, not whatever is active now
 
         def change(declarations: Any, own: dict[str, ChoiceValue] = own, version: str | None = version) -> Any:
             for column, value in own.items():
@@ -166,7 +167,7 @@ def ask_aggregate(request: AggregateQuestionRequest) -> AggregateAnswerResponse:
         if (kept := estimate_join.savable_choices(s, request.choices.get(s.dataset_id, {})))
     }
     if result.status == "answered" and savable:
-        unsaved = _save_choices(store, storage, savable)
+        unsaved = _save_choices(store, {s.dataset_id: s.version for s in sources}, savable)
         if unsaved:
             result.notes.append(CHOICES_NOT_SAVED.format(datasets=", ".join(unsaved)))
     log.info("aggregate_question_done", status=result.status, choices=len(request.choices))

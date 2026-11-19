@@ -13,8 +13,10 @@ import dataclasses
 import polars as pl
 import pytest
 
-from clinical_analytics.contracts import config
+from clinical_analytics.contracts import config, geography
+from clinical_analytics.contracts.geography import STATES
 from clinical_analytics.core import estimate_join as ej
+from clinical_analytics.core import estimates
 from clinical_analytics.core.estimates import detect_frame
 from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED
 
@@ -214,10 +216,16 @@ class TestTraps:
             & (pl.col("age_name") == "All ages")
             & (pl.col("location_name") != "United States")
         )
-        small = oracle.filter(pl.col("val") < config.MIN_CELL_SIZE).height
+        # A both-sexes count is also withheld when its Female or Male count is 1-10 (total minus the
+        # part shown in another answer would give it back).
+        parts = gbd.frame.filter(
+            (pl.col("metric_name") == "Number") & (pl.col("age_name") == "All ages") & (pl.col("sex_name") != "Both")
+        )
+        small_part = set(parts.filter(pl.col("val") < config.MIN_CELL_SIZE).get_column("location_name").to_list())
+        shown = oracle.filter((pl.col("val") >= config.MIN_CELL_SIZE) & ~pl.col("location_name").is_in(small_part))
         ranked = {r["state"] for r in result.table["rows"]}
-        assert small > 0
-        assert len(ranked) == oracle.height - small
+        assert oracle.height - shown.height > 0
+        assert ranked == set(shown.get_column("location_name").to_list())
         assert any("1 to 10 are hidden" in n for n in result.notes)
 
     def test_answer_ageStandardizedVsCrude_refused(self, make_public_source):
@@ -577,3 +585,278 @@ class TestReviewRegressions:
         shown = next(r for r in result.table["rows"] if r["metric_name"] == "Number")["GBD: val"]
         assert 0 < number["val"] < config.MIN_CELL_SIZE  # this seed's modelled count is small
         assert shown == SECONDARY_SUPPRESSED
+
+
+def _source(frame: pl.DataFrame, name: str) -> ej.SourceInput:
+    """A declared join source from an in-memory synthetic frame (already typed)."""
+    return ej.SourceInput(dataset_id=name, name=name, frame=frame, table=detect_frame(frame), declared=True)
+
+
+class TestSecondReviewKinds:
+    """Finding 1: a value is relaxed only when it positively reads as a rate or percent."""
+
+    @pytest.mark.parametrize(
+        ("column", "kind"),
+        [
+            ("Rate per 100000", "rate"),
+            ("e_inc_100k", "rate"),
+            ("Estimate (%)", "rate"),
+            ("Crude Rate", "rate"),
+            ("mx", "rate"),
+            ("val", "count"),
+            ("Hospitalizations", "count"),
+            ("Estimated infections", "count"),
+            ("Patients", "count"),
+            ("Total", "count"),
+            ("Admissions", "count"),
+            ("Persons living with HIV", "count"),
+            ("Incidence", "count"),
+        ],
+    )
+    def test_valueKind_name_failsClosed(self, column, kind):
+        # Act / Assert
+        assert estimates.value_kind(column) == kind
+
+    @pytest.mark.parametrize(
+        ("level", "kind"),
+        [("Rate", "rate"), ("Percent", "rate"), ("Crude Prevalence", "rate"), ("Number", "count"), ("Mean", "count")],
+    )
+    def test_metricLevelKind_level_failsClosed(self, level, kind):
+        # Act / Assert
+        assert estimates.metric_level_kind(level) == kind
+
+    @pytest.mark.parametrize(
+        "column",
+        ["Hospitalizations", "Estimated infections", "Patients", "Total", "Admissions", "Persons living with HIV"],
+    )
+    def test_answer_floatCountByAnyName_hiddenOnJoinPath(self, column):
+        # Arrange: modelled counts 2.5-9.5 under a name that says neither rate nor count
+        names = [s.name for s in STATES][:8]
+        frame = pl.DataFrame(
+            [
+                {"State": s, "Year": y, column: 2.5 + i, f"{column} lower": 1.0 + i, f"{column} upper": 4.0 + i}
+                for i, s in enumerate(names)
+                for y in (2022, 2023)
+            ]
+        )
+
+        # Act
+        result = ej.answer([_source(frame, "T")], f"{column} by state in 2023")
+
+        # Assert
+        assert result.status == "answered", result.message
+        assert all(r[f"T: {column}"] == SECONDARY_SUPPRESSED for r in result.table["rows"])
+
+    def test_answer_gbdOnlyNumberMetric_oneLevelMetricStillACount(self, make_public_table):
+        # Arrange: metric_name is the constant "Number" (folded away as a one-value column)
+        frame = make_public_table(
+            "gbd", locations=("Michigan", "Ohio", "Indiana"), years=(2023,), metrics=("Number",), ages=("All ages",)
+        ).with_columns(pl.col("val") / 100, pl.col("lower") / 100, pl.col("upper") / 100)
+        source = _source(frame, "GBD")
+
+        # Act
+        result = ej.answer([source], "HCV deaths in Michigan, Ohio and Indiana, 2023, both sexes")
+
+        # Assert
+        assert source.table is not None
+        assert source.table.metric_levels == {"metric_name": {"Number": "count"}}
+        assert result.status == "answered", result.message
+        assert all(r["GBD: val"] == SECONDARY_SUPPRESSED for r in result.table["rows"])
+
+
+class TestSecondReviewWithheld:
+    """Findings 2 and 3: nothing in a row with a small count, nor a total of it, is ever shown."""
+
+    @staticmethod
+    def _atlas_like() -> pl.DataFrame:
+        cases = {"Michigan": 4, "Ohio": 7, "Wisconsin": 9}
+        population = {"Michigan": 100_000, "Ohio": 350_000, "Wisconsin": 900_000}
+        rows = []
+        for s in [x.name for x in STATES][:20] + list(cases):
+            c, p = cases.get(s, 150), population.get(s, 1_500_000)
+            rows.append({"Geography": s, "Year": 2023, "Cases": c, "Population": p, "Rate per 100000": c / p * 1e5})
+        return pl.DataFrame(rows).unique(subset=["Geography"], keep="first")
+
+    @pytest.mark.parametrize("question", ["Syphilis rate per 100000 by state in 2023", "Population by state in 2023"])
+    def test_answer_rateAndPopulationBesideSmallCount_withheld(self, question):
+        # Arrange: rate x population would give the hidden count back
+        frame = self._atlas_like()
+
+        # Act
+        result = ej.answer([_source(frame, "A")], question)
+
+        # Assert
+        assert result.status == "answered", result.message
+        shown = {r["state"]: r for r in result.table["rows"]}
+        for state in ("Michigan", "Ohio", "Wisconsin"):
+            assert set(shown[state].values()) >= {SECONDARY_SUPPRESSED}
+        assert config.ESTIMATE_WITHHELD_NOTE in result.notes
+
+    def test_withheldMask_totalBesideSmallPart_totalWithheldEverywhere(self):
+        # Arrange: Both = 46, Male = 41, Female = 5
+        frame = pl.DataFrame(
+            {
+                "State": ["Alaska"] * 3 + ["Ohio"] * 3,
+                "Sex": ["Both", "Female", "Male"] * 2,
+                "Cases": [46, 5, 41, 80, 40, 40],
+            }
+        )
+        table = detect_frame(frame)
+        assert table is not None
+
+        # Act
+        mask = estimates.withheld_mask(frame, table)
+
+        # Assert
+        assert mask.to_list() == [True, True, False, False, False, False]
+
+    def test_answer_totalAskedAlone_withheldWhenAPartIsSmall(self):
+        # Arrange
+        rows = []
+        for i, s in enumerate([x.name for x in STATES][:20]):
+            female = 5 if s == "Alaska" else 30 + i
+            for sex, c in (("Both", 40 + i + female), ("Female", female), ("Male", 40 + i)):
+                rows.append({"State": s, "Year": 2023, "Sex": sex, "Cases": c})
+        source = _source(pl.DataFrame(rows), "S")
+
+        # Act
+        both = ej.answer([source], "How many cases in Alaska in 2023, both sexes?")
+        men = ej.answer([source], "How many cases among men in Alaska in 2023?")
+
+        # Assert: the man count is shown, the total never is (46 - 41 would give 5)
+        assert both.table["rows"][0]["S: Cases"] == SECONDARY_SUPPRESSED
+        assert men.table["rows"][0]["S: Cases"] == 41.0
+
+
+class TestSecondReviewPatientData:
+    """Finding 4: a file with a column named as a patient ID is never an estimate table."""
+
+    @pytest.mark.parametrize("id_column", ["mrn", "patient_id", "subject", "pid", "Patient ID", "MRN"])
+    def test_detectFrame_visitFileWithPatientIdName_none(self, id_column):
+        # Arrange
+        frame = pl.DataFrame(
+            {
+                id_column: [f"MRN{p:04d}" for p in range(1, 41) for _ in range(3)],
+                "visit_month": ["2024-01", "2024-02", "2024-03"] * 40,
+                "site": ["Rural clinic" if p <= 4 else "Main hospital" for p in range(1, 41) for _ in range(3)],
+                "hiv_viral_load_rate": [55.0 + (i % 50) for i in range(120)],
+                "lower": [50.0] * 120,
+                "upper": [120.0] * 120,
+            }
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is None
+
+
+class TestSecondReviewWrongAnswers:
+    """Finding 5."""
+
+    def test_answer_countryGeorgiaAmongCountries_leftOutNotRankedAsState(self):
+        # Arrange: a GBD file with states and countries; the country Georgia is far higher
+        names = [s.name for s in STATES if s.name != "Georgia"][:30] + ["Georgia", "Armenia", "Azerbaijan"]
+        frame = pl.DataFrame(
+            [
+                {
+                    "location_name": n,
+                    "year": 2023,
+                    "val": 500.0 if n == "Georgia" else 10.0 + i / 10,
+                    "lower": 1.0,
+                    "upper": 600.0,
+                }  # fmt: skip
+                for i, n in enumerate(names)
+            ]
+        ).with_columns(pl.col("lower").clip(upper_bound=pl.col("val")))
+
+        # Act
+        result = ej.answer([_source(frame, "G")], "Rank states by tuberculosis death rate in 2023")
+
+        # Assert
+        assert result.status == "answered", result.message
+        assert "Georgia" not in {r["state"] for r in result.table["rows"]}
+        assert any("Georgia was left out" in n for n in result.notes)
+
+    @pytest.mark.parametrize(
+        ("text", "groups"),
+        [
+            ("What is the rate in South Carolina?", []),
+            ("rate in West Virginia", []),
+            ("rate in the South", ["south"]),
+            ("South Dakota and the Midwest", ["midwest"]),
+        ],
+    )
+    def test_groupsNamed_wholeStateNamesFirst(self, text, groups):
+        # Act / Assert
+        assert geography.groups_named(text) == groups
+
+    def test_detectFrame_wonderGenderAndCodeWithTotalRows_aliasesAndTotalLeftOut(self):
+        # Arrange: WONDER total rows leave Gender and Gender Code empty
+        rows = []
+        for state in ("Michigan", "Ohio", "Iowa"):
+            for sex, code, deaths in (("Female", "F", 60), ("Male", "M", 140), (None, None, 200)):
+                rows.append({"State": state, "Year": 2015, "Gender": sex, "Gender Code": code, "Deaths": deaths})
+        frame = pl.DataFrame(rows)
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is not None
+        gender = table.dimension("Gender")
+        assert gender is not None and "Gender Code" in gender.aliases
+        assert None in gender.parents
+
+    def test_standardizationBySource_eachPhraseToItsTable(self, make_public_source):
+        # Arrange
+        gbd = make_public_source("gbd", name="GBD", years=(2023,))
+        wonder = make_public_source("wonder", name="WONDER", years=(2023,))
+        question = (
+            "Does the WONDER crude death rate among women disagree with the GBD age-standardized estimate in 2023?"
+        )
+
+        # Act
+        chosen = ej.standardization_by_source([gbd, wonder], question)
+        result = ej.answer([gbd, wonder], question)
+
+        # Assert
+        assert chosen == {"WONDER": "crude", "GBD": "age-standardized"}
+        assert result.status == "refused"
+        assert "GBD's rate is age-standardized and WONDER's is crude" in result.message
+
+
+class TestSecondReviewSharpEdges:
+    def test_withheldMask_unnamedTotalBySum_withheldBesideSmallPart(self):
+        # Arrange: "Statewide" is not a known total name, but it is the sum of the regions
+        frame = pl.DataFrame(
+            {
+                "State": ["Alaska"] * 4 + ["Ohio"] * 4,
+                "Region": ["Statewide", "North", "South", "West"] * 2,
+                "Cases": [56, 5, 30, 21, 90, 30, 30, 30],
+            }
+        )
+        table = detect_frame(frame)
+        assert table is not None
+
+        # Act
+        mask = estimates.withheld_mask(frame, table)
+
+        # Assert: Alaska's Statewide row (56) and its small region (5) are withheld; Ohio's are not
+        assert mask.to_list() == [True, True, False, False, False, False, False, False]
+
+    def test_isCountRow_countNamedColumnWithRateMetric_stillACount(self):
+        # Arrange: a "Deaths" column on a row whose metric says Rate stays under the small-cell rule
+        frame = pl.DataFrame({"State": ["Ohio", "Iowa"], "metric_name": ["Rate", "Rate"], "Deaths": [4.0, 50.0]})
+        table = detect_frame(frame)
+        assert table is not None
+        deaths = table.value("Deaths")
+        assert deaths is not None
+
+        # Act
+        is_count = estimates.is_count_row(deaths, table, {"metric_name": "Rate"})
+
+        # Assert
+        assert is_count is True
+        assert estimates.withheld_mask(frame, table).to_list() == [True, False]

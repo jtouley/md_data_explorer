@@ -83,12 +83,13 @@ def test_uploadDataset_declaredPatientFile_noteSaysRulesStillApply(test_client: 
     assert body["population_estimates_note"] == POPULATION_ESTIMATES_NOT_DETECTED
 
 
-def test_uploadDataset_declaredGbdTable_valueColumnKeptRowKeyFromEstimateKey(
+def test_uploadDataset_declaredGbdTable_valueColumnKeptRowsNumbered(
     test_client: TestClient, isolated_data_home, make_public_table
 ):
-    # Arrange: GBD's 'val' is nearly unique per row; it must never become the row ID
+    # Arrange: GBD's 'val' is nearly unique per row; it must never become a patient ID
     import io
 
+    from clinical_analytics.core.identifier_rules import ROW_NUMBER_COLUMN
     from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
 
     buffer = io.BytesIO()
@@ -101,8 +102,45 @@ def test_uploadDataset_declaredGbdTable_valueColumnKeptRowKeyFromEstimateKey(
     metadata = storage.get_upload_metadata(body["upload_id"])
     stored = storage.get_upload_data(body["upload_id"]).collect()
 
-    # Assert
+    # Assert: rows are numbered (counted as rows); no patient_id is made from the estimate key
     assert response.status_code == 200, body
-    assert {"val", "lower", "upper", "patient_id"} <= set(stored.columns)
-    assert metadata["synthetic_id_metadata"]["patient_id"]["patient_id_source"] == "estimate_key"
-    assert stored.get_column("patient_id").n_unique() == stored.height
+    assert {"val", "lower", "upper", ROW_NUMBER_COLUMN} <= set(stored.columns)
+    assert "patient_id" not in stored.columns
+    assert metadata["synthetic_id_metadata"]["patient_id"]["patient_id_source"] == "row_index"
+
+
+@pytest.mark.parametrize(
+    "id_column",
+    ["mrn", "patient_id", "subject", "pid", "Patient ID"],
+    ids=["mrn", "patient_id", "subject", "pid", "spaced"],
+)
+def test_uploadDataset_declaredVisitFile_patientIdKeptNotEstimates(
+    test_client: TestClient, isolated_data_home, id_column
+):
+    # Arrange: repeated visits per patient with a rate-named value, declared by mistake
+    import io
+
+    import polars as pl
+
+    from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
+
+    frame = pl.DataFrame(
+        {
+            id_column: [f"MRN{p:04d}" for p in range(1, 41) for _ in range(3)],
+            "visit_month": ["2024-01", "2024-02", "2024-03"] * 40,
+            "sex": ["F" if p % 7 == 0 else "M" for p in range(1, 41) for _ in range(3)],
+            "hiv_viral_load_rate": [55.0 + (i % 50) for i in range(120)],
+        }
+    )
+    buffer = io.BytesIO()
+    frame.write_csv(buffer)
+
+    # Act
+    response = _upload(test_client, buffer.getvalue(), POPULATION_ESTIMATES_FORM_VALUE)
+    body = response.json()
+    metadata = UserDatasetStorage().get_upload_metadata(body["upload_id"])
+
+    # Assert: never treated as estimates; the real ID stays the patient key
+    assert response.status_code == 200, body
+    assert body["population_estimates_note"] == POPULATION_ESTIMATES_NOT_DETECTED
+    assert metadata["synthetic_id_metadata"]["patient_id"]["patient_id_source"] != "row_index"
