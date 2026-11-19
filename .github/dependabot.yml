@@ -25,6 +25,14 @@ updates:
       python-major:
         applies-to: version-updates
         update-types: ["major"]
+    ignore:
+      # Second guard for the onnxruntime<1.24 ceiling in pyproject.toml (1.24+ cannot install on
+      # macOS 13 or Intel Macs): without it Dependabot would widen that ceiling. It also blocks
+      # security PRs above 1.23; the held-back-deps workflow (make audit-held-back) covers that.
+      # The floor and every place that states it: docs/development/packaging.md.
+      # No pandas rule: lifelines>=0.30.3 in pyproject.toml already makes pandas 3 unresolvable.
+      - dependency-name: "onnxruntime"
+        versions: [">=1.24"]
 
   # Electron desktop shell: electron/package.json + package-lock.json.
   - package-ecosystem: "npm"

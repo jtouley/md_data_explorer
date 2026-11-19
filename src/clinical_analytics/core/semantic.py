@@ -2571,6 +2571,23 @@ class SemanticLayer:
                     "ask about one value at a time.",
                 }
 
+        # A share and a different rate at once (QueryPlan.__post_init__ leaves such a plan as it
+        # is): which one the answer is would depend on execution order. Never run it.
+        if plan.proportion_column and plan.rate_column:
+            return {
+                "valid": False,
+                "error": f"The plan asks for a share of '{plan.proportion_column}' and a rate of "
+                f"'{plan.rate_column}' at once; ask about one of them.",
+            }
+
+        # "share with sex = F, by sex" is 100% in one group and 0% in the rest: not a comparison.
+        if plan.rate_column and plan.rate_column == plan.group_by:
+            return {
+                "valid": False,
+                "error": f"A share of '{plan.rate_column}' compared across groups of '{plan.group_by}' "
+                "itself is always 100% or 0%; group by a different column.",
+            }
+
         # Check filter columns exist and operators are valid
         valid_operators = {"==", "!=", ">", ">=", "<", "<=", "IN", "NOT_IN"}
         for filter_spec in plan.filters:

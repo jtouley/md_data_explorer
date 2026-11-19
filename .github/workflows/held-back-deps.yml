@@ -1,0 +1,39 @@
+# Security check for packages held below a release: onnxruntime <1.24 (macOS 13 floor) and pandas <3
+# (lifelines 0.30.3). The Dependabot ignore rule and the pyproject.toml ceilings also stop Dependabot
+# security PRs past those ceilings, so this runs pip-audit on their locked versions instead: weekly,
+# on demand, and whenever the dependency files change. A scheduled failure emails the workflow's
+# owner; the fix is a backport within the ceiling or a deliberate decision recorded in
+# docs/development/packaging.md.
+name: Held-back dependency audit
+
+on:
+  schedule:
+    - cron: "41 6 * * 1"
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/dependabot.yml"
+      - ".github/workflows/held-back-deps.yml"
+      - "Makefile"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ">=0.5.0"
+
+      - name: pip-audit the locked onnxruntime and pandas
+        run: make audit-held-back

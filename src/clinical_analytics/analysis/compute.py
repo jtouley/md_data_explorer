@@ -12,7 +12,12 @@ import numpy as np
 import polars as pl
 from scipy import stats
 
-from clinical_analytics.analysis.grouping import SMALL_VALUE_MODEL_REFUSAL, grouping_problem, is_small_level
+from clinical_analytics.analysis.grouping import (
+    SMALL_CELL_MODEL_REFUSAL,
+    SMALL_VALUE_MODEL_REFUSAL,
+    grouping_problem,
+    is_small_level,
+)
 from clinical_analytics.analysis.numeric_text import statistic_refusal
 from clinical_analytics.analysis.sample_floors import (
     MIN_COMPARISON_N,
@@ -907,6 +912,13 @@ def _ambiguous_event_message(column: str, series: pl.Series, keys: pl.Series | N
     )
 
 
+def _two_valued(series: pl.Series) -> bool:
+    """At most two distinct values. A numeric predictor with two values (dose 5 or 10 mg, grade
+    0 or 3) is fitted as a slope, but with an intercept that slope is a two-level comparison: its
+    odds ratio rests on, and gives back, the patients at each value just like a 0/1 term."""
+    return series.drop_nulls().n_unique() <= 2
+
+
 def _term_sizes(
     frame: pl.DataFrame, kinds: Mapping[str, VariableKind], categorical: list[str], keys: pl.Series | None
 ) -> dict[str, int | None]:
@@ -932,11 +944,40 @@ def _term_sizes(
             sizes.update(
                 {f"{column}_{level}": min(n, reference) for level, n in levels.items() if level != min(levels)}
             )
-        elif kind == "binary":
+        elif kind == "binary" or _two_valued(frame[column]):
             sizes[column] = min(_level_sizes(frame[column], keys).values())
         else:
             sizes[column] = None
     return sizes
+
+
+def _small_outcome_cell(
+    frame: pl.DataFrame,
+    kinds: Mapping[str, VariableKind],
+    categorical: list[str],
+    outcome_col: str,
+    keys: pl.Series | None,
+) -> bool:
+    """Whether a level of a coded predictor holds 1-10 patients with one outcome value.
+
+    Every level and the event total can be large while a level's events are few (328 and 813
+    patients, 15 events, 9 and 6 of them by level). The odds ratio and its CI, with level and
+    event totals that other answers show, give those cells back, so the model is withheld like
+    a small level (``_term_sizes``). ``frame``: complete cases with the outcome already 0/1.
+    """
+    outcome = frame[outcome_col].cast(pl.Utf8)
+    for column, kind in kinds.items():
+        if column not in categorical and kind != "binary" and not _two_valued(frame[column]):
+            continue  # a slope over three or more values names no level and gives back no cell
+        level = _code_text(frame[column]) if column in categorical else frame[column].cast(pl.Utf8)
+        cells = (
+            pl.DataFrame({"level": level, "outcome": outcome})
+            .select(pl.concat_str(["level", "outcome"], separator="\x1f").alias("cell"))
+            .to_series()
+        )
+        if any(is_small_level(n) for n in _level_sizes(cells, keys).values()):
+            return True
+    return False
 
 
 def compute_predictor_analysis(
@@ -945,9 +986,12 @@ def compute_predictor_analysis(
     """
     Logistic regression of a binary outcome on the named predictors.
 
-    A model is refused when a predictor level, a 0/1 predictor's value or an outcome value is
-    held by 1-10 patients (``_term_sizes``): its term or claim would name them. Folding the
+    A model is refused when a predictor level, a two-valued predictor's value or an outcome value
+    is held by 1-10 patients (``_term_sizes``): its term or claim would name them. Folding the
     level into "Other" changes the model, so it is refused instead, naming no column or level.
+    It is also refused when every one of those is large but a predictor value holds 1-10
+    patients with one outcome value (``_small_outcome_cell``): the odds ratio and its CI, with
+    totals shown elsewhere, give that cell back.
     ``entity_key``: the patient key when rows are visits (``SemanticLayer.count_entity_key``);
     the sizes then count distinct patients, never rows.
 
@@ -1022,6 +1066,8 @@ def compute_predictor_analysis(
     term_sizes = _term_sizes(analysis_df, kinds, categorical, keys)
     if any(n is not None and is_small_level(n) for n in term_sizes.values()):
         return {**base, "error": SMALL_VALUE_MODEL_REFUSAL}
+    if _small_outcome_cell(analysis_df, kinds, categorical, outcome_col, keys):
+        return {**base, "error": SMALL_CELL_MODEL_REFUSAL}
     analysis_df_pd = analysis_df.with_columns([_code_text(analysis_df[c]) for c in categorical]).to_pandas()
     if categorical:
         analysis_df_pd = pd.get_dummies(analysis_df_pd, columns=categorical, drop_first=True, dtype=int)
