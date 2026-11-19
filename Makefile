@@ -1,4 +1,4 @@
-.PHONY: help accept smoke-installed fetch-embedding-model check-data check-spdx golden mutation mutation-module mutation-results install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-contracts test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
+.PHONY: help accept smoke-installed fetch-embedding-model check-data check-spdx check-lock-platforms audit-held-back golden mutation mutation-module mutation-results install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-contracts test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
 
 # Default target
 .DEFAULT_GOAL := help
@@ -374,6 +374,35 @@ check-data: ensure-venv ## Fail if git tracks data files (patient data must stay
 check-spdx: ensure-venv ## Fail if a src/**/*.py or electron/src/**/*.js file lacks an SPDX-License-Identifier line
 	$(PYTHON_RUN) scripts/check_spdx_headers.py
 
+# The macOS 13 floor (docs/development/packaging.md): every locked onnxruntime 1.23.x must ship these.
+ONNXRUNTIME_MACOS_WHEELS := $(foreach py,311 312 313,$(foreach arch,arm64 x86_64,cp$(py)-cp$(py)-macosx_13_0_$(arch)))
+
+check-lock-platforms: ## Fail if the locked onnxruntime lacks a macOS 13 arm64/x86_64 wheel for cp311-cp313 (offline)
+	@versions=$$(grep -A1 -x 'name = "onnxruntime"' uv.lock | sed -n 's/^version = "\(.*\)"$$/\1/p'); \
+	if [ "$$(printf '%s\n' "$$versions" | grep -c .)" -ne 1 ]; then \
+		echo "$(RED)uv.lock: expected exactly one onnxruntime version, got: '$$versions'$(NC)"; exit 1; fi; \
+	for tag in $(ONNXRUNTIME_MACOS_WHEELS); do \
+		grep -qF "onnxruntime-$$versions-$$tag.whl" uv.lock || { \
+			echo "$(RED)uv.lock: onnxruntime $$versions has no $$tag wheel; see docs/development/packaging.md$(NC)"; exit 1; }; \
+	done; \
+	echo "$(GREEN)onnxruntime $$versions: macOS 13 arm64 + x86_64 wheels locked for cp311-cp313$(NC)"
+
+# Packages held below a release (pyproject.toml ceilings, .github/dependabot.yml ignore rules), so
+# Dependabot security PRs cannot move them past it. pip-audit checks their locked versions instead.
+# Markers are stripped: pip-audit would skip a line whose marker is false on this machine.
+HELD_BACK_DEPS_RE := ^(onnxruntime|pandas)==
+HELD_BACK_DEPS_COUNT := 2
+PIP_AUDIT_VERSION := 2.10.1
+
+audit-held-back: ## pip-audit the locked onnxruntime and pandas (held back from Dependabot); needs network
+	@reqs=$$($(UV) export --frozen --all-extras --all-groups --no-hashes --no-emit-project --no-header --no-annotate \
+		| grep -E '$(HELD_BACK_DEPS_RE)' | sed 's/ *;.*$$//'); \
+	if [ "$$(printf '%s\n' "$$reqs" | grep -c .)" -ne $(HELD_BACK_DEPS_COUNT) ]; then \
+		echo "$(RED)expected $(HELD_BACK_DEPS_COUNT) locked pins matching $(HELD_BACK_DEPS_RE), got: '$$reqs'$(NC)"; exit 1; fi; \
+	printf '%s\n' "$$reqs"; \
+	printf '%s\n' "$$reqs" | $(UV) tool run --from pip-audit==$(PIP_AUDIT_VERSION) \
+		pip-audit --no-deps --disable-pip --progress-spinner off -r /dev/stdin
+
 GOLDEN_TESTS := tests/scripts/test_make_synthetic_data.py tests/scripts/test_check_no_data_files.py tests/analysis/test_golden_statistics.py tests/eval/test_golden_questions.py \
 	tests/eval/test_golden_headless.py tests/eval/test_hard_questions.py tests/eval/test_adversarial_probes.py \
 	tests/eval/test_reviewer_probes.py tests/eval/test_reverse_accounting.py \
@@ -386,12 +415,13 @@ golden: ensure-venv ## Synthetic golden kit: regenerate in a temp dir, diff agai
 	@echo "$(GREEN)Running golden statistics and golden question tests (slow ones included)...$(NC)"
 	$(PYTEST) $(GOLDEN_TESTS) -v -n auto $(PYTEST_ARGS)
 
-check-fast: ## Run fast code quality checks (lint, format-check, tracked-data guard, SPDX headers) - no tests
+check-fast: ## Run fast code quality checks (lint, format-check, tracked-data guard, SPDX headers, lock platforms) - no tests
 	@echo "$(GREEN)Running fast code quality checks...$(NC)"
 	@$(MAKE) lint || exit 1
 	@$(MAKE) format-check || exit 1
 	@$(MAKE) check-data || exit 1
 	@$(MAKE) check-spdx || exit 1
+	@$(MAKE) check-lock-platforms || exit 1
 	@echo "$(GREEN)✅ All fast checks passed!$(NC)"
 
 run: run-api ## Start the application (FastAPI backend)

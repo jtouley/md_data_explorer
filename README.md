@@ -41,7 +41,7 @@ More detail: [Local data security](docs/security/LOCAL_DATA_SECURITY.md) and the
 
 ## Prerequisites
 
-- macOS 13 (Ventura) or later on Apple silicon or Intel; Windows 10/11 x64; or Linux x86_64/aarch64 with glibc 2.28+. These are the platforms ONNX Runtime 1.23.2, the embedding runtime, ships wheels for ([packaging notes](docs/development/packaging.md)).
+- macOS 13 (Ventura) or later on Apple silicon or Intel; Windows 10/11 x64; or Linux x86_64/aarch64 with glibc 2.28+. These are the platforms ONNX Runtime 1.23 (held below 1.24), the embedding runtime, ships wheels for ([packaging notes](docs/development/packaging.md)).
 - [uv](https://docs.astral.sh/uv/). It installs a suitable Python (3.11 to 3.13) for you.
 - Node.js 22.12 or later, with npm.
 - `make` on macOS and Linux. Windows users can skip it (see below).

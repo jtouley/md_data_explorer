@@ -28,30 +28,62 @@ function withCopyButton(options, details) {
 }
 
 /**
- * Copy, then the dialog to show next: the same one with a note saying whether it worked, and
+ * The dialog to show after a copy: the same one with a note saying whether it worked, and
  * without the Copy details button once it has been used MAX_COPIES times.
- * @param {(text: string) => void} copy
- * @param {string} details
+ * @param {boolean} copied
  * @param {{ detail?: string, buttons?: string[] }} base the caller's options
  * @param {object} shown the dialog just shown
  * @param {number} copies how many times Copy details has been pressed, this one included
  */
-function afterCopy(copy, details, base, shown, copies) {
-  let note = COPIED_NOTE;
-  try {
-    copy(details);
-  } catch {
-    note = COPY_FAILED_NOTE;
-  }
+function afterCopy(copied, base, shown, copies) {
+  const note = copied ? COPIED_NOTE : COPY_FAILED_NOTE;
   const detail = base.detail ? `${base.detail}\n\n${note}` : note;
   const buttons = copies >= MAX_COPIES ? [...(base.buttons || ['OK'])] : shown.buttons;
   return { ...shown, detail, buttons };
 }
 
 /**
+ * Copy without waiting, for the synchronous dialog. Electron 44+ clipboard.writeText returns a
+ * Promise; a rejection cannot be reported in a dialog that is already showing again, so it is
+ * logged instead of left unhandled.
+ * @param {(text: string) => void | Promise<void>} copy
+ * @param {string} details
+ * @returns {boolean} false if the copy failed synchronously
+ */
+function copyNow(copy, details) {
+  try {
+    const pending = copy(details);
+    if (pending && typeof pending.then === 'function') {
+      pending.then(undefined, (error) =>
+        console.error('Could not copy the details:', error?.message || error)
+      );
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Copy and wait for the result, for the asynchronous dialog (clipboard.writeText is async in
+ * Electron 44+, so a failure arrives as a rejection, not a throw).
+ * @param {(text: string) => void | Promise<void>} copy
+ * @param {string} details
+ * @returns {Promise<boolean>} whether the copy worked
+ */
+async function copyAndWait(copy, details) {
+  try {
+    await copy(details);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Show a synchronous dialog until a button other than Copy details is chosen.
  * @param {(options: object) => number} show e.g. dialog.showMessageBoxSync
- * @param {(text: string) => void} copy e.g. clipboard.writeText
+ * @param {(text: string) => void | Promise<void>} copy e.g. clipboard.writeText
  * @param {{ options: object, details?: string }} spec
  * @returns {number} index of the chosen button in `spec.options.buttons`
  */
@@ -60,14 +92,15 @@ export function showWithCopyDetailsSync(show, copy, { options, details }) {
   for (let copies = 1; ; copies += 1) {
     const response = show(shown);
     if (response !== copyIndex || !shown.buttons.includes(COPY_DETAILS)) return response;
-    shown = afterCopy(copy, /** @type {string} */ (details), options, shown, copies);
+    const copied = copyNow(copy, /** @type {string} */ (details));
+    shown = afterCopy(copied, options, shown, copies);
   }
 }
 
 /**
  * Show an asynchronous dialog until a button other than Copy details is chosen.
  * @param {(options: object) => Promise<{ response: number }>} show e.g. dialog.showMessageBox
- * @param {(text: string) => void} copy
+ * @param {(text: string) => void | Promise<void>} copy e.g. clipboard.writeText
  * @param {{ options: object, details?: string }} spec
  * @returns {Promise<number>}
  */
@@ -76,6 +109,7 @@ export async function showWithCopyDetails(show, copy, { options, details }) {
   for (let copies = 1; ; copies += 1) {
     const { response } = await show(shown);
     if (response !== copyIndex || !shown.buttons.includes(COPY_DETAILS)) return response;
-    shown = afterCopy(copy, /** @type {string} */ (details), options, shown, copies);
+    const copied = await copyAndWait(copy, /** @type {string} */ (details));
+    shown = afterCopy(copied, options, shown, copies);
   }
 }

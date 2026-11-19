@@ -96,6 +96,56 @@ describe('native Copy details confirms and never answers for the user (round 2)'
     );
   });
 
+  // Electron 44+: clipboard.writeText returns a Promise, so a failure is a rejection, not a throw.
+  it.each([
+    [
+      'resolves',
+      () => Promise.resolve(),
+      'Details copied. Paste them to whoever supports the app.',
+    ],
+    [
+      'rejects',
+      () => Promise.reject(new Error('clipboard unavailable')),
+      'Couldn’t copy the details. Restart the app and try again.',
+    ],
+  ])('showWithCopyDetails_asyncCopy%s_noteMatchesTheOutcome', async (_label, impl, note) => {
+    // Arrange: Copy details, then Quit
+    const show = vi
+      .fn()
+      .mockResolvedValueOnce({ response: 1 })
+      .mockResolvedValueOnce({ response: 0 });
+    const copy = vi.fn(impl);
+
+    // Act
+    await showWithCopyDetails(show, copy, {
+      options: { message: 'x', buttons: ['Quit'] },
+      details: 'd',
+    });
+
+    // Assert
+    expect(copy).toHaveBeenCalledWith('d');
+    expect(show.mock.calls[1][0].detail).toBe(note);
+  });
+
+  it('showWithCopyDetailsSync_asyncCopyRejects_isLoggedNotUnhandled', async () => {
+    // Arrange: Copy details, then Quit; the copy rejects like Electron 44+ clipboard.writeText
+    const show = vi.fn().mockReturnValueOnce(1).mockReturnValueOnce(0);
+    const copy = vi.fn(() => Promise.reject(new Error('clipboard unavailable')));
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    // Act
+    const response = showWithCopyDetailsSync(show, copy, {
+      options: { message: 'x', buttons: ['Quit'] },
+      details: 'd',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Assert: the rejection was handled (vitest fails the run on an unhandled one) and logged
+    expect(response).toBe(0);
+    expect(logged).toHaveBeenCalledWith('Could not copy the details:', 'clipboard unavailable');
+    logged.mockRestore();
+  });
+
   it('showWithCopyDetails_crashDialogCopyPressedManyTimes_neverReturnsQuit', async () => {
     // Arrange: the crash dialog (Restart = 0, Quit = 1, cancelId 1). The user presses Copy
     // details over and over, then Restart engine once the button is gone.
