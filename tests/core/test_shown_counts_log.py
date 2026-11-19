@@ -20,6 +20,7 @@ from clinical_analytics.core.shown_counts import (
     MemoryShownCountLog,
     ShownSet,
     Universe,
+    to_bitmap,
 )
 
 ROWS = 200
@@ -198,7 +199,7 @@ class TestVisitRows:
         # Arrange: 100 patients shown, then 105 visit rows with a value: 5 readmitted
         universe = self._universe()
         log = MemoryShownCountLog()
-        patients = ShownSet(unit="patients:pid", positions=np.arange(100))
+        patients = ShownSet(unit=str(universe.patients_unit), positions=np.arange(100))
         log.admit("d", "v1", universe, [patients])
 
         # Act
@@ -214,7 +215,7 @@ class TestVisitRows:
         visits = log.admit("d", "v1", universe, [self._visits()])
 
         # Act
-        verdict = log.admit("d", "v1", universe, [ShownSet(unit="patients:pid", positions=np.arange(100))])
+        verdict = log.admit("d", "v1", universe, [ShownSet(unit=str(universe.patients_unit), positions=np.arange(100))])
 
         # Assert
         assert visits.shown is True
@@ -224,7 +225,7 @@ class TestVisitRows:
         # Arrange: rows of 60 patients with one visit each: no extra visits
         universe = self._universe()
         log = MemoryShownCountLog()
-        log.admit("d", "v1", universe, [ShownSet(unit="patients:pid", positions=np.arange(20, 80))])
+        log.admit("d", "v1", universe, [ShownSet(unit=str(universe.patients_unit), positions=np.arange(20, 80))])
 
         # Act
         verdict = log.admit("d", "v1", universe, [_rows(20, 80)])
@@ -233,8 +234,10 @@ class TestVisitRows:
         assert verdict.shown is True
 
 
-def _log_file(data_dir: Path, universe: Universe = UNIVERSE) -> Path:
-    return data_dir / shown_counts.SHOWN_COUNTS_DIRNAME / shown_counts.log_name(universe)
+def _log_file(data_dir: Path) -> Path:
+    """The one log file under ``data_dir`` (its name is a keyed digest of the rows)."""
+    (path,) = (data_dir / shown_counts.SHOWN_COUNTS_DIRNAME).glob("*.json")
+    return path
 
 
 class TestFileLog:
@@ -257,9 +260,7 @@ class TestFileLog:
 
         # Assert
         assert verdict.shown is False
-        assert [p.name for p in (tmp_path / shown_counts.SHOWN_COUNTS_DIRNAME).glob("*.json")] == [
-            shown_counts.log_name(UNIVERSE)
-        ]
+        assert len(list((tmp_path / shown_counts.SHOWN_COUNTS_DIRNAME).glob("*.json"))) == 1
 
     def test_admit_newRows_haveTheirOwnEmptyLog(self, tmp_path: Path) -> None:
         # Arrange: a corrected re-upload is other rows
@@ -277,10 +278,12 @@ class TestFileLog:
         # Arrange / Act
         FileShownCountLog(tmp_path).admit("d1", "v1", UNIVERSE, [_rows(0, 50)])
 
-        # Assert
-        stored = json.loads(_log_file(tmp_path).read_text())
+        # Assert: the rows' fingerprint appears only as a keyed digest (name and file)
+        path = _log_file(tmp_path)
+        stored = json.loads(path.read_text())
         assert set(stored) == {"format", "rows", "fingerprint", "sets"}
-        assert set(stored["sets"][0]) == {"unit", "size", "excess", "bits"}
+        assert set(stored["sets"][0]) == {"unit", "size", "bits"}
+        assert UNIVERSE.fingerprint not in path.read_text() and UNIVERSE.fingerprint not in path.name
 
     @pytest.mark.parametrize("damage", ["not json", "truncated", "wrong_size", "other_rows", "unknown_key"])
     def test_admit_unreadableLog_withholdsEveryAnswer(self, tmp_path: Path, damage: str) -> None:
@@ -422,10 +425,10 @@ class TestExactCheckBounds:
         patient_of_row = np.concatenate([np.arange(150), np.full(50, -1)])
         visits = Universe(rows=ROWS, fingerprint="200:1", patient_key="pid", patient_of_row=patient_of_row)
         log = MemoryShownCountLog()
-        log.admit("d", "v1", visits, [ShownSet(unit="patients:pid", positions=np.arange(60))])
+        log.admit("d", "v1", visits, [ShownSet(unit=str(visits.patients_unit), positions=np.arange(60))])
 
         # Act
-        verdict = log.admit("d", "v1", UNIVERSE, [ShownSet(unit="patients:pid", positions=np.arange(70))])
+        verdict = log.admit("d", "v1", UNIVERSE, [ShownSet(unit=str(visits.patients_unit), positions=np.arange(70))])
 
         # Assert
         assert (verdict.shown, verdict.reason) == (False, UNAVAILABLE_REASON)
@@ -470,3 +473,83 @@ class TestPresenterCounts:
         assert (counts is not None) is listed
         if counts is not None:
             assert 40 in [c.value for c in counts]
+
+
+class TestInstallKey:
+    def test_admit_keyLostWhileLogsExist_withheld(self, tmp_path: Path) -> None:
+        # Arrange: losing the key would make every log unfindable (a reset): fail closed
+        FileShownCountLog(tmp_path).admit("d1", "v1", UNIVERSE, [_rows(0, 50)])
+        (tmp_path / shown_counts.SHOWN_COUNTS_DIRNAME / shown_counts.INSTALL_KEY_NAME).unlink()
+
+        # Act
+        verdict = FileShownCountLog(tmp_path).admit("d1", "v1", UNIVERSE, [_rows(100, 150)])
+
+        # Assert
+        assert (verdict.shown, verdict.reason) == (False, UNAVAILABLE_REASON)
+
+    def test_admit_otherInstall_otherFileNames(self, tmp_path: Path) -> None:
+        # Arrange / Act: two data directories (installs) log the same rows
+        FileShownCountLog(tmp_path / "a").admit("d1", "v1", UNIVERSE, [_rows(0, 50)])
+        FileShownCountLog(tmp_path / "b").admit("d1", "v1", UNIVERSE, [_rows(0, 50)])
+
+        # Assert: the names are keyed per install, so they differ
+        assert _log_file(tmp_path / "a").name != _log_file(tmp_path / "b").name
+
+
+class TestReviewTwo:
+    def test_admit_rowsLoggedBeforeVisitsDeclared_extraVisitsCheckedAfter(self) -> None:
+        # Arrange: 105 rows of 100 patients logged while rows were not yet declared visits (no
+        # patient map); once declared, a patient count of those 100 gives the 5 extra visits
+        patient_of_row = np.concatenate([np.arange(150), np.arange(5), np.full(45, -1)])
+        visits = Universe(rows=ROWS, fingerprint="200:1", patient_key="pid", patient_of_row=patient_of_row)
+        log = MemoryShownCountLog()
+        rows = ShownSet(unit=ROWS_UNIT, positions=np.concatenate([np.arange(100), np.arange(150, 155)]))
+        before = log.admit("d", "v1", UNIVERSE, [rows])
+
+        # Act
+        after = log.admit("d", "v1", visits, [ShownSet(unit=str(visits.patients_unit), positions=np.arange(100))])
+
+        # Assert
+        assert before.shown is True
+        assert after.shown is False
+
+    def test_patientsUnit_namedByWhichRowsArePatients_notTheColumn(self) -> None:
+        # Arrange / Act
+        mapping = np.concatenate([np.arange(150), np.arange(5), np.full(45, -1)])
+        a = Universe(rows=ROWS, fingerprint="f", patient_key="patient_id", patient_of_row=mapping)
+        b = Universe(rows=ROWS, fingerprint="f", patient_key="subject_id", patient_of_row=mapping.copy())
+
+        # Assert
+        assert a.patients_unit == b.patients_unit
+
+    def test_smallGroupDerivable_secondSvdAboveBound_notChecked(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Arrange: atoms built within the bounds, then the bound lowered for the second SVD
+        sets = [
+            to_bitmap(np.arange(0, 60), ROWS),
+            to_bitmap(np.arange(55, 100), ROWS),
+            to_bitmap(np.arange(ROWS), ROWS),
+        ]
+        atoms = shown_counts._Atoms.of(sets, np.arange(ROWS), ROWS)
+        monkeypatch.setattr(shown_counts, "MAX_SPAN_WORK", 1)
+
+        # Act / Assert
+        with pytest.raises(shown_counts._TooLargeError):
+            atoms.small_group_derivable()
+
+    @pytest.mark.slow
+    @pytest.mark.integration
+    def test_admit_manyRandomHalves_shownOrNotCheckedNeverUnchecked(self) -> None:
+        # Arrange: the review's b4. Random halves of 3,000 rows (tiny atoms); each answer is
+        # either shown or withheld, within seconds, never shown on a check that did not finish
+        rng = np.random.default_rng(3)
+        universe = Universe(rows=3000, fingerprint="3000:1")
+        log = MemoryShownCountLog()
+
+        # Act
+        verdicts = [
+            log.admit("d", "v1", universe, [ShownSet(unit=ROWS_UNIT, positions=np.flatnonzero(rng.random(3000) < 0.5))])
+            for _ in range(15)
+        ]
+
+        # Assert
+        assert all(v.shown or v.reason in (WITHHELD_REASON, shown_counts.NOT_CHECKED_REASON) for v in verdicts)

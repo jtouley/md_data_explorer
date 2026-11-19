@@ -28,6 +28,14 @@ describe('renderDatasetDeleteConfirm', () => {
     expect(container.textContent).not.toMatch(/dataset/i);
   });
 
+  test('says the record of counts already shown is kept', () => {
+    // Arrange / Act
+    const { container } = setup();
+
+    // Assert
+    expect(container.textContent).toContain('re-uploading the same rows stays protected');
+  });
+
   test('shows the dataset name and focuses Cancel, not Delete', () => {
     // Arrange / Act
     const { container, q } = setup();

@@ -37,6 +37,16 @@ class ShownCountMismatchError(RuntimeError):
     """A shown count's set does not have the size the answer shows (never names the sizes)."""
 
 
+def _same_patients(entity_of_row: np.ndarray, patient_of_row: np.ndarray) -> bool:
+    """Whether an ID's values and the patients pair one to one: every row has both or neither,
+    each value is on one patient's rows only, and each patient has one value."""
+    keyed, patients = entity_of_row >= 0, patient_of_row >= 0
+    if not np.array_equal(keyed, patients):
+        return False
+    pairs = np.unique(np.stack([entity_of_row[keyed], patient_of_row[keyed]]), axis=1)
+    return bool(np.unique(pairs[0]).size == pairs.shape[1] == np.unique(pairs[1]).size)
+
+
 def layer_universe(layer: Any) -> Universe:
     """The layer's rows as the log knows them; patients mapped to their first row once the
     question service counts patients over visit rows (``count_entity_key``)."""
@@ -118,8 +128,15 @@ def answer_sets(
         flags = frame.with_columns(mask.alias("__shown")).get_column("__shown").to_numpy().astype(bool)
         chosen = positions[flags]
         if count.unit == "counted" and entity_key is not None and entity_key != universe.patient_key:
-            firsts = layer.patient_of_row(entity_key)[chosen]
-            shown = ShownSet(unit=ROWS_UNIT, positions=np.unique(firsts[firsts >= 0]))
+            entity_of_row = layer.patient_of_row(entity_key)
+            if universe.patient_of_row is not None and _same_patients(entity_of_row, universe.patient_of_row):
+                # An ID that names patients one to one (an mrn beside patient_id): its distinct
+                # count is a patient count, so it joins the patient sets it can be compared with.
+                reps = universe.patient_of_row[chosen[entity_of_row[chosen] >= 0]]
+                shown = ShownSet(unit=str(universe.patients_unit), positions=np.unique(reps[reps >= 0]))
+            else:
+                firsts = entity_of_row[chosen]
+                shown = ShownSet(unit=ROWS_UNIT, positions=np.unique(firsts[firsts >= 0]))
         elif count.unit == "counted" and universe.patient_of_row is not None and universe.patients_unit is not None:
             reps = universe.patient_of_row[chosen]
             shown = ShownSet(unit=universe.patients_unit, positions=np.unique(reps[reps >= 0]))

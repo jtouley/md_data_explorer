@@ -34,7 +34,9 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import hmac
 import json
+import secrets
 import threading
 import zlib
 from collections.abc import Iterator, Sequence
@@ -55,7 +57,7 @@ from clinical_analytics.storage.metadata_lock import FileLockTimeoutError, file_
 
 logger = structlog.get_logger()
 
-LOG_FORMAT: Final = 2
+LOG_FORMAT: Final = 3
 # Distinct sets one dataset's rows may hold. A grouped answer adds one set per group shown, so this
 # is about 300 grouped answers of 30 groups with n and events; the exact check's own bounds
 # (``MAX_SPAN_WORK``, ``MAX_MATRIX_FLOATS``) usually stop first on large data.
@@ -71,12 +73,68 @@ MILP_TIME_LIMIT_S: Final = 10.0
 # Residual below which a 0/1 region counts as a combination of shown sets.
 SPAN_TOLERANCE: Final = 1e-6
 ROWS_UNIT: Final = "rows"
-# How both paths number rows and fingerprint them, in DuckDB over the stored table's own columns
-# (the question box's raw table, the SQL sandbox's read_parquet): by content, never by a name a
-# column could take (a column called rowid or file_row_number shadows those). Identical rows tie;
-# they are interchangeable, since every condition holds for both or neither.
-ROW_ORDER_SQL: Final = "hash(*COLUMNS(*)), CAST(row(*COLUMNS(*)) AS VARCHAR)"
-FINGERPRINT_SQL: Final = "count(*) AS n, sum(hash(*COLUMNS(*))::HUGEINT) AS h"
+
+
+def _quoted(column: str) -> str:
+    return '"' + column.replace('"', '""') + '"'
+
+
+def row_digest_sql(columns: Sequence[str]) -> str:
+    """A row's digest from its values alone: SHA-256 of its values as text (missing as NUL), each
+    length-prefixed and sorted, so column order and names do not change it. Shared by both paths
+    (the question box's DuckDB table and the SQL sandbox's ``read_parquet``) and pinned to SHA-256,
+    never DuckDB's ``hash()``. ``columns``: from ``content_columns``."""
+    if not columns:
+        return "sha256('')"
+    return f"sha256(array_to_string(list_sort([{', '.join(_value_text(c) for c in columns)}]), chr(31)))"
+
+
+def _value_text(column: str) -> str:
+    """A column's value as length-prefixed text (missing as NUL), so values can't run together."""
+    value = f"coalesce(CAST({_quoted(column)} AS VARCHAR), chr(0))"
+    return f"length({value})::VARCHAR || ':' || {value}"
+
+
+def row_tiebreak_sql(columns: Sequence[str]) -> str:
+    """Orders rows whose values are the same multiset in different columns (a=1, b=2 and a=2,
+    b=1): their values in column-name order. Rows equal in every column still tie; they are
+    interchangeable, since every condition holds for both or neither."""
+    values = [_value_text(c) for c in sorted(columns)]
+    return f"sha256(concat_ws(chr(31), {', '.join(values)}))" if values else "''"
+
+
+def row_number_sql(columns: Sequence[str]) -> str:
+    """Each row's number on both paths: by digest, ties broken by ``row_tiebreak_sql``, from 0."""
+    return f"row_number() OVER (ORDER BY {row_digest_sql(columns)}, {row_tiebreak_sql(columns)}) - 1"
+
+
+def fingerprint_sql(columns: Sequence[str], source: str) -> str:
+    """The rows' count and fingerprint (SHA-256 of their sorted digests) over ``source``: the same
+    for the same rows whatever the file, row order, column order or names (and on both paths)."""
+    return (
+        f"SELECT count(*) AS n, sha256(coalesce(string_agg(d, '' ORDER BY d), '')) AS h "
+        f"FROM (SELECT {row_digest_sql(columns)} AS d FROM {source})"
+    )
+
+
+# Columns an upload makes up (a patient_id built from other columns, a row index, or a copy of a
+# column): left out of a row's digest, so the same rows uploaded with and without one match.
+SYNTHESIZED_COLUMNS: Final = ("patient_id",)
+
+
+def distinct_values_sql(columns: Sequence[str], source: str) -> str:
+    """One row: per column, how many distinct values (as text, missing as one value) it holds."""
+    counts = ", ".join(f"count(DISTINCT coalesce(CAST({_quoted(c)} AS VARCHAR), chr(0)))" for c in columns)
+    return f"SELECT {counts or '0'} FROM {source}"
+
+
+def content_columns(columns: Sequence[str], distinct: Sequence[int], synthesized: Sequence[str]) -> list[str]:
+    """The columns a row's digest reads: those that tell rows apart (more than one value: a column
+    holding one value everywhere, added or dropped, does not change which rows are which) and
+    that the upload did not make up. ``distinct``: ``distinct_values_sql``'s row."""
+    made_up = set(synthesized)
+    return [c for c, n in zip(columns, distinct, strict=True) if int(n) > 1 and c not in made_up]
+
 
 WITHHELD_REASON: Final = (
     "This answer is not shown: together with answers already shown for this dataset, it would let "
@@ -146,7 +204,12 @@ class Universe:
 
     @property
     def patients_unit(self) -> str | None:
-        return f"patients:{self.patient_key}" if self.patient_key is not None else None
+        """The patient unit, named by which rows belong to which patient (not by the ID column's
+        name), so renaming the ID column can't start a parallel unit."""
+        if self.patient_of_row is None:
+            return None
+        digest = hashlib.sha256(np.ascontiguousarray(self.patient_of_row, dtype=np.int64).tobytes()).hexdigest()
+        return f"patients:{digest[:32]}"
 
 
 @dataclass(frozen=True)
@@ -212,7 +275,6 @@ class _Entry:
     unit: str
     words: np.ndarray
     size: int
-    excess: int | None  # visit-row sets: rows minus their patients; None otherwise
 
 
 @dataclass
@@ -240,7 +302,6 @@ class _StoredSet(BaseModel):
 
     unit: str = Field(min_length=1, max_length=300)
     size: int = Field(ge=0)
-    excess: int | None = Field(default=None, ge=0)
     bits: str  # zlib-compressed bitmap, base64
 
 
@@ -249,22 +310,23 @@ class _StoredLog(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    format: Literal[2]
+    format: Literal[3]
     rows: int = Field(ge=0)
     fingerprint: str = Field(min_length=1)
     sets: list[_StoredSet] = Field(max_length=MAX_LOGGED_SETS)
 
 
-def _encode(state: _State) -> bytes:
+def _encode(state: _State, fingerprint: str) -> bytes:
+    """The file for ``state``; ``fingerprint`` is what the file records for its rows (the file
+    log stores a keyed digest of the rows' fingerprint, never the fingerprint itself)."""
     stored = _StoredLog(
         format=LOG_FORMAT,
         rows=state.rows,
-        fingerprint=state.fingerprint,
+        fingerprint=fingerprint,
         sets=[
             _StoredSet(
                 unit=e.unit,
                 size=e.size,
-                excess=e.excess,
                 bits=base64.b64encode(zlib.compress(e.words.tobytes(), 6)).decode("ascii"),
             )
             for e in state.entries
@@ -273,8 +335,9 @@ def _encode(state: _State) -> bytes:
     return json.dumps(stored.model_dump(mode="json"), separators=(",", ":")).encode("utf-8")
 
 
-def _decode(data: bytes, universe: Universe) -> _State:
-    """The stored log, checked: these rows (count and fingerprint), each bitmap the size stored.
+def _decode(data: bytes, universe: Universe, fingerprint: str) -> _State:
+    """The stored log, checked: these rows (count and the recorded ``fingerprint``), each bitmap
+    the size stored.
 
     Raises:
         ShownLogUnavailableError: the file is not a valid log of these rows.
@@ -283,9 +346,9 @@ def _decode(data: bytes, universe: Universe) -> _State:
         stored = _StoredLog.model_validate_json(data)
     except pydantic.ValidationError as e:
         raise ShownLogUnavailableError(f"shown-count log is invalid ({e.error_count()} errors)") from e
-    if stored.rows != universe.rows or stored.fingerprint != universe.fingerprint:
+    if stored.rows != universe.rows or not hmac.compare_digest(stored.fingerprint, fingerprint):
         raise ShownLogUnavailableError("shown-count log belongs to other rows")
-    state = _State(rows=stored.rows, fingerprint=stored.fingerprint, entries=[], index=set())
+    state = _State(rows=stored.rows, fingerprint=universe.fingerprint, entries=[], index=set())
     expected = _words(stored.rows) * 8
     for item in stored.sets:
         try:
@@ -297,7 +360,7 @@ def _decode(data: bytes, universe: Universe) -> _State:
         words = np.frombuffer(raw, dtype=np.uint64).copy()
         if int(_popcount(words)) != item.size:
             raise ShownLogUnavailableError("shown-count log holds a set whose size does not match")
-        state.add(_Entry(unit=item.unit, words=words, size=item.size, excess=item.excess))
+        state.add(_Entry(unit=item.unit, words=words, size=item.size))
     return state
 
 
@@ -399,6 +462,8 @@ class _Atoms:
         leverage = (basis[:, small] ** 2).sum(axis=0)
         if np.any(1.0 - leverage < SPAN_TOLERANCE):
             return True
+        if self.count * small.size * min(self.count, small.size) > MAX_SPAN_WORK:
+            raise _TooLargeError  # the second SVD, over atoms x small atoms
         residual = -(basis.T @ basis[:, small])  # (I - P) restricted to the small atoms' columns
         residual[small, np.arange(small.size)] += 1.0
         _, singular, right = np.linalg.svd(residual, full_matrices=False)
@@ -493,8 +558,15 @@ def _visits_conflict(state: _State, new: Sequence[_Entry], universe: Universe) -
     if not any(e.unit in (unit, ROWS_UNIT) for e in new):
         return None
     entries = [*state.entries, *new]
+    # Extra rows over patients, from the patient map these rows have now: a set of rows logged
+    # before the rows were declared visits is checked with the declaration in force.
     visits = [
-        e for e in entries if e.unit == ROWS_UNIT and e.excess is not None and 1 <= e.excess <= SMALL_CELL_THRESHOLD - 1
+        e
+        for e in entries
+        if e.unit == ROWS_UNIT
+        and 1
+        <= e.size - int(_patients_of(from_bitmap(e.words, universe.rows), universe).size)
+        <= SMALL_CELL_THRESHOLD - 1
     ]
     if not visits:
         return None
@@ -518,10 +590,7 @@ def _entries(sets: Sequence[ShownSet], universe: Universe) -> list[_Entry]:
         if identity in seen:
             continue
         seen.add(identity)
-        excess = None
-        if shown.unit == ROWS_UNIT and universe.patient_of_row is not None:
-            excess = shown.size - int(_patients_of(shown.positions, universe).size)
-        out.append(_Entry(unit=shown.unit, words=words, size=shown.size, excess=excess))
+        out.append(_Entry(unit=shown.unit, words=words, size=shown.size))
     return out
 
 
@@ -608,25 +677,55 @@ class MemoryShownCountLog(ShownCountLog):
         self._states[(universe.rows, universe.fingerprint)] = state
 
 
-def log_name(universe: Universe) -> str:
-    """The log file's name for these rows: a hash of their count and fingerprint."""
-    return hashlib.sha256(f"{universe.rows}:{universe.fingerprint}".encode()).hexdigest()[:40] + ".json"
+INSTALL_KEY_NAME: Final = ".install_key"
 
 
 class FileShownCountLog(ShownCountLog):
-    """``<data_dir>/shown_counts/<hash of the rows' fingerprint>.json``, one file per set of rows.
+    """``<data_dir>/shown_counts/<keyed digest of the rows' fingerprint>.json``, one file per set
+    of rows.
 
-    Kept when a dataset is deleted: a re-upload of the same rows must find what was shown on
-    them. Holds bitmaps of row numbers only. Written with ``atomic_write`` under a sidecar lock
-    file shared with every process on the data directory.
+    The name and the file hold an HMAC of the fingerprint under a per-install key
+    (``shown_counts/.install_key``, made once), never the fingerprint: a file copied elsewhere does
+    not say which rows it is about. Losing the key while logs exist withholds every answer (the
+    logs could no longer be found, which would reset them). Kept when a dataset is deleted: a
+    re-upload of the same rows must find what was shown on them. Holds bitmaps of row numbers
+    only. Written with ``atomic_write`` under a sidecar lock file shared with every process on the
+    data directory.
     """
 
     def __init__(self, data_dir: Path) -> None:
         super().__init__()
         self.data_dir = data_dir
 
+    @property
+    def _root(self) -> Path:
+        return self.data_dir / SHOWN_COUNTS_DIRNAME
+
+    def _key(self) -> bytes:
+        """The install key, made on first use.
+
+        Raises:
+            ShownLogUnavailableError: it can't be read or made, or logs exist without it.
+        """
+        path = self._root / INSTALL_KEY_NAME
+        try:
+            if not path.exists():
+                if any(self._root.glob("*.json")):
+                    raise ShownLogUnavailableError("shown-count logs exist but their install key is gone")
+                atomic_write_bytes(path, secrets.token_bytes(32), exclusive=True)
+            key = path.read_bytes()
+        except OSError as e:
+            raise ShownLogUnavailableError(f"shown-count install key unavailable: {type(e).__name__}") from e
+        if len(key) != 32:
+            raise ShownLogUnavailableError("shown-count install key is invalid")
+        return key
+
+    def _keyed(self, universe: Universe) -> str:
+        message = f"{universe.rows}:{universe.fingerprint}".encode()
+        return hmac.new(self._key(), message, hashlib.sha256).hexdigest()
+
     def _path(self, universe: Universe) -> Path:
-        return self.data_dir / SHOWN_COUNTS_DIRNAME / log_name(universe)
+        return self._root / f"{self._keyed(universe)[:40]}.json"
 
     @contextmanager
     def _locked(self, universe: Universe) -> Iterator[None]:
@@ -645,10 +744,10 @@ class FileShownCountLog(ShownCountLog):
             return None
         except OSError as e:
             raise ShownLogUnavailableError(f"shown-count log unreadable: {type(e).__name__}") from e
-        return _decode(data, universe)
+        return _decode(data, universe, self._keyed(universe))
 
     def _save(self, universe: Universe, state: _State) -> None:
         try:
-            atomic_write_bytes(self._path(universe), _encode(state))
+            atomic_write_bytes(self._path(universe), _encode(state, self._keyed(universe)))
         except OSError as e:
             raise ShownLogUnavailableError(f"shown-count log not saved: {type(e).__name__}") from e

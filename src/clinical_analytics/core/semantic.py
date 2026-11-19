@@ -29,10 +29,17 @@ from ibis import _
 from clinical_analytics.analysis.numeric_text import is_missing_token, is_numeric_text, missing_token_sql
 from clinical_analytics.core import nl_query_config
 from clinical_analytics.core.execution_gate import evaluate_execution_gate
+from clinical_analytics.core.identifier_rules import SYNTHESIZED_ID_CONFIG_FLAG
 from clinical_analytics.core.log_redaction import stable_hash
 from clinical_analytics.core.mapper import load_dataset_config
 from clinical_analytics.core.schema import UnifiedCohort
-from clinical_analytics.core.shown_counts import FINGERPRINT_SQL, ROW_ORDER_SQL
+from clinical_analytics.core.shown_counts import (
+    SYNTHESIZED_COLUMNS,
+    content_columns,
+    distinct_values_sql,
+    fingerprint_sql,
+    row_number_sql,
+)
 
 if TYPE_CHECKING:
     from clinical_analytics.core.dataset import Granularity
@@ -668,6 +675,7 @@ class SemanticLayer:
         # The log of shown counts: level merges in order, the rows' fingerprint, patient maps.
         self._remaps: list[tuple[str, dict[str, str]]] = []
         self._fingerprint: str | None = None
+        self._digest_columns: list[str] | None = None
         self._patient_of_row: dict[str, np.ndarray] = {}
 
         # Alias index (lazy initialization)
@@ -910,7 +918,7 @@ class SemanticLayer:
 
     def _positioned_view(self) -> Any:
         """The base view with each row's number as ``ROW_POSITION``: rows numbered by content
-        (``shown_counts.ROW_ORDER_SQL``), never by a pseudo-column a dataset column could shadow,
+        (``shown_counts.row_number_sql``), never by a pseudo-column a dataset column could shadow,
         the confirmed level merges applied in the order the base view applied them. For the log
         of shown counts only (``core.shown_counts``): never offered as a column.
 
@@ -925,7 +933,7 @@ class SemanticLayer:
         with self._con_lock:
             self.con.con.execute(
                 f'CREATE OR REPLACE TEMP VIEW "{positioned}" AS SELECT '
-                f'row_number() OVER (ORDER BY {ROW_ORDER_SQL}) - 1 AS "{ROW_POSITION}", * '
+                f'{row_number_sql(self._content_columns())} AS "{ROW_POSITION}", * '
                 f'FROM "{self._raw_table_name}"'
             )
             raw = self.con.table(positioned)
@@ -946,18 +954,29 @@ class SemanticLayer:
             rows: pl.DataFrame = view.select([ROW_POSITION, *dict.fromkeys(columns)]).to_polars()
             return rows
 
+    def _content_columns(self) -> list[str]:
+        """The stored columns a row's digest reads (``shown_counts.content_columns``): those that
+        tell rows apart, but a patient_id the upload made up. Counted once per layer."""
+        if self._digest_columns is None:
+            columns = list(self.raw.columns)
+            made_up = SYNTHESIZED_COLUMNS if self.config.get(SYNTHESIZED_ID_CONFIG_FLAG) else ()
+            with self._con_lock:
+                distinct = self.con.con.execute(distinct_values_sql(columns, f'"{self._raw_table_name}"')).fetchone()
+            self._digest_columns = content_columns(columns, list(distinct or [])[: len(columns)], made_up)
+        return self._digest_columns
+
     def row_fingerprint(self) -> str:
         """Row count and the sum of every row's hash, once per layer: the key of the log of shown
-        counts (``shown_counts.FINGERPRINT_SQL``). The same rows give the same value whatever the
+        counts (``shown_counts.fingerprint_sql``). The same rows give the same value whatever the
         upload, file order or column names."""
         if self._fingerprint is None:
             if self._raw_table_name is None:
                 raise CohortStepError("Rows of this dataset have no stored position.")
             with self._con_lock:
                 rows, digest = self.con.con.execute(
-                    f'SELECT {FINGERPRINT_SQL} FROM "{self._raw_table_name}"'
+                    fingerprint_sql(self._content_columns(), f'"{self._raw_table_name}"')
                 ).fetchone()
-            self._fingerprint = f"{int(rows)}:{int(digest or 0)}"
+            self._fingerprint = f"{int(rows)}:{digest}"
         return self._fingerprint
 
     def patient_of_row(self, key: str) -> np.ndarray:

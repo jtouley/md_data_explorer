@@ -18,6 +18,7 @@ each row one patient?" at upload (``core.patient_rows``), so either answer serve
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +33,8 @@ from clinical_analytics.contracts.declarations import (
 from clinical_analytics.contracts.errors import ContractError, ContractStoreError
 from clinical_analytics.contracts.service import read_saved_contract
 from clinical_analytics.contracts.store import contract_path
-from clinical_analytics.core.shown_counts import FileShownCountLog, ShownCountLog
+from clinical_analytics.core.identifier_rules import SYNTHESIZED_ID_CONFIG_FLAG
+from clinical_analytics.core.shown_counts import SYNTHESIZED_COLUMNS, FileShownCountLog, ShownCountLog
 from clinical_analytics.sql.catalog import SqlCatalog
 from clinical_analytics.sql.errors import SqlRefusedError
 from clinical_analytics.sql.privacy import PatientRowsUnconfirmedError, ShownLogTarget, SqlAnswer, answer_query
@@ -96,6 +98,8 @@ def run_governed_sql(
         log.warning("governed_sql_declarations_unreadable", error_type=type(e).__name__)
         raise SqlRefusedError(DECLARATIONS_UNREADABLE) from e
     catalog = SqlCatalog.from_contract(contract, Path(source), declared.levels)
+    if (getattr(layer, "config", None) or {}).get(SYNTHESIZED_ID_CONFIG_FLAG):
+        catalog = dataclasses.replace(catalog, synthesized=SYNTHESIZED_COLUMNS)
     query = validate_sql(sql, catalog)
     target = ShownLogTarget(shown_log or FileShownCountLog(data_dir), dataset_id, version)
     with SandboxConnection(catalog) as sandbox:

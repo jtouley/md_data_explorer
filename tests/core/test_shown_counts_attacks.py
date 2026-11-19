@@ -507,3 +507,78 @@ class TestConfirmedPatientRows:
         # Assert: the answer counts patients, and the overlap of 5 is withheld
         assert first.claim is not None and "patients" in first.claim
         assert _withheld(result)
+
+
+class TestStableFingerprint:
+    @pytest.mark.parametrize(
+        "variant", ["rows shuffled", "columns reordered", "constant column added", "column renamed", "made-up id"]
+    )
+    def test_ask_sameRowsUploadedAnotherWay_sharesOneLog(
+        self, make_semantic_layer: Any, tmp_path: Path, variant: str
+    ) -> None:
+        # Arrange: the review's b5. "65 or younger" is shown on one upload; "65 or older" on the
+        # same rows uploaded another way would give the 5 aged exactly 65 (65 + 60 - 120)
+        from clinical_analytics.core.identifier_rules import SYNTHESIZED_ID_CONFIG_FLAG
+
+        base = _patients()
+        overrides: dict[str, Any] = {}
+        other = {
+            "rows shuffled": base.sample(fraction=1.0, shuffle=True, seed=1),
+            "columns reordered": base.select(["sex", "age", "patient_id"]),
+            "constant column added": base.with_columns(pl.lit("x").alias("site")),
+            "column renamed": base.rename({"sex": "gender"}),
+            "made-up id": base.with_columns(("R" + pl.int_range(pl.len()).cast(pl.String)).alias("patient_id")),
+        }[variant]
+        if variant == "made-up id":  # the upload synthesized patient_id: not part of the rows' content
+            overrides = {SYNTHESIZED_ID_CONFIG_FLAG: True}
+            base = base.with_columns(("Q" + pl.int_range(pl.len()).cast(pl.String)).alias("patient_id"))
+        first = make_semantic_layer(data=base, workspace_name="first", config_overrides=overrides or None)
+        second = make_semantic_layer(data=other, workspace_name="second", config_overrides=overrides or None)
+        _ask(QueryService(first, data_dir=tmp_path), _count(CohortStep("le", "age", 65)))
+
+        # Act
+        result = _ask(QueryService(second, data_dir=tmp_path), _count(CohortStep("ge", "age", 65)))
+
+        # Assert
+        assert first.row_fingerprint() == second.row_fingerprint()
+        assert _withheld(result)
+
+
+def _two_visits_each(id_column: str = "patient_id") -> pl.DataFrame:
+    """120 patients with two visit rows each, ages as ``_patients``; an mrn one to one with them."""
+    one = _patients()
+    return (
+        pl.concat([one, one])
+        .with_columns(("M" + pl.col("patient_id").str.slice(1)).alias("mrn"))
+        .rename({"patient_id": id_column})
+    )
+
+
+class TestPatientUnitByContent:
+    def test_ask_distinctMrnOneToOneWithPatients_comparedAsPatients(self, make_semantic_layer: Any) -> None:
+        # Arrange: the review's b6. Visit rows; "65 or younger" (65 patients) is logged. Distinct
+        # mrn aged 65+ (60) is a patient count: 65 + 60 - 120 = 5
+        service = QueryService(make_semantic_layer(data=_two_visits_each()))
+        _ask(service, _count())
+        _ask(service, _count(CohortStep("le", "age", 65)))
+
+        # Act
+        result = _ask(
+            service,
+            QueryPlan(intent="COUNT", entity_key="mrn", cohort_steps=[CohortStep("ge", "age", 65)], confidence=0.99),
+        )
+
+        # Assert
+        assert _withheld(result)
+
+    def test_ask_idColumnRenamed_sameRows_samePatientUnit(self, make_semantic_layer: Any, tmp_path: Path) -> None:
+        # Arrange: the same visit rows with the ID column named patient_id, then subject_id
+        first = make_semantic_layer(data=_two_visits_each(), workspace_name="first")
+        second = make_semantic_layer(data=_two_visits_each("subject_id"), workspace_name="second")
+        _ask(QueryService(first, data_dir=tmp_path), _count(CohortStep("le", "age", 65)))
+
+        # Act
+        result = _ask(QueryService(second, data_dir=tmp_path), _count(CohortStep("ge", "age", 65)))
+
+        # Assert
+        assert _withheld(result)

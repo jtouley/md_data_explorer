@@ -193,7 +193,7 @@ def answer_query(
 def _universe(sandbox: SandboxConnection, catalog: SqlCatalog) -> Universe:
     """The stored rows as the log knows them (rows are patients on this path)."""
     row = sandbox.run_unsuppressed(catalog.fingerprint_sql()).row(0, named=True)
-    return Universe(rows=int(row["n"]), fingerprint=f"{int(row['n'])}:{int(row['h'] or 0)}")
+    return Universe(rows=int(row["n"]), fingerprint=f"{int(row['n'])}:{row['h']}")
 
 
 def _shown_steps(cells: dict[Cell, int], hidden: set[Any], conditions: _Conditions) -> list[int]:

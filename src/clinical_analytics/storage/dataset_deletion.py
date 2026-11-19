@@ -11,9 +11,14 @@ An upload leaves data in several places under the data home (``<data home>/data`
 * Temp files a crashed write left behind (``storage.atomic``): ``parquet/.{id}_*.part`` and
   ``uploads/metadata/.{id}.json.*.part`` (they can hold patient rows)
 * Typed Parquet ``parquet/{id}_<table>_<version>.parquet`` and ``parquet/{id}__cohort_<version>.parquet``
-* Data contracts ``contracts/{id}/`` and quality reports ``dq/{id}/``. Not the log of shown counts
-  (``shown_counts/``): it is keyed by the rows, holds row numbers only, and must outlive a delete so
-  that re-uploading the same rows finds what was already shown on them
+* Data contracts ``contracts/{id}/`` and quality reports ``dq/{id}/``
+
+Kept on purpose: the log of shown counts (``shown_counts/``, ``core.shown_counts``). It is keyed
+by a keyed digest (HMAC under a per-install key) of the rows' content, not by dataset id, and holds
+row numbers and set sizes only, never values or IDs. It must outlive a delete: re-uploading the
+same rows must find what was already shown on them, or a delete and re-upload would reset it. The
+delete response and the app's delete panel say so. Purging it needs a deliberate confirmation
+(not built yet; ADR013 section 12).
 * DuckDB tables ``{id}_<table>_<version>`` in ``analytics.duckdb``, and any pre-upgrade backup
   copies of the store (``analytics.duckdb.backup-*``, see ``storage.store_format``)
 
