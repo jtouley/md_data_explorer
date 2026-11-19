@@ -161,20 +161,22 @@ def test_rate_smallCellInGroup_hidesThatRate(make_semantic_layer) -> None:
     assert "0.075" not in shown["claim"] and "7.5%" not in shown["claim"]
 
 
-def _cohort_with_missing(missing: int, size: int = 200, events: int = 50) -> pl.DataFrame:
-    """``size`` patients: diabetes missing for the first ``missing``, then ``events`` "yes", the
-    rest "no"; site alternates North/South."""
-    values = [None] * missing + ["yes"] * events + ["no"] * (size - missing - events)
+def _cohort_with_missing(missing: int, size: int = 200, events: int = 50, missing_south: int = 0) -> pl.DataFrame:
+    """``size`` patients, the first half North and the rest South: diabetes missing for the first
+    ``missing`` (North) and the first ``missing_south`` of South; then ``events`` "yes", the rest "no"."""
+    half = size // 2
+    values = [None] * missing + ["yes"] * events + ["no"] * (half - missing - events)
+    values += [None] * missing_south + ["no"] * (size - half - missing_south)
     return pl.DataFrame(
         {
             "patient_id": [f"P{index:03d}" for index in range(size)],
-            "site": ["North" if index % 2 else "South" for index in range(size)],
+            "site": ["North" if index < half else "South" for index in range(size)],
             "diabetes": values,
         }
     )
 
 
-def test_proportion_fewMissing_shareWithHiddenNNotShown(make_semantic_layer) -> None:
+def test_proportion_fewMissing_shareWithHiddenNNotShown(make_semantic_layer: Callable[..., SemanticLayer]) -> None:
     """Repro: 200 patients, 3 missing diabetes, 50 of 197 "yes". The app showed 25.4% (n hidden)
     and 0.2538 in the table; only n=197 with 50 events gives 0.2538, so 3 excluded was derivable."""
     # Arrange
@@ -200,7 +202,7 @@ def test_proportion_fewMissing_shareWithHiddenNNotShown(make_semantic_layer) -> 
     ],
 )
 def test_proportion_missingWindowBoundaries_shareShownOnlyWithN(
-    make_semantic_layer, missing: int, shown_share: float | None
+    make_semantic_layer: Callable[..., SemanticLayer], missing: int, shown_share: float | None
 ) -> None:
     # Arrange
     layer = make_semantic_layer(dataset_name=f"missing{missing}", data=_cohort_with_missing(missing))
@@ -226,7 +228,9 @@ def test_proportion_missingWindowBoundaries_shareShownOnlyWithN(
         pytest.param(11, True, id="11_missing_shown"),
     ],
 )
-def test_rate_fewMissing_everyRateWithheldWithN(make_semantic_layer, missing: int, rates_shown: bool) -> None:
+def test_rate_fewMissing_everyRateWithheldWithN(
+    make_semantic_layer: Callable[..., SemanticLayer], missing: int, rates_shown: bool
+) -> None:
     # Arrange
     layer = make_semantic_layer(dataset_name=f"rate_missing{missing}", data=_cohort_with_missing(missing))
     plan = QueryPlan(intent="COUNT", confidence=0.95, group_by="site", rate_column="diabetes", rate_value="yes")
@@ -606,3 +610,22 @@ class TestGroupedShareIsARatePlan:
         # Assert
         assert execution["success"] is False
         assert "always 100% or 0%" in str(execution.get("failure_reason"))
+
+
+def test_rate_fewMissingInOneSite_thatSiteNeverShownBesideItsSize(
+    make_semantic_layer: Callable[..., SemanticLayer],
+) -> None:
+    """n is shown (5 North + 17 South = 22 excluded), but North's n of 95 beside its size from a
+    COUNT by site (100) would give back 5 missing in North."""
+    # Arrange
+    frame = _cohort_with_missing(5, missing_south=17)
+    layer = make_semantic_layer(dataset_name="site_missing", data=frame)
+    plan = QueryPlan(intent="COUNT", confidence=0.95, group_by="site", rate_column="diabetes", rate_value="yes")
+
+    # Act
+    _execution, shown = _present(layer, plan)
+
+    # Assert
+    assert "n=178; 22 excluded" in shown["claim"]
+    assert all(row["n"] == SECONDARY_SUPPRESSED for row in shown["table"]["rows"])
+    assert all(row["rate"] == SECONDARY_SUPPRESSED for row in shown["table"]["rows"])

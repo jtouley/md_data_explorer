@@ -951,6 +951,12 @@ def _present_descriptive(analysis: Mapping[str, Any]) -> Presentation:
                 stats = {k: _mask(v) for k, v in stats.items()}
                 reason = "n is hidden (n hidden)" if _is_count(n) else "n is missing"
                 claim = f"Statistics for {name} are not shown because {reason}."
+            elif n_hidden and stats["min"] == 0 and stats["max"] == 1:
+                # Values from 0 to 1 may be a 0/1 flag, whose mean is a share events/n (compute
+                # lists such a flag's frequencies instead, so only a payload that skipped that
+                # step gets here): withheld with n hidden, as a proportion is (_share_withheld).
+                stats = {k: _mask(v) if k in _SUM_STATISTICS else v for k, v in stats.items()}
+                claim = f"The mean and SD of {name} are not shown because n is hidden (n hidden)."
             elif (
                 str(analysis.get("statistic") or "mean") != "mean"
                 and stats.get(str(analysis.get("statistic"))) is not None
@@ -1048,6 +1054,8 @@ def _present_count(analysis: Mapping[str, Any]) -> Presentation:
 
 
 _STATISTIC_LABELS = {"mean": "Mean", "median": "Median", "min": "Minimum", "max": "Maximum", "std": "SD of"}
+# Statistics that are sums over n: of a 0/1 flag, a share (``_present_descriptive``).
+_SUM_STATISTICS: Final = frozenset({"mean", "std"})
 
 
 def _group_label(column: str, level: Any) -> str:
@@ -1065,13 +1073,63 @@ def _counts_small(events: Any, n: Any) -> bool:
     return any(is_small_level(count) for count in (int(events), int(n) - int(events)))
 
 
+def _counts_consistent(events: Any, n: Any) -> bool:
+    """Whether events and n are counts with 0 <= events <= n."""
+    return _is_count(events) and _is_count(n) and 0 <= int(events) <= int(n)
+
+
+def _checked_exclusions(analysis: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The analysis with an n_excluded that is missing, negative or not a count replaced by a value
+    the suppression hides around (fail closed): a share's n is never shown beside an exclusion
+    count nobody checked, since n and the visible row count would give that count back."""
+    excluded = analysis.get("n_excluded")
+    if _is_count(excluded) and int(excluded) >= 0:
+        return analysis
+    return {**analysis, "n_excluded": "unchecked"}
+
+
+def _group_excluded_key(key: str) -> tuple[str, str, str]:
+    """Cell key of one group's exclusions; a 3-tuple never equals a group name or an N_* key."""
+    return ("group", "excluded", key)
+
+
+def _group_parts(
+    analysis: Mapping[str, Any], groups: Sequence[Mapping[str, Any]]
+) -> tuple[dict[str, Any], dict[Any, Any], list[list[Any]]]:
+    """Group sizes, the count cells to suppress and their lines, for a per-group answer.
+
+    A group's n plus its exclusions (its rows with no value) is the group's size, which a COUNT
+    by group shows, so the two are a line: 1-10 exclusions in a group are hidden with its n, and
+    a reader cannot subtract them. The sizes add up to n_used and the exclusions to n_excluded.
+    A group without ``n_rows`` (a payload from before it was recorded) has no exclusions only
+    when the answer excluded nobody; otherwise they are unchecked and hidden (fail closed).
+    """
+    sizes = {str(g.get("group")): g.get("n") for g in groups}
+    parts: dict[Any, Any] = dict(sizes)
+    total_excluded = analysis.get("n_excluded")
+    nobody_excluded = _is_count(total_excluded) and int(total_excluded) == 0
+    lines: list[list[Any]] = [list(sizes)]
+    for g in groups:
+        key, n, n_rows = str(g.get("group")), g.get("n"), g.get("n_rows")
+        excluded: Any = "unchecked"
+        if n_rows is None and nobody_excluded:
+            excluded = 0
+        elif _is_count(n) and _is_count(n_rows) and int(n_rows) >= int(n):
+            excluded = int(n_rows) - int(n)
+        parts[_group_excluded_key(key)] = excluded
+        lines.append([key, _group_excluded_key(key)])
+    lines.append([_group_excluded_key(key) for key in sizes])
+    return sizes, parts, lines
+
+
 def _share_withheld(events: Any, n: Any, n_key: Any, hidden: set[Any]) -> bool:
     """Whether a share events/n (a proportion, or one group's rate) is withheld.
 
-    Withheld when n is hidden (``n_key`` in ``hidden``) or not a count, and when either count
-    (with, without) is small (``_counts_small``). A hidden n is never a reason to round instead:
-    the reader knows the cohort from other answers, so a hidden n lies in a window of at most ten
-    values (cohort - 10 to cohort - 1), and a COUNT with the same filter can show the events
+    Withheld when the answer's n or the share's own n is hidden (``n_key`` in ``hidden``) or not a
+    count, or when either count (with, without) is small or inconsistent (``_counts_small``).
+    A hidden n is never a reason to round instead: the reader knows the cohort from other
+    answers, so a hidden n lies in a window of at most ten values (cohort - 10 to cohort - 1),
+    and a COUNT with the same filter can show the events
     (``events`` patients have the value). A share at any precision a clinician would read then
     has one n in that window that gives it, and n gives back the 1-10 patients excluded. With n
     hidden every (n, events) pair of the window shows the same thing: nothing.
@@ -1088,6 +1146,7 @@ def _percent(value: float) -> str:
 def _present_proportion(analysis: Mapping[str, Any]) -> Presentation:
     """Share of patients with a value. Hidden when either of its counts (with, without) is small
     (the share and n together give both counts), and whenever n is hidden (``_share_withheld``)."""
+    analysis = _checked_exclusions(analysis)
     column = str(analysis.get("column") or "value")
     event = _event_phrase(column, analysis.get("value"))
     share = _num(analysis.get("proportion"))
@@ -1104,6 +1163,10 @@ def _present_proportion(analysis: Mapping[str, Any]) -> Presentation:
         # One wording for every hidden n, whatever the events: the reason must not tell the
         # (n, events) pairs of the window apart.
         claim = _with_details(f"The share with {event} is not shown because n is hidden", [n_clause])
+    elif withheld and not _counts_consistent(analysis.get("events"), n_used):
+        claim = _with_details(
+            f"The share with {event} is not shown because its counts are missing or disagree", [n_clause]
+        )
     elif withheld:
         claim = _with_details(
             f"The share with {event} is not shown because one of its counts is fewer than {_limit(None)} patients",
@@ -1129,8 +1192,9 @@ def _present_rate(analysis: Mapping[str, Any]) -> Presentation:
     groups = list(analysis.get("groups") or [])
     if len(groups) > MAX_GROUP_LEVELS:
         return _too_many_levels(group_col, len(groups))
-    sizes = {str(g.get("group")): g.get("n") for g in groups}
-    hidden = suppress_with_exclusions(analysis, sizes)
+    analysis = _checked_exclusions(analysis)
+    sizes, cells, lines = _group_parts(analysis, groups)
+    hidden = suppress_with_exclusions(analysis, cells, lines)
     n_clause = _n_clause(analysis, hidden)
     small_groups = _small_parts(sizes, hidden)
     rows, parts, withheld = [], [], False
@@ -1155,7 +1219,8 @@ def _present_rate(analysis: Mapping[str, Any]) -> Presentation:
     claim = _with_details(f"{event} by {group_col}: {', '.join(parts)}", [n_clause]) + ". Unadjusted."
     if withheld:
         claim += (
-            f" A rate is not shown when its n is hidden or one of its counts is fewer than {_limit(None)} patients."
+            f" A rate is not shown when its n is hidden, or one of its counts is fewer than {_limit(None)} "
+            "patients or was not recorded."
         )
     fold = {_group_label(group_col, g.get("group")) for g in groups if str(g.get("group")) in small_groups}
     return {"claim": claim, "table": _fold_rows(_table(rows), fold, small_groups.label)}
