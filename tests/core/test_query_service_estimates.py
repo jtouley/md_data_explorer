@@ -26,8 +26,9 @@ VERSION = "v1"
 def estimate_service(make_semantic_layer, make_estimate_frame):
     """A query service on a declared synthetic estimate table (25 counties, so > 20 groups)."""
 
-    def _make(declared: bool = True, **frame_args) -> QueryService:
-        frame = make_estimate_frame(**({"counties": 25} | frame_args))
+    def _make(declared: bool = True, frame=None, **frame_args) -> QueryService:
+        if frame is None:
+            frame = make_estimate_frame(**({"counties": 25} | frame_args))
         layer = make_semantic_layer(dataset_name=DATASET, data=frame, config_overrides={"column_mapping": {}})
         store = MemoryDeclarationStore()
         if declared:
@@ -182,24 +183,6 @@ class TestEstimateQuestions:
         assert table is None
 
 
-@pytest.fixture
-def declared_frame_service(make_semantic_layer):
-    """A query service on a declared synthetic estimate table built from ``frame``."""
-
-    def _make(frame):
-        layer = make_semantic_layer(dataset_name=DATASET, data=frame, config_overrides={"column_mapping": {}})
-        store = MemoryDeclarationStore()
-        store.save(
-            DATASET,
-            Declarations(
-                population_estimates=PopulationEstimatesDeclaration(statement="test", dataset_version=VERSION)
-            ),
-        )
-        return QueryService(layer, declarations=store)
-
-    return _make
-
-
 def _answer_rows(result) -> list[dict]:
     """The answer table's rows; fails when the question produced no answer table."""
     assert result.analysis is not None, result.failure_reason
@@ -210,9 +193,12 @@ def _answer_rows(result) -> list[dict]:
 
 @pytest.mark.slow
 @pytest.mark.integration
-class TestSecondReviewChatPath:
-    def test_ask_gbdOnlyNumberMetric_valuesHidden(self, declared_frame_service):
-        # Arrange: finding 1, a GBD export with only metric_name = Number (modelled counts 1-10)
+class TestTrustTheSourceChatPath:
+    """Owner's decision (ADR014 §7, 2026-11-19): a declared public table is shown as published;
+    only what the source itself suppressed stays hidden."""
+
+    def test_ask_gbdOnlyNumberMetric_shownAsPublished(self, estimate_service):
+        # Arrange: modelled GBD counts of 1-10, published by IHME
         import polars as pl
 
         rows = [
@@ -228,52 +214,32 @@ class TestSecondReviewChatPath:
             for i, s in enumerate(["Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado"])
             for sex in ("Both", "Female", "Male")
         ]
-        service = declared_frame_service(pl.DataFrame(rows))
+        service = estimate_service(frame=pl.DataFrame(rows))
 
         # Act
         result = _ask(service, "Which location_name had the highest val in 2023 for sex_name Both?", confirm=True)
 
-        # Assert
-        rows = _answer_rows(result)
-        assert len(rows) == 6
-        assert all(row["val"] == SECONDARY_SUPPRESSED for row in rows)
+        # Assert: every published value is shown, with its interval
+        shown = {row["location_name"]: row["val"] for row in _answer_rows(result)}
+        assert shown["Alabama"] == 1.4
+        assert shown["Colorado"] == 3.9
 
-    def test_ask_rateBesideSmallCount_rowWithheld(self, declared_frame_service):
-        # Arrange: finding 2, rate x population would give a hidden count back
-        import polars as pl
-
+    def test_ask_sourceSuppressedCell_staysHiddenNeverANumber(self, estimate_service):
+        # Arrange: a WONDER-like table where the source wrote "Suppressed" for Alabama
         from clinical_analytics.contracts.geography import STATES
+        from clinical_analytics.storage.staging import read_csv_typed
 
-        rows = []
-        for i, s in enumerate([x.name for x in STATES][:22]):
-            cases = 4 if s == "Alabama" else 150 + i
-            rows.append({"Geography": s, "Year": 2023, "Cases": cases, "Population": 100_000,
-                         "Rate per 100000": cases / 100_000 * 1e5})  # fmt: skip
-        service = declared_frame_service(pl.DataFrame(rows))
+        lines = ["State,Year,Deaths"] + [
+            f"{x.name},2023,{'Suppressed' if x.name == 'Alabama' else 120 + i}" for i, x in enumerate(STATES[:22])
+        ]
+        frame = read_csv_typed("\n".join(lines).encode(), public=True).data
+        service = estimate_service(frame=frame)
 
         # Act
-        result = _ask(service, "Which Geography had the highest Rate per 100000?", confirm=True)
+        result = _ask(service, "Which State had the highest Deaths?", confirm=True)
 
         # Assert
-        alabama = next(r for r in _answer_rows(result) if r["Geography"] == "Alabama")
-        assert alabama["Rate per 100000"] == SECONDARY_SUPPRESSED
-
-    def test_ask_totalWithSmallPart_totalWithheld(self, declared_frame_service):
-        # Arrange: finding 3, Both = 46 and Male = 41 with Female = 5
-        import polars as pl
-
-        from clinical_analytics.contracts.geography import STATES
-
-        rows = []
-        for i, s in enumerate([x.name for x in STATES][:22]):
-            female = 5 if s == "Alaska" else 30 + i
-            for sex, c in (("Both", 41 + i + female), ("Female", female), ("Male", 41 + i)):
-                rows.append({"State": s, "Year": 2023, "Sex": sex, "Cases": c})
-        service = declared_frame_service(pl.DataFrame(rows))
-
-        # Act
-        result = _ask(service, "Which State had the highest Cases for Sex Both in 2023?", confirm=True)
-
-        # Assert
-        alaska = next(r for r in _answer_rows(result) if r["State"] == "Alaska")
-        assert alaska["Cases"] == SECONDARY_SUPPRESSED
+        rows = {row["State"]: row["Deaths"] for row in _answer_rows(result)}
+        assert rows["Alabama"] == SECONDARY_SUPPRESSED
+        assert rows["Alaska"] == 121
+        assert "Suppressed" in (result.analysis or {}).get("claim", "")

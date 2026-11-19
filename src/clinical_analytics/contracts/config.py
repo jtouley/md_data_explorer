@@ -91,7 +91,15 @@ MISSING_VALUE_TOKENS: Final[tuple[str, ...]] = (
 # Markers a public source writes in place of a number it withholds (ADR014 §10). CDC WONDER:
 # "Suppressed" (1-9 deaths, and rates built on them), "12.3 (Unreliable)" (a rate on fewer than 20
 # deaths), "Not Applicable" (no rate). Staging moves them out of the numbers into flag columns.
-SOURCE_SUPPRESSED_TOKENS: Final[tuple[str, ...]] = ("suppressed", "(s)", "*suppressed*")
+# A cell the source withheld, matched on the lowercased, trimmed cell: "Suppressed", "Data
+# suppressed", "*", "**", "(S)", "S", "(D)", "D", "<10", "< 5", "<=10", "≤10", "1-9", "1–10".
+# Only in a column whose other cells are numbers; such a cell is never read as a number.
+# The words alone, for any upload (a patient file's "<5" is a censored lab value, not suppression).
+SOURCE_SUPPRESSED_WORDS: Final = r"^(\*?\(?suppressed\)?\*?|data suppressed|\(s\))$"
+# The full set, for uploads declared public estimates (ADR014 §7):
+SOURCE_SUPPRESSED_PATTERN: Final = (
+    r"^(\*?\(?suppressed\)?\*?|data suppressed|\*{1,3}|\(?[sd]\)?|(<|<=|≤)\s*\d{1,2}|[01]\s*[-–]\s*(9|10))$"
+)
 SOURCE_NOT_APPLICABLE_TOKENS: Final[tuple[str, ...]] = ("not applicable", "not available")
 SOURCE_UNRELIABLE_PATTERN: Final = r"(?i)\s*\(?\s*unreliable\s*\)?\s*$"
 SUPPRESSED_FLAG_SUFFIX: Final = " suppressed"
@@ -424,6 +432,42 @@ ESTIMATE_RATE_LEVEL: Final = re.compile(
     r"(^|_)(rate|rates|percent|percentage|pct|prevalence|proportion|ratio|coverage|per)($|_)"
 )
 ESTIMATE_SUBAREA_NAME: Final = re.compile(r"\b(county|parish|borough|census area|municipality)\s*$", re.IGNORECASE)
+# ---- Patient-level files can never pass as public estimates (structural guard, fail closed).
+# Name tokens of a column that identifies a person or an encounter (any one is enough).
+ESTIMATE_PERSON_TOKENS: Final = frozenset(
+    {
+        "mrn", "patient", "pt", "subject", "participant", "pid", "person", "member", "mbr", "enc",
+        "encounter", "client", "ssn", "hadm", "beneficiary", "enrollee", "respondent", "guarantor",
+    }
+)  # fmt: skip
+# Record words that identify a row when paired with an ID word: case_number, record_id, visit_no.
+ESTIMATE_RECORD_TOKENS: Final = frozenset({"case", "record", "visit", "stay", "admission", "claim", "episode", "chart"})
+ESTIMATE_ID_SUFFIX_TOKENS: Final = frozenset({"id", "no", "nbr", "num", "number", "key", "code"})
+# A column whose every token is one of these names a person ("name", "first_name", "full name").
+ESTIMATE_NAME_TOKENS: Final = frozenset({"name", "first", "last", "full", "given", "family", "surname", "middle"})
+ESTIMATE_PERSON_NAMES: Final = frozenset({"dob", "dateofbirth", "birthdate", "id", "uid", "uuid"})
+# Name tokens of the dimensions public tables are keyed by (place, time, age, sex, race, cause,
+# measure, category). A key column named for none of them, and not holding places, years, age bands
+# or sexes, is checked for looking like people (below).
+ESTIMATE_DIMENSION_TOKENS: Final = frozenset(
+    {
+        "location", "country", "state", "county", "geography", "geo", "geolocation", "area", "region",
+        "jurisdiction", "place", "fips", "iso", "city", "territory", "nation", "reporting", "residence",
+        "year", "yearstart", "yearend", "season", "week", "month", "quarter", "date", "period", "time",
+        "age", "sex", "gender", "race", "ethnicity", "ethnic", "hispanic", "cause", "disease", "condition",
+        "pathogen", "etiology", "rei", "risk", "icd", "measure", "metric", "indicator", "question", "topic",
+        "category", "type", "unit", "stratification", "stratification1", "stratification2", "group",
+        "vaccine", "dimension", "network", "response", "class", "datavaluetype", "outcome", "sector",
+        "setting", "facility", "source", "surveillance", "survey",
+    }
+)  # fmt: skip
+ESTIMATE_TIME_TOKENS: Final = frozenset({"year", "season", "week", "month", "quarter", "date", "period", "time", "day"})
+ESTIMATE_UNRECOGNISED_MAX_LEVELS: Final = 60  # an unrecognised key with more levels identifies records
+ESTIMATE_SMALL_CODE_MAX: Final = 200  # whole-number levels up to this are weeks, months or ages, not IDs
+ESTIMATE_ID_LIKE_MIN_LEVELS: Final = 10  # ID-like codes (MRN0007, 10045) over this many levels
+ESTIMATE_FREE_TEXT_LENGTH: Final = 40  # median characters of a free-text key
+ESTIMATE_FREE_TEXT_MIN_LEVELS: Final = 20
+ESTIMATE_REPEATED_OVER_TIME_LEVELS: Final = 20  # an unrecognised key repeated across years or dates
 ESTIMATE_MAX_LISTED_LEVELS: Final = 5000  # levels read to find totals; a key with more lists none
 ESTIMATE_LEVELS_IN_HOLD: Final = 6
 
@@ -463,11 +507,6 @@ ESTIMATE_UNDECLARED_REFUSAL: Final = (
 )
 ESTIMATE_TOTAL_LEFT_OUT: Final = "{levels} is the total of the other {column} values, so it is left out."
 ESTIMATE_SAVED_CHOICE_NOTE: Final = "Uses {column} = {level}, the choice saved for this dataset."
-ESTIMATE_SMALL_COUNT_NOTE: Final = "Counts from 1 to 10 are hidden."
-ESTIMATE_WITHHELD_NOTE: Final = (
-    "Some rows are hidden in every answer: a count from 1 to 10 (or one the source suppressed) is in that row, "
-    "or in one of the groups it totals, so its other values could give the count back."
-)
 ESTIMATE_SOURCE_SUPPRESSED_NOTE: Final = (
     'Cells the source suppressed (marked "Suppressed") stay hidden; they are never read as zero or filled in.'
 )
@@ -706,9 +745,6 @@ ESTIMATE_JOIN_NOT_STATES: Final = (
     "{source}: {count} location values aren't states and were left out ({levels}). Counties, cities and local "
     "health jurisdictions (Detroit, out-Wayne) are parts of a state, never joined as one."
 )
-ESTIMATE_JOIN_COUNT_TOTAL_DROPPED: Final = (
-    "{source}: the both-sexes count isn't shown beside its parts, so a hidden count can't be worked out by subtraction."
-)
 ESTIMATE_JOIN_AGE_SUMMARIES_DROPPED: Final = (
     "{source}: summary ages (all ages, age-standardized, bands that contain other bands) are left out of a "
     "breakdown by age."
@@ -768,7 +804,9 @@ ESTIMATE_JOIN_CHANGE_NO_YEAR: Final = "The tables have no year column, so a chan
 ESTIMATE_JOIN_CHANGE_ONE_YEAR: Final = (
     "A change needs two years with values; the rows asked for have {years}. Name a first and a last year."
 )
-ESTIMATE_JOIN_CHANGE_HIDDEN: Final = "{group} ({source}): not shown, because a value is hidden or suppressed."
+ESTIMATE_JOIN_CHANGE_HIDDEN: Final = (
+    "{group} ({source}): no change is computed, because the source suppressed a value it would be built on."
+)
 ESTIMATE_JOIN_CHANGE_OVERLAP: Final = (
     "The two years' intervals overlap, so they don't show a change on their own (a published percent change "
     "with its own interval is the test)."
@@ -804,7 +842,7 @@ ESTIMATE_JOIN_RANK_METHOD: Final = (
     "Rank range: states whose interval lies entirely beyond this state's are certainly ahead of it; states whose "
     "interval overlaps it may be. The national row is not a state and is not ranked."
 )
-ESTIMATE_JOIN_RANK_HIDDEN: Final = "{count} states with a hidden or suppressed value are not ranked."
+ESTIMATE_JOIN_RANK_HIDDEN: Final = "{count} states whose value the source suppressed are not ranked."
 ESTIMATE_JOIN_DISAGREE_NO_BOUNDS: Final = (
     "Neither {a} nor {b} gives an interval, so whether they disagree can't be judged."
 )

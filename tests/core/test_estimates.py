@@ -10,6 +10,7 @@ import ibis
 import polars as pl
 import pytest
 
+from clinical_analytics.contracts import config
 from clinical_analytics.core import estimates
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED
@@ -271,30 +272,28 @@ class TestEstimateAnswer:
         assert "Colorado is the total of the other location_name values" in answer["claim"]
 
     @pytest.mark.parametrize(
-        ("value", "hidden"),
+        ("value", "suppressed", "shown"),
         [
-            pytest.param(0.0, False, id="zero"),
-            pytest.param(1.0, True, id="one"),
-            pytest.param(10.0, True, id="ten"),
-            pytest.param(11.0, False, id="eleven"),
-            pytest.param(None, False, id="null"),
+            pytest.param(0.0, False, 0.0, id="zero"),
+            pytest.param(1.0, False, 1.0, id="one_published"),
+            pytest.param(10.0, False, 10.0, id="ten_published"),
+            pytest.param(None, True, SECONDARY_SUPPRESSED, id="source_suppressed"),
         ],
     )
-    def test_estimateAnswer_countColumnSmallValues_hidden(self, value, hidden):
-        # Arrange: raw counts keep the small-cell rule on a declared dataset
+    def test_estimateAnswer_countColumn_shownAsPublishedSourceSuppressionKept(self, value, suppressed, shown):
+        # Arrange: a declared public table's counts are shown as published (owner's decision,
+        # ADR014 §7); only what the source suppressed stays hidden
         check = estimates.EstimateCheck(
             value=estimates.ValueColumn("Deaths", None, None, "count"), group_dims=("State",)
         )
+        row = _row("Wyoming", value, None, None) | {"suppressed": suppressed}
 
         # Act
-        answer = estimates.estimate_answer(
-            [_row("Wyoming", value, None, None)], check, compare=False, lowest_first=False
-        )
+        answer = estimates.estimate_answer([row], check, compare=False, lowest_first=False)
 
         # Assert
-        shown = answer["table"]["rows"][0]["Deaths"]
-        assert (shown == SECONDARY_SUPPRESSED) is hidden
-        assert ("Counts from 1 to 10 are hidden." in answer["claim"]) is hidden
+        assert answer["table"]["rows"][0]["Deaths"] == shown
+        assert (config.ESTIMATE_SOURCE_SUPPRESSED_NOTE in answer["claim"]) is suppressed
 
 
 class TestGroundPlan:
@@ -322,7 +321,7 @@ class TestGroundPlan:
         }
         assert grounded.metric == "mx"
 
-    def test_groundPlan_countyRanking_groupsByLocationWithoutStateLimit(self, make_estimate_frame):
+    def test_groundPlan_countyRanking_groupsByOwnCountiesNotStateRow(self, make_estimate_frame):
         # Arrange
         table = _detect(make_estimate_frame())
         assert table is not None
@@ -331,9 +330,10 @@ class TestGroundPlan:
         # Act
         grounded = estimates.ground_plan(plan, table, "Which Colorado county had the highest mx in 2014?")
 
-        # Assert
+        # Assert: grouped by location over Colorado's own counties (the state row left out)
         assert grounded.group_by == "location_name"
-        assert all(f.column != "location_name" for f in grounded.filters)
+        kept = [f.value for f in grounded.filters if f.column == "location_name"]
+        assert kept == [["Place01 County", "Place02 County", "Place03 County"]]
 
     def test_groundPlan_parseKeptAnotherLevel_questionLevelsWin(self, make_estimate_frame):
         # Arrange: the parse read "Place01" as Place02
@@ -495,14 +495,15 @@ class TestReviewRegressions:
         assert "Highest" not in answer["claim"]
         assert "in 2019-20 and 5.00 in 2022-23" in answer["claim"]
 
-    def test_groundPlan_countiesOfSeveralStates_notRankedUnderOneState(self, make_estimate_frame):
-        # Arrange: a national county file (two states with their counties)
+    def test_groundPlan_countiesOfSeveralStates_rankedUnderTheirOwnState(self, make_estimate_frame):
+        # Arrange: a national county file (Colorado and Texas with their counties, FIPS aliases)
         colorado = make_estimate_frame(state="Colorado")
         texas = (
             make_estimate_frame(state="Texas")
             .with_columns(
                 pl.col("location_name").str.replace(r"^Place", "TexPlace"), (pl.col("FIPS") + 40000).alias("FIPS")
             )
+            .with_columns(pl.when(pl.col("FIPS") == 40008).then(48).otherwise(pl.col("FIPS")).alias("FIPS"))
             .with_columns(pl.col("FIPS").alias("location_id"))
         )
         table = _detect(pl.concat([colorado, texas]))
@@ -512,5 +513,7 @@ class TestReviewRegressions:
         # Act
         grounded = estimates.ground_plan(plan, table, "Which Colorado county had the highest mx in 2014?")
 
-        # Assert: not regrouped across every state's counties
-        assert grounded.group_by != "location_name"
+        # Assert: only Colorado's counties, never Texas's
+        kept = [f.value for f in grounded.filters if f.column == "location_name"]
+        assert grounded.group_by == "location_name"
+        assert kept == [["Place01 County", "Place02 County", "Place03 County"]]

@@ -23,7 +23,7 @@ import re
 from dataclasses import dataclass
 from typing import Final, Literal, TypeAlias
 
-GeoKind: TypeAlias = Literal["state", "nation", "substate", "unknown"]
+GeoKind: TypeAlias = Literal["state", "nation", "substate", "territory", "unknown"]
 
 
 @dataclass(frozen=True)
@@ -87,6 +87,20 @@ STATES: Final[tuple[State, ...]] = (
     State("56", "WY", "Wyoming"),
 )
 
+# US territories: never states (left out of a state join, named), never foreign countries.
+TERRITORIES: Final[tuple[State, ...]] = (
+    State("60", "AS", "American Samoa"),
+    State("66", "GU", "Guam"),
+    State("69", "MP", "Northern Mariana Islands"),
+    State("72", "PR", "Puerto Rico"),
+    State("78", "VI", "U.S. Virgin Islands"),
+)
+_TERRITORY_KEYS: Final = frozenset(
+    {t.fips for t in TERRITORIES}
+    | {t.usps.casefold() for t in TERRITORIES}
+    | {t.name.casefold() for t in TERRITORIES}
+    | {"virgin islands", "us virgin islands", "commonwealth of the northern mariana islands"}
+)
 _BY_FIPS: Final = {s.fips: s for s in STATES}
 _BY_USPS: Final = {s.usps.casefold(): s for s in STATES}
 _BY_NAME: Final = {s.name.casefold(): s for s in STATES} | {
@@ -171,6 +185,8 @@ def classify(level: object, codes: bool = False) -> Place:
     else:
         text = str(level).strip()
     folded = _STATE_SUFFIX.sub("", text).strip().casefold()
+    if folded in _TERRITORY_KEYS and (codes or not folded.isdigit()):
+        return Place("territory")
     if folded in NATION_LEVELS:
         return Place("nation")
     if folded in _BY_NAME:

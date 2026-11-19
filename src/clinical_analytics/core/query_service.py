@@ -747,23 +747,6 @@ class QueryService:
             logger.debug("estimate_table_not_cached", reason="layer has no cache slot")
         return table
 
-    def _withheld(self, table: estimates.EstimateTable) -> set[tuple[Any, ...]]:
-        """Keys of the rows never shown in any answer (``estimates.withheld_mask``), computed over
-        the whole table once per layer state: a count of 1-10 in the row, or in a part of a total."""
-        generation = self._state_generation()
-        cached = getattr(self, "_withheld_cache", None)
-        if isinstance(cached, tuple) and cached[0] == generation and cached[1] is table:
-            keys: set[tuple[Any, ...]] = cached[2]
-            return keys
-        view = self.semantic_layer.get_base_view()
-        needed = [d.name for d in table.dimensions] + list(table.metric_levels)
-        for value in table.values:
-            needed += [c for c in (value.name, value.suppressed) if c]
-        frame = view.select(*[c for c in dict.fromkeys(needed) if c in view.columns]).to_polars()
-        keys = estimates.withheld_keys(frame, table)
-        self._withheld_cache = (generation, table, keys)
-        return keys
-
     def _finish_estimates(
         self,
         prepared: _Prepared,
@@ -839,7 +822,7 @@ class QueryService:
                 return refused(check.refusal or check.hold or "")
         lowest = estimates.lowest_first(prepared.normalized_query)
         try:
-            rows = estimates.estimate_rows(view, check, table, lowest_first=lowest, withheld=self._withheld(table))
+            rows = estimates.estimate_rows(view, check, table, lowest_first=lowest)
         except estimates.EstimateGrainError as e:
             logger.error("estimate_rows_not_unique", group_dims=list(check.group_dims))
             return refused(str(e))

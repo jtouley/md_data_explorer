@@ -40,7 +40,8 @@ import structlog
 from clinical_analytics.contracts.config import (
     MISSING_VALUE_TOKENS,
     SOURCE_NOT_APPLICABLE_TOKENS,
-    SOURCE_SUPPRESSED_TOKENS,
+    SOURCE_SUPPRESSED_PATTERN,
+    SOURCE_SUPPRESSED_WORDS,
     SOURCE_UNRELIABLE_PATTERN,
     SUPPRESSED_FLAG_SUFFIX,
     UNRELIABLE_FLAG_SUFFIX,
@@ -556,11 +557,14 @@ def unpack_intervals(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(parts).select(order)
 
 
-def _flag_masks(cleaned: pl.Series) -> tuple[pl.Series, pl.Series, pl.Series] | None:
+def _flag_masks(cleaned: pl.Series, public: bool) -> tuple[pl.Series, pl.Series, pl.Series] | None:
     """(suppressed, unreliable, not-applicable) masks for a column that holds numbers plus source
     markers only, or None when any other text is present (the column is left to the typing rules)."""
     folded = cleaned.str.strip_chars().str.to_lowercase()
-    suppressed = folded.is_in(list(SOURCE_SUPPRESSED_TOKENS)).fill_null(False)
+    # A public table's own markers ("<10", "(D)", "*") are suppression. In any other file "<5" is a
+    # censored lab value, so only the unambiguous words count there.
+    pattern = SOURCE_SUPPRESSED_PATTERN if public else SOURCE_SUPPRESSED_WORDS
+    suppressed = folded.str.contains(pattern).fill_null(False)
     unreliable = folded.str.contains(SOURCE_UNRELIABLE_PATTERN).fill_null(False)
     not_applicable = folded.is_in(list(SOURCE_NOT_APPLICABLE_TOKENS)).fill_null(False)
     if not bool(suppressed.any() or unreliable.any()):
@@ -573,7 +577,7 @@ def _flag_masks(cleaned: pl.Series) -> tuple[pl.Series, pl.Series, pl.Series] | 
     return suppressed, unreliable, not_applicable
 
 
-def split_source_flags(df: pl.DataFrame) -> pl.DataFrame:
+def split_source_flags(df: pl.DataFrame, *, public: bool = False) -> pl.DataFrame:
     """Text frame with each source's own suppression markers moved out of its numbers (ADR014 §10).
 
     CDC WONDER writes "Suppressed" for deaths of 1-9 (and for rates built on them), "12.3
@@ -590,7 +594,7 @@ def split_source_flags(df: pl.DataFrame) -> pl.DataFrame:
         if df.schema[col] != pl.String or is_id_column_name(col):
             continue
         cleaned = df.select(_clean(col)).to_series()
-        masks = _flag_masks(cleaned)
+        masks = _flag_masks(cleaned, public)
         if masks is None:
             continue
         suppressed, unreliable, not_applicable = masks
@@ -617,7 +621,7 @@ def split_source_flags(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(added).select(order) if added else df
 
 
-def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1) -> StagedTable:
+def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1, public: bool = False) -> StagedTable:
     """Type an all-text frame (one row per data line). ``header_row_number``: the header's file row.
 
     Raises:
@@ -632,7 +636,7 @@ def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1) -> StagedT
     body = df.slice(1) if units else df
     first_data_row = header_row_number + (2 if units else 1)
     _reject_empty_rows(body, first_data_row)
-    typed, notes = _type_columns(split_source_flags(unpack_intervals(body)))
+    typed, notes = _type_columns(split_source_flags(unpack_intervals(body), public=public))
     log = logger.bind(rows=typed.height, columns=typed.width)
     for note in notes:
         log.info("staging_column_note", column_index=df.columns.index(note.column), reason=note.reason)
@@ -641,7 +645,7 @@ def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1) -> StagedT
     return StagedTable(data=typed, notes=tuple(notes), units=units or {})
 
 
-def read_csv_typed(file_bytes: bytes) -> StagedTable:
+def read_csv_typed(file_bytes: bytes, *, public: bool = False) -> StagedTable:
     """Read CSV bytes as text over the whole file, then stage.
 
     Raises:
@@ -651,7 +655,7 @@ def read_csv_typed(file_bytes: bytes) -> StagedTable:
         text = pl.read_csv(io.BytesIO(file_bytes), infer_schema=False)
     except (pl.exceptions.ComputeError, pl.exceptions.NoDataError) as e:
         raise StagingError(f"The CSV file could not be read: {type(e).__name__}") from e
-    return stage_text_frame(_drop_trailing_blank_rows(text))
+    return stage_text_frame(_drop_trailing_blank_rows(text), public=public)
 
 
 def _cell_text(value: object) -> str | None:
@@ -789,7 +793,7 @@ def _sheet_has_values(sheet: Any) -> bool:
         return True
 
 
-def read_excel_typed(file_bytes: bytes, header_row: int | None = None) -> StagedTable:
+def read_excel_typed(file_bytes: bytes, header_row: int | None = None, *, public: bool = False) -> StagedTable:
     """Read the first sheet of an .xlsx as text, then stage.
 
     Args:
@@ -818,7 +822,7 @@ def read_excel_typed(file_bytes: bytes, header_row: int | None = None) -> Staged
         logger.info("staging_excel_footnote_rows_dropped", rows=footnote_rows)
     # Trailing all-empty rows are sheet formatting, not data lines (unlike in a CSV).
     text = _drop_trailing_blank_rows(pl.DataFrame(body, schema=dict.fromkeys(headers, pl.String), orient="row"))
-    staged = stage_text_frame(text, header_row_number=header_row + 1)
+    staged = stage_text_frame(text, header_row_number=header_row + 1, public=public)
     return replace(staged, sheets=replace(sheets, footnote_rows=footnote_rows))
 
 

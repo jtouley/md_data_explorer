@@ -653,9 +653,9 @@ async def upload_dataset(
         None,
         description="Public population estimates – no patient-level data: send exactly "
         f"'{POPULATION_ESTIMATES_FORM_VALUE}' to declare that every row is a published estimate "
-        "for a group, never a patient (ADR014). Lifts the 20-group limit and the small-cell rule for "
-        "estimated rates of this version only; counts and source-suppressed cells keep it. Any other "
-        "value is rejected.",
+        "for a group, never a patient (ADR014 §7). For this version only, the table is shown as "
+        "published (owner's decision, 2026-11-19: trust the source); cells the source suppressed stay "
+        "hidden. Ignored for a file with patient-level structure. Any other value is rejected.",
     ),
 ) -> DatasetUploadResponse:
     """Upload a dataset file (CSV, Excel, or SPSS).

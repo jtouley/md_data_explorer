@@ -201,14 +201,14 @@ class TestTraps:
         assert any(v == SECONDARY_SUPPRESSED for v in shown.values())
         assert all(v != 0 for v in shown.values())
 
-    def test_answer_gbdNumberMetric_smallModelledCountsHidden(self, make_public_source):
-        # Arrange: GBD 'val' under metric = Number is a count whatever the column is called
+    def test_answer_gbdNumberMetric_rankedAsPublished(self, make_public_source):
+        # Arrange: GBD 'val' under metric = Number, including modelled counts of 1-10
         gbd = make_public_source("gbd", name="GBD", years=(2023,), seed=11)
 
         # Act
         result = ej.answer([gbd], "Number of HCV deaths in every state, 2023, both sexes, all ages, highest first")
 
-        # Assert
+        # Assert: every state ranked on its published value; nothing hidden by the app
         assert result.status == "answered", result.message
         oracle = gbd.frame.filter(
             (pl.col("metric_name") == "Number")
@@ -216,17 +216,9 @@ class TestTraps:
             & (pl.col("age_name") == "All ages")
             & (pl.col("location_name") != "United States")
         )
-        # A both-sexes count is also withheld when its Female or Male count is 1-10 (total minus the
-        # part shown in another answer would give it back).
-        parts = gbd.frame.filter(
-            (pl.col("metric_name") == "Number") & (pl.col("age_name") == "All ages") & (pl.col("sex_name") != "Both")
-        )
-        small_part = set(parts.filter(pl.col("val") < config.MIN_CELL_SIZE).get_column("location_name").to_list())
-        shown = oracle.filter((pl.col("val") >= config.MIN_CELL_SIZE) & ~pl.col("location_name").is_in(small_part))
-        ranked = {r["state"] for r in result.table["rows"]}
-        assert oracle.height - shown.height > 0
-        assert ranked == set(shown.get_column("location_name").to_list())
-        assert any("1 to 10 are hidden" in n for n in result.notes)
+        assert oracle.filter(pl.col("val") < config.MIN_CELL_SIZE).height > 0
+        ranked = {r["state"]: r["val"] for r in result.table["rows"]}
+        assert ranked == dict(oracle.select("location_name", "val").iter_rows())
 
     def test_answer_ageStandardizedVsCrude_refused(self, make_public_source):
         # Arrange
@@ -567,7 +559,7 @@ class TestReviewRegressions:
         # Assert
         assert kept == {"Dimension": "≥18 Years"}
 
-    def test_answer_metricGroupedNumberRows_smallCountsHidden(self, make_public_source):
+    def test_answer_metricGroupedNumberRows_shownAsPublished(self, make_public_source):
         # Arrange: metric left as a breakdown, so 'Number' rows sit beside 'Rate' rows
         gbd = make_public_source("gbd", name="GBD", years=(2023,), locations=("Michigan", "Ohio"), seed=2)
 
@@ -583,8 +575,8 @@ class TestReviewRegressions:
             & (pl.col("metric_name") == "Number")
         ).row(0, named=True)
         shown = next(r for r in result.table["rows"] if r["metric_name"] == "Number")["GBD: val"]
-        assert 0 < number["val"] < config.MIN_CELL_SIZE  # this seed's modelled count is small
-        assert shown == SECONDARY_SUPPRESSED
+        assert 0 < number["val"] < config.MIN_CELL_SIZE  # a modelled count of 1-10
+        assert shown == number["val"]  # published, so shown as published
 
 
 def _source(frame: pl.DataFrame, name: str) -> ej.SourceInput:
@@ -629,8 +621,8 @@ class TestSecondReviewKinds:
         "column",
         ["Hospitalizations", "Estimated infections", "Patients", "Total", "Admissions", "Persons living with HIV"],
     )
-    def test_answer_floatCountByAnyName_hiddenOnJoinPath(self, column):
-        # Arrange: modelled counts 2.5-9.5 under a name that says neither rate nor count
+    def test_answer_publishedModelledCounts_shownAsPublished(self, column):
+        # Arrange: modelled counts 2.5-9.5 in a declared public table (owner's decision, ADR014 §7)
         names = [s.name for s in STATES][:8]
         frame = pl.DataFrame(
             [
@@ -645,10 +637,12 @@ class TestSecondReviewKinds:
 
         # Assert
         assert result.status == "answered", result.message
-        assert all(r[f"T: {column}"] == SECONDARY_SUPPRESSED for r in result.table["rows"])
+        shown = {r["state"]: r[f"T: {column}"] for r in result.table["rows"]}
+        assert shown[names[0]] == 2.5
+        assert shown[names[7]] == 9.5
 
-    def test_answer_gbdOnlyNumberMetric_oneLevelMetricStillACount(self, make_public_table):
-        # Arrange: metric_name is the constant "Number" (folded away as a one-value column)
+    def test_answer_gbdOnlyNumberMetric_namedMetricReadShownAsPublished(self, make_public_table):
+        # Arrange: metric_name is the constant "Number" beside metric_id = 1 (realistic GBD export)
         frame = make_public_table(
             "gbd", locations=("Michigan", "Ohio", "Indiana"), years=(2023,), metrics=("Number",), ages=("All ages",)
         ).with_columns(pl.col("val") / 100, pl.col("lower") / 100, pl.col("upper") / 100)
@@ -657,75 +651,12 @@ class TestSecondReviewKinds:
         # Act
         result = ej.answer([source], "HCV deaths in Michigan, Ohio and Indiana, 2023, both sexes")
 
-        # Assert
+        # Assert: the named metric is read (never metric_id), and values are shown as published
         assert source.table is not None
         assert source.table.metric_levels == {"metric_name": {"Number": "count"}}
         assert result.status == "answered", result.message
-        assert all(r["GBD: val"] == SECONDARY_SUPPRESSED for r in result.table["rows"])
-
-
-class TestSecondReviewWithheld:
-    """Findings 2 and 3: nothing in a row with a small count, nor a total of it, is ever shown."""
-
-    @staticmethod
-    def _atlas_like() -> pl.DataFrame:
-        cases = {"Michigan": 4, "Ohio": 7, "Wisconsin": 9}
-        population = {"Michigan": 100_000, "Ohio": 350_000, "Wisconsin": 900_000}
-        rows = []
-        for s in [x.name for x in STATES][:20] + list(cases):
-            c, p = cases.get(s, 150), population.get(s, 1_500_000)
-            rows.append({"Geography": s, "Year": 2023, "Cases": c, "Population": p, "Rate per 100000": c / p * 1e5})
-        return pl.DataFrame(rows).unique(subset=["Geography"], keep="first")
-
-    @pytest.mark.parametrize("question", ["Syphilis rate per 100000 by state in 2023", "Population by state in 2023"])
-    def test_answer_rateAndPopulationBesideSmallCount_withheld(self, question):
-        # Arrange: rate x population would give the hidden count back
-        frame = self._atlas_like()
-
-        # Act
-        result = ej.answer([_source(frame, "A")], question)
-
-        # Assert
-        assert result.status == "answered", result.message
-        shown = {r["state"]: r for r in result.table["rows"]}
-        for state in ("Michigan", "Ohio", "Wisconsin"):
-            assert set(shown[state].values()) >= {SECONDARY_SUPPRESSED}
-        assert config.ESTIMATE_WITHHELD_NOTE in result.notes
-
-    def test_withheldMask_totalBesideSmallPart_totalWithheldEverywhere(self):
-        # Arrange: Both = 46, Male = 41, Female = 5
-        frame = pl.DataFrame(
-            {
-                "State": ["Alaska"] * 3 + ["Ohio"] * 3,
-                "Sex": ["Both", "Female", "Male"] * 2,
-                "Cases": [46, 5, 41, 80, 40, 40],
-            }
-        )
-        table = detect_frame(frame)
-        assert table is not None
-
-        # Act
-        mask = estimates.withheld_mask(frame, table)
-
-        # Assert
-        assert mask.to_list() == [True, True, False, False, False, False]
-
-    def test_answer_totalAskedAlone_withheldWhenAPartIsSmall(self):
-        # Arrange
-        rows = []
-        for i, s in enumerate([x.name for x in STATES][:20]):
-            female = 5 if s == "Alaska" else 30 + i
-            for sex, c in (("Both", 40 + i + female), ("Female", female), ("Male", 40 + i)):
-                rows.append({"State": s, "Year": 2023, "Sex": sex, "Cases": c})
-        source = _source(pl.DataFrame(rows), "S")
-
-        # Act
-        both = ej.answer([source], "How many cases in Alaska in 2023, both sexes?")
-        men = ej.answer([source], "How many cases among men in Alaska in 2023?")
-
-        # Assert: the man count is shown, the total never is (46 - 41 would give 5)
-        assert both.table["rows"][0]["S: Cases"] == SECONDARY_SUPPRESSED
-        assert men.table["rows"][0]["S: Cases"] == 41.0
+        published = dict(frame.filter(pl.col("sex_name") == "Both").select("location_name", "val").iter_rows())
+        assert {r["state"]: r["GBD: val"] for r in result.table["rows"]} == published
 
 
 class TestSecondReviewPatientData:
@@ -827,36 +758,266 @@ class TestSecondReviewWrongAnswers:
         assert "GBD's rate is age-standardized and WONDER's is crude" in result.message
 
 
-class TestSecondReviewSharpEdges:
-    def test_withheldMask_unnamedTotalBySum_withheldBesideSmallPart(self):
-        # Arrange: "Statewide" is not a known total name, but it is the sum of the regions
-        frame = pl.DataFrame(
-            {
-                "State": ["Alaska"] * 4 + ["Ohio"] * 4,
-                "Region": ["Statewide", "North", "South", "West"] * 2,
-                "Cases": [56, 5, 30, 21, 90, 30, 30, 30],
-            }
-        )
-        table = detect_frame(frame)
-        assert table is not None
+def _visits(id_column: str, ids: list, value: str = "hiv_viral_load_rate", months: int = 3) -> pl.DataFrame:
+    """Synthetic repeated visits per person, with a rate-named value (made-up numbers)."""
+    return pl.DataFrame(
+        {
+            id_column: [i for i in ids for _ in range(months)],
+            "visit_month": [f"2024-0{m}" for _ in ids for m in range(1, months + 1)],
+            "site": ["Rural clinic" if n % 9 == 0 else "Main hospital" for n in range(len(ids)) for _ in range(months)],
+            value: [55.0 + (n % 50) for n in range(len(ids) * months)],
+            "lower": [50.0] * (len(ids) * months),
+            "upper": [130.0] * (len(ids) * months),
+        }
+    )
 
+
+class TestPatientFileGuard:
+    """Item 3 (owner's decision): a patient-level file can never pass as public estimates.
+    Structural, fail closed; the review found person, member_no, enc, Client, case_number and
+    name accepted by a name list."""
+
+    @pytest.mark.parametrize(
+        "id_column",
+        [
+            "person",
+            "member_no",
+            "enc",
+            "Client",
+            "case_number",
+            "name",
+            "ClientID",
+            "Encounter",
+            "record_id",
+            "first_name",
+            "visit_no",
+            "mrn",
+            "PatientID",
+            "subject",
+        ],  # fmt: skip
+    )
+    def test_detectFrame_personOrEncounterColumn_neverEstimates(self, id_column):
         # Act
-        mask = estimates.withheld_mask(frame, table)
-
-        # Assert: Alaska's Statewide row (56) and its small region (5) are withheld; Ohio's are not
-        assert mask.to_list() == [True, True, False, False, False, False, False, False]
-
-    def test_isCountRow_countNamedColumnWithRateMetric_stillACount(self):
-        # Arrange: a "Deaths" column on a row whose metric says Rate stays under the small-cell rule
-        frame = pl.DataFrame({"State": ["Ohio", "Iowa"], "metric_name": ["Rate", "Rate"], "Deaths": [4.0, 50.0]})
-        table = detect_frame(frame)
-        assert table is not None
-        deaths = table.value("Deaths")
-        assert deaths is not None
-
-        # Act
-        is_count = estimates.is_count_row(deaths, table, {"metric_name": "Rate"})
+        table = detect_frame(_visits(id_column, [f"X{n:03d}" for n in range(40)]))
 
         # Assert
-        assert is_count is True
-        assert estimates.withheld_mask(frame, table).to_list() == [True, False]
+        assert table is None
+
+    @pytest.mark.parametrize(
+        ("label", "ids"),
+        [
+            pytest.param("code_like", [f"A{n:05d}" for n in range(15)], id="id_like_values"),
+            pytest.param("numbers_as_text", [str(10000 + n) for n in range(15)], id="numeric_codes"),
+            pytest.param("many_levels", [f"site-{chr(65 + n % 26)}{chr(65 + n // 26)}" for n in range(70)], id="many"),
+            pytest.param(
+                "repeated",
+                [
+                    f"{w} clinic"
+                    for w in (
+                        "north",
+                        "south",
+                        "east",
+                        "west",
+                        "river",
+                        "hill",
+                        "lake",
+                        "park",
+                        "bay",
+                        "glen",
+                        "oak",
+                        "elm",
+                        "ash",
+                        "pine",
+                        "fir",
+                        "yew",
+                        "bark",
+                        "moss",
+                        "fern",
+                        "reed",
+                        "sage",
+                    )
+                ],
+                id="repeated_over_time",
+            ),  # fmt: skip
+        ],
+    )
+    def test_detectFrame_unrecognisedPeopleLikeKey_neverEstimates(self, label, ids):
+        # Arrange: a key column named for nothing a public table is keyed by
+        frame = _visits(label, ids)
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is None
+
+    def test_detectFrame_freeTextKey_neverEstimates(self):
+        # Arrange: long free-text notes as a key (more than 20 levels)
+        notes = [f"Patient reports intermittent symptoms since visit number {n}, follow up advised" for n in range(25)]
+
+        # Act
+        table = detect_frame(_visits("note", notes, months=2))
+
+        # Assert
+        assert table is None
+
+    @pytest.mark.parametrize("disguise", ["location", "category", "indicator", "Year Code"])
+    def test_detectFrame_idValuesUnderARecognisedName_neverEstimates(self, disguise):
+        # Arrange: an MRN column renamed to a dimension a public table is keyed by
+        frame = _visits(disguise, [f"MRN{n:04d}" for n in range(30)])
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is None
+
+    def test_detectFrame_categoriesOnlyWithConstantYear_neverEstimates(self):
+        # Arrange: one patient per row by sex x age group x race, plus a one-value year column
+        import itertools
+
+        combos = list(itertools.product(("F", "M"), ("18-44", "45-64", "65+"), ("Black", "White", "Asian", "Other")))
+        frame = pl.DataFrame(
+            {
+                "sex": [c[0] for c in combos],
+                "age_group": [c[1] for c in combos],
+                "race": [c[2] for c in combos],
+                "year": [2023] * len(combos),
+                "a1c_rate": [6.0 + n / 10 for n in range(len(combos))],
+            }
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is None
+
+    def test_detectFrame_weeklyTableWithNumericWeeks_stillEstimates(self):
+        # Arrange: control, a public weekly table (weeks 1-52 are small numbers, not IDs)
+        frame = pl.DataFrame(
+            {
+                "State": ["Michigan", "Ohio"] * 52,
+                "week": [w for w in range(1, 53) for _ in range(2)],
+                "rate": [1.0 + w / 10 for w in range(104)],
+            }
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is not None
+
+    def test_detectFrame_onePatientPerRowByCategoriesOnly_neverEstimates(self):
+        # Arrange: no ID column; each row is one patient, unique by sex x age group x race x county
+        import itertools
+
+        combos = list(itertools.product(("F", "M"), ("18-44", "45-64", "65+"), ("Black", "White", "Asian"),
+                                        ("Wayne County", "Kent County", "Oakland County")))[:40]  # fmt: skip
+        frame = pl.DataFrame(
+            {
+                "sex": [c[0] for c in combos],
+                "age_group": [c[1] for c in combos],
+                "race": [c[2] for c in combos],
+                "county": [c[3] for c in combos],
+                "a1c_rate": [6.0 + n / 10 for n in range(len(combos))],
+            }
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is None
+
+    @pytest.mark.parametrize(
+        "shape",
+        ["gbd", "wonder", "atlasplus", "aidsvu", "nndss", "fluvaxview", "places", "mdhhs_local"],
+    )
+    def test_detectFrame_publicShapes_stillEstimates(self, make_public_source, shape):
+        # Act: control, every public table shape the fellow uploads is still accepted
+        source = make_public_source(shape, name=shape)
+
+        # Assert
+        assert source.table is not None
+
+    def test_answer_declaredBesidePatientFile_refused(self, make_public_source):
+        # Arrange: item 4, a declared public table never sits beside a patient-level upload
+        gbd = make_public_source("gbd", name="GBD", years=(2023,))
+        patients = ej.SourceInput(
+            "visits", "visits", _visits("mrn", [f"M{n}" for n in range(40)]), None, declared=False
+        )
+
+        # Act
+        result = ej.answer([gbd, patients], "GBD HCV death rate and visits in Michigan, 2023")
+
+        # Assert: refused before any level of the patient file is read or named
+        assert result.status == "refused"
+        assert result.message.startswith("visits wasn't marked")
+        assert "M1" not in result.message
+
+
+class TestVerificationReviewWrongAnswers:
+    """Item 5 (N1-N5 and the "%" level)."""
+
+    def test_valueKind_ageAdjustedDeathRate_isRate(self):
+        # Act / Assert (N2)
+        assert estimates.value_kind("Age-adjusted Death Rate") == "rate"
+
+    def test_measureOf_metricIdBesideNamedMetric_namedMetricDecides(self, make_public_source):
+        # Arrange (N1): metric_id = 3 beside metric_name = Rate (realistic GBD export)
+        gbd = make_public_source("gbd", name="GBD", years=(2023,))
+        value = gbd.table.value("val")
+
+        # Act
+        measure = ej.measure_of(gbd, value, {"metric_id": 3, "metric_name": "Rate", "age_name": "All ages"})
+
+        # Assert
+        assert measure.kind == "rate"
+        assert measure.standardization == "crude"
+
+    def test_measureOf_percentSignLevel_isPercent(self, make_public_source):
+        # Arrange: a metric level written "%"
+        gbd = make_public_source("gbd", name="GBD", years=(2023,))
+
+        # Act
+        measure = ej.measure_of(gbd, gbd.table.value("val"), {"metric_name": "%"})
+
+        # Assert
+        assert estimates.metric_level_kind("%") == "rate"
+        assert measure.kind == "percent"
+
+    def test_answer_georgiaBesideUsTerritories_staysTheState(self):
+        # Arrange (N3): states plus PR, GU, VI, AS, MP: no foreign country, so Georgia is the state
+        names = [s.name for s in STATES][:20] + ["Puerto Rico", "Guam", "U.S. Virgin Islands", "American Samoa",
+                                                  "Northern Mariana Islands"]  # fmt: skip
+        frame = pl.DataFrame([{"location_name": n, "year": 2023, "val": 10.0 + i, "lower": 9.0 + i, "upper": 11.0 + i}
+                              for i, n in enumerate(names)])  # fmt: skip
+
+        # Act
+        result = ej.answer([_source(frame, "G")], "Rank states by the rate in 2023")
+
+        # Assert
+        assert result.status == "answered", result.message
+        assert "Georgia" in {r["state"] for r in result.table["rows"]}
+        assert not any("Georgia was left out" in n for n in result.notes)
+
+    @pytest.mark.parametrize(
+        ("question", "expected"),
+        [
+            ("Compare age-adjusted for WONDER, crude for GBD in 2023", {"WONDER": "age-standardized", "GBD": "crude"}),
+            ("crude rates for GBD and age-adjusted rates for WONDER", {"GBD": "crude", "WONDER": "age-standardized"}),
+            (
+                "Does the WONDER crude death rate disagree with the GBD age-standardized estimate?",
+                {"WONDER": "crude", "GBD": "age-standardized"},
+            ),
+        ],
+    )
+    def test_standardizationBySource_phraseBindsToItsTable(self, make_public_source, question, expected):
+        # Arrange (N5)
+        gbd = make_public_source("gbd", name="GBD", years=(2023,))
+        wonder = make_public_source("wonder", name="WONDER", years=(2023,))
+
+        # Act / Assert
+        assert ej.standardization_by_source([gbd, wonder], question) == expected

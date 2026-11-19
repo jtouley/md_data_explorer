@@ -22,7 +22,7 @@ import polars as pl
 import pytest
 from fastapi.testclient import TestClient
 
-from clinical_analytics.contracts.config import MIN_CELL_SIZE, POPULATION_ESTIMATES_FORM_VALUE
+from clinical_analytics.contracts.config import POPULATION_ESTIMATES_FORM_VALUE
 from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED
 
 pytestmark = [pytest.mark.slow, pytest.mark.integration]
@@ -98,14 +98,14 @@ def test_idea1_hcvWomenMidwest_changeBySexAndWonderDeaths(test_client, isolated_
     assert "No interval is computed for the change" in " ".join(change["notes"])
     assert neighbours["status"] == "answered", neighbours["message"]
     assert {r["group"].split(" · ")[0] for r in neighbours["table"]["rows"]} == set(GREAT_LAKES)
-    # Assert: WONDER deaths beside GBD, small and suppressed counts never shown
+    # Assert: WONDER deaths beside GBD, as published; WONDER's own suppressed cells stay hidden
     assert side["status"] == "answered", side["message"]
     for row in side["table"]["rows"]:
         source = wonder.filter(
             (pl.col("State") == "Michigan") & (pl.col("Year") == "2023") & (pl.col("Gender") == row["sex"])
         ).row(0, named=True)
         deaths = source["Deaths"]
-        if deaths == "Suppressed" or int(deaths) < MIN_CELL_SIZE:
+        if deaths == "Suppressed":  # WONDER's own suppression stays, never a number
             assert row["WONDER: Deaths"] == SECONDARY_SUPPRESSED
         else:
             assert row["WONDER: Deaths"] == float(deaths)
@@ -173,8 +173,8 @@ def test_idea3_legionella_gbdBesideNndss(test_client, isolated_data_home, make_p
                 "Legionellosis Cases"
             ].item()
         )
-        expected = SECONDARY_SUPPRESSED if cases < MIN_CELL_SIZE else float(cases)
-        assert row["NNDSS: Legionellosis Cases"] == expected
+        # NNDSS publishes these counts itself: shown as published, small ones included
+        assert row["NNDSS: Legionellosis Cases"] == float(cases)
 
 
 def test_idea4_hivGreatLakes_changeAndPrepSideBySide(test_client, isolated_data_home, make_public_table):

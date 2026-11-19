@@ -74,8 +74,8 @@ _STATE_NAME: Final = "state"
 _STATE_FIPS: Final = "state_fips"
 # Per table on each harmonized row: value, lower, upper, suppressed at source, unreliable, a count.
 # Reasons a cell is never shown (a value with a bad interval is shown, without the interval).
-_HIDDEN: Final = ("source", "small", "withheld")
-_VALUE_COLUMNS: Final = ("_v", "_lo", "_hi", "_sup", "_unr", "_cnt", "_wh")
+_HIDDEN: Final = ("source",)
+_VALUE_COLUMNS: Final = ("_v", "_lo", "_hi", "_sup", "_unr")
 
 
 class JoinRefusedError(Exception):
@@ -241,15 +241,17 @@ def _standardization_phrases(text: str) -> list[tuple[int, Literal["age-standard
 def standardization_by_source(
     sources: Sequence[SourceInput], text: str
 ) -> dict[str, Literal["age-standardized", "crude"] | None]:
-    """Which standardization the question asks of each table. "WONDER crude ... GBD
-    age-standardized" gives WONDER crude and GBD age-standardized: each phrase belongs to the table
-    named just before it (or, before any table is named, to the first one named after it). One kind
-    of phrase, or tables the question doesn't name, share it. A named table with no phrase of its
-    own gets none, so its age choice is held or refused, never borrowed from another table."""
-    phrases = _standardization_phrases(text)
-    kinds = {std for _, std in phrases}
+    """Which standardization the question asks of each table.
+
+    A phrase followed by "for/in/from <table>" belongs to that table ("age-adjusted for WONDER,
+    crude for GBD"); any other phrase belongs to the nearest table name ("WONDER crude death rate
+    ... GBD age-standardized estimate"). One kind of phrase, or a question naming no table, applies
+    to every table. A named table with no phrase of its own gets none, so its age choice is held or
+    refused, never borrowed from another table."""
+    phrases = [(m.start(), m.end(), std) for m, std in _standardization_matches(text)]
+    kinds = {std for _, _, std in phrases}
     mentions = sorted(
-        (m.start(), s.dataset_id)
+        (m.start(), m.end(), s.dataset_id)
         for s in sources
         for m in re.finditer(rf"(?<![\w]){re.escape(s.name)}(?![\w])", text, re.IGNORECASE)
     )
@@ -257,11 +259,29 @@ def standardization_by_source(
         shared = next(iter(kinds)) if len(kinds) == 1 else None
         return {s.dataset_id: shared for s in sources}
     chosen: dict[str, Literal["age-standardized", "crude"] | None] = {s.dataset_id: None for s in sources}
-    for position, std in phrases:
-        before = [dataset_id for start, dataset_id in mentions if start <= position]
-        owner = before[-1] if before else mentions[0][1]
-        chosen[owner] = chosen[owner] or std
+    for start, end, std in phrases:
+        after = text[end:]
+        bound = next(
+            (
+                dataset_id
+                for m_start, _m_end, dataset_id in mentions
+                if m_start >= end
+                and re.fullmatch(
+                    r"\s*(rates?\s+|values?\s+|estimates?\s+)?(for|in|from|of)\s+(the\s+)?",
+                    after[: m_start - end],
+                    re.IGNORECASE,
+                )
+            ),
+            None,
+        )
+        if bound is None:
+            bound = min(mentions, key=lambda m: min(abs(m[0] - end), abs(start - m[1])))[2]
+        chosen[bound] = chosen[bound] or std
     return chosen
+
+
+def _standardization_matches(text: str) -> list[tuple[re.Match[str], Literal["age-standardized", "crude"]]]:
+    return [(m, "age-standardized" if m.group("std") else "crude") for m in _STANDARDIZATION_PHRASE.finditer(text)]
 
 
 # ---------------------------------------------------------------------------- roles
@@ -313,18 +333,25 @@ def measure_of(source: SourceInput, value: ValueColumn, pinned: Mapping[str, Any
     table = source.table
     assert table is not None  # noqa: S101 - callers refused undetected tables
     pinned_text = {_norm(str(v)) for v in pinned.values()}
-    metric_levels = {_norm(str(level)) for column, level in pinned.items() if estimates.is_metric_column(column)}
-    # Fail closed, as on the chat path: a metric level that says count makes it a count; otherwise
-    # it is a rate (or a percent) only when its column name or a metric level positively says so.
-    level_kinds = {
-        estimates.metric_level_kind(level) for column, level in pinned.items() if estimates.is_metric_column(column)
+    # The named metric only: a code beside it (metric_id = 3) says nothing about the value's kind.
+    named_metric = {
+        column: level
+        for column, level in pinned.items()
+        if estimates.is_metric_column(column) and isinstance(level, str)
     }
+    metric_levels = {_norm(level) for level in named_metric.values()}
+    # A metric level that says count makes it a count; otherwise it is a rate (or a percent) when
+    # its column name or a metric level says so. Kind decides comparisons, never what is shown.
+    level_kinds = {estimates.metric_level_kind(level) for level in named_metric.values()}
     kind: estimates.ValueKind | Literal["percent"]
     if "count" in level_kinds:
         kind = "count"
     elif "rate" in level_kinds or value.kind == "rate":
-        percent = any(("percent" in t or "proportion" in t) for t in metric_levels) or _has(
-            value.name, r"(pct|percent|%|proportion)"
+        raw_levels = list(named_metric.values())
+        percent = (
+            any(("percent" in t or "proportion" in t) for t in metric_levels)
+            or any("%" in level for level in raw_levels)
+            or _has(value.name, r"(pct|percent|%|proportion)")
         )
         kind = "percent" if percent else "rate"
     else:
@@ -582,6 +609,7 @@ def _state_map(levels: Sequence[Any]) -> tuple[pl.DataFrame, dict[str, list[Any]
     one), a state name that is also a country's ("Georgia") is ambiguous and left out, named."""
     rows: list[dict[str, Any]] = []
     others: dict[str, list[Any]] = {}
+    # Only real foreign places make "Georgia" ambiguous: US territories (PR, GU, VI, AS, MP) don't.
     foreign = sum(geography.classify(level, codes=True).kind == "unknown" for level in levels)
     for level in levels:
         if foreign >= 2 and str(level).strip().casefold() in geography.COUNTRY_NAMESAKES:
@@ -599,16 +627,8 @@ def _state_map(levels: Sequence[Any]) -> tuple[pl.DataFrame, dict[str, list[Any]
     return pl.DataFrame(rows, schema=schema), others
 
 
-def _count_expr(source: SourceInput, value: ValueColumn) -> pl.Expr:
-    """True on rows whose value is a count, fail closed (``estimates.count_row_expr``)."""
-    table = source.table
-    if table is None:
-        return pl.lit(True)
-    return estimates.count_row_expr(value, table)
-
-
 def _harmonize(
-    source: SourceInput, value: ValueColumn, pins: _Pins, asked: Asked, count: bool
+    source: SourceInput, value: ValueColumn, pins: _Pins, asked: Asked
 ) -> tuple[pl.DataFrame, list[str], list[str]]:
     """The table's rows with harmonized keys and its value columns, plus notes.
 
@@ -616,11 +636,7 @@ def _harmonize(
         JoinRefusedError: a role the question needs can't be applied to this table.
     """
     notes: list[str] = []
-    table = source.table
-    assert table is not None  # noqa: S101 - callers refused undetected tables
-    # Withheld over the whole table, before any filter: a row with a small count anywhere in it, or
-    # a total with a withheld part, is never shown (estimates.withheld_mask).
-    lazy = source.frame.with_columns(estimates.withheld_mask(source.frame, table).alias("__withheld")).lazy()
+    lazy = source.frame.lazy()
     for column, level in pins.pinned.items():
         lazy = lazy.filter(pl.col(column) == level)
     for column, levels in pins.kept.items():
@@ -639,7 +655,7 @@ def _harmonize(
         )
         for level in others.get("ambiguous", []):
             notes.append(config.ESTIMATE_JOIN_AMBIGUOUS_PLACE.format(source=source.name, level=level))
-        substate = others.get("substate", []) + others.get("unknown", [])
+        substate = others.get("substate", []) + others.get("territory", []) + others.get("unknown", [])
         if substate:
             notes.append(
                 config.ESTIMATE_JOIN_NOT_STATES.format(
@@ -690,11 +706,8 @@ def _harmonize(
         (pl.col(value.upper).cast(pl.Float64, strict=False) if value.upper else pl.lit(None, pl.Float64)).alias("_hi"),
         (pl.col(value.suppressed).fill_null(False) if value.suppressed else pl.lit(False)).alias("_sup"),
         (pl.col(value.unreliable).fill_null(False) if value.unreliable else pl.lit(False)).alias("_unr"),
-        _count_expr(source, value).alias("_cnt"),
-        pl.col("__withheld").alias("_wh"),
     ]
     frame = lazy.with_columns(exprs).select([*keys, *_VALUE_COLUMNS]).collect()
-    count = count or bool(frame.get_column("_cnt").any())
     # Filters from the question's roles.
     before = frame.height
     null_keys = frame.filter(pl.any_horizontal([pl.col(k).is_null() for k in keys])) if keys else frame.clear()
@@ -732,10 +745,6 @@ def _harmonize(
             frame = frame.filter(pl.col("sex").is_in(asked.sexes))
         elif asked.by_sex:
             frame = frame.filter(pl.col("sex") != "Both")
-        if count and frame.get_column("sex").n_unique() > 1 and "Both" in frame.get_column("sex").to_list():
-            # A count total beside its parts would give away a hidden part by subtraction.
-            frame = frame.filter(pl.col("sex") != "Both")
-            notes.append(config.ESTIMATE_JOIN_COUNT_TOTAL_DROPPED.format(source=source.name))
     if "age" in keys and age_col is not None:
         dimension = source.table.dimension(age_col) if source.table else None
         summaries = list(dimension.parents) if dimension else []
@@ -941,7 +950,7 @@ def prepare(
                 options=[option],
             )
         try:
-            frame, keys, notes = _harmonize(source, value, pins, asked_for[source.dataset_id], measure.kind == "count")
+            frame, keys, notes = _harmonize(source, value, pins, asked_for[source.dataset_id])
         except JoinRefusedError as e:
             return asked, _refused(str(e))
         duplicated = frame.group_by(keys).len().filter(pl.col("len") > 1).height if keys else int(frame.height > 1)
@@ -1074,11 +1083,7 @@ def _cell(
     """(value, lower, upper, hidden reason) for one table's value on one joined row."""
     value, lower, upper = row[f"_v{index}"], row[f"_lo{index}"], row[f"_hi{index}"]
     if row[f"_sup{index}"]:
-        return None, None, None, "source"
-    if (measure.kind == "count" or row[f"_cnt{index}"]) and estimates.small_count(value):
-        return None, None, None, "small"
-    if row[f"_wh{index}"]:
-        return None, None, None, "withheld"
+        return None, None, None, "source"  # the source suppressed it: never a number here
     if value is not None and lower is not None and upper is not None and not lower <= value <= upper:
         return value, None, None, "interval"
     return value, lower, upper, None
@@ -1097,12 +1102,8 @@ def _value_text(value: float | None, lower: float | None, upper: float | None, h
 
 def _hidden_notes(counts: Mapping[str, int], unreliable: Sequence[str]) -> list[str]:
     notes = []
-    if counts.get("small"):
-        notes.append(config.ESTIMATE_SMALL_COUNT_NOTE)
     if counts.get("source"):
         notes.append(config.ESTIMATE_SOURCE_SUPPRESSED_NOTE)
-    if counts.get("withheld"):
-        notes.append(config.ESTIMATE_WITHHELD_NOTE)
     if counts.get("interval"):
         notes.append(config.ESTIMATE_BAD_INTERVAL_NOTE.format(groups=f"{counts['interval']} rows"))
     if unreliable:
@@ -1347,8 +1348,8 @@ def _rank(
             total=total, order=order, source=part.source.name, value=part.value.name, scope=scope, listed=listed
         )
     notes = [config.ESTIMATE_JOIN_RANK_METHOD, *_hidden_notes(hidden, [])]
-    if hidden.get("small") or hidden.get("source"):
-        notes.append(config.ESTIMATE_JOIN_RANK_HIDDEN.format(count=hidden.get("small", 0) + hidden.get("source", 0)))
+    if hidden.get("source"):
+        notes.append(config.ESTIMATE_JOIN_RANK_HIDDEN.format(count=hidden["source"]))
     return claim, {"columns": list(rows[0]), "rows": rows}, notes
 
 

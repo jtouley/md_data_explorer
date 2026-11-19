@@ -196,7 +196,9 @@ def normalize_upload_to_table_list(
         logger.info(f"Extracted {len(doc_files)} documentation files from ZIP")
     else:
         # Single-file: wrap in list (becomes multi-table with 1 table)
-        staged = load_single_file_staged(file_bytes, filename)
+        # A declared public table's own suppression markers ("<10", "(D)", "*") are read as such.
+        public = bool(metadata and metadata.get("population_estimates") is True)
+        staged = load_single_file_staged(file_bytes, filename, public=public)
         table_name = Path(filename).stem  # Use original filename stem
         tables = [
             {
@@ -391,7 +393,7 @@ def _detect_excel_header_row(file_bytes: bytes, max_rows_to_check: int = 5) -> i
     return detect_header_row(rows, max_rows_to_check)
 
 
-def load_single_file_staged(file_bytes: bytes, filename: str) -> StagedTable:
+def load_single_file_staged(file_bytes: bytes, filename: str, *, public: bool = False) -> StagedTable:
     """
     Load a single file (CSV, Excel, SPSS) as one typed table with its staging notes.
 
@@ -404,10 +406,10 @@ def load_single_file_staged(file_bytes: bytes, filename: str) -> StagedTable:
     """
     file_ext = Path(filename).suffix.lower()
     if file_ext == ".csv":
-        return read_csv_typed(file_bytes)
+        return read_csv_typed(file_bytes, public=public)
     if file_ext in {".xlsx", ".xls"}:
         # Openpyxl reads .xlsx only; an .xls file fails here with a clear StagingError.
-        return read_excel_typed(file_bytes)
+        return read_excel_typed(file_bytes, public=public)
     if file_ext == ".sav":
         import pyreadstat
 
