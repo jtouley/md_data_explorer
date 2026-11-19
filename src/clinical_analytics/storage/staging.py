@@ -24,12 +24,18 @@ A first row that is a units sub-header (``years``, ``mg/dL`` above numeric colum
 is kept as unit metadata and is not a patient; the report says that row was removed. Trailing
 lines with no values (``,,,`` written by exporters) are dropped; any other row with no ID and no
 values fails the upload.
+
+Formats: delimited text (``.csv``, ``.tsv``, ``.psv``; ``DELIMITERS``), Excel (``.xlsx`` with
+openpyxl; legacy ``.xls`` BIFF workbooks, recognised by their bytes, with xlrd) and SAS
+transport (``.xpt``). Excel and delimited text are staged as text; SAS transport files carry
+their own types (numbers or text), and only whole-number columns change, to Int64.
 """
 
 from __future__ import annotations
 
 import io
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from typing import Any, Final, Literal
@@ -65,7 +71,25 @@ NoteReason = Literal[
     "int_overflow",
     "missing_tokens",
     "shared_column_type",
+    "from_file_names",
 ]
+
+# CDC WONDER exports put a notes block under the data: a line "---" starts it, and every line
+# from there is one quoted field (dataset, query, citation, footnotes). Split off only in that
+# shape (first header "Notes", no separator in any notes line), so a "---" line in any other
+# file never hides the rows below it.
+_EXPORT_NOTES_START: Final = re.compile(rb'(?m)^[ \t]*"?---"?[ \t]*\r?$')
+# CDC WONDER's first column: "Notes". Its "Total" rows stay in the data: aggregate mode reads them
+# as total rows (core/estimates.py).
+EXPORT_NOTES_COLUMN: Final = "notes"
+# StagedTable.source_format (and upload metadata SOURCE_FORMAT_KEY) for a CDC WONDER export.
+CDC_WONDER_FORMAT: Final = "cdc_wonder"
+
+# Column separator by file extension (``.gz`` stripped first). Text tables in a ZIP use the same.
+DELIMITERS: Final[dict[str, str]] = {".csv": ",", ".tsv": "\t", ".psv": "|"}
+
+# An .xlsx is a ZIP. A workbook that is not one is read as legacy .xls (BIFF, raw or in OLE2).
+_ZIP_MAGIC: Final = b"PK\x03\x04"
 
 # A units-row cell must be one of these (case-insensitive) or a ratio such as "mg/dL" or
 # "x10^9/L" (``_UNIT_RATIO_RE``), unless the file has an ID-named column whose cell is empty.
@@ -212,6 +236,12 @@ class StagedTable:
     notes: tuple[ColumnTypeNote, ...] = ()
     units: dict[str, str] = field(default_factory=dict)
     sheets: ExcelSheets | None = None  # Excel only: the sheet read and the sheets skipped
+    # Text exports with a notes block (CDC WONDER): the block as documentation text, and
+    # sentences for the user about rows left out of the data (subtotal rows).
+    export_notes: str = ""
+    table_notes: tuple[str, ...] = ()
+    # The published export the file was read as ("cdc_wonder"), or "" for any other file.
+    source_format: str = ""
 
 
 def is_id_column_name(name: str) -> bool:
@@ -557,12 +587,19 @@ def unpack_intervals(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(parts).select(order)
 
 
-def _flag_masks(cleaned: pl.Series, public: bool) -> tuple[pl.Series, pl.Series, pl.Series] | None:
+def _flag_masks(
+    cleaned: pl.Series, public: bool, source_words: bool = False
+) -> tuple[pl.Series, pl.Series, pl.Series] | None:
     """(suppressed, unreliable, not-applicable) masks for a column that holds numbers plus source
     markers only, or None when any other text is present (the column is left to the typing rules)."""
+    # Fail closed (ADR014 §7): a source's markers are read only in a table declared public and
+    # accepted, or in a CDC WONDER-shaped export (``source_words``). Any other file is never
+    # reinterpreted: a patient file's "<5", "Suppressed" or "Unreliable" stays the text it is.
+    if not (public or source_words):
+        return None
     folded = cleaned.str.strip_chars().str.to_lowercase()
-    # A public table's own markers ("<10", "(D)", "*") are suppression. In any other file "<5" is a
-    # censored lab value, so only the unambiguous words count there.
+    # A public table's own markers ("<10", "(D)", "*") are suppression. In a WONDER export that is
+    # not declared, only the unambiguous words count ("<5" could be a censored value).
     pattern = SOURCE_SUPPRESSED_PATTERN if public else SOURCE_SUPPRESSED_WORDS
     suppressed = folded.str.contains(pattern).fill_null(False)
     unreliable = folded.str.contains(SOURCE_UNRELIABLE_PATTERN).fill_null(False)
@@ -577,7 +614,7 @@ def _flag_masks(cleaned: pl.Series, public: bool) -> tuple[pl.Series, pl.Series,
     return suppressed, unreliable, not_applicable
 
 
-def split_source_flags(df: pl.DataFrame, *, public: bool = False) -> pl.DataFrame:
+def split_source_flags(df: pl.DataFrame, *, public: bool = False, source_words: bool = False) -> pl.DataFrame:
     """Text frame with each source's own suppression markers moved out of its numbers (ADR014 §10).
 
     CDC WONDER writes "Suppressed" for deaths of 1-9 (and for rates built on them), "12.3
@@ -594,7 +631,7 @@ def split_source_flags(df: pl.DataFrame, *, public: bool = False) -> pl.DataFram
         if df.schema[col] != pl.String or is_id_column_name(col):
             continue
         cleaned = df.select(_clean(col)).to_series()
-        masks = _flag_masks(cleaned, public)
+        masks = _flag_masks(cleaned, public, source_words)
         if masks is None:
             continue
         suppressed, unreliable, not_applicable = masks
@@ -621,7 +658,9 @@ def split_source_flags(df: pl.DataFrame, *, public: bool = False) -> pl.DataFram
     return df.with_columns(added).select(order) if added else df
 
 
-def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1, public: bool = False) -> StagedTable:
+def stage_text_frame(
+    df: pl.DataFrame, *, header_row_number: int = 1, public: bool = False, source_words: bool = False
+) -> StagedTable:
     """Type an all-text frame (one row per data line). ``header_row_number``: the header's file row.
 
     Raises:
@@ -631,12 +670,14 @@ def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1, public: bo
     not_text = [c for c, t in df.schema.items() if t != pl.String]
     if not_text:
         raise TypeError(f"stage_text_frame needs text columns; got non-text {not_text}")
+    df = _name_blank_headers(df)
+    _reject_case_twin_headers(df)
 
     units = _units_row(df)
     body = df.slice(1) if units else df
     first_data_row = header_row_number + (2 if units else 1)
     _reject_empty_rows(body, first_data_row)
-    typed, notes = _type_columns(split_source_flags(unpack_intervals(body), public=public))
+    typed, notes = _type_columns(split_source_flags(unpack_intervals(body), public=public, source_words=source_words))
     log = logger.bind(rows=typed.height, columns=typed.width)
     for note in notes:
         log.info("staging_column_note", column_index=df.columns.index(note.column), reason=note.reason)
@@ -645,17 +686,137 @@ def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1, public: bo
     return StagedTable(data=typed, notes=tuple(notes), units=units or {})
 
 
-def read_csv_typed(file_bytes: bytes, *, public: bool = False) -> StagedTable:
-    """Read CSV bytes as text over the whole file, then stage.
+def _name_blank_headers(df: pl.DataFrame) -> pl.DataFrame:
+    """A blank header (R's ``write.csv`` row-name column, ``""``) becomes ``column_<i>``, as in Excel.
+
+    A column with no name cannot be queried (the query view needs a name for every column).
+    """
+    renames = {c: f"column_{i}" for i, c in enumerate(df.columns) if not c.strip()}
+    taken = {c.casefold() for c in df.columns if c not in renames}  # the query engine ignores case
+    if any(name.casefold() in taken for name in renames.values()):
+        renames = {c: f"column_{i}_unnamed" for i, c in enumerate(df.columns) if not c.strip()}
+    return df.rename(renames) if renames else df
+
+
+def _reject_case_twin_headers(df: pl.DataFrame) -> None:
+    """Refuse headers that differ only in letter case (``Age`` and ``age``).
+
+    The query engine (DuckDB) reads column names without regard to case, so it would rename one
+    of the two and its answers could read the wrong column. Header names are not cell values, so
+    the message may quote them.
 
     Raises:
-        StagingError: the CSV cannot be parsed, or a row has no ID and no values.
+        StagingError: two or more headers are the same apart from case.
     """
+    by_folded: dict[str, list[str]] = {}
+    for name in df.columns:
+        by_folded.setdefault(name.casefold(), []).append(name)
+    twins = [names for names in by_folded.values() if len(names) > 1]
+    if twins:
+        listed = "; ".join(" and ".join(f"'{n}'" for n in names) for names in twins)
+        raise StagingError(
+            f"Columns {listed} differ only in upper and lower case, which this app reads as one name. "
+            "Rename one of them and upload the file again."
+        )
+
+
+def read_csv_typed(file_bytes: bytes, separator: str = ",", *, public: bool = False) -> StagedTable:
+    """Read delimited text (CSV; ``separator`` for TSV/PSV) as text over the whole file, then stage.
+
+    A CDC WONDER-shaped export (first header "Notes"): its notes block under the data (from the
+    "---" line) is kept as documentation, never rows, and its source words ("Suppressed",
+    "12.3 (Unreliable)") become flag columns (``split_source_flags``). ``public``: the upload was
+    declared public estimates and accepted (``stage_declared``). Any other file is read as on
+    main: a patient file's "<5" or "Suppressed" stays the text it is.
+
+    Raises:
+        StagingError: the file cannot be parsed, or a row has no ID and no values.
+    """
+    wonder = is_notes_export(file_bytes, separator)
+    data_bytes, export_notes = split_export_notes(file_bytes, separator)
     try:
-        text = pl.read_csv(io.BytesIO(file_bytes), infer_schema=False)
+        text = pl.read_csv(io.BytesIO(data_bytes), separator=separator, infer_schema=False)
     except (pl.exceptions.ComputeError, pl.exceptions.NoDataError) as e:
-        raise StagingError(f"The CSV file could not be read: {type(e).__name__}") from e
-    return stage_text_frame(_drop_trailing_blank_rows(text), public=public)
+        raise StagingError(f"The {_delimited_kind(separator)} file could not be read: {type(e).__name__}") from e
+    staged = stage_text_frame(_drop_trailing_blank_rows(text), public=public, source_words=wonder)
+    staged = replace(staged, source_format=CDC_WONDER_FORMAT if wonder else "")
+    if not export_notes.strip():
+        return staged
+    lines = sum(1 for line in export_notes.splitlines() if line.strip().strip('"').strip() not in ("", "---"))
+    note = (
+        f"The notes under the data ({lines} line{'s' if lines != 1 else ''}: dataset, query, citation) "
+        "were kept as the dataset's documentation, not as rows."
+    )
+    return replace(staged, export_notes=export_notes, table_notes=(note,))
+
+
+def is_notes_export(file_bytes: bytes, separator: str) -> bool:
+    """True when the first header is "Notes" (CDC WONDER's layout): read the file on its own, so
+    its subtotal rows, notes block and suppressed values are handled (never as a numbered set)."""
+    first_header = file_bytes.split(b"\n", 1)[0].split(separator.encode(), 1)[0].strip().strip(b'"').strip()
+    return first_header.lower() == EXPORT_NOTES_COLUMN.encode()
+
+
+def split_export_notes(file_bytes: bytes, separator: str = "\t") -> tuple[bytes, str]:
+    """(the data lines, the notes block as text) of a CDC WONDER-shaped export; (``file_bytes``,
+    "") for any other file. WONDER-shaped: the first header is "Notes", a "---" line follows
+    the data, and no line from there on holds the separator (each is one quoted note)."""
+    if not is_notes_export(file_bytes, separator):
+        return file_bytes, ""
+    match = _EXPORT_NOTES_START.search(file_bytes)
+    if match is None:
+        return file_bytes, ""
+    block = file_bytes[match.start() :]
+    if separator.encode() in block:
+        return file_bytes, ""  # data-shaped lines below "---": not a notes block, never hidden
+    return file_bytes[: match.start()], block.decode("utf-8", errors="replace")
+
+
+def _delimited_kind(separator: str) -> str:
+    return {",": "CSV", "\t": "tab-separated", "|": "pipe-separated"}.get(separator, "text")
+
+
+def read_xport_typed(file_bytes: bytes) -> StagedTable:
+    """Read a SAS transport file (``.xpt``, as NHANES publishes), keeping its own column types.
+
+    SAS stores every number as a float, so a column of whole numbers (codes such as 1/2, IDs,
+    counts) becomes Int64 when every value fits; other numbers stay Float64. Empty text cells
+    become null. Dates SAS formats as dates arrive as dates.
+
+    Raises:
+        StagingError: the file is not a readable SAS transport file.
+    """
+    import pyreadstat
+
+    try:
+        df, _meta = pyreadstat.read_xport(io.BytesIO(file_bytes), output_format="polars")
+    except (pyreadstat.ReadstatError, pyreadstat.PyreadstatError) as e:
+        raise StagingError(f"The SAS transport (.xpt) file could not be read: {type(e).__name__}") from e
+    if not isinstance(df, pl.DataFrame):  # output_format="polars" always gives one
+        raise StagingError("The SAS transport (.xpt) file could not be read as a table")
+    return StagedTable(data=_whole_floats_as_int(df))
+
+
+def _whole_floats_as_int(df: pl.DataFrame) -> pl.DataFrame:
+    """Float columns whose values are all whole and fit Int64 become Int64; blank text is null.
+
+    NaN counts as missing (it is how a reader may store a SAS missing value). A column with any
+    fraction, or a value too large for Int64, stays Float64 so no digit is lost. A column with no
+    value at all (read as type Null) becomes text, as an empty CSV column does.
+    """
+    limit = float(2**53)  # every whole float below this converts to Int64 exactly
+    casts: list[pl.Expr] = []
+    for col, dtype in df.schema.items():
+        if dtype == pl.String:
+            casts.append(_clean(col).alias(col))
+        elif dtype == pl.Null:  # a column with no value at all: text, as a CSV's would be
+            casts.append(pl.col(col).cast(pl.String))
+        elif dtype.is_float():
+            values = df.get_column(col).fill_nan(None).drop_nulls()
+            whole = values.len() > 0 and bool(((values == values.floor()) & (values.abs() < limit)).all())
+            filled = pl.col(col).fill_nan(None)
+            casts.append((filled.cast(pl.Int64) if whole else filled).alias(col))
+    return df.with_columns(casts) if casts else df
 
 
 def _cell_text(value: object) -> str | None:
@@ -751,6 +912,9 @@ def _read_first_sheet(file_bytes: bytes) -> tuple[list[list[object]], ExcelSheet
     Raises:
         StagingError: the workbook cannot be read or has no sheet.
     """
+    if not file_bytes.startswith(_ZIP_MAGIC):
+        return _read_first_xls_sheet(file_bytes)  # .xlsx is a ZIP; anything else may be BIFF
+
     import zipfile
 
     import openpyxl
@@ -779,6 +943,87 @@ def _read_first_sheet(file_bytes: bytes) -> tuple[list[list[object]], ExcelSheet
 _SHEET_CELL_ERRORS: Final = (ValueError, OverflowError, KeyError, TypeError)
 
 
+def _read_first_xls_sheet(file_bytes: bytes) -> tuple[list[list[object]], ExcelSheets]:
+    """``_read_first_sheet`` for a legacy .xls workbook (BIFF2-8, raw or in an OLE2 file), via xlrd.
+
+    Cells come back as the values openpyxl gives: numbers, text, booleans, datetimes for cells
+    formatted as dates (``_cell_text`` writes them as ISO text), None for empty cells. An error
+    cell holds its Excel text (``#N/A``, a missing-value marker; ``#DIV/0!``).
+
+    Raises:
+        StagingError: the workbook cannot be read (encrypted, damaged, or not a workbook).
+    """
+    import struct
+
+    import xlrd
+    from xlrd.compdoc import CompDocError
+
+    if not file_bytes:
+        raise StagingError("The Excel (.xls) file could not be read: it is empty")
+    try:
+        # xlrd writes format warnings to a log file (stdout by default): keep them out of output.
+        wb = xlrd.open_workbook(file_contents=file_bytes, on_demand=True, logfile=io.StringIO())
+    except (xlrd.XLRDError, CompDocError, struct.error, IndexError, UnicodeDecodeError, ValueError) as e:
+        raise StagingError(f"The Excel (.xls) file could not be read: {type(e).__name__}") from e
+    try:
+        names = wb.sheet_names()
+        if not names:
+            raise StagingError("The Excel file has no sheets")
+        first = wb.sheet_by_index(0)
+        rows = [[_xls_value(first.cell(r, c), wb.datemode) for c in range(first.ncols)] for r in range(first.nrows)]
+        skipped = tuple(
+            name for i, name in enumerate(names[1:], start=1) if _xls_sheet_has_values(wb.sheet_by_index(i))
+        )
+    except (xlrd.XLRDError, struct.error, IndexError, UnicodeDecodeError, ValueError) as e:
+        raise StagingError(f"The Excel (.xls) file could not be read: {type(e).__name__}") from e
+    finally:
+        wb.release_resources()
+    return rows, ExcelSheets(read=names[0], skipped=skipped, empty=len(names) - 1 - len(skipped))
+
+
+def _xls_sheet_has_values(sheet: Any) -> bool:
+    """``_sheet_has_values`` for an unread .xls sheet: one that cannot be scanned counts as
+    holding data (named as not read), never failing the upload of the sheet that is read."""
+    import struct
+
+    import xlrd
+
+    try:
+        return _rows_have_values((_xls_value(cell, 0) for cell in row) for row in sheet.get_rows())
+    except (xlrd.XLRDError, struct.error, IndexError, UnicodeDecodeError, *_SHEET_CELL_ERRORS) as e:
+        logger.warning("staging_excel_other_sheet_unscannable", error_type=type(e).__name__)
+        return True
+
+
+def _xls_value(cell: Any, datemode: int) -> object:
+    """One xlrd cell as openpyxl would give it (see ``_read_first_xls_sheet``)."""
+    import xlrd
+
+    if cell.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
+        return None
+    if cell.ctype == xlrd.XL_CELL_TEXT:
+        return cell.value if str(cell.value).strip() else None
+    if cell.ctype == xlrd.XL_CELL_DATE:
+        try:
+            moment = xlrd.xldate.xldate_as_datetime(cell.value, datemode)
+            # A serial below 1 is a time of day with no date (openpyxl gives a time, not 1899-12-31).
+            return moment.time() if 0 <= cell.value < 1 else moment
+        except (xlrd.xldate.XLDateError, OverflowError, ValueError):
+            return cell.value  # a serial no date can hold: keep the number, never drop it
+    if cell.ctype == xlrd.XL_CELL_BOOLEAN:
+        return bool(cell.value)
+    if cell.ctype == xlrd.XL_CELL_ERROR:
+        return xlrd.error_text_from_code.get(cell.value, "#N/A")
+    if isinstance(cell.value, float) and cell.value.is_integer():
+        return int(cell.value)  # BIFF stores every number as a float; openpyxl gives whole ones as int
+    return cell.value
+
+
+def _rows_have_values(rows: Iterable[Iterable[object]]) -> bool:
+    """True when any cell holds a value (stops at the first one)."""
+    return any(cell is not None and str(cell).strip() for row in rows for cell in row)
+
+
 def _sheet_has_values(sheet: Any) -> bool:
     """True when any cell of the sheet holds a value (stops at the first one).
 
@@ -786,15 +1031,14 @@ def _sheet_has_values(sheet: Any) -> bool:
     data: it is named as not read, and it never fails the upload of the sheet that is read.
     """
     try:
-        rows = sheet.iter_rows(values_only=True)
-        return any(cell is not None and str(cell).strip() for row in rows for cell in row)
+        return _rows_have_values(sheet.iter_rows(values_only=True))
     except _SHEET_CELL_ERRORS as e:
         logger.warning("staging_excel_other_sheet_unscannable", error_type=type(e).__name__)
         return True
 
 
 def read_excel_typed(file_bytes: bytes, header_row: int | None = None, *, public: bool = False) -> StagedTable:
-    """Read the first sheet of an .xlsx as text, then stage.
+    """Read the first sheet of an .xlsx or .xls workbook as text, then stage.
 
     Args:
         file_bytes: Workbook bytes.
@@ -901,10 +1145,11 @@ _NOTE_TEXT: Final[dict[str, str]] = {
     "shared_column_type": "type changed to match the same column in another table, so the tables join",
     "ambiguous_dates": "kept as text: dates could be day/month or month/day and nothing in the file settles which",
     "not_dates": "kept as text: {n} values are not dates",
+    "from_file_names": "added from the file names: {n} files with the same columns were read as one table",
 }
 
 
-def describe_sheets(sheets: dict[str, object] | None) -> str:
+def describe_sheets(sheets: Mapping[str, object] | None) -> str:
     """The upload note for a workbook, or "" when nothing in it was left out.
 
     Only the first sheet is read. When another sheet holds data, the note says which sheet was

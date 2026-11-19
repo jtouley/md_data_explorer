@@ -13,6 +13,7 @@ import pytest
 from clinical_analytics.core.multi_table_handler import (
     MultiTableHandler,
 )
+from clinical_analytics.core.schema import NoCohortAnchorError
 
 
 class TestTableClassification:
@@ -662,7 +663,7 @@ class TestAnchorSelection:
         handler = MultiTableHandler(tables)
         handler.detect_relationships()
 
-        with pytest.raises(ValueError, match="No dimension tables found"):
+        with pytest.raises(NoCohortAnchorError, match="cannot be joined into one cohort"):
             handler._find_anchor_by_centrality()
 
         handler.close()
@@ -683,7 +684,7 @@ class TestAnchorSelection:
         handler = MultiTableHandler(tables)
         handler.detect_relationships()
 
-        with pytest.raises(ValueError, match="No suitable anchor table found"):
+        with pytest.raises(NoCohortAnchorError, match="cannot be joined into one cohort"):
             handler._find_anchor_by_centrality()
 
         handler.close()
@@ -1719,3 +1720,88 @@ class TestPlanMart:
         assert metadata.parquet_path.is_file(), "Patient-level should be single file"
 
         handler.close()
+
+
+def test_findAnchor_eicuStayKeyWithoutUnderscore_stayTableAnchors():
+    # Arrange: eICU names its stay key patientunitstayid; vitals repeat it per measurement
+    patient = pl.DataFrame(
+        {
+            "patientunitstayid": list(range(1001, 1031)),
+            "uniquepid": [f"U{i // 2}" for i in range(30)],
+            "age": [str(40 + i) for i in range(30)],
+        }
+    )
+    vitals = pl.DataFrame(
+        {"patientunitstayid": [1001 + i % 30 for i in range(120)], "heartrate": [70 + i % 40 for i in range(120)]}
+    )
+
+    # Act
+    with MultiTableHandler({"patient": patient, "vitalPeriodic": vitals}) as handler:
+        handler.detect_relationships()
+        handler.classify_tables()
+        anchor = handler._find_anchor_by_centrality()
+
+    # Assert
+    assert anchor == "patient"
+
+
+def test_findAnchor_oneRowPerPersonTables_anchorsOnTableOfEveryone():
+    # Arrange: NHANES shape; every file one row per SEQN, the lab files cover subsets
+    people = list(range(93700, 93760))
+    tables = {
+        "BIOPRO_J": pl.DataFrame({"SEQN": people[::3], "LBXSATSI": [float(i) for i in range(20)]}),
+        "DEMO_J": pl.DataFrame({"SEQN": people, "RIAGENDR": [1 + i % 2 for i in range(60)]}),
+        "HEPC_J": pl.DataFrame({"SEQN": people[::2], "LBXHCR": [1 + i % 2 for i in range(30)]}),
+    }
+
+    # Act
+    with MultiTableHandler(tables) as handler:
+        handler.detect_relationships()
+        handler.classify_tables()
+        anchor = handler._find_anchor_by_centrality()
+
+    # Assert
+    assert anchor == "DEMO_J"
+
+
+@pytest.mark.parametrize(
+    ("grain_key", "level"),
+    [
+        ("patientunitstayid", "admission"),
+        ("PatientUnitStayID", "admission"),
+        ("patient_id", "patient"),
+        ("SEQN", "patient"),
+        ("hadm_id", "admission"),
+        ("lab_event_id", "event"),
+    ],
+)
+def test_detectGrainLevel_stayKeyNamedForPatient_isStayNotPatient(grain_key: str, level: str):
+    # Arrange
+    with MultiTableHandler({"t": pl.DataFrame({grain_key: [1, 2]})}) as handler:
+        # Act
+        detected = handler._detect_grain_level(grain_key)
+
+    # Assert
+    assert detected == level
+
+
+def test_findAnchor_hubWithFewOrphanChildKeys_stillAnchors():
+    # Arrange: an extract where 1 in 25 admissions points at a patient outside it (match 0.96)
+    patients = pl.DataFrame({"patient_id": [f"P{i:03d}" for i in range(60)], "age": list(range(60))})
+    admissions = pl.DataFrame(
+        {
+            "hadm_id": list(range(100)),
+            "patient_id": [f"P{i % 60:03d}" if i % 25 else f"X{i:03d}" for i in range(100)],
+        }
+    )
+    # A larger one-row-per-person table that nothing joins to: it wins a tie on rows
+    registry = pl.DataFrame({"subject_id": [f"S{i:03d}" for i in range(80)], "consented": [i % 2 for i in range(80)]})
+
+    # Act
+    with MultiTableHandler({"registry": registry, "patients": patients, "admissions": admissions}) as handler:
+        handler.detect_relationships()
+        handler.classify_tables()
+        anchor = handler._find_anchor_by_centrality()
+
+    # Assert
+    assert anchor == "patients"

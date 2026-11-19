@@ -2421,3 +2421,39 @@ def make_population_estimates():
         return frame.select(columns)
 
     return _make
+
+
+@pytest.fixture
+def make_wonder_export() -> Callable[..., bytes]:
+    """Factory: a synthetic file shaped like a CDC WONDER export (no real data).
+
+    Tab-separated, quoted text, a first column "Notes", ``states`` data rows with "Suppressed"
+    deaths and "Unreliable" rates in some of them, a "Total" subtotal row, then a "---" notes block
+    (dataset, query parameters, citation) that is documentation, not data.
+    """
+
+    def _make(states: int = 40, suppressed_every: int = 7, unreliable_every: int = 5, total_row: bool = True) -> bytes:
+        header = ['"Notes"', '"State"', '"State Code"', '"Deaths"', '"Population"', '"Crude Rate"']
+        lines = ["\t".join(header)]
+        for i in range(1, states + 1):
+            deaths = "Suppressed" if i % suppressed_every == 0 else str(100 + i * 13)
+            rate = (
+                "Suppressed"
+                if i % suppressed_every == 0
+                else ("Unreliable" if i % unreliable_every == 0 else f"{10 + i / 10:.1f}")
+            )
+            lines.append("\t".join(["", f'"State {i:02d}"', f'"{i:02d}"', deaths, str(500000 + i * 1000), rate]))
+        if total_row:
+            lines.append("\t".join(['"Total"', "", "", "99999", "99999999", "12.3"]))
+        lines += [
+            '"---"',
+            '"Dataset: Synthetic Underlying Cause of Death (test fixture)"',
+            '"Query Parameters:"',
+            '"Group By: State"',
+            '"---"',
+            '"Help: Deaths of 1-9 are suppressed; rates from fewer than 20 deaths are unreliable."',
+            '"Query Date: Jan 1, 2026"',
+        ]
+        return ("\n".join(lines) + "\n").encode()
+
+    return _make

@@ -20,6 +20,18 @@ whose licences ship with their own wheels and npm packages).
 - Base model: `nreimers/MiniLM-L6-H384-uncased` (Microsoft MiniLM), fine-tuned by the
   sentence-transformers project. The bundled files are unmodified.
 
+## xlrd (legacy .xls reader)
+
+- Source: <https://pypi.org/project/xlrd/> (locked in `uv.lock`), used by
+  `src/clinical_analytics/storage/staging.py` to read `.xls` workbooks, which openpyxl cannot read.
+- Licence: BSD-3-Clause for most of the library, plus a 4-clause BSD licence for earlier work it
+  includes; both texts ship in the package's `LICENSE` file. The 4-clause part asks that every
+  redistribution, and any advertising material that mentions the feature, carry this
+  acknowledgment: "This product includes software developed by David Giffin
+  <david@giffin.org>."
+- Chosen over python-calamine (MIT), which cannot read the raw BIFF2-4 workbooks some public
+  datasets still ship (hbiostat's `prostate.xls`).
+
 ## Fonts
 
 Source Sans 3 and Source Serif 4 (SIL Open Font License 1.1); see `electron/src/fonts/*-OFL.md`.

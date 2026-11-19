@@ -51,8 +51,8 @@ from clinical_analytics.storage.dataset_deletion import (
     purge_dataset_files,
     validate_dataset_id,
 )
-from clinical_analytics.storage.staging import StagingError
 from clinical_analytics.ui.storage.user_datasets import (
+    USER_FILE_ERRORS,
     UploadSecurityValidator,
     UserDatasetStorage,
     duplicate_name_message,
@@ -597,10 +597,12 @@ def _upload_sheet_note(storage: UserDatasetStorage, upload_id: str) -> str:
 
 
 def _upload_cohort_notes(storage: UserDatasetStorage, upload_id: str) -> list[str]:
-    """What a multi-table cohort left out (tables, keyless rows, features), for the user."""
-    from clinical_analytics.ui.storage.user_datasets import COHORT_BUILD_KEY, describe_cohort_build
+    """What the cohort left out, for the user: ZIP files kept as documentation instead of tables,
+    then what a multi-table cohort dropped (tables, keyless rows, features)."""
+    from clinical_analytics.ui.storage.user_datasets import COHORT_BUILD_KEY, ZIP_NOTES_KEY, describe_cohort_build
 
-    return describe_cohort_build((storage.get_upload_metadata(upload_id) or {}).get(COHORT_BUILD_KEY))
+    metadata = storage.get_upload_metadata(upload_id) or {}
+    return [*metadata.get(ZIP_NOTES_KEY, []), *describe_cohort_build(metadata.get(COHORT_BUILD_KEY))]
 
 
 # Said on every delete (API and app): the log of shown counts is kept (core.shown_counts, ADR013 §12).
@@ -625,7 +627,9 @@ class DatasetDeleteResponse(BaseModel):
     )
 
 
-ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".xlsx", ".xls", ".sav"}
+# .zip: tables plus their documentation (ADR004), the multi-table path; .xpt: SAS transport (NHANES);
+# .tsv and .txt: tab-separated text (CDC WONDER exports, with their notes block as documentation).
+ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".tsv", ".txt", ".xlsx", ".xls", ".sav", ".xpt", ".zip"}
 
 # What to do next when an error-level check fails, by rule id suffix (contracts.builder._id_rules).
 _NEXT_STEP_BY_RULE_SUFFIX: dict[str, str] = {
@@ -783,7 +787,7 @@ def load_sample_dataset() -> DatasetUploadResponse:
 
 @router.post("/datasets/upload", response_model=DatasetUploadResponse)
 async def upload_dataset(
-    file: UploadFile = File(..., description="CSV or Excel file to upload"),
+    file: UploadFile = File(..., description="CSV, Excel, SPSS, SAS transport or ZIP file to upload"),
     dataset_name: str | None = Form(None, description="Optional display name"),
     population_estimates: str | None = Form(
         None,
@@ -794,8 +798,10 @@ async def upload_dataset(
         "hidden. Ignored for a file with patient-level structure. Any other value is rejected.",
     ),
 ) -> DatasetUploadResponse:
-    """Upload a dataset file (CSV, Excel, or SPSS).
+    """Upload a dataset file (CSV, Excel .xlsx/.xls, SPSS .sav, SAS transport .xpt, or ZIP).
 
+    A ZIP holds tables (any of those formats, .tsv/.psv, gzipped text) and their documentation
+    (.pdf, .md, .txt; ADR004); several tables become one cohort (the multi-table path).
     Validates the file extension and size, then delegates to UserDatasetStorage.
 
     Args:
@@ -847,12 +853,12 @@ async def upload_dataset(
             file_bytes=file_bytes,
             original_filename=filename,
             metadata=metadata,
-            raise_staging_errors=True,
+            raise_user_errors=True,
         )
-    except StagingError as e:
-        # The file cannot be read as a table: the user's file, not a server fault. Staging
-        # messages are written for the user and never quote cell values.
-        log.warning("dataset_upload_unreadable", error_type=type(e).__name__)
+    except USER_FILE_ERRORS as e:
+        # The file cannot be used as sent (unreadable, no patient ID, a damaged ZIP): the user's
+        # to fix, not a server fault. These messages are written for the user and quote no cells.
+        log.warning("dataset_upload_refused", error_type=type(e).__name__)
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     if not success or upload_id is None:
