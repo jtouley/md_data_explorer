@@ -185,10 +185,12 @@ CDIFF: dict[str, Oracle] = {
     ),
     # Patients with positive tests on two or more distinct encounters.
     "fellow_cdiff-repeat-positives-listing-04": _listing(
-        lambda f: f.filter(_POSITIVE)
-        .group_by("patient_id")
-        .agg(pl.col("encounter_id").n_unique().alias("n"))
-        .filter(pl.col("n") >= 2)
+        lambda f: (
+            f.filter(_POSITIVE)
+            .group_by("patient_id")
+            .agg(pl.col("encounter_id").n_unique().alias("n"))
+            .filter(pl.col("n") >= 2)
+        )
     ),
 }
 

@@ -1,4 +1,4 @@
-"""Raw-SQL comparison arm: its plumbing, with fake models only (no model server is needed).
+"""SQL comparison arms (raw and governed): their plumbing, with fake models only (no model server).
 
 The arm's answers go through the same ``score`` as the app's; these tests check that each
 answer shape reaches the grader as the app's would, that every failure is an ERROR, that the SQL
@@ -7,6 +7,7 @@ tool cannot touch files, and that the arm never runs in CI on pull requests.
 
 from __future__ import annotations
 
+import argparse
 import json
 import threading
 from collections.abc import Callable, Iterator
@@ -16,22 +17,26 @@ from typing import Any
 
 import pytest
 
-from clinical_analytics.eval.corpus.raw_sql_arm import (
+from clinical_analytics.eval.corpus.run import AcceptanceError
+from clinical_analytics.eval.corpus.score import OracleAnswer, score
+from clinical_analytics.eval.corpus.sql_arm import (
     ArmError,
     CountAnswer,
     DeclineAnswer,
+    GovernedSqlTool,
     ModelCallError,
     OddsRatioAnswer,
     PValueAnswer,
-    SqlTool,
+    RawSqlTool,
     TableAnswer,
     answer_question,
+    comparison_markdown,
     main,
     ollama_model,
+    parse_modes,
     presentation_of,
     run_arm,
 )
-from clinical_analytics.eval.corpus.score import OracleAnswer, score
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXTRACT_HEADER = "patient_id,visit_id,sex,flag"
@@ -54,8 +59,8 @@ def _scripted(*replies: Any) -> tuple[Callable[[str, str], str], list[str]]:
 
 
 @pytest.fixture
-def sql_tool(write_extract) -> Iterator[SqlTool]:
-    tool = SqlTool(write_extract(EXTRACT_HEADER, EXTRACT_ROWS))
+def sql_tool(write_extract) -> Iterator[RawSqlTool]:
+    tool = RawSqlTool(write_extract(EXTRACT_HEADER, EXTRACT_ROWS))
     yield tool
     tool.close()
 
@@ -138,7 +143,7 @@ class TestAnswerQuestion:
     def test_answerQuestion_sqlThenAnswer_resultReachesModelAndAnswerCompletes(self, sql_tool):
         # Arrange
         model, prompts = _scripted(
-            {"sql": "SELECT count(DISTINCT patient_id) AS n FROM extract"},
+            {"sql": "SELECT count(DISTINCT patient_id) AS n FROM unified"},
             {"answer": {"type": "count", "value": 3, "unit": "patients"}},
         )
 
@@ -174,7 +179,7 @@ class TestAnswerQuestion:
 
     def test_answerQuestion_badSql_errorTextGoesBackToModel(self, sql_tool):
         # Arrange
-        model, prompts = _scripted({"sql": "SELECT nope FROM extract"}, {"answer": {"type": "decline", "reason": "x"}})
+        model, prompts = _scripted({"sql": "SELECT nope FROM unified"}, {"answer": {"type": "decline", "reason": "x"}})
 
         # Act
         answer = answer_question(model, sql_tool, "How many?")
@@ -189,7 +194,7 @@ class TestSqlTool:
         "sql",
         [
             pytest.param("SELECT * FROM read_csv('/etc/hostname')", id="read_file"),
-            pytest.param("COPY extract TO 'leak.csv'", id="write_file"),
+            pytest.param("COPY unified TO 'leak.csv'", id="write_file"),
             pytest.param("SET enable_external_access = true", id="unlock"),
         ],
     )
@@ -296,11 +301,11 @@ class TestRunArm:
         def model(system: str, prompt: str) -> str:
             question = prompt.split("Question: ", 1)[1].splitlines()[0]
             if "Result:" not in prompt:
-                return json.dumps({"sql": "SELECT count(*) FROM extract"})
+                return json.dumps({"sql": "SELECT count(*) FROM unified"})
             return json.dumps({"answer": next(a for key, a in answers.items() if key in question)})
 
         # Act
-        report = run_arm("fellow_hepb", model, "fake", "test")
+        report = run_arm("fellow_hepb", "raw", model, "fake", "test")
 
         # Assert
         grades = {r.id.split("-", 1)[1]: (r.grade, r.leak) for r in report.results}
@@ -331,8 +336,135 @@ class TestNeverInPullRequestCi:
         workflows = sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml"))
 
         # Act
-        running = [p.name for p in workflows if "raw_sql_arm" in p.read_text() or "accept-raw-sql" in p.read_text()]
+        running = [p.name for p in workflows if "sql_arm" in p.read_text() or "accept-sql-arms" in p.read_text()]
 
         # Assert: the arm needs a model server and is on demand only.
         assert workflows
         assert running == []
+
+
+class _FakeGovernedApi:
+    """Stands in for the app's API: answers POST /api/queries/sql with a fixed body (or error)."""
+
+    def __init__(self, reply: dict[str, Any] | Exception) -> None:
+        self.reply, self.sent, self.stopped = reply, [], False
+
+    def post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self.sent.append((path, payload))
+        if isinstance(self.reply, Exception):
+            raise self.reply
+        return self.reply
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+class TestGovernedSqlTool:
+    @pytest.mark.parametrize(
+        ("reply", "expected"),
+        [
+            pytest.param(
+                {"status": "answered", "columns": ["sex", "n"], "rows": [{"sex": "female", "n": 40}], "notes": []},
+                "sex | n\nfemale | 40",
+                id="answered",
+            ),
+            pytest.param(
+                {"status": "answered", "columns": ["n"], "rows": [{"n": None}], "notes": ["Small counts hidden."]},
+                "n\nNone\nNotes: Small counts hidden.",
+                id="answered_with_note",
+            ),
+            pytest.param(
+                {"status": "refused", "reason": "Rows are visits.", "needs_confirmation": None},
+                "Refused: Rows are visits.",
+                id="refused",
+            ),
+            pytest.param(AcceptanceError("POST /api/queries/sql -> 503: busy"), "SQL error: POST", id="http_error"),
+        ],
+    )
+    def test_run_appReply_textForModel(self, reply, expected):
+        # Arrange
+        api = _FakeGovernedApi(reply)
+        tool = GovernedSqlTool(api, "ds1", ["sex"])  # type: ignore[arg-type]
+
+        # Act
+        text = tool.run("SELECT sex, count(*) AS n FROM unified GROUP BY sex")
+
+        # Assert
+        assert text.startswith(expected)
+        assert api.sent[0] == ("/api/queries/sql", {"dataset_id": "ds1", "sql": api.sent[0][1]["sql"]})
+
+    def test_run_needsPatientConfirmation_neverConfirmsForTheUser(self):
+        # Arrange
+        reply = {
+            "status": "refused",
+            "reason": "Confirm one row per patient.",
+            "needs_confirmation": "x",
+            "confirmation": "t",
+        }
+        api = _FakeGovernedApi(reply)
+        tool = GovernedSqlTool(api, "ds1", [])  # type: ignore[arg-type]
+
+        # Act
+        tool.run("SELECT count(*) FROM unified")
+        tool.run("SELECT count(*) FROM unified")
+
+        # Assert
+        assert all("confirm_one_row_per_patient" not in payload for _, payload in api.sent)
+
+
+class TestModesAndComparison:
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            pytest.param("raw", ("raw",), id="one"),
+            pytest.param("raw, app", ("app", "raw"), id="canonical_order"),
+            pytest.param("app,governed,raw", ("app", "governed", "raw"), id="all"),
+        ],
+    )
+    def test_parseModes_valid_canonicalOrder(self, text, expected):
+        # Arrange / Act / Assert
+        assert parse_modes(text) == expected
+
+    @pytest.mark.parametrize("text", [pytest.param("", id="empty"), pytest.param("raw,mcp", id="unknown")])
+    def test_parseModes_invalid_refused(self, text):
+        # Arrange / Act / Assert
+        with pytest.raises(argparse.ArgumentTypeError, match="use one or more of"):
+            parse_modes(text)
+
+    def test_comparisonMarkdown_threeColumns_separateRatesAndNotRun(self, corpus_cache):
+        # Arrange: the raw arm declines everything; the governed column did not run.
+        model, _ = _scripted(*[{"answer": {"type": "decline", "reason": "no"}}] * 10)
+        raw = run_arm("fellow_measles", "raw", model, "fake", "test")
+
+        # Act
+        text = comparison_markdown("fellow_measles", {"app": None, "governed": None, "raw": raw})
+
+        # Assert
+        assert "| | app as-is | model + governed SQL | model + raw SQL |" in text
+        assert "| blanks filled right | not run | not run | 0 of 2 |" in text
+        assert "| answered right | not run | not run | 0 of 4 |" in text
+        assert "| correctly held | not run | not run | 1 of 1 |" in text
+        assert "waiting on aggregate mode (not asked in any column): 2 (of 4 blanks)" in text
+
+
+@pytest.mark.slow
+@pytest.mark.integration
+class TestGovernedThroughTheApp:
+    def test_runArm_governedOnVisitRows_everyAnswerHeldNoLeak(self, corpus_cache):
+        # Arrange: a model that writes sensible SQL, then answers from whatever the tool returned.
+        def model(system: str, prompt: str) -> str:
+            if "Result:" not in prompt:
+                return json.dumps({"sql": "SELECT count(DISTINCT patient_id) AS n FROM unified"})
+            result = prompt.rsplit("Result:\n", 1)[1]
+            if result.startswith(("Refused", "SQL error")):
+                return json.dumps({"answer": {"type": "decline", "reason": result.splitlines()[0]}})
+            return json.dumps({"answer": {"type": "count", "value": int(result.splitlines()[1]), "unit": "patients"}})
+
+        # Act
+        report = run_arm("fellow_cdiff", "governed", model, "fake", "test", app_src=REPO_ROOT / "src")
+
+        # Assert: the governed path refuses visit-level rows today, so nothing is shown.
+        counts = report.counts()
+        assert (counts["WRONG"], counts["LEAK"], counts["ERROR"]) == (0, 0, 0)
+        assert counts["HELD"] == report.rates().expect_answer
+        assert all("visits" in r.reason for r in report.results if r.grade == "HELD")
