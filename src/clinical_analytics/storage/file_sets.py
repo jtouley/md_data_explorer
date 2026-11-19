@@ -94,9 +94,12 @@ def split_file_sets(members: list[TextMember]) -> tuple[list[FileSet], list[Text
             groups[(prefix, suffix, member.separator, _header_line(member.content))].append(member)
     in_set: set[str] = set()
     sets: list[FileSet] = []
+    taken: set[str] = set()
     for (prefix, _suffix, _sep, _header), group in groups.items():
         if len(group) >= MIN_SET_FILES:
-            sets.append(FileSet(name=_set_name(group), prefix=prefix, members=tuple(group)))
+            name = _unique_set_name(_set_name(group), prefix, taken)
+            taken.add(name.casefold())
+            sets.append(FileSet(name=name, prefix=prefix, members=tuple(group)))
             in_set.update(m.path for m in group)
     singles = [m for m in members if m.path not in in_set]
     if sets:
@@ -117,7 +120,11 @@ def read_file_set(file_set: FileSet) -> StagedTable:
     except (pl.exceptions.ComputeError, pl.exceptions.NoDataError) as e:
         raise StagingError(_unreadable(file_set.name, e)) from e
     id_column = _id_column(file_set.prefix, columns)
-    added = [c for c in (id_column, SOURCE_FOLDER_COLUMN) if c in columns]
+    folders = [m.folder for m in file_set.members]
+    adds = (id_column, SOURCE_FOLDER_COLUMN) if len(set(folders)) > 1 else (id_column,)
+    # Case-blind, as the query engine reads names: "Source_File" would clash with "source_file".
+    folded = {c.casefold() for c in columns}
+    added = [c for c in adds if c.casefold() in folded]
     if added:
         raise StagingError(
             f"Files in '{file_set.name}' already have a column named '{added[0]}', a name the upload adds "
@@ -126,7 +133,6 @@ def read_file_set(file_set: FileSet) -> StagedTable:
 
     text, rows_per_file = _read_members(file_set.members, columns, separator, file_set.name)
     stems = [m.stem for m in file_set.members]
-    folders = [m.folder for m in file_set.members]
     if len(set(stems)) < len(stems):  # the same name in two folders: keep both apart
         stems = [f"{folder}/{stem}" for folder, stem in zip(folders, stems, strict=True)]
     extra = [pl.Series(id_column, stems).repeat_by(pl.Series(rows_per_file)).explode()]
@@ -197,6 +203,19 @@ def _set_name(group: list[TextMember]) -> str:
         while not folder.startswith(shared):
             shared = shared[:-1]
     return shared.rstrip("_- ") or _DEFAULT_SET_NAME
+
+
+def _unique_set_name(name: str, prefix: str, taken: set[str]) -> str:
+    """``name``, or when another set already has it (two numbered groups in one folder: ``p1.psv``
+    and ``visit1.csv``), ``name_<prefix>``, then ``name_<prefix>_2``, ... (compared case-blind)."""
+    if name.casefold() not in taken:
+        return name
+    candidate = f"{name}_{prefix}"
+    n = 2
+    while candidate.casefold() in taken:
+        candidate = f"{name}_{prefix}_{n}"
+        n += 1
+    return candidate
 
 
 def _unreadable(name: str, error: Exception) -> str:

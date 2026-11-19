@@ -163,3 +163,44 @@ def test_readFileSet_headerAlreadyHasAddedName_raisesStagingError() -> None:
     # Act / Assert
     with pytest.raises(StagingError, match="already have a column named 'source_folder'"):
         read_file_set(file_set)
+
+
+def test_splitFileSets_twoNumberedGroupsInOneFolder_getDistinctNames() -> None:
+    # Arrange: both groups sit at the ZIP root, so both would be named "records"
+    files = [
+        _psv("p001.psv", ["80|NaN|0|0"]),
+        _psv("p002.psv", ["81|NaN|1|0"]),
+        TextMember("visit1.csv", b"patient_id,bp\nA1,120\n", ","),
+        TextMember("visit2.csv", b"patient_id,bp\nA2,130\n", ","),
+    ]
+
+    # Act
+    sets, singles = split_file_sets(files)
+
+    # Assert
+    assert [s.name for s in sets] == ["records", "records_visit"]
+    assert singles == []
+
+
+@pytest.mark.parametrize(
+    ("folders", "stem", "header", "outcome"),
+    [
+        pytest.param("AA", "p", "HR|source_folder", "reads", id="source_folder_one_folder_never_added"),
+        pytest.param("AB", "p", "HR|Source_Folder", "clash", id="source_folder_other_case_two_folders"),
+        pytest.param("AA", "p", "HR|SOURCE_FILE", "reads", id="source_file_not_added_for_patient_files"),
+        pytest.param("AA", "visit", "HR|Source_File", "clash", id="source_file_other_case"),
+    ],
+)
+def test_readFileSet_headerNamesAnAddedColumn_clashesOnlyWhenAddedAndCaseBlind(
+    folders: str, stem: str, header: str, outcome: str
+) -> None:
+    # Arrange
+    files = [_psv(f"{d}/{stem}{i}.psv", ["1|x"], header=header) for i, d in enumerate(folders)]
+    (file_set,), _ = split_file_sets(files)
+
+    # Act / Assert
+    if outcome == "clash":
+        with pytest.raises(StagingError, match="already have a column named"):
+            read_file_set(file_set)
+    else:
+        assert read_file_set(file_set).data.height == 2

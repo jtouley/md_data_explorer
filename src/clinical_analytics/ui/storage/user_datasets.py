@@ -55,6 +55,7 @@ from clinical_analytics.storage.staging import (
     ID_COLUMN_NAMES,
     StagedTable,
     StagingError,
+    describe_sheets,
     detect_header_row,
     read_csv_typed,
     read_excel_rows,
@@ -279,30 +280,39 @@ def extract_documentation_files(zip_file: Any, budget: "ZipExpansionBudget | Non
         >>> doc_names = [f.name for f in doc_files]
         ['README.md', 'dictionary.txt', 'study_protocol.pdf']
     """
-    doc_extensions = {".pdf", ".md", ".txt"}
-    doc_files = []
     budget = budget or ZipExpansionBudget()
-
     try:
         with zipfile.ZipFile(zip_file) as zf:
-            for file_info in zf.filelist:
-                # Skip directories and macOS metadata
-                if file_info.is_dir() or file_info.filename.startswith("__MACOSX"):
-                    continue
-
-                # Check if file has documentation extension
-                file_path = Path(file_info.filename)
-                if file_path.suffix.lower() in doc_extensions:
-                    content = budget.read(zf, file_info.filename)
-                    doc_files.append(DocFile(name=file_path.name, path=file_info.filename, content=content))
-
-        return doc_files
-
+            return _zip_docs(zf, nested=True, budget=budget)
     except (zipfile.BadZipFile, NotImplementedError, EOFError, ValueError) as e:
         # Never drop the documentation in silence: the dictionary is what the answers lean on.
         raise UploadFileError(
             "The documentation files in this ZIP could not be read. Zip the files again and upload the new ZIP."
         ) from e
+
+
+_DOC_EXTENSIONS: Final = frozenset({".pdf", ".md", ".txt"})
+
+
+def _zip_docs(zf: zipfile.ZipFile, nested: bool, budget: "ZipExpansionBudget") -> list[DocFile]:
+    """The documentation files of a ZIP, and of a ZIP inside it (one level, as ``_zip_members``
+    reads its tables). A nested ZIP is read again here, so it is charged to ``budget`` twice."""
+    doc_files: list[DocFile] = []
+    for file_info in zf.filelist:
+        # Skip directories and macOS metadata
+        if file_info.is_dir() or file_info.filename.startswith("__MACOSX"):
+            continue
+        file_path = Path(file_info.filename)
+        if nested and file_path.suffix.lower() == ".zip":
+            with zipfile.ZipFile(io.BytesIO(budget.read(zf, file_info.filename))) as inner:
+                doc_files.extend(
+                    DocFile(name=d.name, path=f"{file_info.filename}/{d.path}", content=d.content)
+                    for d in _zip_docs(inner, nested=False, budget=budget)
+                )
+        elif file_path.suffix.lower() in _DOC_EXTENSIONS:
+            content = budget.read(zf, file_info.filename)
+            doc_files.append(DocFile(name=file_path.name, path=file_info.filename, content=content))
+    return doc_files
 
 
 # Table files read from a ZIP (``.gz`` allowed on delimited text). Docs: ``extract_documentation_files``.
@@ -313,8 +323,9 @@ ZIP_TABLE_EXTENSIONS: Final = frozenset({*DELIMITERS, ".xlsx", ".xls", ".xpt", "
 # expand a thousandfold and exhaust memory. The largest corpus upload (eICU demo) expands to ~310 MB.
 MAX_ZIP_EXPANDED_BYTES: Final = 1024**3
 # At most this many entries in a ZIP (each nested ZIP counted on its own). Sepsis 2019, the largest
-# file set in the corpus, has 40,336 files; the cap stops an archive of millions of empty entries
-# from exhausting memory before the expansion budget is ever charged.
+# file set in the corpus, has 40,336 files. The cap is checked once ``zipfile`` has read the central
+# directory (which the 100 MB upload cap bounds), so it limits the per-entry work after that (reads,
+# file sets, staging), not the directory's own parse.
 MAX_ZIP_ENTRIES: Final = 100_000
 
 
@@ -455,6 +466,38 @@ def _zip_members(z: zipfile.ZipFile, nested: bool, budget: ZipExpansionBudget) -
     return members
 
 
+def _looks_like_codebook(content: bytes, separator: str) -> bool:
+    """True when delimited text is several small tables split by blank rows, each opening with a
+    header row of words (UCI diabetes' ``IDS_mapping.csv``), not one data table with a stray
+    blank line: every block after a blank row must start with a row that has no number in it.
+    """
+    blocks: list[list[str]] = []  # the first row of each block of non-blank rows
+    in_block = False
+    for line in content.decode("utf-8", errors="replace").splitlines():
+        cells = [c.strip().strip('"').strip() for c in line.split(separator)]
+        if not any(cells):
+            in_block = False
+            continue
+        if not in_block:
+            blocks.append(cells)
+            in_block = True
+    return len(blocks) >= 2 and all(_is_word_row(first) for first in blocks)
+
+
+def _is_word_row(cells: list[str]) -> bool:
+    """A row of words (a header): no cell is a number."""
+
+    def is_number(cell: str) -> bool:
+        try:
+            float(cell.replace(",", ""))
+        except ValueError:
+            return False
+        return True
+
+    filled = [c for c in cells if c]
+    return bool(filled) and not any(is_number(c) for c in filled)
+
+
 @dataclass(frozen=True)
 class ZipRead:
     """What a ZIP gave: its tables, the text files read as documentation instead, and why."""
@@ -521,20 +564,34 @@ def read_zip_tables(file_bytes: bytes, budget: ZipExpansionBudget | None = None)
     except StagingError as e:
         raise UploadFileError(str(e)) from e
     singles = [(entry, name, ext, content) for entry, name, ext, content in members if entry not in in_set]
+    sheet_notes: list[str] = []
     for entry, name, ext, content in singles:
         try:
-            staged_tables.append((name, load_single_file_staged(content, f"{name}{ext}")))
+            staged = load_single_file_staged(content, f"{name}{ext}")
+            staged_tables.append((name, staged))
+            # Each workbook's own sheet note, naming the file: in a ZIP of several workbooks, a
+            # sheet left unread in any of them must never look fully loaded.
+            if sheet_note := describe_sheets(staged.sheets.as_dict() if staged.sheets is not None else None):
+                sheet_notes.append(f"{Path(entry).name}: {sheet_note}")
         except StagingError as e:
-            if ext not in DELIMITERS or len(singles) + len(file_sets) < 2:
+            # Only a codebook may become documentation: its text reaches doc_context and the model's
+            # prompts, so a data table that fails (patient rows) must fail the upload instead.
+            if (
+                ext not in DELIMITERS
+                or len(singles) + len(file_sets) < 2
+                or not _looks_like_codebook(content, DELIMITERS[ext])
+            ):
                 raise UploadFileError(f"Table '{name}': {e}") from e
             as_docs.append(DocFile(name=f"{name}.txt", path=entry, content=content))
-            # Says why, so a data table that fails is never mistaken for a codebook in silence.
+            # Says why, so a table kept as documentation is never mistaken for data in silence.
             notes.append(
                 f"{Path(entry).name} was kept as documentation, not read as a table, so it is not in the "
-                f"cohort. {str(e).rstrip('.')}. If it is a codebook (several tables split by blank rows), "
-                "you can ignore this."
+                f"cohort. {str(e).rstrip('.')}. It looks like a codebook (several tables split by blank "
+                "rows); if it is one, you can ignore this."
             )
             logger.info("zip_table_read_as_documentation", error_type=type(e).__name__)
+    if len(staged_tables) > 1:  # one table: its workbook note is the upload's sheet_note
+        notes.extend(sheet_notes)
     if not staged_tables:
         raise UploadFileError(
             "No file in the ZIP could be read as a table. Each table needs one header row followed by "
@@ -1306,8 +1363,11 @@ def save_table_list(
                 with tempfile.TemporaryDirectory() as temp_dir:
                     temp_path = Path(temp_dir)
                     doc_paths = []
-                    for doc_file in metadata["doc_files"]:
-                        doc_temp_path = temp_path / doc_file.name
+                    for i, doc_file in enumerate(metadata["doc_files"]):
+                        # One folder per document: README.txt in two folders, or codebook.txt beside
+                        # codebook.csv kept as documentation, must not overwrite each other.
+                        doc_temp_path = temp_path / str(i) / Path(doc_file.name).name
+                        doc_temp_path.parent.mkdir()
                         doc_temp_path.write_bytes(doc_file.content)
                         doc_paths.append(doc_temp_path)
                     doc_context = extract_context_from_docs(doc_paths)
@@ -1419,7 +1479,8 @@ def save_table_list(
         column_units: dict[str, str] = {}
         for t in tables:
             column_units.update(t.get("units") or {})
-        excel_sheets = next((t["sheets"].as_dict() for t in tables if t.get("sheets") is not None), None)
+        # One file: its workbook note. Several (a ZIP): each workbook's note is a ZIP note instead.
+        excel_sheets = tables[0]["sheets"].as_dict() if len(tables) == 1 and tables[0].get("sheets") else None
 
         canonical_tables = {
             t["name"]: {

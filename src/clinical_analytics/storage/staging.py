@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import io
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from typing import Any, Final, Literal
@@ -751,7 +751,9 @@ def _xls_value(cell: Any, datemode: int) -> object:
         return cell.value if str(cell.value).strip() else None
     if cell.ctype == xlrd.XL_CELL_DATE:
         try:
-            return xlrd.xldate.xldate_as_datetime(cell.value, datemode)
+            moment = xlrd.xldate.xldate_as_datetime(cell.value, datemode)
+            # A serial below 1 is a time of day with no date (openpyxl gives a time, not 1899-12-31).
+            return moment.time() if 0 <= cell.value < 1 else moment
         except (xlrd.xldate.XLDateError, OverflowError, ValueError):
             return cell.value  # a serial no date can hold: keep the number, never drop it
     if cell.ctype == xlrd.XL_CELL_BOOLEAN:
@@ -863,7 +865,7 @@ _NOTE_TEXT: Final[dict[str, str]] = {
 }
 
 
-def describe_sheets(sheets: dict[str, object] | None) -> str:
+def describe_sheets(sheets: Mapping[str, object] | None) -> str:
     """The upload note for a workbook, or "" when nothing in it was left out.
 
     Only the first sheet is read. When another sheet holds data, the note says which sheet was

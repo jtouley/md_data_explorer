@@ -127,18 +127,25 @@ def test_uploadDataset_zipWithStackedCodebookCsv_codebookReadAsDocs(test_client:
     assert "discharge_id" in meta["doc_context"]
 
 
-def test_uploadDataset_zipWithBrokenDataTable_noteSaysWhyItIsNotInCohort(test_client: TestClient, isolated_data_home):
-    # Arrange: a lab table with a row that has no ID and no values (staging refuses it)
-    labs = b"patient_id,alt\nP000,31\nP001,40\n,\nP002,22\n"
+@pytest.mark.parametrize(
+    "labs",
+    [
+        pytest.param(b"patient_id,alt\nP000,31\nP001,40\n,\nP002,22\n", id="blank_row_then_numbers"),
+        pytest.param(b"patient_id,Alt,alt\nP000,31,30\nP001,40,41\n", id="case_twin_headers"),
+    ],
+)
+def test_uploadDataset_zipWithBrokenDataTable_refused400NeverKeptAsDocs(
+    test_client: TestClient, isolated_data_home, labs: bytes
+):
+    # Arrange: a data table that staging refuses. Kept as documentation, its patient rows would
+    # reach doc_context and the model's prompts; only a codebook may become documentation.
 
     # Act
     body = _upload(test_client, "labs.zip", _zip({"cohort.csv": _cohort_csv(), "labs.csv": labs}), "labs")
 
-    # Assert: never dropped in silence; the note names the file and the reason, shown with the cohort
-    assert body["_status_code"] == 200, body
-    note = next(n for n in body["cohort_notes"] if n.startswith("labs.csv"))
-    assert "is not in the cohort" in note
-    assert "no patient ID and no values" in note
+    # Assert
+    assert body["_status_code"] == 400, body
+    assert body["detail"].startswith("Table 'labs':")
 
 
 def test_uploadDataset_zipWithCorruptSav_failsWithReadableReason(test_client: TestClient, isolated_data_home):
@@ -410,3 +417,72 @@ def test_uploadDataset_zipWithTooManyEntries_refused400(
     # Assert
     assert body["_status_code"] == 400, body
     assert "The ZIP holds more than 3 files" in body["detail"]
+
+
+# --- Review round: docs in a nested ZIP, docs that share a name, workbooks in a ZIP ---------------
+
+
+def test_uploadDataset_zipInsideZipWithReadme_docsReachContext(test_client: TestClient, isolated_data_home):
+    # Arrange: the README sits next to the table inside the nested ZIP (UCI shape)
+    inner = _zip({"cohort.csv": _cohort_csv(), "README.txt": _README})
+
+    # Act
+    body = _upload(test_client, "outer.zip", _zip({"dataset.zip": inner}), "nested_docs")
+    _frame, meta = _stored(body["upload_id"])
+
+    # Assert
+    assert body["_status_code"] == 200, body
+    assert "covid_hosp: hospitalised with COVID-19" in meta["doc_context"]
+
+
+def test_uploadDataset_docsSharingAName_bothReachContext(test_client: TestClient, isolated_data_home):
+    # Arrange: README.txt in two folders; extraction once wrote both to one temp path
+    data = _zip(
+        {
+            "cohort.csv": _cohort_csv(),
+            "siteA/README.txt": b"Site A dictionary: alpha_marker means the first assay.\n" * 4,
+            "siteB/README.txt": b"Site B dictionary: beta_marker means the second assay.\n" * 4,
+        }
+    )
+
+    # Act
+    body = _upload(test_client, "sites.zip", data, "sites")
+    _frame, meta = _stored(body["upload_id"])
+
+    # Assert
+    assert body["_status_code"] == 200, body
+    assert "alpha_marker" in meta["doc_context"]
+    assert "beta_marker" in meta["doc_context"]
+
+
+def _xlsx(sheets: dict[str, list[list[object]]]) -> bytes:
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    for title, rows in sheets.items():
+        ws = wb.create_sheet(title)
+        for row in rows:
+            ws.append(row)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_uploadDataset_zipWithTwoWorkbooks_eachUnreadSheetNamedWithItsFile(test_client: TestClient, isolated_data_home):
+    # Arrange: only the second workbook has a sheet left unread; the note once came from the first
+    first = _xlsx({"Baseline": [["patient_id", "bmi"], *[[f"P{i:03d}", 20 + i % 9] for i in range(120)]]})
+    second = _xlsx(
+        {
+            "Labs": [["patient_id", "alt"], *[[f"P{i:03d}", 30 + i % 11] for i in range(0, 120, 2)]],
+            "FollowUp": [["patient_id", "alt_6m"], ["P000", 33]],
+        }
+    )
+
+    # Act
+    body = _upload(test_client, "books.zip", _zip({"a.xlsx": first, "b.xlsx": second}), "books")
+
+    # Assert
+    assert body["_status_code"] == 200, body
+    assert any(n.startswith("b.xlsx: Read 1 of 2 sheets") and "FollowUp" in n for n in body["cohort_notes"])
+    assert not any(n.startswith("a.xlsx") for n in body["cohort_notes"])

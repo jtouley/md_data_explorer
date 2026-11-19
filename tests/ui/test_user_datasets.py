@@ -2085,3 +2085,24 @@ def test_saveUpload_variableMappingHighMissing_clarifyingQuestionStillAsked(uplo
     # Assert
     assert any(w.get("type") == "high_missing" and w.get("column") == "ldl" for w in warnings)
     assert [c.question_type for c in clarifications if c.variable_name == "ldl"] == ["quality_warning"]
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        pytest.param(b"type_id,description\n1,Emergency\n,\ndischarge_id,description\n1,Home\n", True, id="codebook"),
+        pytest.param(b"patient_id,alt\nP000,31\n,\nP002,22\n", False, id="data_with_blank_row"),
+        pytest.param(b"patient_id,alt\nP000,31\nP001,40\n", False, id="one_block"),
+        pytest.param(b"", False, id="empty"),
+        pytest.param(b"a,b\n1,2\n\n3,4\n", False, id="numeric_block_start"),
+    ],
+)
+def test_looksLikeCodebook_onlyStackedHeaderBlocks_true(content: bytes, expected: bool):
+    # Arrange
+    from clinical_analytics.ui.storage.user_datasets import _looks_like_codebook
+
+    # Act
+    result = _looks_like_codebook(content, ",")
+
+    # Assert
+    assert result is expected

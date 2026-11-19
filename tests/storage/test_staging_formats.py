@@ -109,6 +109,27 @@ def test_readExcelTyped_legacyXlsSheets_namesSkippedAndCountsEmpty() -> None:
     assert staged.data.height == 12
 
 
+def test_readExcelTyped_legacyXlsTimeOfDay_staysTimeLikeXlsx() -> None:
+    # Arrange: a time-only cell (serial below 1) used to become a datetime on 1899-12-31
+    wb = xlwt.Workbook()
+    ws = wb.add_sheet("Data")
+    ws.write(0, 0, "patient_id")
+    ws.write(0, 1, "admit_time")
+    for r in range(1, 13):
+        ws.write(r, 0, f"P{r:02d}")
+        ws.write(r, 1, dt.time(8, r), xlwt.easyxf(num_format_str="HH:MM"))
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    # Act
+    staged = read_excel_typed(buf.getvalue())
+
+    # Assert
+    assert staged.data["admit_time"].dtype != pl.Datetime
+    assert "1899" not in str(staged.data["admit_time"].cast(pl.String).to_list())
+    assert str(staged.data["admit_time"][0]).startswith("08:01")
+
+
 @pytest.mark.parametrize(
     "data",
     [
