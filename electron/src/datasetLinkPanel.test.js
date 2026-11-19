@@ -112,13 +112,13 @@ describe('source wording', () => {
     const note = sourceStatusNote(normalizeSource(RAW_SOURCE));
 
     // Assert
-    expect(note).toBe('Source saved: mirror.example.test, 19 November 2026.');
+    expect(note).toBe('Source saved: data.example.test, 19 November 2026.');
   });
 
   test('methodsSentence groups the byte count', () => {
     // Act
     const text = methodsSentence({
-      finalUrl: 'https://a.example.test/x.csv',
+      url: 'https://a.example.test/x.csv',
       fetchedAt: '2026-01-02T00:00:00+00:00',
       sizeBytes: 1048576,
       sha256: SHA,

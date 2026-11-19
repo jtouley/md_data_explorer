@@ -33,6 +33,7 @@ import http.client
 import ipaddress
 import socket
 import ssl
+import threading
 import time
 import zlib
 from dataclasses import dataclass
@@ -75,6 +76,17 @@ CONTENT_TYPE_EXTENSIONS: Final[dict[str, str]] = {
     "application/zip": ".zip",
     "application/x-zip-compressed": ".zip",
     "text/tab-separated-values": ".tsv",
+}
+# How the "not a data file" message names each format, in words a clinician knows.
+FORMAT_NAMES: Final[dict[str, str]] = {
+    ".csv": "CSV",
+    ".tsv": "tab-separated text",
+    ".psv": "pipe-separated text",
+    ".xlsx": "Excel",
+    ".xls": "Excel",
+    ".sav": "SPSS",
+    ".xpt": "SAS transport",
+    ".zip": "ZIP",
 }
 HTML_CONTENT_TYPES: Final[frozenset[str]] = frozenset({"text/html", "application/xhtml+xml"})
 HTML_PREFIXES: Final[tuple[bytes, ...]] = (b"<!doctype html", b"<html")
@@ -121,10 +133,14 @@ class SourceProvenance(BaseModel):
     filename: str = Field(..., description="File name the dataset was read as")
 
     def methods_sentence(self) -> str:
-        """One sentence for a methods section: what was downloaded, from where, and when."""
+        """One sentence for a methods section: what was downloaded, from where, and when.
+
+        Cites the link as the user gave it, not the address after redirects: a redirect often
+        ends at a signed storage link that expires within minutes and carries credentials.
+        """
         fetched = datetime.fromisoformat(self.fetched_at)
         when = f"{fetched.day} {fetched:%B %Y}"
-        return f"Data downloaded from {self.final_url} on {when} ({self.size_bytes:,} bytes; SHA-256 {self.sha256})."
+        return f"Data downloaded from {self.url} on {when} ({self.size_bytes:,} bytes; SHA-256 {self.sha256})."
 
 
 @dataclass(frozen=True)
@@ -239,7 +255,9 @@ def _tls_context() -> ssl.SSLContext:
     try:
         import certifi
     except ImportError:  # pragma: no cover - certifi ships with the app's HTTP dependencies
-        pass
+        # Still verifying, against the system store; on a Python with none, every link fails
+        # as "certificate couldn't be verified", and this line says why.
+        logger.warning("dataset_url_certifi_missing", action="using the system certificate store")
     else:
         # Python.org macOS builds have no system CA bundle until a post-install step is run.
         context.load_verify_locations(cafile=certifi.where())
@@ -263,6 +281,9 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
         super().__init__(host, HTTPS_PORT, timeout=timeout, context=context)
         self._addresses = addresses
         self._tls = context
+        # http.client drops ``self.sock`` once a Connection: close response is handed out; the
+        # watchdog and the per-read timeouts still need the socket the body is read from.
+        self.live_socket: socket.socket | None = None
 
     def connect(self) -> None:
         last_error: OSError | None = None
@@ -273,7 +294,7 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
                 last_error = e
                 continue
             try:
-                self.sock = self._tls.wrap_socket(raw, server_hostname=self.host)
+                self.sock = self.live_socket = self._tls.wrap_socket(raw, server_hostname=self.host)
             except BaseException:
                 raw.close()
                 raise
@@ -323,10 +344,13 @@ def choose_filename(
     if by_type and by_type in accepted_extensions:
         stem = PurePosixPath(candidates[0]).stem if candidates else "download"
         return f"{stem or 'download'}{by_type}"
-    shown = sorted(ext.lstrip(".").upper() for ext in accepted_extensions)
+    ordered = [ext for ext in FORMAT_NAMES if ext in accepted_extensions]
+    ordered += sorted(accepted_extensions - set(FORMAT_NAMES))
+    names = list(dict.fromkeys(FORMAT_NAMES.get(ext, ext.lstrip(".").upper()) for ext in ordered))
+    shown = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} or {names[-1]}"
     raise UrlFetchError(
         "not_data",
-        f"That link isn't a data file this app can read ({', '.join(shown)}). "
+        f"That link isn't a data file this app can read ({shown}). "
         "On the website, look for a Download or Export button and copy that link instead.",
     )
 
@@ -364,6 +388,13 @@ def _too_large() -> UrlFetchError:
     )
 
 
+def _timed_out() -> UrlFetchError:
+    return UrlFetchError(
+        "timeout",
+        "The website took too long to send the file. Try again later, or download it in your browser.",
+    )
+
+
 class _Deadline:
     def __init__(self, seconds: float) -> None:
         self._end = time.monotonic() + seconds
@@ -371,11 +402,44 @@ class _Deadline:
     def remaining(self) -> float:
         left = self._end - time.monotonic()
         if left <= 0:
-            raise UrlFetchError(
-                "timeout",
-                "The website took too long to send the file. Try again later, or download it in your browser.",
-            )
+            raise _timed_out()
         return left
+
+
+class _Watchdog:
+    """Cuts the connection when the overall deadline passes, whatever a read is waiting on.
+
+    Socket timeouts bound each recv, not a buffered read or the header phase: a server sending
+    a byte every few seconds would never trip them. Shutting the socket down from a timer
+    ends any blocked read at once.
+    """
+
+    def __init__(self, connection: _PinnedHTTPSConnection, seconds: float) -> None:
+        self.fired = False
+        self._connection = connection
+        self._timer = threading.Timer(seconds, self._fire)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def _fire(self) -> None:
+        self.fired = True
+        sock = self._connection.live_socket
+        if sock is None:
+            return
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError as e:  # already closed by the fetch itself
+            logger.debug("dataset_url_watchdog_socket_closed", error_type=type(e).__name__)
+
+    def cancel(self) -> None:
+        self._timer.cancel()
+
+
+_GZIP_WBITS: Final[int] = 16 + zlib.MAX_WBITS
+
+
+def _damaged() -> UrlFetchError:
+    return UrlFetchError("site_error", "The file arrived damaged. Try again.")
 
 
 class _BoundedBody:
@@ -383,20 +447,23 @@ class _BoundedBody:
 
     def __init__(self, content_encoding: str | None) -> None:
         encoding = (content_encoding or "identity").strip().lower()
+        self._wbits: int | None
         if encoding in ("", "identity"):
-            self._inflater = None
+            self._wbits = None
         elif encoding in ("gzip", "x-gzip"):
-            self._inflater = zlib.decompressobj(wbits=16 + zlib.MAX_WBITS)
+            self._wbits = _GZIP_WBITS
         elif encoding == "deflate":
-            self._inflater = zlib.decompressobj(wbits=zlib.MAX_WBITS)
+            self._wbits = zlib.MAX_WBITS  # zlib-wrapped; raw deflate is tried if the header is wrong
         else:
             raise UrlFetchError(
                 "not_data",
                 "The website sent the file in a form this app can't read. Download it in your browser instead.",
             )
+        self._inflater = zlib.decompressobj(wbits=self._wbits) if self._wbits is not None else None
         self._parts: list[bytes] = []
         self._size = 0
         self._wire = 0
+        self._head = b""  # deflate input seen before any output, replayed if it turns out raw
 
     def _keep(self, data: bytes) -> None:
         self._size += len(data)
@@ -412,14 +479,37 @@ class _BoundedBody:
         if self._inflater is None:
             self._keep(chunk)
             return
-        pending = chunk
+        guessing_deflate = self._wbits == zlib.MAX_WBITS and self._size == 0
         try:
-            while pending:
-                # Never ask for more than one byte past the cap, so a bomb stops early.
-                self._keep(self._inflater.decompress(pending, MAX_DOWNLOAD_BYTES - self._size + 1))
-                pending = self._inflater.unconsumed_tail
+            self._inflate(chunk)
         except zlib.error as e:
-            raise UrlFetchError("site_error", "The file arrived damaged. Try again.") from e
+            if not guessing_deflate:
+                raise _damaged() from e
+            # "deflate" sent without the zlib header (some servers do): start again as raw deflate.
+            self._wbits = -zlib.MAX_WBITS
+            self._inflater = zlib.decompressobj(wbits=self._wbits)
+            replay, self._head = self._head + chunk, b""
+            try:
+                self._inflate(replay)
+            except zlib.error as again:
+                raise _damaged() from again
+            return
+        if guessing_deflate:
+            self._head = self._head + chunk if self._size == 0 else b""
+
+    def _inflate(self, data: bytes) -> None:
+        inflater = self._inflater
+        assert inflater is not None and self._wbits is not None
+        pending = data
+        while pending:
+            if inflater.eof:
+                # gzip allows several members back to back (bgzip, pigz, concatenated files).
+                if self._wbits != _GZIP_WBITS:
+                    raise _damaged()
+                inflater = self._inflater = zlib.decompressobj(wbits=self._wbits)
+            # Never ask for more than one byte past the cap, so a bomb stops early.
+            self._keep(inflater.decompress(pending, MAX_DOWNLOAD_BYTES - self._size + 1))
+            pending = inflater.unconsumed_tail or inflater.unused_data
 
     def finish(self) -> bytes:
         if self._inflater is not None:
@@ -434,8 +524,8 @@ def _read_body(response: http.client.HTTPResponse, sock: socket.socket | None, d
     if length is not None and length.strip().isdigit() and int(length) > MAX_DOWNLOAD_BYTES:
         raise _too_large()
     body = _BoundedBody(response.getheader("Content-Encoding"))
-    while True:
-        if sock is not None:
+    while not response.isclosed():  # http.client closes it once the whole body is read
+        if sock is not None and sock.fileno() != -1:
             sock.settimeout(min(READ_TIMEOUT_S, deadline.remaining()))
         chunk = response.read(CHUNK_BYTES)
         if not chunk:
@@ -481,6 +571,8 @@ def fetch_public_file(url: str, *, accepted_extensions: frozenset[str]) -> Fetch
             host, addresses, timeout=min(CONNECT_TIMEOUT_S, deadline.remaining()), context=context
         )
         target = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+        watchdog = _Watchdog(connection, deadline.remaining())
+        response: http.client.HTTPResponse | None = None
         try:
             connection.request(
                 "GET",
@@ -492,7 +584,8 @@ def fetch_public_file(url: str, *, accepted_extensions: frozenset[str]) -> Fetch
                     "Connection": "close",
                 },
             )
-            connection.sock.settimeout(min(READ_TIMEOUT_S, deadline.remaining()))  # type: ignore[union-attr]
+            if connection.live_socket is not None:
+                connection.live_socket.settimeout(min(READ_TIMEOUT_S, deadline.remaining()))
             response = connection.getresponse()
             status = response.status
             if status in REDIRECT_STATUSES:
@@ -513,25 +606,40 @@ def fetch_public_file(url: str, *, accepted_extensions: frozenset[str]) -> Fetch
                 content_type=content_type,
                 accepted_extensions=accepted_extensions,
             )
-            content = _read_body(response, connection.sock, deadline)
+            content = _read_body(response, connection.live_socket, deadline)
             last_modified = response.getheader("Last-Modified")
+            if watchdog.fired:  # the read ended because the watchdog cut it, not at the end
+                raise _timed_out()
+        except UrlFetchError:
+            if watchdog.fired:
+                raise _timed_out() from None
+            raise
         except ssl.SSLError as e:
+            if watchdog.fired:
+                raise _timed_out() from e
             raise UrlFetchError(
                 "insecure",
                 "The website's security certificate couldn't be verified, so nothing was downloaded. "
                 "Check the link, or download the file in your browser.",
             ) from e
         except TimeoutError as e:
+            if watchdog.fired:
+                raise _timed_out() from e
             raise UrlFetchError(
                 "timeout", "The website took too long to answer. Try again later, or download the file in your browser."
             ) from e
-        except (OSError, http.client.HTTPException) as e:
+        except (OSError, ValueError, http.client.HTTPException) as e:  # ValueError: read on a socket the watchdog cut
+            if watchdog.fired:
+                raise _timed_out() from e
             raise UrlFetchError(
                 "unreachable",
                 "Couldn't download from that website: the connection failed. "
                 "Check that this computer is online, then try again.",
             ) from e
         finally:
+            watchdog.cancel()
+            if response is not None:
+                response.close()
             connection.close()
 
         if _looks_like_html(content):

@@ -47,7 +47,7 @@ export function normalizeSource(raw) {
   const methodsText =
     typeof r.methods_text === 'string' && r.methods_text
       ? r.methods_text
-      : methodsSentence({ finalUrl, fetchedAt, sizeBytes, sha256 });
+      : methodsSentence({ url, fetchedAt, sizeBytes, sha256 });
   return { url, finalUrl, fetchedAt, sizeBytes, sha256, methodsText };
 }
 
@@ -68,13 +68,14 @@ export function formatFetchDate(iso) {
 }
 
 /**
- * The methods-section sentence, matching the engine's wording (used when only stored fields exist).
- * @param {{ finalUrl: string, fetchedAt: string, sizeBytes: number, sha256: string }} s
+ * The methods-section sentence, matching the engine's wording (used when only stored fields
+ * exist). It cites the link as given, never a redirect target (often an expiring signed link).
+ * @param {{ url: string, fetchedAt: string, sizeBytes: number, sha256: string }} s
  * @returns {string}
  */
 export function methodsSentence(s) {
   return (
-    `Data downloaded from ${s.finalUrl} on ${formatFetchDate(s.fetchedAt)} ` +
+    `Data downloaded from ${s.url} on ${formatFetchDate(s.fetchedAt)} ` +
     `(${s.sizeBytes.toLocaleString('en-US')} bytes; SHA-256 ${s.sha256}).`
   );
 }
@@ -85,9 +86,9 @@ export function methodsSentence(s) {
  * @returns {string}
  */
 export function sourceStatusNote(source) {
-  let host = source.finalUrl;
+  let host = source.url;
   try {
-    host = new URL(source.finalUrl).hostname;
+    host = new URL(source.url).hostname;
   } catch {
     // keep the full link
   }
@@ -127,7 +128,7 @@ export function renderDatasetLinkForm(container, { onSubmit, onCancel }) {
   urlInput.required = true;
   urlInput.autocomplete = 'off';
   urlInput.spellcheck = false;
-  urlInput.placeholder = 'https://';
+  urlInput.placeholder = 'https://data.cdc.gov/…';
   urlInput.dataset.testid = 'dataset-link-url';
   urlInput.setAttribute('aria-describedby', 'dataset-link-hint dataset-link-error');
 

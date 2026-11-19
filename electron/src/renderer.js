@@ -1879,6 +1879,19 @@ async function handleCopyDatasetSource() {
 }
 
 /**
+ * What the status line says about the source after a link loads. When the engine could not
+ * save it, the sentence itself is shown, so it is not lost.
+ * @param {import('./datasetLinkPanel.js').DatasetSource | null} source
+ * @param {boolean} recorded
+ * @returns {string}
+ */
+function linkSourceNote(source, recorded) {
+  if (!source) return '';
+  if (recorded) return sourceStatusNote(source);
+  return `Its source couldn’t be saved with the cohort. Keep this for your methods: ${source.methodsText}`;
+}
+
+/**
  * Open the in-page form for a link to a public data file, below the cohort switcher.
  * @param {HTMLElement | null} [returnFocusTo] where focus goes back to on Cancel
  */
@@ -1886,6 +1899,12 @@ function openDatasetLinkForm(returnFocusTo) {
   const { datasetLinkArea, datasetMenuBtn } = elements;
   if (!datasetLinkArea || typeof window.clinicalAPI?.loadDatasetFromUrl !== 'function') return;
   setDatasetMenuOpen(false);
+  // Already open (perhaps mid-download): bring it back rather than replace it.
+  const open = datasetLinkArea.querySelector('input');
+  if (open) {
+    open.focus();
+    return;
+  }
   const focusBack = returnFocusTo?.isConnected ? returnFocusTo : datasetMenuBtn;
   const close = () => {
     closeDatasetLinkForm(datasetLinkArea);
@@ -1897,26 +1916,13 @@ function openDatasetLinkForm(returnFocusTo) {
       form.setBusy(true);
       setDatasetStatus('Downloading the data file…');
       const before = state.currentDatasetId;
+      let raw;
+      let result;
       try {
-        const raw = await window.clinicalAPI.loadDatasetFromUrl(url, name);
-        const result = normalizeUploadResponse(raw);
+        raw = await window.clinicalAPI.loadDatasetFromUrl(url, name);
+        result = normalizeUploadResponse(raw);
         if (result.status !== 'ready' || !result.upload_id) {
           throw new Error(result.message || '');
-        }
-        const source = normalizeSource(raw?.source);
-        closeDatasetLinkForm(datasetLinkArea);
-        const headline = uploadStatusText(
-          readyHeadline(result.dataset_name),
-          dataCheckStatusNote(result.quality)
-        );
-        setDatasetStatus(source ? `${headline} ${sourceStatusNote(source)}` : headline, 'ok', {
-          showDetails: true,
-        });
-        await selectNewDataset(result.upload_id);
-        if (state.currentDatasetId && state.currentDatasetId !== before) {
-          elements.queryInput?.focus();
-        } else {
-          datasetMenuBtn?.focus();
         }
       } catch (error) {
         console.error('Load from link failed:', error?.message);
@@ -1925,6 +1931,32 @@ function openDatasetLinkForm(returnFocusTo) {
         form.setError(
           `Couldn’t load that link. ${plainFailureMessage(error?.message, { context: 'upload' })}`
         );
+        return;
+      }
+      // Loaded. From here on nothing may read as a failure to load.
+      closeDatasetLinkForm(datasetLinkArea);
+      const source = normalizeSource(raw?.source);
+      const headline = uploadStatusText(
+        readyHeadline(result.dataset_name),
+        dataCheckStatusNote(result.quality)
+      );
+      setDatasetStatus(
+        `${headline} ${linkSourceNote(source, raw?.source_recorded !== false)}`,
+        'ok',
+        {
+          showDetails: true,
+        }
+      );
+      try {
+        await selectNewDataset(result.upload_id);
+      } catch (error) {
+        console.error('Cohort list refresh failed:', error?.message);
+        announce('The cohort is loaded. Choose Refresh the list in the cohort menu to see it.');
+      }
+      if (state.currentDatasetId && state.currentDatasetId !== before) {
+        elements.queryInput?.focus();
+      } else {
+        datasetMenuBtn?.focus();
       }
     },
   });
@@ -2092,7 +2124,7 @@ function bindEvents() {
   });
 
   if (typeof window.clinicalAPI?.loadDatasetFromUrl === 'function' && elements.loadFromLinkBtn) {
-    elements.loadFromLinkBtn.hidden = false;
+    elements.loadFromLinkBtn.classList.remove('hidden');
     elements.loadFromLinkBtn.addEventListener('click', () => openDatasetLinkForm(datasetMenuBtn));
   }
   elements.copyDatasetSourceBtn?.addEventListener('click', () => void handleCopyDatasetSource());

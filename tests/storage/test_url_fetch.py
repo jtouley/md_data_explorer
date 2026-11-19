@@ -12,6 +12,8 @@ import hashlib
 import ipaddress
 import socket
 import ssl
+import time
+import zlib
 
 import pytest
 from fixtures.https_server import CannedResponse
@@ -246,6 +248,42 @@ def test_fetchPublicFile_gzipTransfer_inflatedAndHashedAsStored(local_https_sour
     assert fetched.provenance.sha256 == hashlib.sha256(CSV).hexdigest()
 
 
+@pytest.mark.parametrize(
+    ("encoding", "body"),
+    [
+        ("gzip", gzip.compress(CSV[:1000]) + gzip.compress(CSV[1000:])),  # two members (bgzip, pigz)
+        ("deflate", zlib.compress(CSV)),
+        ("deflate", (lambda c: c.compress(CSV) + c.flush())(zlib.compressobj(wbits=-zlib.MAX_WBITS))),  # raw
+    ],
+    ids=["gzip-multi-member", "deflate-zlib", "deflate-raw"],
+)
+def test_fetchPublicFile_compressedVariants_inflatedWhole(local_https_source, encoding: str, body: bytes):
+    # Arrange
+    local_https_source.routes["/a.csv"] = CannedResponse(
+        headers={"Content-Type": "text/csv", "Content-Encoding": encoding}, body=body, trickle_chunks=3
+    )
+
+    # Act
+    fetched = fetch_public_file(local_https_source.url("/a.csv"), accepted_extensions=ACCEPTED)
+
+    # Assert
+    assert fetched.content == CSV
+
+
+def test_fetchPublicFile_damagedGzip_siteError(local_https_source):
+    # Arrange
+    local_https_source.routes["/a.csv"] = CannedResponse(
+        headers={"Content-Type": "text/csv", "Content-Encoding": "gzip"}, body=b"\x1f\x8b\x08\x00garbage" * 20
+    )
+
+    # Act
+    with pytest.raises(UrlFetchError) as caught:
+        fetch_public_file(local_https_source.url("/a.csv"), accepted_extensions=ACCEPTED)
+
+    # Assert
+    assert caught.value.kind == "site_error"
+
+
 def test_fetchPublicFile_chunkedTransfer_readFully(local_https_source):
     # Arrange
     local_https_source.routes["/a.csv"] = CannedResponse(
@@ -274,6 +312,9 @@ def test_fetchPublicFile_redirectToOtherPublicHost_followedAndRecorded(local_htt
     assert fetched.provenance.final_url == "https://mirror.example.test/files/2026.csv"
     assert fetched.filename == "2026.csv"
     assert local_https_source.connections == ["93.184.215.14", "93.184.215.15"]
+    # The methods sentence cites the link given, not a redirect target (often an expiring signed link)
+    assert "https://data.example.test/latest" in fetched.provenance.methods_sentence()
+    assert "mirror.example.test" not in fetched.provenance.methods_sentence()
 
 
 @pytest.mark.parametrize(
@@ -441,18 +482,20 @@ def test_fetchPublicFile_serverStallsBeforeBody_timeout(local_https_source, monk
 
 
 def test_fetchPublicFile_tricklingServer_stoppedByOverallDeadline(local_https_source, monkeypatch):
-    # Arrange: every read is quick, but the whole download never ends in time
-    monkeypatch.setattr(url_fetch, "TOTAL_DEADLINE_S", 0.6)
+    # Arrange: one byte at a time, each well inside the read timeout; the whole body would take minutes
+    monkeypatch.setattr(url_fetch, "TOTAL_DEADLINE_S", 0.8)
     local_https_source.routes["/drip.csv"] = CannedResponse(
-        headers={"Content-Type": "text/csv"}, body=CSV, trickle_chunks=40, trickle_pause_s=0.1
+        headers={"Content-Type": "text/csv"}, body=CSV, trickle_chunks=len(CSV), trickle_pause_s=0.1
     )
+    started = time.monotonic()
 
     # Act
     with pytest.raises(UrlFetchError) as caught:
         fetch_public_file(local_https_source.url("/drip.csv"), accepted_extensions=ACCEPTED)
 
-    # Assert
+    # Assert: stopped at the deadline, not when the buffered read would have filled
     assert caught.value.kind == "timeout"
+    assert time.monotonic() - started < 5
 
 
 def test_fetchPublicFile_noAcceptedExtensions_rejectedAsProgrammingError():
@@ -513,4 +556,4 @@ def test_chooseFilename_unreadableType_notData(url_path: str, content_type: str 
 
     # Assert
     assert caught.value.kind == "not_data"
-    assert "CSV" in caught.value.message
+    assert "(CSV, Excel or SPSS)" in caught.value.message

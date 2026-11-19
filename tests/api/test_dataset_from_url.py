@@ -55,6 +55,7 @@ def test_loadFromUrl_publicCsv_readyWithSourceRecorded(test_client: TestClient, 
     assert source["size_bytes"] == len(STATE_RATES_CSV)
     assert source["filename"] == "hcv_deaths.csv"
     assert source["methods_text"].startswith(f"Data downloaded from {url} on ")
+    assert body["source_recorded"] is True
     stored = detail["metadata"]["source"]
     assert stored["sha256"] == source["sha256"]
     assert stored["fetched_at"] == source["fetched_at"]
@@ -75,10 +76,12 @@ def test_loadFromUrl_sameLinkTwiceSameName_secondRefusedAsDuplicate(
     # Act
     second = test_client.post(ROUTE, json={"url": url, "dataset_name": "rates"})
 
-    # Assert: the upload pipeline's own duplicate-name rule, unchanged
+    # Assert: refused before downloading again, with what to do
     assert first.status_code == 200
-    assert second.status_code >= 400
+    assert second.status_code == 409
     assert "already exists" in second.json()["detail"]
+    assert "Type a different name" in second.json()["detail"]
+    assert len(local_https_source.requests) == 1
     dependencies.invalidate_semantic_layer_cache(first.json()["upload_id"])
 
 
@@ -163,5 +166,50 @@ def test_loadFromUrl_sourceNotSaved_stillReadyAndSaysSo(
     assert response.status_code == 200, body
     assert body["status"] == "ready"
     assert "couldn't be saved" in body["message"]
+    assert body["source_recorded"] is False
     assert body["source"]["url"] == url
+    dependencies.invalidate_semantic_layer_cache(body["upload_id"])
+
+
+def test_loadFromUrl_defaultNameTaken_409AfterDownload(test_client: TestClient, isolated_data_home, local_https_source):
+    # Arrange: two portal exports that are both called rows.csv
+    from clinical_analytics.api import dependencies
+
+    for path in ("/a/rows.csv", "/b/rows.csv"):
+        local_https_source.routes[path] = CannedResponse(headers={"Content-Type": "text/csv"}, body=STATE_RATES_CSV)
+    first = test_client.post(ROUTE, json={"url": local_https_source.url("/a/rows.csv")})
+
+    # Act
+    second = test_client.post(ROUTE, json={"url": local_https_source.url("/b/rows.csv"), "dataset_name": "  "})
+
+    # Assert
+    assert first.status_code == 200, first.text
+    assert first.json()["dataset_name"] == "rows"
+    assert second.status_code == 409
+    assert "“rows”" in second.json()["detail"]
+    dependencies.invalidate_semantic_layer_cache(first.json()["upload_id"])
+
+
+@pytest.mark.parametrize("error", [OSError("unreadable"), ValueError("bad json")])
+def test_loadFromUrl_metadataUnreadableWhenRecording_stillReadyNotRecorded(
+    test_client: TestClient, isolated_data_home, local_https_source, monkeypatch, error: Exception
+):
+    # Arrange
+    from clinical_analytics.api import dependencies
+
+    url = _serve_rates(local_https_source)
+
+    class Storage(dataset_url.UserDatasetStorage):
+        def get_upload_metadata(self, upload_id: str):  # type: ignore[override]
+            raise error
+
+    monkeypatch.setattr(dataset_url, "UserDatasetStorage", Storage)
+
+    # Act
+    response = test_client.post(ROUTE, json={"url": url})
+
+    # Assert
+    body = response.json()
+    assert response.status_code == 200, body
+    assert body["source_recorded"] is False
     dependencies.invalidate_semantic_layer_cache(body["upload_id"])
