@@ -153,3 +153,27 @@ class TestLimit:
         assert [row["ward"] for row in top.rows] == ["A"]
         assert answer.failure_reason is None
         assert answer.claim is not None
+
+
+class TestPositionColumns:
+    @pytest.mark.parametrize("name", ["rowid", "file_row_number"])
+    def test_acrossPaths_columnNamedLikeARowNumber_sameRowsSameLog(
+        self, make_sql_catalog: Callable[..., SqlCatalog], make_semantic_layer: Any, name: str
+    ) -> None:
+        # Arrange: a column that would shadow DuckDB's rowid or clash with read_parquet's
+        # file_row_number; both paths number rows by content, so they still share one log
+        frame = _cohort().with_columns(pl.lit(7).alias(name))
+        catalog, log = make_sql_catalog(frame), MemoryShownCountLog()
+        layer = make_semantic_layer(
+            data=frame, config_overrides={"init_params": {"source_path": str(catalog.parquet_path)}}
+        )
+        shown = _ask_box(
+            QueryService(layer, shown_log=log),
+            QueryPlan(intent="COUNT", cohort_steps=[CohortStep("le", "age", 65)], confidence=0.99),
+        )
+
+        # Act / Assert
+        with pytest.raises(SqlRefusedError) as refused:
+            _sql("SELECT count(*) AS n FROM unified WHERE age >= 65", catalog, log)
+        assert shown.claim is not None
+        assert refused.value.reason == WITHHELD_REASON

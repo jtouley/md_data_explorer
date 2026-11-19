@@ -978,18 +978,24 @@ def _present_survival(analysis: Mapping[str, Any]) -> Presentation:
     # Summary only: the Kaplan-Meier step table lists individual event times and its steps reveal
     # counts in small risk sets.
     complete = _complete(time_col, event_col)
-    counts_shown = _n_counts(analysis, hidden, complete, "rows")
-    if counted and "events" not in hidden and analysis.get("event_text") is not None:
-        event_cell = Condition("eq_text", str(event_col), str(analysis.get("event_text")))
-        counts_shown += _count(parts["events"], [event_cell, *complete], "rows")
+    survival_counts: list[ShownCount] | None = _n_counts(analysis, hidden, complete, "rows")
+    if counted and "events" not in hidden:
+        if analysis.get("event_text") is None:
+            # The events are shown but the set behind them can't be named: the counts are not
+            # listed, so the log withholds the answer (never shown unchecked).
+            survival_counts = None
+        else:
+            event_cell = Condition("eq_text", str(event_col), str(analysis.get("event_text")))
+            survival_counts = [*(survival_counts or []), *_count(parts["events"], [event_cell, *complete], "rows")]
+    listed = {} if survival_counts is None else {"shown": survival_counts}
     if not counted:
-        return {"claim": claim, "table": None, "shown": counts_shown}
+        return {"claim": claim, "table": None, **listed}  # type: ignore[typeddict-item]
     row = {
         "n": _mask(n_used) if N_USED in hidden else n_used,
         **{k: _mask(v) if k in hidden else v for k, v in parts.items()},
         f"median {time_col}": _mask(median) if median_hidden else median,
     }
-    return {"claim": claim, "table": _table([row]), "shown": counts_shown}
+    return {"claim": claim, "table": _table([row]), **listed}  # type: ignore[typeddict-item]
 
 
 def _present_descriptive(analysis: Mapping[str, Any]) -> Presentation:

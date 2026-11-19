@@ -1,32 +1,32 @@
 # SPDX-License-Identifier: MIT
-"""The log of shown counts: for each dataset version, the patients behind every count shown.
+"""The log of shown counts: for each dataset's rows, the patients behind every count shown.
 
 Per-answer suppression (``result_presentation``, ``sql.privacy``) sees one answer. It cannot see
 that "patients with a 2019 row" (60), "patients with a 2020 row" (40) and "patients with a row
-before 2021" (95) give the 5 patients with rows in both years, or that "ever yes" + "ever no" -
-the total gives the patients whose value changed. This log can (ADR013 section 12).
+before 2021" (95) give the 5 patients with rows in both years, or that the total minus "over 65"
+minus "women" plus "women over 65" gives the men of 65 or under. This log can (ADR013 §12).
 
 What is stored. Each count an answer shows is a set: the rows or patients of its cohort that meet
 the answer's conditions (a filter, a group cell, a value). The set is stored exactly, as a bitmap
-over the dataset version's rows in stored order (a patient is the first row with their ID), never
-as IDs or values. A count of visit rows and a count of patients are different units.
+over the dataset's rows numbered by content (a patient, or another counted ID, is its first row),
+never as IDs or values. A count of visit rows and a count of patients are different units.
 
-The check. Before an answer is shown, each new set N is compared with every set L already shown
-for this version, with the dataset itself (its row and patient totals, which the app shows) and
-with the answer's other sets. The answer is withheld, and nothing logged, when for any pair
-``|N - L|``, ``|L - N|`` or ``|N & L|`` is 1 to ``SMALL_CELL_THRESHOLD - 1``. Every Venn region of
-every pair of shown sets is then 0 or at least the threshold, so no count a reader works out from
-two shown counts (a difference, an overlap, a union through the total) is 1 to 10. For visit
-rows: a count of visit rows next to the count of their patients gives the extra visits, so a set
-of visit rows whose extra visits are 1-10 is withheld when a shown patient set is within 10
-patients of its patients.
+The guarantee. Per unit, the shown sets (every set shown on these rows, the new answer's sets and
+the totals the app shows) split the units into atoms: the units each set either holds or not.
+A count a reader can work out by adding and subtracting shown counts is a combination of atoms
+in the row space of the sets x atoms matrix. An answer is withheld, and nothing of it logged,
+when any group of 1 to ``SMALL_CELL_THRESHOLD - 1`` units (any 0/1 combination of atoms of that
+total size, so any union of atoms, not only one atom or one pair region) lies in that row space.
+For visit rows: a set of visit rows with 1-10 more rows than patients is withheld once the count
+of its patients lies in the patient sets' row space. When the check would exceed its bounds it
+is not run and the answer is withheld: nothing is ever shown unchecked.
 
-Not covered: a region of three or more shown sets that no pair of them isolates (stated in
-ADR013 section 12 and ``docs/security/THREAT_MODEL.md``).
+Not covered: bounds a reader can draw from inequalities (a value pinned between two derivable
+limits) rather than equalities.
 
-Fail closed. A log that can't be read, or that was written for other rows (its row count and
-fingerprint differ), withholds every answer of that version until it is fixed; so does a log
-that can't be saved, or one that already holds ``MAX_LOGGED_SETS`` sets.
+Keyed by the rows' fingerprint, not by upload id or version: the same file uploaded twice, or
+relabelled, shares one log. Fail closed: a log that can't be read or saved, or that is full,
+withholds every answer on those rows until it is fixed.
 """
 
 from __future__ import annotations
@@ -55,14 +55,28 @@ from clinical_analytics.storage.metadata_lock import FileLockTimeoutError, file_
 
 logger = structlog.get_logger()
 
-LOG_FORMAT: Final = 1
-# Distinct sets one dataset version may hold. Each answer is checked against all of them; at the
-# cap a 100,000-row dataset holds 2,000 x 12.5 KB = 25 MB of bitmaps and a check of a new set reads
-# them once (numpy, about 10 ms). At the cap, answers that would add a set are withheld.
-MAX_LOGGED_SETS: Final = 2000
+LOG_FORMAT: Final = 2
+# Distinct sets one dataset's rows may hold. A grouped answer adds one set per group shown, so this
+# is about 300 grouped answers of 30 groups with n and events; the exact check's own bounds
+# (``MAX_SPAN_WORK``, ``MAX_MATRIX_FLOATS``) usually stop first on large data.
+MAX_LOGGED_SETS: Final = 20_000
 # Sets one answer may add (a table of 30 groups with n and events per group is 62).
 MAX_NEW_SETS: Final = 256
+# Bounds of the exact check: operations of the SVD (sets x atoms x min(sets, atoms)), floats of
+# the sets x atoms matrix (and of the small-atom matrix), and seconds of the integer program.
+# Above any of them the answer is withheld ("could not be checked"), never shown unchecked.
+MAX_SPAN_WORK: Final = 20_000_000_000
+MAX_MATRIX_FLOATS: Final = 25_000_000
+MILP_TIME_LIMIT_S: Final = 10.0
+# Residual below which a 0/1 region counts as a combination of shown sets.
+SPAN_TOLERANCE: Final = 1e-6
 ROWS_UNIT: Final = "rows"
+# How both paths number rows and fingerprint them, in DuckDB over the stored table's own columns
+# (the question box's raw table, the SQL sandbox's read_parquet): by content, never by a name a
+# column could take (a column called rowid or file_row_number shadows those). Identical rows tie;
+# they are interchangeable, since every condition holds for both or neither.
+ROW_ORDER_SQL: Final = "hash(*COLUMNS(*)), CAST(row(*COLUMNS(*)) AS VARCHAR)"
+FINGERPRINT_SQL: Final = "count(*) AS n, sum(hash(*COLUMNS(*))::HUGEINT) AS h"
 
 WITHHELD_REASON: Final = (
     "This answer is not shown: together with answers already shown for this dataset, it would let "
@@ -120,9 +134,10 @@ class ShownCount:
 
 @dataclass(frozen=True)
 class Universe:
-    """The rows of one dataset version: their count, a fingerprint of their stored order and
-    content, and (when patients are counted over visit rows) each row's patient as the first
-    row with its ID (-1 for a row with no ID)."""
+    """The rows of one dataset: their count, a fingerprint of their content (the log's key), and
+    (when patients are counted over visit rows) each row's patient as the first row with its ID
+    (-1 for a row with no ID). Rows are numbered by content, so the same rows uploaded twice, or
+    with columns renamed, are numbered alike (``SemanticLayer.row_fingerprint``)."""
 
     rows: int
     fingerprint: str
@@ -233,19 +248,15 @@ class _StoredLog(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    format: Literal[1]
-    dataset: str
-    version: str
+    format: Literal[2]
     rows: int = Field(ge=0)
     fingerprint: str = Field(min_length=1)
     sets: list[_StoredSet] = Field(max_length=MAX_LOGGED_SETS)
 
 
-def _encode(state: _State, dataset: str, version: str) -> bytes:
+def _encode(state: _State) -> bytes:
     stored = _StoredLog(
         format=LOG_FORMAT,
-        dataset=dataset,
-        version=version,
         rows=state.rows,
         fingerprint=state.fingerprint,
         sets=[
@@ -261,18 +272,18 @@ def _encode(state: _State, dataset: str, version: str) -> bytes:
     return json.dumps(stored.model_dump(mode="json"), separators=(",", ":")).encode("utf-8")
 
 
-def _decode(data: bytes, dataset: str, version: str) -> _State:
-    """The stored log, checked: the right dataset and version, and each bitmap the size stored.
+def _decode(data: bytes, universe: Universe) -> _State:
+    """The stored log, checked: these rows (count and fingerprint), each bitmap the size stored.
 
     Raises:
-        ShownLogUnavailableError: the file is not a valid log of this dataset version.
+        ShownLogUnavailableError: the file is not a valid log of these rows.
     """
     try:
         stored = _StoredLog.model_validate_json(data)
     except pydantic.ValidationError as e:
         raise ShownLogUnavailableError(f"shown-count log is invalid ({e.error_count()} errors)") from e
-    if stored.dataset != dataset or stored.version != version:
-        raise ShownLogUnavailableError("shown-count log belongs to another dataset version")
+    if stored.rows != universe.rows or stored.fingerprint != universe.fingerprint:
+        raise ShownLogUnavailableError("shown-count log belongs to other rows")
     state = _State(rows=stored.rows, fingerprint=stored.fingerprint, entries=[], index=set())
     expected = _words(stored.rows) * 8
     for item in stored.sets:
@@ -292,6 +303,10 @@ def _decode(data: bytes, dataset: str, version: str) -> _State:
 # --- the check ----------------------------------------------------------------------------
 
 
+class _TooLargeError(Exception):
+    """The exact check would exceed one of its bounds: the answer is withheld, not checked."""
+
+
 def _patients_of(positions: np.ndarray, universe: Universe) -> np.ndarray:
     """The first row of each patient with a row in ``positions`` (rows with no ID dropped)."""
     assert universe.patient_of_row is not None
@@ -309,64 +324,40 @@ def _universe_sets(universe: Universe) -> dict[str, np.ndarray]:
     return sets
 
 
-def _pair_conflict(words: np.ndarray, size: int, others: np.ndarray, sizes: np.ndarray) -> bool:
-    """Whether ``words`` and any row of ``others`` have a Venn region of 1 to threshold-1."""
-    if others.shape[0] == 0:
-        return False
-    both = _popcount(others & words)
-    return bool(np.any(_small(both) | _small(size - both) | _small(sizes - both)))
-
-
 def find_conflict(state: _State, new: Sequence[_Entry], universe: Universe) -> str | None:
-    """Which check the answer fails ("derivable", "overlap", "visits"), or None when it may be shown.
+    """Which check the answer fails, or None when it may be shown.
 
-    Per unit, the shown sets (logged, new and the totals) split the units into atoms: the units
-    each shown set either holds or not. A count a reader can work out by adding and subtracting
-    shown counts is a combination of atoms in the row space of the sets' atom matrix. The answer
-    is withheld when a region of 1 to threshold-1 units is in that row space, for each atom and
-    each region of a pair of shown sets (intersection, either difference). Only the units the
-    answer adds sets to are checked: the others' atoms do not change. Beyond ``MAX_SPAN_WORK`` the
-    stricter pairwise rule is used instead: every pair region of 1 to threshold-1 withholds,
-    derivable or not.
+    "derivable": a group of 1 to threshold-1 units is a combination of shown counts (module
+    docstring); "visits": extra visit rows of 1-10 follow from shown counts; "unchecked": the
+    check would exceed its bounds. Only the units the answer adds sets to are checked: the other
+    units' atoms do not change.
 
     Raises:
-        ShownLogUnavailableError: the log holds patient sets but the rows have no patient map now.
+        ShownLogUnavailableError: the answer adds patient sets but the rows have no patient map.
     """
     totals = _universe_sets(universe)
-    for unit in sorted({e.unit for e in new}):
-        member = totals.get(unit)
-        if member is None:
-            raise ShownLogUnavailableError("patient sets without a patient map for these rows")
-        entries = [e for e in state.entries if e.unit == unit] + [e for e in new if e.unit == unit]
-        try:
+    try:
+        for unit in sorted({e.unit for e in new}):
+            member = totals.get(unit)
+            if member is None:
+                raise ShownLogUnavailableError("patient sets without a patient map for these rows")
+            entries = [e for e in state.entries if e.unit == unit] + [e for e in new if e.unit == unit]
             atoms = _Atoms.of([*(e.words for e in entries), member], from_bitmap(member, universe.rows), universe.rows)
-            if atoms.work > MAX_SPAN_WORK:
-                raise _TooLargeError
-        except _TooLargeError:
-            logger.info("shown_count_span_too_large", sets=len(entries) + 1)
-            if _pairwise_conflict(entries, new, member):
-                return "overlap"
-            continue
-        if atoms.small_region_derivable():
-            return "derivable"
-    return _visits_conflict(state, new, universe)
-
-
-# Above this many operations the exact check is replaced by the pairwise rule: the SVD and the
-# pair overlaps (sets^2 x atoms) and the small regions tested (regions x atoms).
-MAX_SPAN_WORK: Final = 4_000_000_000
-# Floats one block of regions may hold while it is tested (200 MB), and the sets x atoms matrix.
-_REGION_BLOCK_FLOATS: Final = 25_000_000
-_MAX_MATRIX_FLOATS: Final = 25_000_000
-
-
-class _TooLargeError(Exception):
-    """The exact check would exceed its memory or work bound: the stricter rule applies."""
+            if atoms.small_group_derivable():
+                return "derivable"
+        return _visits_conflict(state, new, universe)
+    except _TooLargeError:
+        logger.info("shown_count_check_too_large", logged=len(state.entries), new=len(new))
+        return "unchecked"
 
 
 @dataclass(frozen=True)
 class _Atoms:
-    """The atoms of one unit's shown sets: ``matrix`` (sets x atoms, 0/1) and each atom's size."""
+    """The atoms of one unit's shown sets: ``matrix`` (sets x atoms, 0/1) and each atom's size.
+
+    Raises (``of``):
+        _TooLargeError: the matrix would exceed ``MAX_MATRIX_FLOATS`` or the SVD ``MAX_SPAN_WORK``.
+    """
 
     matrix: np.ndarray
     sizes: np.ndarray
@@ -374,7 +365,7 @@ class _Atoms:
     @classmethod
     def of(cls, words: Sequence[np.ndarray], members: np.ndarray, rows: int) -> _Atoms:
         # Each unit's signature (which sets hold it), packed 8 sets to a byte, 8 sets at a time:
-        # never a sets x rows array of bytes (200 MB at the cap on 100,000 rows).
+        # never a sets x rows array of bytes.
         chunks = []
         for start in range(0, len(words), 8):
             bits = np.stack(
@@ -383,54 +374,96 @@ class _Atoms:
             chunks.append(np.packbits(bits[:, members], axis=0))
         signatures = np.vstack(chunks).T
         unique, sizes = np.unique(signatures, axis=0, return_counts=True)
-        if len(words) * unique.shape[0] > _MAX_MATRIX_FLOATS:
+        sets, atoms = len(words), int(unique.shape[0])
+        if sets * atoms > MAX_MATRIX_FLOATS or sets * atoms * min(sets, atoms) > MAX_SPAN_WORK:
             raise _TooLargeError
-        matrix = np.unpackbits(unique, axis=1, count=len(words)).T.astype(np.float64)
+        matrix = np.unpackbits(unique, axis=1, count=sets).T.astype(np.float64)
         return cls(matrix=matrix, sizes=sizes.astype(np.int64))
+
+    def small_group_derivable(self) -> bool:
+        """Whether some group of 1 to threshold-1 units is a combination of the sets.
+
+        Such a group holds only atoms of 1 to threshold-1 units ("small"). First, cheaply: a
+        small atom alone (its leverage on the row space is 1), and whether any direction on the
+        small atoms lies in the row space at all (the null space of ``(I - P)`` restricted to
+        them, P the projection onto the row space; empty for most answers). Otherwise an integer
+        program over the atoms that null space touches decides it (``_group_in_row_space``).
+        """
+        small = np.flatnonzero(_small(self.sizes))
+        if small.size == 0:
+            return False
+        if self.count * small.size > MAX_MATRIX_FLOATS:
+            raise _TooLargeError
+        basis = _row_space(self.matrix)  # r x atoms, orthonormal rows
+        leverage = (basis[:, small] ** 2).sum(axis=0)
+        if np.any(1.0 - leverage < SPAN_TOLERANCE):
+            return True
+        residual = -(basis.T @ basis[:, small])  # (I - P) restricted to the small atoms' columns
+        residual[small, np.arange(small.size)] += 1.0
+        _, singular, right = np.linalg.svd(residual, full_matrices=False)
+        null = right[int(np.sum(singular > SPAN_TOLERANCE)) :].T  # small x d
+        if null.shape[1] == 0:
+            return False
+        touched = small[np.abs(null).max(axis=1) > SPAN_TOLERANCE]
+        return _group_in_row_space(self.matrix, self.sizes, touched, basis)
 
     @property
     def count(self) -> int:
         return int(self.sizes.size)
 
-    def _pairs(self) -> tuple[np.ndarray, np.ndarray]:
-        """Units in set i and set j, and in set i but not set j."""
-        weighted = self.matrix * self.sizes
-        both = self.matrix @ weighted.T
-        return both, weighted.sum(axis=1)[:, None] - both
 
-    @property
-    def work(self) -> int:
-        """Operations of the exact check, at most: the SVD and pair overlaps (sets^2 x atoms) and
-        testing every pair region (2 x sets^2 regions x atoms)."""
-        sets = int(self.matrix.shape[0])
-        return 3 * sets * sets * max(self.count, 1)
+def _group_in_row_space(sets: np.ndarray, sizes: np.ndarray, candidates: np.ndarray, basis: np.ndarray) -> bool:
+    """Whether a union of ``candidates`` atoms totalling 1 to threshold-1 units is a combination
+    of the rows of ``sets``: an integer program (HiGHS) with a free weight per set and a 0/1 choice
+    per candidate atom, the weighted sets equal to the chosen atoms and to 0 on every other atom.
 
-    def small_region_derivable(self) -> bool:
-        """Whether an atom or a pair region of 1 to threshold-1 units is a combination of sets."""
-        sets = self.matrix
-        basis = _row_space(sets)
-        # An atom is a combination of the sets exactly when its unit vector lies in their row
-        # space: its leverage (squared norm of its column of the orthonormal basis) is 1.
-        leverage = (basis * basis).sum(axis=0)
-        if np.any(_small(self.sizes) & (1.0 - leverage < SPAN_TOLERANCE)):
-            return True
-        both, only = self._pairs()
-        other = ~np.eye(sets.shape[0], dtype=bool)
-        first, second = np.nonzero(_small(both) & other)
-        left, right = np.nonzero(_small(only) & other)
-        pairs = [(sets[first], sets[second], False), (sets[left], sets[right], True)]
-        block = max(1, _REGION_BLOCK_FLOATS // max(self.count, 1))
-        for a, b, minus in pairs:
-            for start in range(0, a.shape[0], block):
-                x, y = a[start : start + block], b[start : start + block]
-                regions = x * (1.0 - y) if minus else x * y
-                if _in_basis(regions, basis):
-                    return True
+    A group it finds is checked against the row space again; one that does not check out is still
+    treated as derivable (withheld, never shown on a rounding).
+
+    Raises:
+        _TooLargeError: the program hit its time limit or did not finish.
+    """
+    from scipy.optimize import Bounds, LinearConstraint, milp
+    from scipy.sparse import csr_matrix, hstack
+
+    n_sets, n_atoms = sets.shape
+    choose = np.zeros((n_atoms, candidates.size))
+    choose[candidates, np.arange(candidates.size)] = 1.0
+    equal = hstack([csr_matrix(sets.T), csr_matrix(-choose)])
+    size_row = np.concatenate([np.zeros(n_sets), sizes[candidates].astype(np.float64)])
+    constraints = [
+        LinearConstraint(equal, 0.0, 0.0),
+        LinearConstraint(size_row[None, :], 1.0, float(SMALL_CELL_THRESHOLD - 1)),
+    ]
+    integrality = np.concatenate([np.zeros(n_sets), np.ones(candidates.size)])
+    bounds = Bounds(
+        np.concatenate([np.full(n_sets, -np.inf), np.zeros(candidates.size)]),
+        np.concatenate([np.full(n_sets, np.inf), np.ones(candidates.size)]),
+    )
+    result = milp(
+        np.zeros(n_sets + candidates.size),
+        constraints=constraints,
+        integrality=integrality,
+        bounds=bounds,
+        options={"time_limit": MILP_TIME_LIMIT_S, "presolve": True},
+    )
+    if result.status == 2:  # infeasible: no such group
         return False
+    if result.status != 0 or result.x is None:
+        raise _TooLargeError
+    group = np.zeros(n_atoms)
+    group[candidates] = np.round(result.x[n_sets:])
+    if not _in_basis(group[None, :], basis):
+        logger.warning("shown_count_group_not_confirmed")
+    return True
 
 
 def _row_space(sets: np.ndarray) -> np.ndarray:
-    """An orthonormal basis (rows) of the row space of ``sets``."""
+    """An orthonormal basis (rows) of the row space of ``sets``.
+
+    The rank cut is the numerical noise floor (largest singular value x size x machine epsilon):
+    a direction kept by mistake only makes more groups derivable (more withheld); a true direction
+    below it would need a singular value under about 1e-13 of the largest."""
     _, singular, basis = np.linalg.svd(sets, full_matrices=False)
     tolerance = singular.max(initial=0.0) * max(sets.shape) * np.finfo(np.float64).eps
     return basis[singular > tolerance]
@@ -444,27 +477,14 @@ def _in_basis(regions: np.ndarray, basis: np.ndarray) -> bool:
     return bool(np.any(np.abs(residual).max(axis=1) < SPAN_TOLERANCE))
 
 
-# Residual below which a 0/1 region counts as a combination of shown sets.
-SPAN_TOLERANCE: Final = 1e-6
-
-
-def _pairwise_conflict(entries: Sequence[_Entry], new: Sequence[_Entry], total: np.ndarray) -> bool:
-    """Every pair with a new set: any region of 1 to threshold-1, derivable or not."""
-    others = [e for e in entries if not any(e is n for n in new)]
-    words = [e.words for e in others] + [total]
-    sizes = [e.size for e in others] + [int(_popcount(total))]
-    for entry in new:
-        if _pair_conflict(entry.words, entry.size, np.vstack(words), np.asarray(sizes, dtype=np.int64)):
-            return True
-        words.append(entry.words)
-        sizes.append(entry.size)
-    return False
-
-
 def _visits_conflict(state: _State, new: Sequence[_Entry], universe: Universe) -> str | None:
     """Visit rows next to their patients: a set of visit rows with 1 to threshold-1 more rows than
     patients is withheld once the count of its patients is a combination of shown patient counts
-    (the extra visits then follow). Checked whenever the answer adds a set of either kind."""
+    (the extra visits then follow). Checked whenever the answer adds a set of either kind.
+
+    Raises:
+        _TooLargeError: the patient sets exceed the check's bounds.
+    """
     unit = universe.patients_unit
     if unit is None or universe.patient_of_row is None:
         return None
@@ -479,10 +499,7 @@ def _visits_conflict(state: _State, new: Sequence[_Entry], universe: Universe) -
     total = _universe_sets(universe)[unit]
     patients = [*(e.words for e in entries if e.unit == unit), total]
     targets = [to_bitmap(_patients_of(from_bitmap(e.words, universe.rows), universe), universe.rows) for e in visits]
-    try:
-        atoms = _Atoms.of([*patients, *targets], from_bitmap(total, universe.rows), universe.rows)
-    except _TooLargeError:
-        return "visits"  # can't be checked exactly: withheld (never shown unchecked)
+    atoms = _Atoms.of([*patients, *targets], from_bitmap(total, universe.rows), universe.rows)
     known = atoms.matrix[: len(patients)]
     if _in_basis(atoms.matrix[len(patients) :], _row_space(known)):
         return "visits"
@@ -510,18 +527,19 @@ def _entries(sets: Sequence[ShownSet], universe: Universe) -> list[_Entry]:
 
 
 class ShownCountLog:
-    """Admit an answer's sets for one dataset version, or say why it is withheld.
+    """Admit an answer's sets for one dataset's rows, or say why it is withheld.
 
-    Subclasses store the state; this class owns the rule. ``admit`` is the only entry point: the
-    check and the write happen under one lock, so two answers checked at once can't both pass
-    against a log that holds neither.
+    Subclasses store the state, keyed by the rows' fingerprint; this class owns the rule. ``admit``
+    is the only entry point: the check and the write happen under one lock, so two answers checked
+    at once can't both pass against a log that holds neither.
     """
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
 
     def admit(self, dataset: str, version: str, universe: Universe, sets: Sequence[ShownSet]) -> Verdict:
-        """Check ``sets`` against the version's log; log them when the answer may be shown.
+        """Check ``sets`` against the log of these rows; log them when the answer may be shown.
+        ``dataset`` and ``version`` only label the log events: the log belongs to the rows.
 
         Never raises for the log itself: an unreadable or unsaved log withholds the answer.
         """
@@ -531,11 +549,8 @@ class ShownCountLog:
                 log.error("shown_count_out_of_range")
                 return Verdict(shown=False, reason=UNAVAILABLE_REASON)
         try:
-            with self._lock, self._locked(dataset, version):
-                state = self._load(dataset, version) or _State.empty(universe)
-                if state.rows != universe.rows or state.fingerprint != universe.fingerprint:
-                    log.error("shown_count_log_other_rows")
-                    return Verdict(shown=False, reason=UNAVAILABLE_REASON)
+            with self._lock, self._locked(universe):
+                state = self._load(universe) or _State.empty(universe)
                 new = [e for e in _entries(sets, universe) if _identity(e.unit, e.words) not in state.index]
                 if not new:
                     return Verdict(shown=True)
@@ -550,13 +565,16 @@ class ShownCountLog:
                 except (MemoryError, np.linalg.LinAlgError, ValueError) as e:
                     log.error("shown_count_check_failed", error_type=type(e).__name__)
                     return Verdict(shown=False, reason=NOT_CHECKED_REASON)
+                if conflict == "unchecked":
+                    log.warning("shown_count_not_checked", logged=len(state.entries), new=len(new))
+                    return Verdict(shown=False, reason=NOT_CHECKED_REASON)
                 if conflict is not None:
-                    # Never the counts: the region found is a count of 1 to 10 patients.
+                    # Never the counts: the group found is a count of 1 to 10 patients.
                     log.info("shown_count_withheld", check=conflict, logged=len(state.entries), new=len(new))
                     return Verdict(shown=False, reason=WITHHELD_REASON)
                 for entry in new:
                     state.add(entry)
-                self._save(dataset, version, state)
+                self._save(universe, state)
                 log.info("shown_count_logged", logged=len(state.entries), new=len(new))
                 return Verdict(shown=True, added=len(new))
         except ShownLogUnavailableError as e:
@@ -564,13 +582,13 @@ class ShownCountLog:
             return Verdict(shown=False, reason=UNAVAILABLE_REASON)
 
     @contextmanager
-    def _locked(self, dataset: str, version: str) -> Iterator[None]:
+    def _locked(self, universe: Universe) -> Iterator[None]:
         yield
 
-    def _load(self, dataset: str, version: str) -> _State | None:
+    def _load(self, universe: Universe) -> _State | None:
         raise NotImplementedError
 
-    def _save(self, dataset: str, version: str, state: _State) -> None:
+    def _save(self, universe: Universe, state: _State) -> None:
         raise NotImplementedError
 
 
@@ -579,58 +597,56 @@ class MemoryShownCountLog(ShownCountLog):
 
     def __init__(self) -> None:
         super().__init__()
-        self._states: dict[tuple[str, str], _State] = {}
+        self._states: dict[tuple[int, str], _State] = {}
 
-    def _load(self, dataset: str, version: str) -> _State | None:
-        return self._states.get((dataset, version))
+    def _load(self, universe: Universe) -> _State | None:
+        return self._states.get((universe.rows, universe.fingerprint))
 
-    def _save(self, dataset: str, version: str, state: _State) -> None:
-        self._states[(dataset, version)] = state
+    def _save(self, universe: Universe, state: _State) -> None:
+        self._states[(universe.rows, universe.fingerprint)] = state
+
+
+def log_name(universe: Universe) -> str:
+    """The log file's name for these rows: a hash of their count and fingerprint."""
+    return hashlib.sha256(f"{universe.rows}:{universe.fingerprint}".encode()).hexdigest()[:40] + ".json"
 
 
 class FileShownCountLog(ShownCountLog):
-    """``<data_dir>/shown_counts/<dataset id>/<hash of version>.json``, one file per version.
+    """``<data_dir>/shown_counts/<hash of the rows' fingerprint>.json``, one file per set of rows.
 
-    A new version starts with an empty log (its rows are different); an old version's file stays
-    until the dataset is deleted (``storage.dataset_deletion``). Written with ``atomic_write`` under
-    a sidecar lock file shared with every process on the data directory.
+    Kept when a dataset is deleted: a re-upload of the same rows must find what was shown on
+    them. Holds bitmaps of row numbers only. Written with ``atomic_write`` under a sidecar lock
+    file shared with every process on the data directory.
     """
 
     def __init__(self, data_dir: Path) -> None:
         super().__init__()
         self.data_dir = data_dir
 
-    def _path(self, dataset: str, version: str) -> Path:
-        from clinical_analytics.storage.dataset_deletion import InvalidDatasetIdError, validate_dataset_id
-
-        try:
-            checked = validate_dataset_id(dataset)
-        except InvalidDatasetIdError as e:
-            raise ShownLogUnavailableError("invalid dataset id for the shown-count log") from e
-        name = hashlib.sha256(version.encode("utf-8")).hexdigest()[:32]
-        return self.data_dir / SHOWN_COUNTS_DIRNAME / checked / f"{name}.json"
+    def _path(self, universe: Universe) -> Path:
+        return self.data_dir / SHOWN_COUNTS_DIRNAME / log_name(universe)
 
     @contextmanager
-    def _locked(self, dataset: str, version: str) -> Iterator[None]:
-        path = self._path(dataset, version)
+    def _locked(self, universe: Universe) -> Iterator[None]:
+        path = self._path(universe)
         try:
             with file_lock(path.with_name(f".{path.name}.lock")):
                 yield
         except (FileLockTimeoutError, OSError) as e:
             raise ShownLogUnavailableError(f"shown-count log lock failed: {type(e).__name__}") from e
 
-    def _load(self, dataset: str, version: str) -> _State | None:
-        path = self._path(dataset, version)
+    def _load(self, universe: Universe) -> _State | None:
+        path = self._path(universe)
         try:
             data = path.read_bytes()
         except FileNotFoundError:
             return None
         except OSError as e:
             raise ShownLogUnavailableError(f"shown-count log unreadable: {type(e).__name__}") from e
-        return _decode(data, dataset, version)
+        return _decode(data, universe)
 
-    def _save(self, dataset: str, version: str, state: _State) -> None:
+    def _save(self, universe: Universe, state: _State) -> None:
         try:
-            atomic_write_bytes(self._path(dataset, version), _encode(state, dataset, version))
+            atomic_write_bytes(self._path(universe), _encode(state))
         except OSError as e:
             raise ShownLogUnavailableError(f"shown-count log not saved: {type(e).__name__}") from e

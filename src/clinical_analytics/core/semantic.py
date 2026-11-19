@@ -32,6 +32,7 @@ from clinical_analytics.core.execution_gate import evaluate_execution_gate
 from clinical_analytics.core.log_redaction import stable_hash
 from clinical_analytics.core.mapper import load_dataset_config
 from clinical_analytics.core.schema import UnifiedCohort
+from clinical_analytics.core.shown_counts import FINGERPRINT_SQL, ROW_ORDER_SQL
 
 if TYPE_CHECKING:
     from clinical_analytics.core.dataset import Granularity
@@ -908,21 +909,24 @@ class SemanticLayer:
         return raw.mutate(**mutations) if mutations else raw
 
     def _positioned_view(self) -> Any:
-        """The base view with each row's position in the stored table (DuckDB ``rowid``: the
-        Parquet's row order, ``read_parquet``'s ``file_row_number``) as ``ROW_POSITION``, the
-        confirmed level merges applied in the order the base view applied them. For the log of
-        shown counts only (``core.shown_counts``): never offered as a column."""
+        """The base view with each row's number as ``ROW_POSITION``: rows numbered by content
+        (``shown_counts.ROW_ORDER_SQL``), never by a pseudo-column a dataset column could shadow,
+        the confirmed level merges applied in the order the base view applied them. For the log
+        of shown counts only (``core.shown_counts``): never offered as a column.
+
+        Raises:
+            CohortStepError: the source is not a table, or a column has the position's name.
+        """
         if self._raw_table_name is None:
             raise CohortStepError("Rows of this dataset have no stored position.")
-        raw_columns = list(self.raw.columns)
-        if ROW_POSITION in raw_columns:
+        if ROW_POSITION.casefold() in {c.casefold() for c in self.raw.columns}:
             raise CohortStepError("Rows of this dataset have no stored position.")
-        names = ", ".join(_quote_ident(c) for c in raw_columns)
         positioned = _validate_table_identifier(f"{self._raw_table_name}_positioned")
         with self._con_lock:
             self.con.con.execute(
-                f'CREATE OR REPLACE TEMP VIEW "{positioned}" AS '
-                f'SELECT rowid AS "{ROW_POSITION}", {names} FROM "{self._raw_table_name}"'
+                f'CREATE OR REPLACE TEMP VIEW "{positioned}" AS SELECT '
+                f'row_number() OVER (ORDER BY {ROW_ORDER_SQL}) - 1 AS "{ROW_POSITION}", * '
+                f'FROM "{self._raw_table_name}"'
             )
             raw = self.con.table(positioned)
         view = self._view_over(raw)
@@ -942,20 +946,22 @@ class SemanticLayer:
             return view.select([ROW_POSITION, *dict.fromkeys(columns)]).to_polars()
 
     def row_fingerprint(self) -> str:
-        """Row count and a hash of every row with its position, once per layer: the log of shown
-        counts is kept only for these exact rows in this order."""
+        """Row count and the sum of every row's hash, once per layer: the key of the log of shown
+        counts (``shown_counts.FINGERPRINT_SQL``). The same rows give the same value whatever the
+        upload, file order or column names."""
         if self._fingerprint is None:
             if self._raw_table_name is None:
                 raise CohortStepError("Rows of this dataset have no stored position.")
             with self._con_lock:
                 rows, digest = self.con.con.execute(
-                    f'SELECT count(*), bit_xor(hash(rowid, *COLUMNS(*))) FROM "{self._raw_table_name}"'
+                    f'SELECT {FINGERPRINT_SQL} FROM "{self._raw_table_name}"'
                 ).fetchone()
             self._fingerprint = f"{int(rows)}:{int(digest or 0)}"
         return self._fingerprint
 
     def patient_of_row(self, key: str) -> np.ndarray:
-        """For each row position, the position of the first row with its ``key`` (-1: no key)."""
+        """For each row position, the position of the first row with its ``key`` (-1: no key):
+        the patient, or another counted ID (an admission), as one row."""
         cached = self._patient_of_row.get(key)
         if cached is not None:
             return cached

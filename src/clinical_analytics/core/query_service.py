@@ -44,7 +44,6 @@ from clinical_analytics.core.result_presentation import Presentation, present_wi
 from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.core.shown_counts import (
     NOT_CHECKED_REASON,
-    Condition,
     FileShownCountLog,
     MemoryShownCountLog,
     ShownCount,
@@ -687,9 +686,7 @@ class QueryService:
                         else:
                             analysis = self._with_findings(analysis, findings, query_plan)
                             presentation, shown = present_with_counts(analysis)
-                            verdict = self._admit_shown(
-                                prepared, query_plan, context, analysis, presentation, shown, findings
-                            )
+                            verdict = self._admit_shown(prepared, query_plan, context, analysis, presentation, shown)
                             if verdict.shown:
                                 claim = presentation.get("claim")
                             else:
@@ -729,7 +726,6 @@ class QueryService:
         analysis: dict[str, Any],
         presentation: Presentation,
         shown: list[ShownCount] | None,
-        findings: answer_checks.Findings,
     ) -> Verdict:
         """Check the answer's shown counts against the counts already shown for this dataset
         version, and log them if it may be shown (``core.shown_counts``). Locked (``_finish``).
@@ -745,20 +741,19 @@ class QueryService:
             return Verdict(shown=False, reason=NOT_CHECKED_REASON)
         if not shown:
             return Verdict(shown=True)
+        # A COUNT of distinct IDs (patients, admissions, another ID column) is logged as each ID's
+        # first row, never skipped: distinct encounter IDs minus patients is a patient count too.
         entity = plan.entity_key if plan.intent == "COUNT" else None
-        if entity and findings.key is not None and entity != findings.key:
-            return Verdict(shown=True)  # distinct values of another entity (wards), not patients
         try:
             universe = layer_universe(self.semantic_layer)
-            if entity and universe.patient_key is None:
-                # Distinct IDs over rows that are patients: a row with no ID is not counted.
-                shown = [
-                    dataclasses.replace(c, conditions=(*c.conditions, Condition("notnull", entity)))
-                    if c.unit == "counted"
-                    else c
-                    for c in shown
-                ]
-            sets = answer_sets(self.semantic_layer, plan, shown, universe, refine=_compute_cohort(plan, context))
+            sets = answer_sets(
+                self.semantic_layer,
+                plan,
+                shown,
+                universe,
+                refine=_compute_cohort(plan, context),
+                entity_key=entity,
+            )
         except (ShownCountMismatchError, CohortStepError, duckdb.Error, pl.exceptions.PolarsError) as e:
             log.error("shown_counts_not_rebuilt", **error_fields(e))
             return Verdict(shown=False, reason=NOT_CHECKED_REASON)

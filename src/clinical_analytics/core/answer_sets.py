@@ -79,10 +79,18 @@ def _expression(layer: Any, frame: pl.DataFrame, condition: Condition) -> pl.Exp
 
 
 def answer_sets(
-    layer: Any, plan: QueryPlan, counts: Sequence[ShownCount], universe: Universe, refine: Refine | None = None
+    layer: Any,
+    plan: QueryPlan,
+    counts: Sequence[ShownCount],
+    universe: Universe,
+    refine: Refine | None = None,
+    entity_key: str | None = None,
 ) -> list[ShownSet]:
     """The set behind each count, in the log's units. ``refine``: filters the answer applied
-    again to the cohort (an answer from ``analysis.compute``).
+    again to the cohort (an answer from ``analysis.compute``). ``entity_key``: the ID a COUNT
+    counts distinct values of (``QueryPlan.entity_key``); each value is its first row, a value
+    missing is no unit, and the set is in rows, where extra rows over patients are checked
+    (admissions minus patients).
 
     Raises:
         ShownCountMismatchError: a set's size differs from the count shown, or a condition can't
@@ -94,6 +102,8 @@ def answer_sets(
     columns = [c.column for count in counts for c in count.conditions]
     if universe.patient_key is not None:
         columns.append(universe.patient_key)
+    if entity_key is not None:
+        columns.append(entity_key)
     if refine is not None:
         columns.extend(refine.columns)
     frame = layer.shown_rows(plan, columns)
@@ -107,7 +117,10 @@ def answer_sets(
             mask = mask & _expression(layer, frame, condition)
         flags = frame.with_columns(mask.alias("__shown")).get_column("__shown").to_numpy().astype(bool)
         chosen = positions[flags]
-        if count.unit == "counted" and universe.patient_of_row is not None and universe.patients_unit is not None:
+        if count.unit == "counted" and entity_key is not None and entity_key != universe.patient_key:
+            firsts = layer.patient_of_row(entity_key)[chosen]
+            shown = ShownSet(unit=ROWS_UNIT, positions=np.unique(firsts[firsts >= 0]))
+        elif count.unit == "counted" and universe.patient_of_row is not None and universe.patients_unit is not None:
             reps = universe.patient_of_row[chosen]
             shown = ShownSet(unit=universe.patients_unit, positions=np.unique(reps[reps >= 0]))
         else:

@@ -11,8 +11,9 @@ An upload leaves data in several places under the data home (``<data home>/data`
 * Temp files a crashed write left behind (``storage.atomic``): ``parquet/.{id}_*.part`` and
   ``uploads/metadata/.{id}.json.*.part`` (they can hold patient rows)
 * Typed Parquet ``parquet/{id}_<table>_<version>.parquet`` and ``parquet/{id}__cohort_<version>.parquet``
-* Data contracts ``contracts/{id}/``, quality reports ``dq/{id}/`` and the log of shown counts
-  ``shown_counts/{id}/``
+* Data contracts ``contracts/{id}/`` and quality reports ``dq/{id}/``. Not the log of shown counts
+  (``shown_counts/``): it is keyed by the rows, holds row numbers only, and must outlive a delete so
+  that re-uploading the same rows finds what was already shown on them
 * DuckDB tables ``{id}_<table>_<version>`` in ``analytics.duckdb``, and any pre-upgrade backup
   copies of the store (``analytics.duckdb.backup-*``, see ``storage.store_format``)
 
@@ -42,7 +43,7 @@ from pathlib import Path
 import duckdb
 import structlog
 
-from clinical_analytics.contracts.config import CONTRACTS_DIRNAME, DQ_DIRNAME, SHOWN_COUNTS_DIRNAME
+from clinical_analytics.contracts.config import CONTRACTS_DIRNAME, DQ_DIRNAME
 from clinical_analytics.storage.atomic import PART_SUFFIX
 from clinical_analytics.storage.datastore import StoreInUseError, exclusive_store
 from clinical_analytics.storage.store_format import (
@@ -59,7 +60,7 @@ logger = structlog.get_logger()
 DATASET_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_\-]{0,127}$")
 DUCKDB_FILENAME = STORE_FILENAME
 PARQUET_DIRNAME = "parquet"
-DERIVED_DIRNAMES = (CONTRACTS_DIRNAME, DQ_DIRNAME, SHOWN_COUNTS_DIRNAME)
+DERIVED_DIRNAMES = (CONTRACTS_DIRNAME, DQ_DIRNAME)
 
 
 class DatasetDeletionError(RuntimeError):
@@ -316,8 +317,7 @@ def purge_dataset_files(
             ]:
                 _remove(path, uploads_root, report)
 
-            # Data contracts, quality reports and the log of shown counts (contracts/{id}/, dq/{id}/,
-            # shown_counts/{id}/); removing a missing
+            # Data contracts and quality reports (contracts/{id}/, dq/{id}/); removing a missing
             # directory is a no-op, so a retried delete is safe.
             for dirname in DERIVED_DIRNAMES:
                 _remove(data_dir / dirname / dataset_id, data_dir, report)

@@ -127,18 +127,57 @@ class TestDerivableRule:
         assert withheld.shown is False
         assert verdict.shown is True
 
-    def test_admit_otherVersionOrDataset_startsEmpty(self) -> None:
-        # Arrange
+    def test_admit_otherRowsOrSameRowsUnderAnotherName_logOfTheRows(self) -> None:
+        # Arrange: the log belongs to the rows: another dataset id or version on the same rows
+        # (the same file uploaded twice) shares it; other rows have their own
         log = MemoryShownCountLog()
         log.admit("d", "v1", UNIVERSE, [_rows(0, 50)])
 
         # Act
-        other_version = log.admit("d", "v2", UNIVERSE, [_rows(0, 55)])
-        other_dataset = log.admit("e", "v1", UNIVERSE, [_rows(0, 55)])
+        same_rows = log.admit("e", "v2", UNIVERSE, [_rows(0, 55)])
+        other_rows = log.admit("d", "v1", Universe(rows=ROWS, fingerprint="200:2"), [_rows(0, 55)])
 
         # Assert
-        assert other_version.shown is True
-        assert other_dataset.shown is True
+        assert same_rows.shown is False
+        assert other_rows.shown is True
+
+    @pytest.mark.parametrize(("men_young", "shown"), [(5, False), (10, False), (11, True), (0, True)])
+    def test_admit_unionOfAtomsDerivable_withheld(self, men_young: int, shown: bool) -> None:
+        # Arrange: the review's case. Total, "over 65", "women", then "women over 65" give the men
+        # of 65 or under (total - over 65 - women + women over 65). "Diabetes" splits that group
+        # into atoms of 3 and 2 first, so no single atom or pair region is small.
+        women_old, women_young, men_old = np.arange(0, 60), np.arange(60, 120), np.arange(120, 120 + 75)
+        men_young_rows = np.arange(195, 195 + men_young)
+        rows = 195 + men_young
+        universe = Universe(rows=rows, fingerprint=f"{rows}:1")
+        diabetes = np.concatenate([women_old[:25], women_young[:30], men_old[:40], men_young_rows[:3]])
+        log = MemoryShownCountLog()
+        for positions in (diabetes, np.union1d(women_old, men_old), np.union1d(women_old, women_young)):
+            log.admit("d", "v1", universe, [ShownSet(unit=ROWS_UNIT, positions=positions)])
+
+        # Act
+        verdict = log.admit("d", "v1", universe, [ShownSet(unit=ROWS_UNIT, positions=women_old)])
+
+        # Assert
+        assert verdict.shown is shown
+
+    def test_admit_twoRegionsAndAnAgeBand_withheld(self) -> None:
+        # Arrange: the review's second form. North 53 and South 53 of 106; "aged 65+" 100; the
+        # region sets and the age band leave 6 patients under 65 across both regions
+        universe = Universe(rows=106, fingerprint="106:1")
+        north, south = np.arange(0, 53), np.arange(53, 106)
+        young = np.concatenate([np.arange(0, 3), np.arange(53, 56)])
+        old = np.setdiff1d(np.arange(106), young)
+        log = MemoryShownCountLog()
+        log.admit(
+            "d", "v1", universe, [ShownSet(unit=ROWS_UNIT, positions=north), ShownSet(unit=ROWS_UNIT, positions=south)]
+        )
+
+        # Act
+        verdict = log.admit("d", "v1", universe, [ShownSet(unit=ROWS_UNIT, positions=old)])
+
+        # Assert
+        assert verdict.shown is False
 
 
 class TestVisitRows:
@@ -194,6 +233,10 @@ class TestVisitRows:
         assert verdict.shown is True
 
 
+def _log_file(data_dir: Path, universe: Universe = UNIVERSE) -> Path:
+    return data_dir / shown_counts.SHOWN_COUNTS_DIRNAME / shown_counts.log_name(universe)
+
+
 class TestFileLog:
     def test_admit_afterRestart_checksAgainstWhatWasShown(self, tmp_path: Path) -> None:
         # Arrange: one process shows A; a new log object (an app restart) reads the file
@@ -205,35 +248,45 @@ class TestFileLog:
         # Assert
         assert verdict.shown is False
 
-    def test_admit_newVersion_hasItsOwnEmptyLog(self, tmp_path: Path) -> None:
-        # Arrange
+    def test_admit_sameRowsUploadedTwice_shareOneFile(self, tmp_path: Path) -> None:
+        # Arrange: two uploads (ids, versions) of the same rows
+        FileShownCountLog(tmp_path).admit("upload-a", "v1", UNIVERSE, [_rows(0, 50)])
+
+        # Act
+        verdict = FileShownCountLog(tmp_path).admit("upload-b", "v9", UNIVERSE, [_rows(0, 55)])
+
+        # Assert
+        assert verdict.shown is False
+        assert [p.name for p in (tmp_path / shown_counts.SHOWN_COUNTS_DIRNAME).glob("*.json")] == [
+            shown_counts.log_name(UNIVERSE)
+        ]
+
+    def test_admit_newRows_haveTheirOwnEmptyLog(self, tmp_path: Path) -> None:
+        # Arrange: a corrected re-upload is other rows
         FileShownCountLog(tmp_path).admit("d1", "v1", UNIVERSE, [_rows(0, 50)])
 
         # Act
-        verdict = FileShownCountLog(tmp_path).admit("d1", "v2", UNIVERSE, [_rows(0, 55)])
+        verdict = FileShownCountLog(tmp_path).admit(
+            "d1", "v2", Universe(rows=ROWS, fingerprint="200:2"), [_rows(0, 55)]
+        )
 
         # Assert
         assert verdict.shown is True
-        assert len(list((tmp_path / shown_counts.SHOWN_COUNTS_DIRNAME / "d1").glob("*.json"))) == 2
 
     def test_file_holdsNoIdsOrValues_onlyBitmaps(self, tmp_path: Path) -> None:
         # Arrange / Act
         FileShownCountLog(tmp_path).admit("d1", "v1", UNIVERSE, [_rows(0, 50)])
 
         # Assert
-        (path,) = (tmp_path / shown_counts.SHOWN_COUNTS_DIRNAME / "d1").glob("*.json")
-        stored = json.loads(path.read_text())
-        assert set(stored) == {"format", "dataset", "version", "rows", "fingerprint", "sets"}
+        stored = json.loads(_log_file(tmp_path).read_text())
+        assert set(stored) == {"format", "rows", "fingerprint", "sets"}
         assert set(stored["sets"][0]) == {"unit", "size", "excess", "bits"}
 
-    @pytest.mark.parametrize(
-        "damage",
-        ["not json", "truncated", "wrong_size", "other_version", "unknown_key"],
-    )
+    @pytest.mark.parametrize("damage", ["not json", "truncated", "wrong_size", "other_rows", "unknown_key"])
     def test_admit_unreadableLog_withholdsEveryAnswer(self, tmp_path: Path, damage: str) -> None:
         # Arrange
         FileShownCountLog(tmp_path).admit("d1", "v1", UNIVERSE, [_rows(0, 50)])
-        (path,) = (tmp_path / shown_counts.SHOWN_COUNTS_DIRNAME / "d1").glob("*.json")
+        path = _log_file(tmp_path)
         stored = json.loads(path.read_text())
         if damage == "not json":
             path.write_text("{")
@@ -242,8 +295,8 @@ class TestFileLog:
         elif damage == "wrong_size":
             stored["sets"][0]["size"] = 49
             path.write_text(json.dumps(stored))
-        elif damage == "other_version":
-            stored["version"] = "v0"
+        elif damage == "other_rows":
+            stored["fingerprint"] = "200:9"
             path.write_text(json.dumps(stored))
         else:
             stored["extra"] = 1
@@ -251,18 +304,6 @@ class TestFileLog:
 
         # Act: a set that conflicts with nothing
         verdict = FileShownCountLog(tmp_path).admit("d1", "v1", UNIVERSE, [_rows(100, 150)])
-
-        # Assert
-        assert (verdict.shown, verdict.reason) == (False, UNAVAILABLE_REASON)
-
-    def test_admit_logOfOtherRows_withheld(self, tmp_path: Path) -> None:
-        # Arrange: the same version's rows hashed differently (reordered or changed)
-        FileShownCountLog(tmp_path).admit("d1", "v1", UNIVERSE, [_rows(0, 50)])
-
-        # Act
-        verdict = FileShownCountLog(tmp_path).admit(
-            "d1", "v1", Universe(rows=ROWS, fingerprint="200:2"), [_rows(100, 150)]
-        )
 
         # Assert
         assert (verdict.shown, verdict.reason) == (False, UNAVAILABLE_REASON)
@@ -281,13 +322,6 @@ class TestFileLog:
 
         # Assert
         assert (verdict.shown, verdict.reason) == (False, UNAVAILABLE_REASON)
-
-    def test_admit_invalidDatasetId_withheld(self, tmp_path: Path) -> None:
-        # Arrange / Act
-        verdict = FileShownCountLog(tmp_path).admit("../x", "v1", UNIVERSE, [_rows(0, 50)])
-
-        # Assert
-        assert verdict.shown is False
 
 
 class TestBounds:
@@ -316,34 +350,59 @@ class TestBounds:
 
 
 class TestDatasetDeletion:
-    def test_purgeDatasetFiles_removesTheDatasetsLog(self, tmp_path: Path) -> None:
-        # Arrange
+    def test_purgeDatasetFiles_keepsTheLogOfTheRows(self, tmp_path: Path) -> None:
+        # Arrange: deleting and re-uploading the same rows must not reset what was shown on them
         from clinical_analytics.storage.dataset_deletion import purge_dataset_files
 
         uploads = tmp_path / "uploads"
         uploads.mkdir()
         FileShownCountLog(tmp_path).admit("d1", "v1", UNIVERSE, [_rows(0, 50)])
-        FileShownCountLog(tmp_path).admit("d2", "v1", UNIVERSE, [_rows(0, 50)])
 
         # Act
         purge_dataset_files("d1", uploads)
+        verdict = FileShownCountLog(tmp_path).admit("d2", "v1", UNIVERSE, [_rows(0, 55)])
 
         # Assert
-        assert not (tmp_path / shown_counts.SHOWN_COUNTS_DIRNAME / "d1").exists()
-        assert (tmp_path / shown_counts.SHOWN_COUNTS_DIRNAME / "d2").is_dir()
+        assert verdict.shown is False
 
 
 class TestExactCheckBounds:
-    def test_admit_aboveWorkBound_usesTheStricterPairwiseRule(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Arrange: an overlap of 5 that can't be derived; the exact check would show it
-        monkeypatch.setattr(shown_counts, "MAX_SPAN_WORK", 0)
+    @pytest.mark.parametrize("bound", ["MAX_SPAN_WORK", "MAX_MATRIX_FLOATS"])
+    def test_admit_aboveABound_withheldNeverShownUnchecked(self, monkeypatch: pytest.MonkeyPatch, bound: str) -> None:
+        # Arrange: the review's fallback leak (total, over 65, women, women over 65) with each
+        # bound at 0: no stricter-but-leaky rule runs instead, the answer is withheld
         log = MemoryShownCountLog()
+        log.admit("d", "v1", UNIVERSE, [_rows(0, 60), _rows(55, 100)])
+        monkeypatch.setattr(shown_counts, bound, 0)
+
+        # Act: their union makes the overlap of 5 derivable
+        verdict = log.admit("d", "v1", UNIVERSE, [_rows(0, 100)])
+
+        # Assert
+        assert (verdict.shown, verdict.reason) == (False, shown_counts.NOT_CHECKED_REASON)
+
+    def test_admit_integerProgramUnfinished_withheldNeverShownUnchecked(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Arrange: the union case, which only the integer program decides; it does not finish
+        from scipy import optimize
+
+        women_old, women_young, men_old, men_young = (
+            np.arange(0, 60),
+            np.arange(60, 120),
+            np.arange(120, 195),
+            np.arange(195, 200),
+        )
+        diabetes = np.concatenate([women_old[:25], women_young[:30], men_old[:40], men_young[:3]])
+        log = MemoryShownCountLog()
+        for positions in (diabetes, np.union1d(women_old, men_old), np.union1d(women_old, women_young)):
+            log.admit("d", "v1", UNIVERSE, [ShownSet(unit=ROWS_UNIT, positions=positions)])
+        unfinished = optimize.OptimizeResult(status=1, x=None)
+        monkeypatch.setattr(optimize, "milp", lambda *args, **kwargs: unfinished)
 
         # Act
-        verdict = log.admit("d", "v1", UNIVERSE, [_rows(0, 60), _rows(55, 100)])
+        verdict = log.admit("d", "v1", UNIVERSE, [ShownSet(unit=ROWS_UNIT, positions=women_old)])
 
-        # Assert: withheld, never shown unchecked
-        assert (verdict.shown, verdict.reason) == (False, WITHHELD_REASON)
+        # Assert
+        assert (verdict.shown, verdict.reason) == (False, shown_counts.NOT_CHECKED_REASON)
 
     def test_admit_checkFails_withheldAsNotChecked(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Arrange
@@ -380,3 +439,34 @@ class TestExactCheckBounds:
 
         # Assert
         assert (verdict.shown, verdict.reason) == (False, shown_counts.TOO_MANY_COUNTS_REASON)
+
+
+class TestPresenterCounts:
+    @pytest.mark.parametrize(("event_text", "listed"), [(None, False), ("1", True)])
+    def test_presentWithCounts_survivalEventsWithoutEventText_notListed(
+        self, event_text: str | None, listed: bool
+    ) -> None:
+        # Arrange: an ungrouped survival result that shows its events (40 of 200)
+        from clinical_analytics.core.result_presentation import present_with_counts
+
+        analysis = {
+            "type": "survival",
+            "time_col": "months",
+            "event_col": "died",
+            "n_used": 200,
+            "n_excluded": 0,
+            "n_events": 40,
+            "median_survival": 12.0,
+            "event_level": "1",
+            **({"event_text": event_text} if event_text is not None else {}),
+        }
+
+        # Act
+        presentation, counts = present_with_counts(analysis)
+
+        # Assert: without the event's text the events can't be rebuilt, so nothing is listed
+        # and the log withholds the answer
+        assert presentation["table"] is not None
+        assert (counts is not None) is listed
+        if counts is not None:
+            assert 40 in [c.value for c in counts]

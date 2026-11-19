@@ -28,7 +28,7 @@ from clinical_analytics.core.shown_counts import (
 )
 
 
-def _ask(service: QueryService, plan: QueryPlan, version: str = "v1") -> Any:
+def _ask(service: QueryService, plan: QueryPlan, version: str = "v1", dataset_id: str = "probe") -> Any:
     """Ask with the plan fixed and word accounting passed; confirm a hold once (the grain)."""
     intent = SimpleNamespace(
         confidence=0.99,
@@ -43,10 +43,10 @@ def _ask(service: QueryService, plan: QueryPlan, version: str = "v1") -> Any:
     service.nl_engine.parse_query = lambda *args, **kwargs: intent  # type: ignore[method-assign]
     service.nl_engine._intent_to_plan = lambda *args: plan  # type: ignore[method-assign]
     service._accounting_hold_reason = lambda *args: None  # type: ignore[method-assign]
-    result = service.ask("q", dataset_id="probe", dataset_version=version)
+    result = service.ask("q", dataset_id=dataset_id, dataset_version=version)
     if result.requires_confirmation:
         result = service.ask(
-            "q", dataset_id="probe", dataset_version=version, confirmed=True, confirm_plan_hash=result.plan_hash
+            "q", dataset_id=dataset_id, dataset_version=version, confirmed=True, confirm_plan_hash=result.plan_hash
         )
     return result
 
@@ -215,13 +215,45 @@ class TestAcrossRestartsAndVersions:
         # Assert
         assert _withheld(result)
 
-    def test_ask_newVersion_startsFromAnEmptyLog(self, make_semantic_layer: Any, tmp_path: Path) -> None:
-        # Arrange
-        service = QueryService(make_semantic_layer(data=_patients()), data_dir=tmp_path)
-        _ask(service, _count(CohortStep("le", "age", 65)), version="v1")
+    def test_ask_sameFileUploadedTwice_sharesOneLog(self, make_semantic_layer: Any, tmp_path: Path) -> None:
+        # Arrange: the review's case. The same rows under two upload ids and versions
+        first = make_semantic_layer(data=_patients(), workspace_name="first")
+        second = make_semantic_layer(data=_patients(), workspace_name="second")
+        _ask(QueryService(first, data_dir=tmp_path), _count(CohortStep("le", "age", 65)), "v1", "upload-a")
 
         # Act
-        result = _ask(service, _count(CohortStep("ge", "age", 65)), version="v2")
+        result = _ask(QueryService(second, data_dir=tmp_path), _count(CohortStep("ge", "age", 65)), "v9", "upload-b")
+
+        # Assert
+        assert _withheld(result)
+
+    def test_ask_columnsRenamed_sameRows_sharesOneLog(self, make_semantic_layer: Any, tmp_path: Path) -> None:
+        # Arrange: the same rows with a column relabelled
+        first = make_semantic_layer(data=_patients(), workspace_name="first")
+        second = make_semantic_layer(data=_patients().rename({"age": "age_years"}), workspace_name="second")
+        _ask(QueryService(first, data_dir=tmp_path), _count(CohortStep("le", "age", 65)))
+
+        # Act
+        result = _ask(QueryService(second, data_dir=tmp_path), _count(CohortStep("ge", "age_years", 65)))
+
+        # Assert
+        assert _withheld(result)
+
+    def test_ask_otherRows_startFromAnEmptyLog(self, make_semantic_layer: Any, tmp_path: Path) -> None:
+        # Arrange: a corrected upload (one value changed) is other rows
+        corrected = _patients().with_columns(
+            pl.when(pl.int_range(pl.len()) == 0).then(41).otherwise(pl.col("age")).alias("age")
+        )
+        _ask(
+            QueryService(make_semantic_layer(data=_patients(), workspace_name="a"), data_dir=tmp_path),
+            _count(CohortStep("le", "age", 65)),
+        )
+
+        # Act
+        result = _ask(
+            QueryService(make_semantic_layer(data=corrected, workspace_name="b"), data_dir=tmp_path),
+            _count(CohortStep("ge", "age", 65)),
+        )
 
         # Assert
         assert result.claim is not None
@@ -230,8 +262,8 @@ class TestAcrossRestartsAndVersions:
         # Arrange: a log damaged on disk
         service = QueryService(make_semantic_layer(data=_patients()), data_dir=tmp_path)
         _ask(service, _count(CohortStep("le", "age", 65)))
-        (path,) = (tmp_path / SHOWN_COUNTS_DIRNAME / "probe").glob("*.json")
-        path.write_text(json.dumps({"format": 1}))
+        (path,) = (tmp_path / SHOWN_COUNTS_DIRNAME).glob("*.json")
+        path.write_text(json.dumps({"format": 2}))
 
         # Act
         result = _ask(service, _count(group_by="sex"))
@@ -332,3 +364,119 @@ class TestReviewFollowUps:
         # Assert
         assert result.analysis is None
         assert result.failure_reason == NOT_CHECKED_REASON
+
+
+def _union_cohort(diabetes: bool = True) -> pl.DataFrame:
+    """The review's case: 60 women over 65, 60 women 65 or under, 75 men over 65, 5 men 65 or under;
+    diabetes splits each group (the 5 men into 3 and 2)."""
+    rows: list[dict[str, Any]] = []
+    for n, age, sex, with_dm in ((60, 70, "F", 25), (60, 50, "F", 30), (75, 72, "M", 40), (5, 55, "M", 3)):
+        for k in range(n):
+            rows.append(
+                {"patient_id": f"P{len(rows):03d}", "age": age, "sex": sex, "diabetes": "yes" if k < with_dm else "no"}
+            )
+    return pl.DataFrame(rows)
+
+
+def _ask_words(service: QueryService, question: str) -> Any:
+    """Ask through the real parser, confirming a hold once (as a doctor pressing Confirm)."""
+    result = service.ask(question, dataset_id="probe", dataset_version="v1")
+    if result.requires_confirmation:
+        result = service.ask(
+            question, dataset_id="probe", dataset_version="v1", confirmed=True, confirm_plan_hash=result.plan_hash
+        )
+    return result
+
+
+class TestUnionsOfAtoms:
+    @pytest.mark.parametrize("diabetes_first", [True, False])
+    def test_ask_totalMinusTwoGroupsPlusTheirOverlap_withheld(
+        self, make_semantic_layer: Any, diabetes_first: bool
+    ) -> None:
+        # Arrange: 200 - 135 (over 65) - 120 (women) + 60 (women over 65) = 5 men of 65 or under.
+        # Asked first, "diabetes" splits those 5 into atoms of 3 and 2
+        service = QueryService(make_semantic_layer(data=_union_cohort()))
+        earlier = [_count(), _count(CohortStep("gt", "age", 65)), _count(CohortStep("eq", "sex", "F"))]
+        if diabetes_first:
+            earlier.insert(1, _count(CohortStep("eq", "diabetes", "yes")))
+        shown = [_ask(service, plan) for plan in earlier]
+
+        # Act
+        result = _ask(service, _count(CohortStep("eq", "sex", "F"), CohortStep("gt", "age", 65)))
+
+        # Assert
+        assert all(r.claim is not None for r in shown)
+        assert _withheld(result)
+
+    def test_ask_unionAttackThroughTheParser_withheld(self, make_semantic_layer: Any) -> None:
+        # Arrange: the same questions in words, as the review asked them
+        service = QueryService(make_semantic_layer(data=_union_cohort()))
+        questions = [
+            "how many patients?",
+            "how many patients have diabetes yes?",
+            "how many patients over 65?",
+            "how many women?",
+        ]
+        shown = [_ask_words(service, question).claim for question in questions]
+
+        # Act
+        result = _ask_words(service, "how many women over 65?")
+
+        # Assert
+        assert None not in shown
+        assert result.failure_reason == WITHHELD_REASON
+
+
+class TestOtherIds:
+    def test_ask_distinctOtherIdBesideALoggedCount_withheld(self, make_semantic_layer: Any) -> None:
+        # Arrange: the review's case. "65 or younger" is logged; distinct mrn aged 65+ (60) would
+        # give the 5 aged exactly 65
+        frame = _patients().with_columns(("M" + pl.col("patient_id").str.slice(1)).alias("mrn"))
+        service = QueryService(make_semantic_layer(data=frame))
+        _ask(service, _count(CohortStep("le", "age", 65)))
+
+        # Act
+        result = _ask(
+            service,
+            QueryPlan(intent="COUNT", entity_key="mrn", cohort_steps=[CohortStep("ge", "age", 65)], confidence=0.99),
+        )
+
+        # Assert
+        assert _withheld(result)
+
+    def test_ask_admissionsBesidePatients_withheld(self, make_semantic_layer: Any) -> None:
+        # Arrange: 100 patients, one readmitted: 101 distinct admission IDs over visit rows
+        frame = pl.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(100)] + ["P000"],
+                "encounter_id": [f"A{i:03d}" for i in range(101)],
+            }
+        )
+        service = QueryService(make_semantic_layer(data=frame))
+        patients = _ask(service, _count())
+
+        # Act
+        result = _ask(service, QueryPlan(intent="COUNT", entity_key="encounter_id", confidence=0.99))
+
+        # Assert
+        assert patients.claim is not None
+        assert _withheld(result)
+
+
+class TestPositionColumns:
+    @pytest.mark.parametrize("name", ["rowid", "file_row_number", "ROWID"])
+    def test_ask_columnNamedLikeARowNumber_rowsStillNumberedByContent(
+        self, make_semantic_layer: Any, name: str
+    ) -> None:
+        # Arrange: a dataset column that would shadow DuckDB's rowid or read_parquet's
+        # file_row_number (here constant, so a shadowed number would put every row at one place)
+        frame = _patients().with_columns(pl.lit(7).alias(name))
+        service = QueryService(make_semantic_layer(data=frame))
+        first = _ask(service, _count(CohortStep("le", "age", 65)))
+
+        # Act
+        result = _ask(service, _count(CohortStep("ge", "age", 65)))
+
+        # Assert
+        assert first.claim is not None
+        assert _withheld(result)

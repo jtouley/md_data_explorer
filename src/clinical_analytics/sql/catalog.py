@@ -20,6 +20,7 @@ from sqlglot import exp
 from clinical_analytics.contracts.config import UNIFIED_OBJECT_NAME
 from clinical_analytics.contracts.declarations import LevelMapping
 from clinical_analytics.contracts.quality import is_id_property, is_restricted_property
+from clinical_analytics.core.shown_counts import FINGERPRINT_SQL, ROW_ORDER_SQL
 from clinical_analytics.sql.errors import SqlRefusedError
 from clinical_analytics.sql.render import render
 
@@ -71,25 +72,18 @@ class SqlCatalog:
         return f'CREATE VIEW "{UNIFIED_OBJECT_NAME}" AS {render(exp.select(*self._columns()).from_(reader))}'
 
     def positioned_view_sql(self) -> str:
-        """The same view with each row's position in the Parquet (``file_row_number``, the layer's
-        ``rowid``) as ``POSITIONED_COLUMN``, named ``POSITIONED_VIEW``: read only by the log of
-        shown counts (``sql.privacy``); a query can't name it (the validator reads one table)."""
-        position = exp.alias_(exp.column("file_row_number"), POSITIONED_COLUMN, quoted=True)
-        query = exp.select(position, *self._columns()).from_(self._positioned_reader())
-        return f'CREATE VIEW "{POSITIONED_VIEW}" AS {render(query)}'
+        """The same view with each row's number (``shown_counts.ROW_ORDER_SQL``, as the question
+        box numbers them) as ``POSITIONED_COLUMN``, named ``POSITIONED_VIEW``: read only by the
+        log of shown counts (``sql.privacy``); a query can't name it (the validator reads one table)."""
+        reader = render(exp.func("read_parquet", exp.Literal.string(str(self.parquet_path))))
+        numbered = f'SELECT row_number() OVER (ORDER BY {ROW_ORDER_SQL}) - 1 AS "{POSITIONED_COLUMN}", * FROM {reader}'
+        columns = ", ".join(render(c) for c in self._columns())
+        return f'CREATE VIEW "{POSITIONED_VIEW}" AS SELECT "{POSITIONED_COLUMN}", {columns} FROM ({numbered})'
 
     def fingerprint_sql(self) -> str:
-        """Row count and a hash of every stored row with its position: the same value as
-        ``SemanticLayer.row_fingerprint`` on the layer that reads this Parquet."""
-        reader = render(exp.select(exp.Star()).from_(self._positioned_reader()))
-        return (
-            "SELECT count(*) AS n, bit_xor(hash(file_row_number, *COLUMNS(* EXCLUDE (file_row_number)))) AS h "
-            f"FROM ({reader})"
-        )
-
-    def _positioned_reader(self) -> exp.Expr:
-        flag = exp.EQ(this=exp.column("file_row_number"), expression=exp.true())
-        return exp.func("read_parquet", exp.Literal.string(str(self.parquet_path)), flag)
+        """Row count and hash sum of the stored rows: ``SemanticLayer.row_fingerprint``'s value."""
+        reader = render(exp.func("read_parquet", exp.Literal.string(str(self.parquet_path))))
+        return f"SELECT {FINGERPRINT_SQL} FROM {reader}"
 
     def _columns(self) -> list[exp.Expr]:
         merges: dict[str, list[LevelMapping]] = {}
