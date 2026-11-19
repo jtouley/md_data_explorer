@@ -216,6 +216,8 @@ def _labelled_bound_pairs(by_norm: Mapping[str, str], pairs: dict[str, tuple[str
         stem, tail = match.group("stem"), match.group("tail")
         if not stem and not tail and match.group("side") in ("low", "lower"):
             continue  # a bare "lower"/"low" is the standalone pass's
+        if match.group("side") == "low" and not re.search(r"(ci|cl|confidence|interval|limit|bound)", tail):
+            continue  # "Result Low"/"Result High" is a lab's reference range, not an interval
         high = _LOWER_SIDES[match.group("side")]
         upper = by_norm.get(f"{stem}_{high}{tail}" if stem else f"{high}{tail}")
         if upper is None or upper in used:
@@ -418,6 +420,7 @@ def _public_shape_problem(
     pairs: Mapping[str, tuple[str, str]],
     values: Sequence[ValueColumn],
     metric_levels: Mapping[str, Mapping[Any, str]],
+    columns: Sequence[str] = (),
 ) -> str | None:
     """Which allowlist rule a table breaks (``core/public_shape.py``), or None when it is shaped like
     a public estimate table. Fail closed: a key too large to list is never recognised."""
@@ -429,8 +432,9 @@ def _public_shape_problem(
         found: list[Any] = view.select(column).distinct().to_polars().get_column(column).to_list()
         return found
 
-    # A column named as a person or record ID refuses the table whatever its values, key or not.
-    if any(public_shape.person_id_named(c) for c in (*candidates, *numeric)):
+    # A column named as a person or record ID refuses the table whatever its values or type, key
+    # or not (a pl.Date "dob" too).
+    if any(public_shape.person_id_named(c) for c in (*columns, *candidates, *numeric)):
         return "person_id_column"
     kinds_seen: list[frozenset[str]] = []
     has_label = False
@@ -450,11 +454,15 @@ def _public_shape_problem(
     all_kinds = frozenset().union(*kinds_seen) if kinds_seen else frozenset()
     # Every public source has a place: a key of places, or one place for the whole file (a state's
     # own table). A time-only or label-only table is refused (ADR014 §7).
-    single_place = any(
-        levels.get(c) == 1 and public_shape.classify_value(distinct(c)[0], c) == "place"
-        for c in candidates
-        if c not in key and schema[c].is_string()
-    )
+    # Order-free and null-safe: a blank cell beside the one state is a placeholder, never the place.
+    single_place = False
+    for c in candidates:
+        if c in key or levels.get(c) != 1 or not schema[c].is_string():
+            continue
+        named = [v for v in distinct(c) if v is not None and str(v).strip()]
+        single_place = single_place or (
+            bool(named) and all(public_shape.classify_value(v, c) == "place" for v in named)
+        )
     if "place" not in all_kinds and not single_place:
         return "no_place"
     if has_label:
@@ -483,6 +491,22 @@ def _public_shape_problem(
     for column in numeric:
         if column not in candidates and public_shape.other_column_problem(column, [], is_numeric=True, id_alias=False):
             return "numeric_patient_id"
+    # Every other column, whatever its type (dates, datetimes, booleans, lists): fail closed.
+    time_keys = [c for c, kinds in zip(key, kinds_seen, strict=True) if "time" in kinds]
+    for column in columns:
+        if column in candidates or column in numeric:
+            continue
+        dtype = schema[column]
+        if dtype.is_boolean() or dtype.is_null() or (dtype.is_string() and levels.get(column, 0) == 0):
+            continue  # a flag ("Deaths suppressed") or an empty column; its name was checked above
+        if not dtype.is_temporal():
+            return "unsupported_column_type"
+        if set(public_shape.tokens(column)) & public_shape.PERSON_EVENT_TOKENS:
+            return "person_event_date"  # "dob", "visit_date", "admit_ts"
+        if _distinct_rows(view, [column]) > 1 and not (
+            time_keys and _distinct_rows(view, [*time_keys, column]) == _distinct_rows(view, time_keys)
+        ):
+            return "varying_date_column"  # a date per row that no published period fixes
     return None
 
 
@@ -586,7 +610,7 @@ def detect_estimate_table(view: Any, rows: int, skip: Sequence[str] = ()) -> Est
     if any(levels[c] * 2 > rows and not _mostly_states(listed_by[c], c) for c in key):
         return None
     problem = _public_shape_problem(
-        view, schema, key, listed_by, levels, candidates, aliases, numeric, pairs, values, metric_levels
+        view, schema, key, listed_by, levels, candidates, aliases, numeric, pairs, values, metric_levels, columns
     )
     if problem is not None:
         # Never a value in the log: only which rule refused it.

@@ -8,6 +8,7 @@ Regression tests for the round-4 probes (g1 guard, g2 grids, item 5 over-refusal
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 
 import polars as pl
@@ -319,7 +320,7 @@ class TestResidualRisk:
     def test_detectFrame_stateNamesUsedAsPatientIds_acceptedResidualRisk(self):
         # Arrange: one "patient" per state name, three visit months: structurally a state x month
         # table of rates. Documented residual risk (ADR014 §7): the declaration is the safeguard.
-        frame = _visits(lambda p: {"State": _STATE_NAMES[p]})
+        frame = _visits(lambda p: {"State": _STATE_NAMES[p]}).rename({"visit_month": "Month"})
 
         # Act
         table = detect_frame(frame)
@@ -592,3 +593,215 @@ class TestRoundFiveGuard:
 
         # Assert
         assert kind == "territory"
+
+
+_TEN_STATES = ["Ohio", "Iowa", "Utah", "Maine", "Idaho", "Texas"]
+
+
+def _state_years() -> pl.DataFrame:
+    return pl.DataFrame(
+        [
+            {"State": s, "Year": y, "Rate per 100000": 1.0 + i}
+            for i, s in enumerate(_TEN_STATES)
+            for y in range(2016, 2024)
+        ]
+    )
+
+
+class TestRoundSixGuard:
+    """Round 6: the guard's job is a patient file declared public BY MISTAKE. Every column is
+    checked whatever its type; names in any script; a person's own dates are never a time key."""
+
+    @pytest.mark.parametrize(
+        ("name", "extra", "accepted"),
+        [
+            pytest.param("ts", lambda n: pl.Series([dt.datetime(2024, 1, 1, h % 24, h // 24) for h in range(n)]),
+                         False, id="datetime_varying"),
+            pytest.param("dob", lambda n: pl.Series([dt.date(1950, 5, 1)] * n), False, id="date_named_dob"),
+            pytest.param("visit_date", lambda n: pl.Series([dt.date(2024, 5, 1)] * n), False, id="date_named_visit"),
+            pytest.param("codes", lambda n: pl.Series([[1, 2]] * n), False, id="list_fails_closed"),
+            pytest.param("los", lambda n: pl.Series([dt.timedelta(days=3)] * n), False, id="duration_fails_closed"),
+            pytest.param("Data As Of", lambda n: pl.Series([dt.date(2024, 5, 1)] * n), True, id="date_constant"),
+            pytest.param("Rate suppressed", lambda n: pl.Series([False] * n), True, id="boolean_flag"),
+        ],
+    )  # fmt: skip
+    def test_detectFrame_columnOfAnyType_checked(self, name, extra, accepted):
+        # Arrange
+        base = _state_years()
+        frame = base.with_columns(extra(base.height).alias(name))
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert (table is not None) is accepted
+
+    def test_detectFrame_dateFixedByYearKey_accepted(self):
+        # Arrange: a period-end date that the Year key fixes
+        frame = _state_years().with_columns(
+            (pl.col("Year").cast(pl.String) + "-12-31").str.to_date().alias("Period End")
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is not None
+
+    @pytest.mark.parametrize(
+        "names",
+        [
+            pytest.param(["José García", "Zoë Müller", "Ángel Ruiz", "Nguyễn Văn An"], id="accented"),
+            pytest.param(
+                ["Maria de la Cruz", "Dr. Ana Lopez", "D'Angelo Rossi", "Ana María Lopez"], id="particles_titles"
+            ),
+        ],
+    )
+    def test_detectFrame_unicodeNamesAsCategory_neverEstimates(self, names):
+        # Arrange
+        frame = pl.DataFrame(
+            [{"State": "Texas", "Category": n, "Year": y, "a1c_percent": 6.5} for n in names for y in range(2016, 2024)]
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is None
+
+    @pytest.mark.parametrize("column", ["Provider", "Attending Physician", "Nurse", "Doctor"])
+    def test_detectFrame_clinicianColumnWithNames_refused(self, column):
+        # Arrange
+        base = _state_years()
+        names = pl.Series([["José García", "Ana Lopez", "Zoë Müller"][i % 3] for i in range(base.height)])
+        frame = base.with_columns(names.alias(column))
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is None
+
+    @pytest.mark.parametrize("value", ["Admission 004417", "12345-ABC", "Encounter 77812"])
+    def test_labelShaped_wordWithLongNumberOrDigitsDashLetters_notLabel(self, value):
+        # Act
+        shaped = public_shape.label_shaped(value, "category")
+
+        # Assert
+        assert not shaped
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "#Tuberculosis (A16-A19)",
+            "Other diseases of respiratory system (J00-J06,J30-J39,J67,J70-J98)",
+            "Shigella sonnei",
+            "Escherichia coli O157:H7",
+            "HHS Regions",
+            "Census Regions",
+            "Selected Hospitals",
+            "Healthy People 2030",
+        ],
+    )
+    def test_labelsOk_publishedVocabulary_accepted(self, value):
+        # Act
+        ok = public_shape.labels_ok([value], "cause")
+
+        # Assert
+        assert ok
+
+    def test_detectFrame_birthYearByBirthMonthGrid_neverEstimates(self):
+        # Arrange: counties x sex x birth_year x birth_month, one patient per cell
+        frame = pl.DataFrame(
+            [
+                {"County": c, "Sex": s, "birth_year": by, "birth_month": bm, "bmi_rate": 20.0 + bm}
+                for c in ("Alcona County, MI", "Alger County, MI")
+                for s in ("Female", "Male")
+                for by in (1950, 1951, 1952)
+                for bm in range(1, 13)
+            ]
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is None
+
+    def test_detectFrame_stateYearVisitMonth_neverEstimates(self):
+        # Arrange
+        frame = pl.DataFrame(
+            [
+                {"State": s, "Year": 2024, "visit_month": m, "hba1c_pct": 6.0 + m / 10}
+                for s in _TEN_STATES
+                for m in range(1, 13)
+            ]
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is None
+
+    def test_detectFrame_onePlaceWithBlankCell_sameVerdictEveryRun(self):
+        # Arrange: a state's own table, one State cell blank
+        frame = pl.DataFrame(
+            [
+                {
+                    "State": None if (c, y) == ("Syphilis", 2021) else "Michigan",
+                    "cause_name": c,
+                    "Year": y,
+                    "Rate": 1.0,
+                    "lower": 0.5,
+                    "upper": 2.0,
+                }
+                for c in ("Syphilis", "Chlamydia")
+                for y in (2021, 2022, 2023)
+            ]
+        )  # fmt: skip
+
+        # Act
+        verdicts = {detect_frame(frame) is not None for _ in range(8)}
+
+        # Assert
+        assert verdicts == {True}
+
+    def test_detectFrame_placeInsideLabelKey_noPlaceRequirementMet(self):
+        # Arrange: "Texas" among cause labels is not a place key
+        frame = pl.DataFrame(
+            [
+                {"cause_name": c, "Year": y, "Rate": 1.0, "lower": 0.5, "upper": 2.0}
+                for c in ("Syphilis", "Chlamydia", "Texas")
+                for y in (2021, 2022, 2023)
+            ]
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is None
+
+    def test_detectFrame_fluviewRegionType_accepted(self):
+        # Arrange: FluView ILINet with its REGION TYPE label
+        frame = pl.DataFrame(
+            [
+                {
+                    "REGION TYPE": "HHS Regions",
+                    "REGION": f"Region {r}",
+                    "YEAR": y,
+                    "WEEK": w,
+                    "% WEIGHTED ILI": 1.0 + w / 10,
+                }
+                for r in range(1, 11)
+                for y in (2022, 2023)
+                for w in range(1, 6)
+            ]
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is not None

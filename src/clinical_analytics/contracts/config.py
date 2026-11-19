@@ -346,7 +346,6 @@ POPULATION_ESTIMATES_NOT_DETECTED: Final = (
 ESTIMATE_BOUND_SUFFIXES: Final[tuple[tuple[str, str], ...]] = (
     ("_lo", "_hi"),
     ("_lower", "_upper"),
-    ("_low", "_high"),
     ("_lci", "_uci"),
     ("_lcl", "_ucl"),
     ("_cilower", "_ciupper"),
@@ -701,6 +700,18 @@ ESTIMATE_JOIN_MONTH_HOLD: Final = (
 ESTIMATE_JOIN_MONTH_BESIDE_ANNUAL: Final = (
     "{source} is a monthly table ({column}) and another table has one value per year. Choose the month to "
     "line up with the year; an annual total or average of the months isn't published, so none is computed."
+)
+ESTIMATE_JOIN_MONTH_VS_YEAR: Final = (
+    "{source}'s value is for one month ({month}); the other table's is for the whole year {year}. They are "
+    "shown side by side as different periods, not as the same estimate."
+)
+ESTIMATE_JOIN_MONTH_VS_YEAR_REFUSED: Final = (
+    "One table's value is for a single month ({month}) and the other's is for a whole year, so they can't be "
+    "compared as the same estimate. Ask for them side by side, or use tables with the same period."
+)
+ESTIMATE_JOIN_MONTHS_DIFFER: Final = (
+    "The monthly tables are set to different months ({months}), so their values are not the same period and "
+    "aren't joined. Choose the same month for each."
 )
 ESTIMATE_JOIN_NAME_MONTH_YEAR: Final = "{source} is a monthly table. Name a year (or a month, such as 2023-03)."
 ESTIMATE_JOIN_SEASON_TREND: Final = (

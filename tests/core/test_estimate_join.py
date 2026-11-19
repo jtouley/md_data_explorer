@@ -1312,3 +1312,105 @@ class TestRoundFiveJoins:
         assert result.status == "answered", result.message
         assert "Georgia" in {r["state"] for r in result.table["rows"]}
         assert any(extra in n and "left out" in n for n in result.notes)
+
+
+class TestRoundSixJoins:
+    """Round 6 M1-M3: a named month against a year is said plainly; months never join as one year;
+    a one-value year is confirmable; a table with no time is not annual; totals aren't territories."""
+
+    def test_answer_namedMonthBesideAnnual_saidPlainly(self):
+        # Arrange
+        sources = [_monthly_years(), _annual()]
+
+        # Act
+        result = ej.answer(sources, "Rate in Alaska in 2023-03 in monthly and annual")
+
+        # Assert
+        assert result.status == "answered", result.message
+        assert any("one month (2023-03)" in n and "whole year 2023" in n for n in result.notes)
+
+    def test_answer_namedMonthDisagreeWithAnnual_refused(self):
+        # Arrange
+        sources = [_monthly_years(), _annual()]
+        choices = {"monthly": {ej.STANDARDIZATION_CHOICE: "crude"}, "annual": {ej.STANDARDIZATION_CHOICE: "crude"}}
+
+        # Act
+        result = ej.answer(sources, "Does the monthly rate disagree with annual in Alaska in 2023-03?", choices)
+
+        # Assert
+        assert result.status == "refused"
+        assert "single month" in result.message
+
+    def test_answer_twoMonthlyTablesAtDifferentMonths_neverOneYear(self):
+        # Arrange
+        other = dataclasses.replace(_monthly_years(), dataset_id="monthly2", name="monthly2")
+        sources = [_monthly_years(), other, _annual()]
+        choices = {"monthly": {"Month": "2023-01"}, "monthly2": {"Month": "2023-03"}}
+
+        # Act
+        result = ej.answer(sources, "Rate in Alaska in 2023 in monthly, monthly2 and annual", choices)
+
+        # Assert
+        assert result.status == "refused"
+        assert "different months" in result.message
+
+    def test_answer_oneValueYearConfirmed_appliedNotRejected(self):
+        # Arrange: a file whose only year is 2021, asked about 2022 beside an annual table
+        one = _source(
+            pl.DataFrame(
+                [
+                    {"State": st.name, "Year": 2021, "Rate per 100000": 7.0 + i, "Indicator": "Hepatitis C, chronic"}
+                    for i, st in enumerate(STATES[:40])
+                ]
+            ),
+            "ONE",
+        )
+        sources = [dataclasses.replace(_annual(), dataset_id="ANN", name="ANN"), one]
+        question = "ANN and ONE rate in Alaska, 2022"
+
+        # Act
+        held = ej.answer(sources, question)
+        chosen = _held_defaults(held)
+        problems = [ej.choice_problem(one, chosen.get("ONE", {}))]
+        answered = ej.answer(sources, question, chosen)
+
+        # Assert
+        assert held.status == "held"
+        assert problems == [None]
+        assert answered.status == "answered", answered.message
+
+    def test_answer_monthlyBesideTableWithNoTime_notHeldAsAnnual(self):
+        # Arrange: a table with no year at all is not an annual partner
+        timeless = _source(
+            pl.DataFrame([{"State": st.name, "Rate per 100000": 3.0 + i} for i, st in enumerate(STATES[:10])]),
+            "timeless",
+        )
+
+        # Act
+        result = ej.answer([_monthly_years(), timeless], "Rate in Alaska in 2023 in monthly and timeless")
+
+        # Assert: refused for the missing month key, never held as if it were annual
+        assert result.status == "refused"
+        assert "no month" in result.message
+        assert not result.options
+
+    def test_harmonize_totalRow_notListedAsLeftOutPlace(self):
+        # Arrange
+        places = [st.name for st in STATES] + ["Total", "Guam"]
+        source = _source(
+            pl.DataFrame(
+                [
+                    {"Geography": p, "Year": y, "Rate per 100000": 1.0 + i}
+                    for i, p in enumerate(places)
+                    for y in (2022, 2023)
+                ]
+            ),
+            "geo",
+        )
+
+        # Act
+        result = ej.answer([source], "Rank states by rate in 2023")
+
+        # Assert
+        left_out = [n for n in result.notes if "left out (" in n]
+        assert left_out and "Guam" in left_out[0] and "Total" not in left_out[0]

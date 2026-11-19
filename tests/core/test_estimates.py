@@ -635,3 +635,17 @@ class TestLabelledIntervals:
         assert table is not None
         assert [v.name for v in table.values] == ["Cases", "Rate per 100000"]
         assert table.value("Rate per 100000").lower == "Lower 95% CI"
+
+
+class TestReferenceRanges:
+    @pytest.mark.parametrize(
+        "columns",
+        [["Result", "Result Low", "Result High"], ["val", "low", "high"]],
+        ids=["result_low_high", "bare_low_high"],
+    )
+    def test_boundPairs_labReferenceRange_notAnInterval(self, columns):
+        # Act
+        pairs = estimates._bound_pairs(columns, set(columns))
+
+        # Assert
+        assert pairs == {}

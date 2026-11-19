@@ -118,6 +118,10 @@ _LABEL_VOCABULARY: Final = frozenset(
         "state", "states", "county", "region", "national", "age", "group", "groups", "category", "overall",
         "all", "other", "unknown", "reported", "confirmed", "probable", "new", "per", "population", "count",
         "vitamin", "serogroup", "serotype", "strain", "hepatitis", "influenza", "dose", "doses", "coli",
+        "hospitals", "hospital", "regions", "selected", "census", "hhs", "sites", "site", "clinics",
+        "laboratories", "laboratory", "facilities", "jurisdictions", "jurisdiction", "areas", "area",
+        "territories", "metro", "metropolitan", "urban", "rural", "sentinel", "providers", "division",
+        "divisions", "nation", "country", "countries", "world", "global", "tract", "tracts", "zip",
     }
 )  # fmt: skip
 _LABEL_TOKENS: Final = frozenset(
@@ -150,11 +154,26 @@ _CODE_TOKEN: Final = re.compile(
 _PUBLIC_CODES: Final = re.compile(
     r"^(covid-?19|sars-cov-?2|h\d{1,2}n\d{1,2}|hiv-?[12]|htlv-?[12]|hpv-?\d{1,2}|pm2\.5|pm10|cd4|hba1c|"
     r"vitamin\s?d3?|b12|ivd\d*|cvd19|covid19|mmr2?|dtap\d?|tdap\d?|pcv\d{2}|ppsv23|hepb\d?|ccc2|q[1-4]|h[1-9]|"
-    r"pdm09|\d{1,2}(st|nd|rd|th)|\d{1,2}v)$",
+    r"pdm09|o157|o26|o45|o103|o111|o121|o145|\d{1,2}(st|nd|rd|th)|\d{1,2}v)$",
     re.IGNORECASE,
 )
 # "Smith J", "J. Smith", "Smith, J.": a surname with an initial.
 _NAME_INITIAL: Final = re.compile(r"^([A-Z][A-Za-z'’\-]+,?\s+[A-Z]\.?|[A-Z]\.?\s+[A-Z][A-Za-z'’\-]+)$")
+_ICD_RANGES: Final = re.compile(
+    r"\(\s*\*?[A-Z]\d{2}(\.\d+)?(\s*[-–]\s*[A-Z]?\d{2}(\.\d+)?)?"
+    r"(\s*,\s*\*?[A-Z]\d{2}(\.\d+)?(\s*[-–]\s*[A-Z]?\d{2}(\.\d+)?)?)*\s*\)"
+)
+# Columns about a named clinician: any value that reads as a name refuses the table.
+_CLINICIAN_TOKENS: Final = frozenset(
+    {
+        "provider", "providers", "physician", "doctor", "clinician", "nurse", "attending", "surgeon",
+        "practitioner", "prescriber", "pcp", "staff", "therapist", "dentist",
+    }
+)  # fmt: skip
+# Columns of a person's own dates or events: never a public time key ("birth_year", "visit_month").
+PERSON_EVENT_TOKENS: Final = frozenset(
+    {"birth", "dob", "born", "visit", "admit", "admission", "discharge", "encounter", "death", "deceased"}
+)
 _LAST_FIRST: Final = re.compile(r"^[A-Za-z'’\-]+(\s[A-Za-z'’\-]+)?,\s*[A-Za-z'’\-.]+(\s[A-Za-z'’\-.]+)?$")
 
 
@@ -259,9 +278,16 @@ def _county_shaped(text: str) -> bool:
 def is_label(value: Any, column: str) -> bool:
     """A plain label: words, not an ID, not a person's name, not a code (ICD codes only in a cause
     or ICD column)."""
+    return label_shaped(value, column) and not person_name(_text(value)) if value is not None else True
+
+
+def label_shaped(value: Any, column: str) -> bool:
+    """A label by everything but the name test: words, no person or record word, no ID or code."""
     if value is None:
         return True
     text = _text(value)
+    # A published ICD range after a cause ("Tuberculosis (A16-A19)") is part of the label.
+    text = _ICD_RANGES.sub("", text).strip() or text
     if mixed_script(text) or not text.isascii() and not _latin(text):
         return False  # a lookalike letter from another script
     if _PUBLIC_CODES.match(text):
@@ -275,7 +301,11 @@ def is_label(value: Any, column: str) -> bool:
         return False  # "Patient 7", "Subject 01", "Room A12"
     if any(not _PUBLIC_CODES.match(m.group(0)) for m in _CODE_TOKEN.finditer(text)):
         return False  # "MRN.0007", "A12", "Pt7"
-    return not (id_shaped(text) or person_name(text))
+    if any(not _YEAR.match(run) for run in re.findall(r"(?<!\d)\d{4,}(?!\d)", text)):
+        return False  # "Admission 004417": a word beside a long number
+    if re.search(r"\d{3,}\s*[-_/]\s*[A-Za-z]", text):
+        return False  # "12345-ABC"
+    return not id_shaped(text)
 
 
 def _latin(text: str) -> bool:
@@ -295,19 +325,58 @@ def id_shaped(text: str) -> bool:
     return bool(_ID_CODE.match(text)) and not (_YEAR.match(text) or _MMWR.match(text))
 
 
+_TITLES: Final = frozenset({"dr", "mr", "mrs", "ms", "miss", "mx", "prof", "sir", "dame", "rev", "fr", "sr", "jr"})
+_PARTICLES: Final = frozenset(
+    {
+        "de", "la", "las", "los", "del", "della", "van", "von", "der", "den", "bin", "binti", "al", "el", "da",
+        "di", "du", "le", "ibn", "ben", "dos", "das", "ter", "ten", "y", "e", "st", "mac", "o",
+    }
+)  # fmt: skip
+# One part of a name in any script: letters, joined by an apostrophe or hyphen ("D'Angelo",
+# "al-Rashid", "Nguyễn"); an initial is one letter with an optional dot.
+_NAME_PART: Final = re.compile(r"^[^\W\d_]+([’'\-][^\W\d_]+)*$")
+_INITIAL_PART: Final = re.compile(r"^[^\W\d_]\.?$")
+
+
+_NOT_NAME_WORDS: Final = (
+    _LABEL_VOCABULARY
+    | _RACE_CORE
+    | {"sexes", "both", "atlantic", "central", "north", "south", "east", "west", "new", "mid", "hispanic", "latino"}
+)
+
+
+def _words_of(text: str) -> list[str]:
+    return re.findall(r"[^\W\d_]+", text.casefold())
+
+
 def person_name(text: str) -> bool:
-    """Shaped like a person's name ("Ana Lopez", "J. Smith") or initials, and holding no word of a
-    public-health label."""
+    """Shaped like a person's name in any script and case ("Ana Lopez", "José García", "Nguyễn Văn
+    An", "Maria de la Cruz", "Dr. Ana Lopez", "LOPEZ, ANA", "J. Smith") or initials, and holding no
+    word of a public-health label. A binomial Latin name ("Shigella sonnei": capitalised genus,
+    lower-case species) is not a person's name."""
     text = _text(text)
     if _INITIALS.match(text):
         return True
-    words = set(re.findall(r"[a-z]+", text.casefold()))
-    if words & _LABEL_VOCABULARY:
+    if set(_words_of(text)) & _NOT_NAME_WORDS:
         return False
-    if _LAST_FIRST.match(text) or _NAME_INITIAL.match(text):
-        return True  # "LOPEZ, ANA", "Lopez, Ana", "Smith J", "J. Smith"
-    # Any case: "ana lopez", "ANA LOPEZ" read as "Ana Lopez".
-    return bool(_PERSON_NAME.match(text) or _PERSON_NAME.match(text.title()))
+    parts = text.replace(",", " ").split()
+    while parts and parts[0].rstrip(".").casefold() in _TITLES:
+        parts = parts[1:]
+    if not 2 <= len(parts) <= 5 or any(p.casefold() in _PARTICLES for p in (parts[0], parts[-1])):
+        return False
+    core = [p for p in parts if p.casefold() not in _PARTICLES]
+    if not all(_NAME_PART.match(p.rstrip(".")) or _INITIAL_PART.match(p) for p in core):
+        return False
+    if not any(_NAME_PART.match(p) and len(p) >= 2 for p in core) or len(core) < 2:
+        return False
+    if all(_INITIAL_PART.match(p) for p in core):
+        return False
+    lettered = [p for p in core if not _INITIAL_PART.match(p)]
+    if len(core) == 2 and lettered == core and core[0][:1].isupper() and core[1].islower() and core[0][1:].islower():
+        return False  # binomial Latin ("Shigella sonnei", "Escherichia coli")
+    # Capitalised parts, one case throughout, or a script without case (Arabic, Devanagari).
+    same_case = text.isupper() or text.islower() or all(p[:1].isupper() or p[:1].upper() == p[:1].lower() for p in core)
+    return bool(same_case)
 
 
 @dataclass(frozen=True)
@@ -324,6 +393,9 @@ def key_column(column: str, values: Sequence[Any], alias_values: Mapping[str, Se
     classes = [classify_value(v, column) for v in present]
     strict = [c for c in classes if c is not None]
     kinds = frozenset(strict)
+    name_tokens = set(tokens(column))
+    if "time" in kinds and name_tokens & PERSON_EVENT_TOKENS:
+        return KeyVerdict(False, kinds, False)  # "birth_year", "visit_month": a person's own dates
     if present and len(strict) == len(present):
         return KeyVerdict(True, kinds, False)
     for alias, vals in alias_values.items():
@@ -331,12 +403,23 @@ def key_column(column: str, values: Sequence[Any], alias_values: Mapping[str, Se
         if vals and all(c is not None for c in alias_classes):
             return KeyVerdict(True, frozenset(c for c in alias_classes if c), False)
     rest = [v for v, c in zip(present, classes, strict=True) if c is None]
-    if set(tokens(column)) & _LABEL_TOKENS:
-        labelled = len([v for v in rest if is_label(v, column)]) == len(rest) and len(present) >= 2
-        return KeyVerdict(labelled, kinds, labelled)
+    if name_tokens & _LABEL_TOKENS and not name_tokens & _CLINICIAN_TOKENS:
+        labelled = len(present) >= 2 and labels_ok(rest, column)
+        # A place among labels ("Texas" in a cause column) never makes the column a place key.
+        return KeyVerdict(labelled, kinds - {"place"}, labelled)
     # A place, time or demographic column may carry a minority of plain labels beside its values.
     mostly = len(strict) * 4 >= len(present) * 3 and kinds - {"total", "placeholder"}
     return KeyVerdict(bool(mostly) and all(is_label(v, column) for v in rest), kinds, False)
+
+
+def labels_ok(values: Sequence[Any], column: str) -> bool:
+    """Label values: every one label-shaped (no person or record word, ID or code), and fewer than
+    three in ten reading as people's names (one odd label such as "Selected Hospitals" is not a
+    names column; a column of patients' names is)."""
+    present = [v for v in values if v is not None]
+    if not all(label_shaped(v, column) for v in present):
+        return False
+    return sum(person_name(_text(v)) for v in present) * 10 < len(present) * 3
 
 
 def other_column_problem(column: str, values: Sequence[Any], *, is_numeric: bool, id_alias: bool) -> bool:
@@ -356,8 +439,12 @@ def other_column_problem(column: str, values: Sequence[Any], *, is_numeric: bool
     if name_tokens and name_tokens <= _NAME_COLUMN_TOKENS:
         # "name", "full_name": people's names, unless every value is a place (Census NAME).
         return not all(classify_value(v, column) == "place" for v in present)
-    if any(mixed_script(v) for v in present):
-        return True
+    if name_tokens & _CLINICIAN_TOKENS and any(person_name(v) for v in present):
+        return True  # "Provider": "José García"
+    if name_tokens & PERSON_EVENT_TOKENS and any(classify_value(v, column) == "time" for v in present):
+        return True  # "dob", "visit_date": a person's own dates
+    if any(mixed_script(v) or not _latin(v) for v in present):
+        return True  # lookalike letters, or text in a script these tables never use (fail closed)
     if all(classify_value(v, column) is not None for v in present):
         return False  # years, FIPS, states, totals: public values whatever the column is called
     if any(_SSN.match(v) or _MRN.match(v) or (_CASE_NUMBER.match(v) and not _season(v)) for v in present):

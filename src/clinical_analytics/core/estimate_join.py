@@ -740,7 +740,7 @@ def _harmonize(
             notes.append(config.ESTIMATE_JOIN_AMBIGUOUS_PLACE.format(source=source.name, level=level))
         substate = [
             level
-            for kind in ("substate", "territory", "region", "country", "other", "unknown")
+            for kind in ("substate", "territory", "region", "country", "unknown")
             for level in others.get(kind, [])
         ]
         if substate:
@@ -774,9 +774,11 @@ def _harmonize(
         keys.append("year")
     month_col = pins.roles.get("month")
     if month_col is not None and month_col in pins.pinned and "year" not in keys:
-        # One month chosen to line up with an annual table: joined on its year, shown as chosen.
-        exprs.append(pl.lit(int(str(pins.pinned[month_col])[:4]), dtype=pl.Int64).alias("year"))
+        # One month chosen to line up with an annual table: joined on its year, and said plainly.
+        month = str(pins.pinned[month_col])
+        exprs.append(pl.lit(int(month[:4]), dtype=pl.Int64).alias("year"))
         keys.append("year")
+        notes.append(config.ESTIMATE_JOIN_MONTH_VS_YEAR.format(source=source.name, month=month, year=month[:4]))
     elif month_col is not None:
         exprs.append(pl.col(month_col).cast(pl.String).str.strip_chars().alias("month"))
         keys.append("month")
@@ -963,6 +965,19 @@ def _resolve_roles(source: SourceInput, pins: _Pins, asked: Asked, choices: Mapp
         pins.refusals.append(config.ESTIMATE_JOIN_NAME_STATE.format(source=source.name))
 
 
+def _has_year(source: SourceInput) -> bool:
+    """A year key, or one year for the whole file (a one-value year column)."""
+    table = source.table
+    if table is None:
+        return False
+    if any(role_of(d) == "year" for d in table.dimensions):
+        return True
+    return any(
+        re.search(r"year", column, re.IGNORECASE) and source.frame.get_column(column).drop_nulls().n_unique() == 1
+        for column in source.frame.columns
+    )
+
+
 def _years_asked(asked: Asked) -> list[int]:
     """The years a question covers: "from 2019 to 2023" is every year in between when it asks for a
     series (by month, a trend); otherwise the years it names."""
@@ -1072,6 +1087,9 @@ def prepare(
     monthly = [
         source.table is not None and any(role_of(d) == "month" for d in source.table.dimensions) for source in sources
     ]
+    # An annual partner has a year (a year key, or one year for the whole file); a table with no
+    # time at all is not "annual".
+    annual = [not m and _has_year(source) for m, source in zip(monthly, sources, strict=True)]
     asked_for = {s.dataset_id: dataclasses.replace(asked, standardization=by_source[s.dataset_id]) for s in sources}
     question_asked = asked
     for index, source in enumerate(sources):
@@ -1081,7 +1099,7 @@ def prepare(
         source = dataclasses.replace(source, saved_choices={**source.saved_choices, **own})
         sources_used[index] = source
         pins = _pin_dimensions(source, asked, own, single)
-        pins.annual_partner = monthly[index] and not all(monthly)
+        pins.annual_partner = monthly[index] and any(annual)
         _resolve_roles(source, pins, asked, own)
         value, value_hold = _choose_value(source, asked, own)
         if value_hold is not None:
@@ -1095,6 +1113,16 @@ def prepare(
         refusals += pins.refusals
         if value is not None:
             pinned_all.append((source, pins, value))
+    month_pins = {
+        str(pins.pinned[col])
+        for _source, pins, _value in pinned_all
+        if (col := pins.roles.get("month")) is not None and col in pins.pinned
+    }
+    if len(month_pins) > 1:
+        # Two monthly tables at different months never join as one year.
+        refusals.append(config.ESTIMATE_JOIN_MONTHS_DIFFER.format(months=", ".join(sorted(month_pins))))
+    if month_pins and asked.analysis in ("disagree", "change"):
+        refusals.append(config.ESTIMATE_JOIN_MONTH_VS_YEAR_REFUSED.format(month=sorted(month_pins)[0]))
     if refusals:
         return asked, _refused(" ".join(dict.fromkeys(refusals)))
     if holds:
@@ -1693,6 +1721,10 @@ def choice_problem(source: SourceInput, choices: Mapping[str, Any]) -> str | Non
             continue
         if column in table.attributes and value in source.frame.get_column(column).unique().to_list():
             continue
+        if column in source.frame.columns and source.frame.get_column(column).drop_nulls().unique().to_list() == [
+            value
+        ]:
+            continue  # a one-value column (a file's only year): confirming it pairs that year
         return f"{source.name} has no column {column!r} to choose a value for."
     return None
 
