@@ -571,3 +571,43 @@ def test_uploadDataset_zipOfOneWonderExport_notesAsDocsTotalsSaid(
     assert frame.height == 29
     assert "Query Parameters" in meta.get("doc_context", "")
     assert "deaths.tsv: 1 subtotal row (Notes: Total) was left out, so no row is counted twice." in body["cohort_notes"]
+
+
+@pytest.mark.parametrize(
+    ("name", "as_zip"),
+    [
+        pytest.param("wonder.txt", False, id="txt"),
+        pytest.param("wonder.tsv", False, id="tsv"),
+        pytest.param("deaths.tsv", True, id="zip"),
+    ],
+)
+def test_uploadDataset_wonderExport_neverAskedIsEachRowOnePatient(
+    test_client: TestClient, isolated_data_home, make_wonder_export, name: str, as_zip: bool
+):
+    # Arrange: a WONDER export has rows of counts and rates for places, never patients
+    data = _zip({name: make_wonder_export(states=40)}) if as_zip else make_wonder_export(states=40)
+
+    # Act
+    body = _upload(test_client, "wonder.zip" if as_zip else name, data, f"wonder_{name.split('.')[-1]}_{as_zip}")
+
+    # Assert: stored, counts rows, and the one-row-per-patient question is never offered
+    assert body["_status_code"] == 200, body
+    assert body["one_row_per_patient"] is None
+    assert "Answers count rows, not patients." in body["unit_note"]
+
+
+@pytest.mark.parametrize("name", ["records.tsv", "records.txt"])
+def test_uploadDataset_tabSeparatedPatientFile_stillAskedIsEachRowOnePatient(
+    test_client: TestClient, isolated_data_home, name: str
+):
+    # Arrange: tab-separated but not a WONDER export (a record code unique on every row, not named
+    # as a patient ID): the WONDER exclusion never reaches it, so #145's question is offered
+    rows = [f"R{i:04d}\t{'female' if i % 2 else 'male'}\t{('A', 'B', 'C', 'D')[i % 4]}" for i in range(120)]
+    data = ("\n".join(["record_code\tsex\tward", *rows]) + "\n").encode()
+
+    # Act
+    body = _upload(test_client, name, data, f"records_{name[-3:]}")
+
+    # Assert
+    assert body["_status_code"] == 200, body
+    assert body["one_row_per_patient"] is not None

@@ -40,6 +40,7 @@ from typing import Any, Final
 import polars as pl
 import structlog
 
+from clinical_analytics.core.identifier_rules import SOURCE_FORMAT_KEY
 from clinical_analytics.core.schema import DataQualityError, NoCohortAnchorError
 from clinical_analytics.storage import atomic
 from clinical_analytics.storage.file_sets import TextMember, read_file_set, split_file_sets
@@ -211,6 +212,7 @@ def normalize_upload_to_table_list(
     """
     # Detect upload type from file extension
     zip_notes: list[str] = []
+    source_format = ""
     if filename.lower().endswith(".zip"):
         # Multi-table: extract from ZIP
         # One expansion budget for the tables and the documentation (zip-bomb guard).
@@ -221,6 +223,7 @@ def normalize_upload_to_table_list(
         # Extract documentation files from ZIP (Phase 1: ADR004)
         doc_files = [*extract_documentation_files(io.BytesIO(file_bytes), budget=budget), *read.as_docs]
         zip_notes = list(read.notes)
+        source_format = read.source_format
         logger.info("zip_documentation_files", files=len(doc_files), tables_read_as_docs=len(read.as_docs))
     else:
         # Single-file: wrap in list (becomes multi-table with 1 table)
@@ -246,6 +249,7 @@ def normalize_upload_to_table_list(
             else []
         )
         zip_notes = list(staged.table_notes)
+        source_format = staged.source_format
 
     # Handle external PDF/documentation files (standalone upload)
     if metadata and "external_pdf_bytes" in metadata:
@@ -261,6 +265,7 @@ def normalize_upload_to_table_list(
         "table_names": [t["name"] for t in tables],
         "doc_files": doc_files,  # Phase 1: Store doc files for processing
         ZIP_NOTES_KEY: zip_notes,
+        SOURCE_FORMAT_KEY: source_format,
     }
 
     return tables, table_metadata
@@ -515,6 +520,7 @@ class ZipRead:
     table_list: list[dict[str, Any]]
     as_docs: tuple[DocFile, ...] = ()
     notes: tuple[str, ...] = ()
+    source_format: str = ""  # "cdc_wonder" when any table is a CDC WONDER export
 
 
 def extract_zip_tables(file_bytes: bytes) -> list[dict[str, Any]]:
@@ -632,7 +638,8 @@ def read_zip_tables(file_bytes: bytes, budget: ZipExpansionBudget | None = None)
     for table in tables:
         table["data"] = settled[table["name"]]
         table["notes"] = (*table["notes"], *(n for name, n in shared_notes if name == table["name"]))
-    return ZipRead(table_list=tables, as_docs=tuple(as_docs), notes=tuple(notes))
+    source_format = next((t.source_format for _name, t in staged_tables if t.source_format), "")
+    return ZipRead(table_list=tables, as_docs=tuple(as_docs), notes=tuple(notes), source_format=source_format)
 
 
 def _detect_excel_header_row(file_bytes: bytes, max_rows_to_check: int = 5) -> int:
@@ -2148,6 +2155,8 @@ class UserDatasetStorage:
             zip_notes: list[str] = table_metadata[ZIP_NOTES_KEY]
             if zip_notes:
                 metadata[ZIP_NOTES_KEY] = zip_notes
+            if table_metadata[SOURCE_FORMAT_KEY]:
+                metadata[SOURCE_FORMAT_KEY] = table_metadata[SOURCE_FORMAT_KEY]
 
             # Mark all existing versions as inactive (the drift check below reads stored metadata)
             if existing_version_history is not None:

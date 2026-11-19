@@ -36,6 +36,11 @@ import { STOPPED, createStopController } from './stopControl.js';
 import { bindBannerDismiss, bindSidebarToggle } from './layoutControls.js';
 import { closeDatasetDeleteConfirm, renderDatasetDeleteConfirm } from './datasetDeletePanel.js';
 import {
+  closePatientRowsQuestion,
+  patientRowsAnsweredText,
+  renderPatientRowsQuestion,
+} from './patientRowsPanel.js';
+import {
   closeDatasetLinkForm,
   normalizeSource,
   renderDatasetLinkForm,
@@ -85,6 +90,7 @@ const elements = {
   refreshDatasetsBtn: document.getElementById('refresh-datasets'),
   deleteDatasetBtn: document.getElementById('delete-dataset'),
   datasetDeleteArea: document.getElementById('dataset-delete-area'),
+  patientRowsArea: document.getElementById('patient-rows-area'),
   loadFromLinkBtn: document.getElementById('load-from-link'),
   datasetLinkArea: document.getElementById('dataset-link-area'),
   datasetSourceSection: document.getElementById('dataset-source-section'),
@@ -165,6 +171,9 @@ const state = {
   datasetInfo: null,
   /** First question per session, this run only (never persisted: questions can identify patients). */
   sessionTitles: new Map(),
+  /** The cohort whose "Is each row one patient?" is on screen (null: none). */
+  /** @type {string | null} */
+  patientRowsDatasetId: null,
 };
 
 /** The narrow-window sidebar toggle (see layoutControls.js), once bound. */
@@ -1246,6 +1255,8 @@ function applyDataset(datasetId, { resetChat }) {
   if (openDatasetPanelBtn) openDatasetPanelBtn.disabled = !datasetId;
   if (newChatBtn) newChatBtn.disabled = !datasetId;
   if (datasetDeleteArea) closeDatasetDeleteConfirm(datasetDeleteArea);
+  // The question belongs to the cohort just uploaded: another cohort closes it, unanswered.
+  if (state.patientRowsDatasetId && state.patientRowsDatasetId !== datasetId) closePatientRows();
   if (changed) state.datasetInfo = null;
   if (!datasetId) closeDatasetPanel();
   else if (elements.datasetPanelTitle)
@@ -1780,6 +1791,70 @@ async function runFromDatasetMenu(action) {
   }
 }
 
+function closePatientRows() {
+  state.patientRowsDatasetId = null;
+  if (elements.patientRowsArea) closePatientRowsQuestion(elements.patientRowsArea);
+}
+
+/**
+ * Ask "Is each row one patient?" when the upload response says it is pending. Never answers
+ * for the user: until a button is pressed, answers count rows.
+ * @param {ReturnType<typeof normalizeUploadResponse>} result
+ * @param {string} name cohort name as shown in the status line
+ */
+function askPatientRows(result, name) {
+  const area = elements.patientRowsArea;
+  const question = result.one_row_per_patient;
+  if (!area || !question || typeof window.clinicalAPI?.answerOneRowPerPatient !== 'function') {
+    return;
+  }
+  const datasetId = result.upload_id;
+  state.patientRowsDatasetId = datasetId;
+  // Focus moves to the question only when nothing else holds it (the upload's own controls or
+  // the page): typing elsewhere during an upload is never interrupted.
+  const active = document.activeElement;
+  const takeFocus =
+    !active ||
+    active === document.body ||
+    active === elements.datasetMenuBtn ||
+    Boolean(elements.datasetLinkArea?.contains(active)) ||
+    Boolean(elements.uploadArea?.contains(active));
+  const panel = renderPatientRowsQuestion(area, {
+    takeFocus,
+    onAnswer: async (oneRowPerPatient) => {
+      panel.setBusy(true);
+      let counts;
+      try {
+        const body = await window.clinicalAPI.answerOneRowPerPatient(
+          datasetId,
+          question.confirmation,
+          oneRowPerPatient
+        );
+        counts = body?.counts === 'patients' ? 'patients' : 'rows';
+      } catch (error) {
+        console.error('One-row-per-patient answer failed:', error?.message);
+        panel.setBusy(false);
+        panel.setError(
+          `Your answer wasn’t saved, so answers still count rows. ${plainFailureMessage(error?.message, { context: 'upload' })}`
+        );
+        panel.focus();
+        return;
+      }
+      // Saved; the question on screen may by now be another cohort's (a slow answer): leave it.
+      if (state.patientRowsDatasetId !== datasetId) return;
+      const text = patientRowsAnsweredText(counts, name);
+      const hadFocus = area.contains(document.activeElement);
+      closePatientRows();
+      setDatasetStatus(text, 'ok'); // the status line is a live region: read once
+      if (hadFocus && state.currentDatasetId === datasetId && !elements.queryInput?.disabled) {
+        elements.queryInput.focus();
+      }
+    },
+  });
+  // Focused, the group reads its question and what each answer does; otherwise say it is there.
+  if (!takeFocus) announce('Is each row one patient? Answer it below the cohort status.');
+}
+
 async function handleLoadSample() {
   if (typeof window.clinicalAPI?.loadSampleDataset !== 'function') return;
   setDatasetStatus('Loading the sample cohort…');
@@ -1799,6 +1874,7 @@ async function handleLoadSample() {
         { showDetails: result.status === 'needs_review' || dataCheckNeedsReview(result.quality) }
       );
       await selectNewDataset(result.upload_id);
+      askPatientRows(result, result.dataset_name);
     } else {
       setDatasetStatus(
         `Couldn’t load the sample cohort. ${plainFailureMessage(result.message, { context: 'upload' })}`,
@@ -1841,6 +1917,7 @@ async function handleFileUpload(file) {
         { showDetails: result.status === 'needs_review' || dataCheckNeedsReview(result.quality) }
       );
       await selectNewDataset(result.upload_id);
+      askPatientRows(result, result.dataset_name || file.name);
     } else {
       setDatasetStatus(
         `Couldn’t upload “${file.name}”. ${plainFailureMessage(result.message, { context: 'upload' })}`,
@@ -1967,6 +2044,10 @@ function openDatasetLinkForm(returnFocusTo) {
         console.error('Cohort list refresh failed:', error?.message);
         announce('The cohort is loaded. Choose Refresh the list in the cohort menu to see it.');
       }
+      askPatientRows(result, result.dataset_name);
+      // When asked, the question keeps focus: answering it comes before asking one.
+      const asking = elements.patientRowsArea?.contains(document.activeElement);
+      if (asking) return;
       if (state.currentDatasetId && state.currentDatasetId !== before) {
         elements.queryInput?.focus();
       } else {

@@ -4,6 +4,7 @@
  */
 
 import { normalizeQuality } from './dataCheckPanel.js';
+import { normalizePatientRowsQuestion } from './patientRowsPanel.js';
 
 // Mirrors ALLOWED_UPLOAD_EXTENSIONS in api/routes/datasets.py.
 const ALLOWED_EXTENSIONS = new Set([
@@ -25,7 +26,7 @@ const ALLOWED_EXTENSIONS = new Set([
 
 /**
  * @param {Record<string, unknown>|null|undefined} raw
- * @returns {{ upload_id: string, dataset_name: string, status: string, message: string, failed_checks: string[], quality: import('./dataCheckPanel.js').DataCheck | null, sheet_note: string, unit_note: string, cohort_notes: string[] }}
+ * @returns {{ upload_id: string, dataset_name: string, status: string, message: string, failed_checks: string[], quality: import('./dataCheckPanel.js').DataCheck | null, sheet_note: string, unit_note: string, one_row_per_patient: { confirmation: string } | null, cohort_notes: string[] }}
  */
 export function normalizeUploadResponse(raw) {
   if (!raw || typeof raw !== 'object') {
@@ -39,6 +40,7 @@ export function normalizeUploadResponse(raw) {
       sheet_note: '',
       unit_note: '',
       cohort_notes: [],
+      one_row_per_patient: null,
     };
   }
   return {
@@ -60,6 +62,8 @@ export function normalizeUploadResponse(raw) {
           .filter((note) => typeof note === 'string' && note.trim())
           .map((note) => note.trim())
       : [],
+    // "Is each row one patient?" still to answer (null: not asked, or already answered yes).
+    one_row_per_patient: normalizePatientRowsQuestion(raw.one_row_per_patient),
   };
 }
 

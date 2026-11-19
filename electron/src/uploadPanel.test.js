@@ -33,6 +33,7 @@ describe('normalizeUploadResponse', () => {
       sheet_note: '',
       unit_note: '',
       cohort_notes: [],
+      one_row_per_patient: null,
     });
     expect(normalizeUploadResponse(undefined)).toEqual({
       upload_id: '',
@@ -44,6 +45,7 @@ describe('normalizeUploadResponse', () => {
       sheet_note: '',
       unit_note: '',
       cohort_notes: [],
+      one_row_per_patient: null,
     });
   });
 });
@@ -363,6 +365,25 @@ describe('upload unit note (rows, not patients)', () => {
   ])('normalizeUploadResponse keeps only a text unit note (%#)', (raw, expected) => {
     expect(normalizeUploadResponse(raw).unit_note).toBe(expected);
   });
+
+  test.each([
+    [{ status: 'pending', confirmation: 'a'.repeat(32) }, { confirmation: 'a'.repeat(32) }],
+    [null, null],
+    [undefined, null],
+    [{ status: 'answered', confirmation: 'a'.repeat(32) }, null],
+    [{ status: 'pending', confirmation: '' }, null],
+    [{ status: 'pending' }, null],
+    ['pending', null],
+  ])(
+    'normalizeUploadResponse keeps only a pending one-row-per-patient question (%#)',
+    (raw, expected) => {
+      // Arrange / Act
+      const result = normalizeUploadResponse({ upload_id: 'u1', one_row_per_patient: raw });
+
+      // Assert
+      expect(result.one_row_per_patient).toEqual(expected);
+    }
+  );
 
   test('a ready keyless upload says rows, not patients, right after the headline', () => {
     const result = normalizeUploadResponse({

@@ -1852,6 +1852,58 @@ ul {
   font-size: var(--fs-sm);
 }
 
+/* ---------- "Is each row one patient?" (asked once after an upload) ---------- */
+
+.patient-rows-area {
+  margin-top: var(--sp-2);
+}
+
+.patient-rows-question {
+  padding: var(--sp-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  transition:
+    opacity var(--dur-enter) var(--ease-out),
+    transform var(--dur-enter) var(--ease-out);
+}
+
+@starting-style {
+  .patient-rows-question {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.patient-rows-title {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: var(--lh-md);
+}
+
+.patient-rows-body,
+.patient-rows-error {
+  margin-top: var(--sp-1);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+  color: var(--text-2);
+}
+
+.patient-rows-error {
+  color: var(--danger);
+}
+
+.patient-rows-question .result-confirm-actions {
+  margin-top: var(--sp-3);
+  flex-wrap: wrap;
+}
+
+.patient-rows-question .btn {
+  min-height: 32px;
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-sm);
+}
+
 /* Load from a link: in-page form below the cohort switcher */
 .dataset-link-area {
   margin-top: var(--sp-2);

@@ -12,18 +12,23 @@ grain declaration (``contracts/declarations.py``, grain ``patient``): kept per d
 row count, so a re-upload asks again. The refusal carries a confirmation token bound to the dataset
 version, ID column and row count it asked about; only that token is accepted (ADR013 section 6.3), so
 a confirmation never lands on data the user was not asked about (a re-upload in between, or a
-client that always sends one).
+client that always sends one). The same grain declaration is stored when the user answers "Is
+each row one patient?" at upload (``core.patient_rows``), so either answer serves both paths.
 """
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import Any
 
 import structlog
 
-from clinical_analytics.contracts.declarations import Declarations, DeclarationStore, GrainDeclaration
+from clinical_analytics.contracts.declarations import (
+    Declarations,
+    DeclarationStore,
+    GrainDeclaration,
+    confirmation_token,
+)
 from clinical_analytics.contracts.errors import ContractError, ContractStoreError
 from clinical_analytics.contracts.service import read_saved_contract
 from clinical_analytics.contracts.store import contract_path
@@ -41,7 +46,6 @@ NO_CONTRACT = (
 )
 NOT_STORED = "This dataset is not stored as Parquet yet, so SQL cannot run on it. Upload it again."
 DECLARATIONS_UNREADABLE = "This dataset's saved confirmations can't be read or saved, so SQL can't run on it now."
-CONFIRMATION_TOKEN_CHARS = 32
 CONFIRMATION_STALE = (
     "The dataset changed after you were asked to confirm one row per patient. "
     "Check that each row is still one patient, then confirm again."
@@ -107,13 +111,6 @@ def run_governed_sql(
                 raise SqlRefusedError(DECLARATIONS_UNREADABLE) from store_error
             log.info("governed_sql_patient_grain_confirmed", dataset_version=version)
             return answer_query(query, sandbox, catalog, confirmed_patient_rows=e.rows)
-
-
-def confirmation_token(version: str, key: str | None, rows: int) -> str:
-    """Names what a one-row-per-patient confirmation is about: this dataset version, its ID
-    column (or none) and its row count. Opaque: the row count is not shown."""
-    digest = hashlib.sha256(f"{version}\x00{key or ''}\x00{rows}".encode()).hexdigest()
-    return digest[:CONFIRMATION_TOKEN_CHARS]
 
 
 def _confirmed_rows(declared: Declarations, catalog: SqlCatalog) -> int | None:

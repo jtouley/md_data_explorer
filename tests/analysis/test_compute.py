@@ -462,8 +462,9 @@ class TestComputePredictorAnalysis:
                 "age": [25 + i for i in range(0, 50, 5)]
                 + [27 + i for i in range(0, 50, 5)]
                 + [29 + i for i in range(0, 50, 5)],
-                # Not a linear function of age (collinear predictors cannot be estimated separately)
-                "score": [40, 10, 70, 20, 90, 30, 60, 100, 50, 80] * 3,
+                # Not a linear function of age (collinear predictors cannot be estimated separately);
+                # one value per patient, so a measurement, not 10 groups of 3 patients
+                "score": [v + i for i, v in enumerate([40, 10, 70, 20, 90, 30, 60, 100, 50, 80] * 3)],
             }
         )
 
@@ -965,10 +966,11 @@ class TestComputeMissingAndDegenerateInputs:
 
     @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "neg_inf"])
     def test_compute_comparison_nonFiniteOutcome_excludesAndCountsRow(self, bad, sample_context_compare):
-        # Arrange: 10 finite values per group plus one non-finite value in group A
+        # Arrange: 10 finite values per group plus one non-finite value in group A; every value
+        # held by one patient, so the score is a measurement (no table of counts)
         df = pl.DataFrame(
             {
-                "score": [float(v) for v in range(1, 11)] + [float(v) for v in range(5, 15)] + [bad],
+                "score": [float(v) for v in range(1, 11)] + [v + 0.5 for v in range(5, 15)] + [bad],
                 "category": ["A"] * 10 + ["B"] * 10 + ["A"],
             }
         )
@@ -978,7 +980,7 @@ class TestComputeMissingAndDegenerateInputs:
 
         # Assert
         assert (result["n_used"], result["n_excluded"]) == (20, 1)
-        assert result["group_means"] == pytest.approx({"A": 5.5, "B": 9.5})
+        assert result["group_means"] == pytest.approx({"A": 5.5, "B": 10.0})
         assert np.isfinite(result["p_value"])
 
     @pytest.mark.parametrize("bad", [float("nan"), float("inf")], ids=["nan", "inf"])
@@ -1122,8 +1124,9 @@ class TestComputeDegenerateGroupsReview:
         assert "p_value" not in result
 
     def test_compute_comparison_smallRealSpreadWelch_isNotRefused(self, sample_context_compare):
-        # Arrange: spread of 0.01 on values near 5 is real variation, not float noise
-        df = pl.DataFrame({"score": [5.0, 5.01] * 5 + [6.0, 6.01] * 5, "category": ["A"] * 10 + ["B"] * 10})
+        # Arrange: spread of 0.01 on values near 5 is real variation, not float noise (11 patients
+        # at each value, so the value x group cells are not small)
+        df = pl.DataFrame({"score": [5.0, 5.01] * 11 + [6.0, 6.01] * 11, "category": ["A"] * 22 + ["B"] * 22})
 
         # Act
         result = compute_comparison_analysis(df, sample_context_compare)

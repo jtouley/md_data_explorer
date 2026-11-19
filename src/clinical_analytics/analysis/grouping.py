@@ -83,6 +83,53 @@ def grouping_problem(column: str, levels: int) -> str | None:
     return None
 
 
+# The share of patients a column may hold outside its MAX_GROUP_LEVELS most common values and
+# still behave like categories. A 0/1 exposure with 21 patients at 21 odd values (0.37, 0.52,
+# ...) beside 979 at 0 or 1 has 23 values, but a correlation, mean or odds ratio of it is that of
+# the 0/1 table up to a few patients, so with the margins it gives a small cell back nearly
+# exactly. A measurement spreads well past 5% of patients over values beyond its 20 most common.
+MAX_STRAY_SHARE: Final = 0.05
+
+
+def behaves_like_categories(sizes: Mapping[object, object]) -> bool:
+    """Whether a column with these patients per value (``{value: patients}``, each value present)
+    behaves like categories, so a statistic of it is a statistic of its table of counts.
+
+    One rule for a model's predictor, a compared outcome and a correlated column. A column
+    behaves like categories when it has at most ``MAX_GROUP_LEVELS`` values, or when all but
+    ``MAX_STRAY_SHARE`` of its patients hold one of its ``MAX_GROUP_LEVELS`` most common values
+    (a few stray values do not make a coded column a measurement). Its table is then counted
+    over every value, stray ones included, and checked by ``is_small_level``.
+
+    Why up to ``MAX_GROUP_LEVELS`` and not two: a column with that few values can be cross-
+    tabulated (``grouping_problem``), and the crosstab shows every cell but the small ones and
+    their complements. A group's mean, a slope's odds ratio or r is one more linear equation in
+    those cells (a mean is the sum of value x cell over n), which with the line totals solves
+    the hidden ones: a dose of 0, 0.5 or 1 is three groups of patients however it is stored.
+
+    A column with more values, spread over more patients, is a measurement and rests on no
+    table (``NO_COUNT_TABLE``): it cannot be cross-tabulated, and one equation does not pin its
+    many cells. So is a column of three or more values where most patients hold a value nobody
+    else has (12 patients, 12 blood pressures): its crosstab hides every cell and folds every
+    label, so there is nothing for one equation to complete, and the small-group rules for
+    sizes, means and medians already cover each patient's own value. Two values are always
+    categories, as before. A size that is not a positive count cannot be weighed, so the column
+    is then treated as categories (fail closed: its table is counted and checked).
+    """
+    if len(sizes) <= 2 or not all(_is_count(n) for n in sizes.values()):
+        return True
+    counts = sorted((int(n) for n in sizes.values() if isinstance(n, int | np.integer)), reverse=True)
+    total = sum(counts)
+    if 2 * sum(1 for n in counts if n == 1) > total:
+        return False
+    return len(counts) <= MAX_GROUP_LEVELS or sum(counts[MAX_GROUP_LEVELS:]) <= MAX_STRAY_SHARE * total
+
+
+def _is_count(value: object) -> bool:
+    """A positive patient count (a present value has at least one patient)."""
+    return isinstance(value, int | np.integer) and not isinstance(value, bool) and int(value) > 0
+
+
 def is_small_level(count: object) -> bool:
     """A level whose own patient count must not be shown under its label (1..threshold-1).
 
@@ -165,8 +212,9 @@ UNRECORDED_CELLS_TEST_REFUSAL: Final = (
     "A significance test or correlation isn't shown because the sizes of the groups it rests on weren't "
     "recorded; ask again to recompute."
 )
-# ``table_min_cell`` of a statistic that rests on no table of counts (a correlation of two
-# measurements). Only compute records it; any other value that is not a count is withheld.
+# ``table_min_cell`` of a statistic that rests on no table of counts (a correlation with a
+# measurement, or group means of a measured outcome: neither column behaves like categories).
+# Only compute records it; any other value that is not a count is withheld.
 NO_COUNT_TABLE: Final = "no_count_table"
 
 
@@ -179,8 +227,9 @@ def table_statistic_refusal(min_cell: object, *, may_rest_on_no_table: bool = Fa
     with the same ``is_small_level`` rule for a count. ``min_cell``: the fewest patients in any
     non-empty cell of the tested table, as compute records it (``table_min_cell``).
     ``NO_COUNT_TABLE`` says the statistic rests on no table; it is accepted only with
-    ``may_rest_on_no_table`` (a correlation, which may be of two measurements), never for a test
-    of a table, so a stray marker cannot let a test through.
+    ``may_rest_on_no_table`` (a correlation, or a comparison of group means, either of which may
+    be of a measurement), never for a test of a table, so a stray marker cannot let a test
+    through.
     Fail closed:
 
     * None (not recorded), or ``NO_COUNT_TABLE`` where a table is required:

@@ -83,6 +83,8 @@ _EXPORT_NOTES_START: Final = re.compile(rb'(?m)^[ \t]*"?---"?[ \t]*\r?$')
 # CDC WONDER's first column: "Notes". A row whose Notes cell is "Total" is a subtotal of the rows
 # above it; kept, it would be counted twice in every sum or count.
 EXPORT_NOTES_COLUMN: Final = "notes"
+# StagedTable.source_format (and upload metadata SOURCE_FORMAT_KEY) for a CDC WONDER export.
+CDC_WONDER_FORMAT: Final = "cdc_wonder"
 EXPORT_TOTAL_LABEL: Final = "total"
 
 # Column separator by file extension (``.gz`` stripped first). Text tables in a ZIP use the same.
@@ -240,6 +242,8 @@ class StagedTable:
     # sentences for the user about rows left out of the data (subtotal rows).
     export_notes: str = ""
     table_notes: tuple[str, ...] = ()
+    # The published export the file was read as ("cdc_wonder"), or "" for any other file.
+    source_format: str = ""
 
 
 def is_id_column_name(name: str) -> bool:
@@ -583,7 +587,13 @@ def read_csv_typed(file_bytes: bytes, separator: str = ",") -> StagedTable:
             f"{totals} subtotal row{'s' if totals != 1 else ''} (Notes: Total) "
             f"{'were' if totals != 1 else 'was'} left out, so no row is counted twice.",
         )
-    return replace(staged, notes=(*staged.notes, *notes), export_notes=export_notes, table_notes=table_notes)
+    return replace(
+        staged,
+        notes=(*staged.notes, *notes),
+        export_notes=export_notes,
+        table_notes=table_notes,
+        source_format=CDC_WONDER_FORMAT if is_notes_export(file_bytes, separator) else "",
+    )
 
 
 def is_notes_export(file_bytes: bytes, separator: str) -> bool:

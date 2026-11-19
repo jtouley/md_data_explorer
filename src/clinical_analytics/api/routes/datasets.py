@@ -17,7 +17,7 @@ from typing import Annotated, Any, Literal
 import polars as pl
 import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -31,7 +31,13 @@ from clinical_analytics.api.dependencies import (
 from clinical_analytics.api.models import database as db_models
 from clinical_analytics.api.routes.queries import forget_query_service
 from clinical_analytics.contracts.builder import logical_type
-from clinical_analytics.contracts.errors import ContractDamagedError, ContractError
+from clinical_analytics.contracts.declarations import CONFIRMATION_TOKEN_CHARS, Declarations, FileDeclarationStore
+from clinical_analytics.contracts.errors import (
+    ContractDamagedError,
+    ContractError,
+    ContractStoreError,
+    InvalidDeclarationKeyError,
+)
 from clinical_analytics.contracts.quality import QualityCheckResult, QualityNotRun, QualityReport
 from clinical_analytics.contracts.service import check_upload
 from clinical_analytics.contracts.store import latest_report
@@ -402,6 +408,23 @@ def get_dataset_quality(dataset_id: str) -> QualityReport:
 # ============================================================================
 
 
+class OneRowPerPatientQuestion(BaseModel):
+    """ "Is each row one patient?", asked once after upload (``core.patient_rows``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["pending"] = Field(
+        "pending", description="Not answered yet: until it is, answers count rows, not patients"
+    )
+    confirmation: str = Field(
+        ...,
+        description=(
+            "Send back with the answer to POST /api/datasets/{upload_id}/one-row-per-patient. "
+            "Bound to this dataset version and row count: refused after a re-upload"
+        ),
+    )
+
+
 class DatasetUploadResponse(BaseModel):
     """Response after a successful dataset upload."""
 
@@ -441,7 +464,16 @@ class DatasetUploadResponse(BaseModel):
         default="",
         description=(
             "Set when no column identifies a patient: what tells the rows apart, that answers count "
-            "rows, not patients, and how to get patient counts. Empty when patient_id names patients"
+            "rows, not patients, and how to get patient counts. Empty when patient_id names patients, "
+            "or the user confirmed that each row is one patient"
+        ),
+    )
+    one_row_per_patient: OneRowPerPatientQuestion | None = Field(
+        None,
+        description=(
+            "Set when the user should be asked whether each row is one patient: a column unique on "
+            "every row (or nothing) tells rows apart, none is named as a patient ID, and no ID-like "
+            "column repeats. Null when not asked (IDs name patients, IDs repeat) or already answered yes"
         ),
     )
 
@@ -458,11 +490,34 @@ def _upload_type_notes(storage: UserDatasetStorage, upload_id: str) -> list[str]
     )
 
 
-def _upload_unit_note(storage: UserDatasetStorage, upload_id: str) -> str:
-    """Rows, not patients: said at upload when the stored patient_id is a row key ("" otherwise)."""
-    from clinical_analytics.core.identifier_rules import row_key_note
+def _upload_declarations(storage: UserDatasetStorage, upload_id: str) -> Declarations:
+    """The upload's stored declarations; none when they can't be read (logged): the question is
+    then asked, and answers count rows, as the question path reads unreadable declarations."""
+    try:
+        return FileDeclarationStore(storage.upload_dir.parent).load(upload_id)
+    except (ContractStoreError, InvalidDeclarationKeyError) as e:
+        logger.error("dataset_upload_declarations_unreadable", upload_id=upload_id, **error_fields(e))
+        return Declarations()
 
-    return row_key_note(storage.get_upload_metadata(upload_id) or {})
+
+def _upload_unit_note(storage: UserDatasetStorage, upload_id: str, declarations: Declarations) -> str:
+    """Rows, not patients: said at upload when the stored patient_id is a row key ("" otherwise,
+    and "" once the user confirmed this version's rows are one per patient)."""
+    from clinical_analytics.core.identifier_rules import row_key_note
+    from clinical_analytics.core.patient_rows import confirmed_patient_rows
+
+    metadata = storage.get_upload_metadata(upload_id) or {}
+    return "" if confirmed_patient_rows(metadata, declarations) else row_key_note(metadata)
+
+
+def _upload_patient_rows_question(
+    storage: UserDatasetStorage, upload_id: str, declarations: Declarations
+) -> OneRowPerPatientQuestion | None:
+    """ "Is each row one patient?" with its token, or None when not asked or already answered yes."""
+    from clinical_analytics.core.patient_rows import pending_token
+
+    token = pending_token(storage.get_upload_metadata(upload_id) or {}, declarations)
+    return None if token is None else OneRowPerPatientQuestion(status="pending", confirmation=token)
 
 
 def _upload_sheet_note(storage: UserDatasetStorage, upload_id: str) -> str:
@@ -535,6 +590,7 @@ def _upload_response(
 ) -> DatasetUploadResponse:
     """ "ready" only when no error-level check failed; else "needs_review", naming the checks."""
     failed = _failed_error_checks(quality)
+    declarations = _upload_declarations(storage, upload_id)
     return DatasetUploadResponse(
         upload_id=upload_id,
         dataset_name=dataset_name,
@@ -545,8 +601,77 @@ def _upload_response(
         type_notes=_upload_type_notes(storage, upload_id),
         cohort_notes=_upload_cohort_notes(storage, upload_id),
         sheet_note=_upload_sheet_note(storage, upload_id),
-        unit_note=_upload_unit_note(storage, upload_id),
+        unit_note=_upload_unit_note(storage, upload_id, declarations),
+        one_row_per_patient=_upload_patient_rows_question(storage, upload_id, declarations),
     )
+
+
+class OneRowPerPatientAnswer(BaseModel):
+    """The user's answer to "Is each row one patient?"."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    confirmation: str = Field(
+        ...,
+        min_length=CONFIRMATION_TOKEN_CHARS,
+        max_length=CONFIRMATION_TOKEN_CHARS,
+        pattern=r"^[0-9a-f]+$",
+        description="The upload response's one_row_per_patient.confirmation",
+    )
+    one_row_per_patient: StrictBool = Field(
+        ..., description="true: each row is one patient. false: rows are visits, tests or other records"
+    )
+
+
+class OneRowPerPatientResult(BaseModel):
+    """What answers on this dataset version count after the answer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_id: str
+    counts: Literal["patients", "rows"]
+
+
+@router.post("/datasets/{dataset_id}/one-row-per-patient", response_model=OneRowPerPatientResult)
+def answer_one_row_per_patient(dataset_id: str, answer: OneRowPerPatientAnswer) -> OneRowPerPatientResult:
+    """Record the answer to "Is each row one patient?" for the dataset's current version.
+
+    Stored as that version's one-row-per-patient grain (``core.patient_rows``), which questions
+    and governed SQL both read. Held under the dataset's files lock, so a delete cannot purge
+    the declarations while the answer is written.
+
+    Raises:
+        HTTPException: 400 for a bad id, 404 when the dataset does not exist, 409 when the
+            question is not asked on this version or the token is not this version's (nothing is
+            stored), or the dataset is being deleted; 500 when the answer cannot be saved.
+    """
+    from clinical_analytics.core.patient_rows import PatientRowsError, record_answer
+
+    try:
+        validate_dataset_id(dataset_id)
+    except InvalidDatasetIdError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    log = logger.bind(dataset_id=dataset_id)
+    storage = UserDatasetStorage()
+    with dataset_files_lock(dataset_id):
+        reject_if_deleting(dataset_id)
+        metadata = storage.get_upload_metadata(dataset_id)
+        if not metadata:
+            raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
+        try:
+            counts = record_answer(
+                dataset_id,
+                metadata,
+                FileDeclarationStore(storage.upload_dir.parent),
+                confirmation=answer.confirmation,
+                one_row_per_patient=answer.one_row_per_patient,
+            )
+        except PatientRowsError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except (ContractStoreError, InvalidDeclarationKeyError) as e:
+            log.error("patient_rows_answer_not_saved", **error_fields(e))
+            raise HTTPException(status_code=500, detail="The answer couldn’t be stored. Try again.") from e
+    return OneRowPerPatientResult(dataset_id=dataset_id, counts=counts)
 
 
 @router.post("/datasets/sample", response_model=DatasetUploadResponse)

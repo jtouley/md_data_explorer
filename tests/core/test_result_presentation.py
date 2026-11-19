@@ -23,6 +23,7 @@ from clinical_analytics.core.result_presentation import (
 T_TEST = {
     "type": "comparison",
     "test_type": "t_test",
+    "table_min_cell": NO_COUNT_TABLE,  # a measured outcome: compute records it
     "outcome_col": "ldl",
     "group_col": "treatment",
     "groups": ["drug", "placebo"],
@@ -56,6 +57,7 @@ class TestPresentAnalysisClaims:
                 {
                     "type": "comparison",
                     "test_type": "anova",
+                    "table_min_cell": NO_COUNT_TABLE,  # a measured outcome: compute records it
                     "outcome_col": "ldl",
                     "group_col": "site",
                     "n_groups": 3,
@@ -838,6 +840,7 @@ class TestSmallGroupStatistics:
         analysis = {
             "type": "comparison",
             "test_type": "anova",
+            "table_min_cell": NO_COUNT_TABLE,  # a measured outcome: compute records it
             "outcome_col": "ldl",
             "group_col": "site",
             "groups": ["a", "b", "c"],
@@ -999,6 +1002,7 @@ def _anova(cells: tuple[int, ...]) -> dict[str, Any]:
     return {
         "type": "comparison",
         "test_type": "anova",
+        "table_min_cell": NO_COUNT_TABLE,  # a measured outcome: compute records it
         "outcome_col": "ldl",
         "group_col": "site",
         "groups": ["a", "b", "c"],
@@ -1197,6 +1201,7 @@ class TestMissingCountsFailClosed:
         analysis = {
             "type": "comparison",
             "test_type": "anova",
+            "table_min_cell": NO_COUNT_TABLE,  # a measured outcome: compute records it
             "outcome_col": "ldl",
             "group_col": "site",
             "groups": ["a", "b", "c"],
