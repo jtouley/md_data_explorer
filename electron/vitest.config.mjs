@@ -14,6 +14,7 @@ export default defineConfig({
         'src/backendSidecar.js',
         'src/startupWindow.js',
         'src/confirmHold.js',
+        'src/datasetLinkPanel.js',
         'src/enrichmentPanel.js',
         'src/icons.js',
         'src/layoutControls.js',

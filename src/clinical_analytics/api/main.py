@@ -25,7 +25,7 @@ from clinical_analytics.api import health_llm
 from clinical_analytics.api.db.database import create_tables
 
 # Import routes
-from clinical_analytics.api.routes import datasets, enrichments, queries, sessions
+from clinical_analytics.api.routes import dataset_url, datasets, enrichments, queries, sessions
 from clinical_analytics.api.security import (
     NONCE_PATTERN,
     BearerTokenMiddleware,
@@ -217,6 +217,7 @@ async def health_check(
 # Register API routes
 app.include_router(sessions.router, prefix="/api", tags=["sessions"])
 app.include_router(datasets.router, prefix="/api", tags=["datasets"])
+app.include_router(dataset_url.router, prefix="/api", tags=["datasets"])
 app.include_router(queries.router, prefix="/api", tags=["queries"])
 app.include_router(enrichments.router, prefix="/api", tags=["enrichments"])
 

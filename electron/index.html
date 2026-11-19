@@ -51,6 +51,9 @@
           </div>
           <div id="dataset-menu" class="menu hidden" role="group" aria-label="Cohort actions" data-testid="dataset-menu">
             <div id="upload-area" class="menu-upload" data-testid="upload-area"></div>
+            <button type="button" id="load-from-link" class="menu-item" data-testid="load-from-link-btn" hidden>
+              Load from a link…
+            </button>
             <button type="button" id="open-dataset-panel" class="menu-item" data-testid="open-dataset-panel" disabled>
               Preview and details
             </button>
@@ -73,6 +76,7 @@
             Open cohort details
           </button>
           <div id="dataset-delete-area" class="dataset-delete-area hidden"></div>
+          <div id="dataset-link-area" class="dataset-link-area hidden"></div>
         </div>
 
         <button type="button" id="new-chat-btn" class="btn-new-chat" data-testid="new-chat-btn" disabled>
@@ -185,6 +189,14 @@
               <tbody id="dataset-preview-body"></tbody>
             </table>
           </div>
+        </section>
+
+        <section id="dataset-source-section" class="enrichment-section hidden" data-testid="dataset-source-section" aria-labelledby="dataset-source-title">
+          <div class="panel-section-header">
+            <h3 id="dataset-source-title" class="panel-section-title">Source</h3>
+            <button type="button" id="copy-dataset-source" class="btn btn-secondary btn-sm" data-testid="copy-dataset-source">Copy for methods</button>
+          </div>
+          <p id="dataset-source-text" class="panel-hint dataset-source-text" data-testid="dataset-source-text"></p>
         </section>
 
         <section id="data-check-section" class="enrichment-section hidden" data-testid="data-check-section" aria-labelledby="data-check-title">

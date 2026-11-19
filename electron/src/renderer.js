@@ -36,6 +36,12 @@ import { STOPPED, createStopController } from './stopControl.js';
 import { bindBannerDismiss, bindSidebarToggle } from './layoutControls.js';
 import { closeDatasetDeleteConfirm, renderDatasetDeleteConfirm } from './datasetDeletePanel.js';
 import {
+  closeDatasetLinkForm,
+  normalizeSource,
+  renderDatasetLinkForm,
+  sourceStatusNote,
+} from './datasetLinkPanel.js';
+import {
   ensureServerSession,
   normalizeSessionListResponse,
   renderSessionList,
@@ -79,6 +85,11 @@ const elements = {
   refreshDatasetsBtn: document.getElementById('refresh-datasets'),
   deleteDatasetBtn: document.getElementById('delete-dataset'),
   datasetDeleteArea: document.getElementById('dataset-delete-area'),
+  loadFromLinkBtn: document.getElementById('load-from-link'),
+  datasetLinkArea: document.getElementById('dataset-link-area'),
+  datasetSourceSection: document.getElementById('dataset-source-section'),
+  datasetSourceText: document.getElementById('dataset-source-text'),
+  copyDatasetSourceBtn: document.getElementById('copy-dataset-source'),
   datasetPanel: document.getElementById('dataset-panel'),
   datasetPanelTitle: document.getElementById('dataset-panel-title'),
   closeDatasetPanelBtn: document.getElementById('close-dataset-panel'),
@@ -734,6 +745,12 @@ function renderWelcome(mode) {
       );
       actions.appendChild(up);
     }
+    if (typeof window.clinicalAPI?.loadDatasetFromUrl === 'function') {
+      const link = el('button', 'btn btn-secondary', 'Load from a link…');
+      link.type = 'button';
+      link.addEventListener('click', () => openDatasetLinkForm(link));
+      actions.appendChild(link);
+    }
     if (typeof window.clinicalAPI?.loadSampleDataset === 'function') {
       const sample = el('button', 'btn btn-secondary', 'Use the sample cohort');
       sample.type = 'button';
@@ -858,6 +875,7 @@ async function loadDatasetOverview() {
     datasetOverviewSummary.textContent = '';
     datasetMeta?.classList.add('hidden');
     renderDatasetPreview([], []);
+    renderDatasetSource(null);
     void loadDataCheck(null);
     return;
   }
@@ -889,6 +907,7 @@ async function loadDatasetOverview() {
 
     datasetOverviewSummary.textContent = `${rowCount} rows · ${columns.length} variables`;
     renderDatasetPreview(columns, rows);
+    renderDatasetSource(detail?.metadata?.source);
     void loadDataCheck(datasetId);
     if (datasetMeta) {
       datasetMeta.textContent = `${rowCount} rows · ${columns.length} variables`;
@@ -911,6 +930,7 @@ async function loadDatasetOverview() {
       renderWelcome('dataset');
     }
   } catch (error) {
+    renderDatasetSource(null);
     datasetOverviewSummary.textContent = `Couldn’t load this cohort’s first rows. ${plainFailureMessage(error?.message, { context: 'panel' })}`;
     renderDatasetPreview([], []);
   }
@@ -1825,6 +1845,92 @@ async function handleFileUpload(file) {
 }
 
 // ============================================================================
+// Load from a link (public data)
+// ============================================================================
+
+/**
+ * Show where a cohort loaded from a link came from, with its methods sentence (or hide the
+ * section for uploaded files).
+ * @param {unknown} raw `source` from the dataset's metadata
+ */
+function renderDatasetSource(raw) {
+  const { datasetSourceSection, datasetSourceText } = elements;
+  if (!datasetSourceSection || !datasetSourceText) return;
+  const source = normalizeSource(raw);
+  datasetSourceSection.classList.toggle('hidden', !source);
+  datasetSourceText.textContent = source ? source.methodsText : '';
+}
+
+async function handleCopyDatasetSource() {
+  const { copyDatasetSourceBtn, datasetSourceText } = elements;
+  const text = datasetSourceText?.textContent ?? '';
+  if (!copyDatasetSourceBtn || !text) return;
+  try {
+    await copyText(text);
+    copyDatasetSourceBtn.textContent = 'Copied';
+    announce('Source sentence copied.');
+  } catch {
+    copyDatasetSourceBtn.textContent = 'Couldn’t copy';
+    announce('Couldn’t copy. Select the sentence and copy it instead.');
+  }
+  window.setTimeout(() => {
+    copyDatasetSourceBtn.textContent = 'Copy for methods';
+  }, 2000);
+}
+
+/**
+ * Open the in-page form for a link to a public data file, below the cohort switcher.
+ * @param {HTMLElement | null} [returnFocusTo] where focus goes back to on Cancel
+ */
+function openDatasetLinkForm(returnFocusTo) {
+  const { datasetLinkArea, datasetMenuBtn } = elements;
+  if (!datasetLinkArea || typeof window.clinicalAPI?.loadDatasetFromUrl !== 'function') return;
+  setDatasetMenuOpen(false);
+  const focusBack = returnFocusTo?.isConnected ? returnFocusTo : datasetMenuBtn;
+  const close = () => {
+    closeDatasetLinkForm(datasetLinkArea);
+    focusBack?.focus();
+  };
+  const form = renderDatasetLinkForm(datasetLinkArea, {
+    onCancel: close,
+    onSubmit: async (url, name) => {
+      form.setBusy(true);
+      setDatasetStatus('Downloading the data file…');
+      const before = state.currentDatasetId;
+      try {
+        const raw = await window.clinicalAPI.loadDatasetFromUrl(url, name);
+        const result = normalizeUploadResponse(raw);
+        if (result.status !== 'ready' || !result.upload_id) {
+          throw new Error(result.message || '');
+        }
+        const source = normalizeSource(raw?.source);
+        closeDatasetLinkForm(datasetLinkArea);
+        const headline = uploadStatusText(
+          readyHeadline(result.dataset_name),
+          dataCheckStatusNote(result.quality)
+        );
+        setDatasetStatus(source ? `${headline} ${sourceStatusNote(source)}` : headline, 'ok', {
+          showDetails: true,
+        });
+        await selectNewDataset(result.upload_id);
+        if (state.currentDatasetId && state.currentDatasetId !== before) {
+          elements.queryInput?.focus();
+        } else {
+          datasetMenuBtn?.focus();
+        }
+      } catch (error) {
+        console.error('Load from link failed:', error?.message);
+        form.setBusy(false);
+        setDatasetStatus('');
+        form.setError(
+          `Couldn’t load that link. ${plainFailureMessage(error?.message, { context: 'upload' })}`
+        );
+      }
+    },
+  });
+}
+
+// ============================================================================
 // Appearance (System / Light / Dark)
 // ============================================================================
 
@@ -1984,6 +2090,12 @@ function bindEvents() {
       setDatasetMenuOpen(false);
     }
   });
+
+  if (typeof window.clinicalAPI?.loadDatasetFromUrl === 'function' && elements.loadFromLinkBtn) {
+    elements.loadFromLinkBtn.hidden = false;
+    elements.loadFromLinkBtn.addEventListener('click', () => openDatasetLinkForm(datasetMenuBtn));
+  }
+  elements.copyDatasetSourceBtn?.addEventListener('click', () => void handleCopyDatasetSource());
 
   openDatasetPanelBtn?.addEventListener('click', () => {
     setDatasetMenuOpen(false);
