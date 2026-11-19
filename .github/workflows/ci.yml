@@ -150,11 +150,13 @@ jobs:
     name: Acceptance on COVID-MS, no model
     runs-on: ubuntu-latest
     needs: quality
-    # Normal run: about 5 minutes of setup, under 2 of questions, under 1 of upload check. With
-    # ACCEPT_TIMEOUT=120 a hung question costs at most 240 s (the harness waits once more, then
-    # later questions check it without waiting), so 30 minutes still leaves room for a slow app
-    # start (300 s health limit) in each of the two steps and ends with the table written.
-    timeout-minutes: 30
+    # Normal run: about 5 minutes of setup, under 1 of questions (each takes 0.5-2 s without a
+    # model), under 1 of upload check. Worst case, so the job ends with its table instead of
+    # being cancelled: every question slow but finishing costs 2 x ACCEPT_TIMEOUT (the harness
+    # waits once more for a timed-out query; a query still running after that makes later
+    # questions ERROR at once), so 15 questions x 120 s = 30 minutes, plus 5 of setup and two
+    # app starts (300 s health limit each). Raise this with the question count.
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -168,7 +170,7 @@ jobs:
       # baseline (one aggregate count). The table goes to the job summary and an artifact.
       - name: Ask the COVID-MS questions and check the gate
         run: >-
-          make accept DATASET=covid_ms MODEL=none ACCEPT_TIMEOUT=120
+          make accept DATASET=covid_ms MODEL=none ACCEPT_TIMEOUT=60
           ACCEPT_ARGS="--label ci --fail-on WRONG,LEAK,ERROR
           --baseline tests/eval/corpus/baselines/covid_ms.none.json
           --results-dir $RUNNER_TEMP/accept-results --summary $GITHUB_STEP_SUMMARY"

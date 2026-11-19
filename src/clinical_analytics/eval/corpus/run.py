@@ -618,6 +618,18 @@ def _server_note(code: int | None) -> str:
     return "" if code in (None, -15) else f" · **API process exited with code {code} during the run**"
 
 
+# A whole number 1-10 not part of a decimal or a word: in a grade reason it can be a count of
+# 1-10 patients (the oracle's expected value, or a value the app showed in a LEAK).
+_SMALL_NUMBER = re.compile(r"(?<![\w.])(?:10|[1-9])(?![\w.])")
+
+
+def public_reason(reason: str) -> str:
+    """A grade reason safe for the table that is printed and published (CI log, job summary,
+    artifact): every whole number 1-10 becomes ``1-10``. results.json keeps the full reason,
+    and it never leaves the machine."""
+    return _SMALL_NUMBER.sub("1-10", reason)
+
+
 def markdown(report: RunReport) -> str:
     counts = report.counts()
     latencies = [result.latency_s for result in report.results]
@@ -639,7 +651,7 @@ def markdown(report: RunReport) -> str:
         "|---|---|---|---|---|---|---|",
     ]
     for result in report.results:
-        reason = result.reason.replace("|", "\\|").replace("\n", " ")[:180]
+        reason = public_reason(result.reason).replace("|", "\\|").replace("\n", " ")[:180]
         lines.append(
             f"| {result.id} | {result.grade} | {'LEAK' if result.leak else ''} | {result.tier or '-'} | "
             f"{result.llm} | {result.latency_s:.1f} | {reason} |"

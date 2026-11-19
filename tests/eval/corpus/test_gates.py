@@ -30,6 +30,7 @@ from clinical_analytics.eval.corpus.run import (
     main,
     parse_fail_on,
     positive_seconds,
+    public_reason,
     table_shape,
 )
 
@@ -465,3 +466,43 @@ class TestApiRequest:
         # Act / Assert
         with pytest.raises(AcceptanceError, match=match):
             api.request("GET", "/api/datasets/x")
+
+
+class TestPublicReason:
+    @pytest.mark.parametrize(
+        ("reason", "expected"),
+        [
+            pytest.param("shown 5, expected 4", "shown 1-10, expected 1-10", id="small_counts_masked"),
+            pytest.param("'Female': shown 10, expected 9", "'Female': shown 1-10, expected 1-10", id="ten_masked"),
+            pytest.param(
+                "LEAK label of a group of 3 patients shown: RRMS; count matches",
+                "LEAK label of a group of 1-10 patients shown: RRMS; count matches",
+                id="leak_count_masked",
+            ),
+            pytest.param("shown 1141, expected 1140", "shown 1141, expected 1140", id="large_counts_kept"),
+            pytest.param("shown 0, expected 11", "shown 0, expected 11", id="zero_and_eleven_kept"),
+            pytest.param("p=0.03 shown, rate 4.5", "p=0.03 shown, rate 4.5", id="decimals_kept"),
+            pytest.param("'19' and q7 and covid_ms-or-012", "'19' and q7 and covid_ms-or-012", id="words_kept"),
+            pytest.param("", "", id="empty"),
+        ],
+    )
+    def test_public_reason_numbers_masksOnlyWholeNumbersOneToTen(self, reason: str, expected: str) -> None:
+        # Act
+        shown = public_reason(reason)
+
+        # Assert
+        assert shown == expected
+
+    def test_markdown_wrongCountReason_tableHidesSmallExpectedValue(self) -> None:
+        # Arrange
+        report = RunReport("covid_ms", "none", "test", "abc", "now", {})
+        result = _result("WRONG")
+        result.reason = "shown 6, expected 7"
+        report.results.append(result)
+
+        # Act
+        text = run_module.markdown(report)
+
+        # Assert
+        assert "shown 1-10, expected 1-10" in text
+        assert "expected 7" not in text
