@@ -429,6 +429,13 @@ class DatasetUploadResponse(BaseModel):
         default="",
         description="Excel uploads: the sheet that was read and the other sheets with data that were not",
     )
+    unit_note: str = Field(
+        default="",
+        description=(
+            "Set when no column identifies a patient: what tells the rows apart, that answers count "
+            "rows, not patients, and how to get patient counts. Empty when patient_id names patients"
+        ),
+    )
 
 
 def _upload_type_notes(storage: UserDatasetStorage, upload_id: str) -> list[str]:
@@ -441,6 +448,13 @@ def _upload_type_notes(storage: UserDatasetStorage, upload_id: str) -> list[str]
     return describe_column_types(
         metadata.get(COLUMN_TYPES_KEY) or [], metadata.get(COLUMN_UNITS_KEY) or {}, SMALL_CELL_THRESHOLD
     )
+
+
+def _upload_unit_note(storage: UserDatasetStorage, upload_id: str) -> str:
+    """Rows, not patients: said at upload when the stored patient_id is a row key ("" otherwise)."""
+    from clinical_analytics.core.identifier_rules import row_key_note
+
+    return row_key_note(storage.get_upload_metadata(upload_id) or {})
 
 
 def _upload_sheet_note(storage: UserDatasetStorage, upload_id: str) -> str:
@@ -519,6 +533,7 @@ def _upload_response(
         type_notes=_upload_type_notes(storage, upload_id),
         cohort_notes=_upload_cohort_notes(storage, upload_id),
         sheet_note=_upload_sheet_note(storage, upload_id),
+        unit_note=_upload_unit_note(storage, upload_id),
     )
 
 

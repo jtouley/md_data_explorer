@@ -434,3 +434,66 @@ def test_question_compositeRowKey_countsRowsNeverPatients(
     assert result.analysis is not None, result.failure_reason
     assert result.analysis.get("unit") == "rows"
     assert not re.search(r"\bpatients?\b", result.claim or "")
+
+
+def _sepsis_survival_shaped(n: int = 240) -> pl.DataFrame:
+    """Synthetic frame shaped like UCI sepsis_survival's primary cohort: no ID column, four
+    low-cardinality columns, so many rows are identical and no combination is unique."""
+    return pl.DataFrame(
+        {
+            "age_years": [20 + (i * 7) % 70 for i in range(n)],
+            "sex_0male_1female": [i % 2 for i in range(n)],
+            "episode_number": [1 + i % 3 for i in range(n)],
+            "hospital_outcome_1alive_0dead": [0 if i % 9 == 0 else 1 for i in range(n)],
+        }
+    )
+
+
+def test_uploadDataset_sepsisSurvivalShaped_uploadsAndSaysRowsNotPatients(
+    test_client: TestClient, upload: Callable[..., Any]
+) -> None:
+    # Arrange
+    df = _sepsis_survival_shaped()
+    assert df.unique().height < df.height  # no column or combination identifies a row
+
+    # Act
+    response = upload(df, "sepsis_survival")
+    body = response.json()
+    detail = test_client.get(f"/api/datasets/{body['upload_id']}").json()
+
+    # Assert: uploaded with a row number, and the response says plainly that it counts rows
+    assert response.status_code == 200, body
+    assert body["status"] == "ready"
+    assert body["unit_note"].startswith("No column in this file identifies a patient, so each row was numbered")
+    assert "Answers count rows, not patients." in body["unit_note"]
+    assert "row_number" in detail["tables"][0]["columns"]
+    assert detail["tables"][0]["row_count"] == df.height
+
+
+def test_question_sepsisSurvivalShaped_countAnswersInRows(upload: Callable[..., Any]) -> None:
+    # Arrange
+    from clinical_analytics.api import dependencies
+    from clinical_analytics.core.query_service import QueryService
+
+    df = _sepsis_survival_shaped()
+    upload_id = upload(df, "sepsis_rows").json()["upload_id"]
+
+    # Act
+    with dependencies.lease_semantic_layer(upload_id) as lease:
+        result = QueryService(lease.layer).ask("how many patients?", dataset_id=upload_id, dataset_version="v1")
+
+    # Assert: the count is of rows, and the answer never calls them patients
+    assert result.analysis is not None, result.failure_reason
+    assert result.analysis.get("unit") == "rows"
+    assert not re.search(r"\bpatients?\b", result.claim or "")
+
+
+def test_uploadDataset_patientIdColumn_noUnitNote(upload: Callable[..., Any]) -> None:
+    # Arrange
+    df = pl.DataFrame({"patient_id": [f"P{i:03d}" for i in range(200)], "sbp": [110.0 + i % 40 for i in range(200)]})
+
+    # Act
+    body = upload(df, "with_ids").json()
+
+    # Assert
+    assert body["unit_note"] == ""

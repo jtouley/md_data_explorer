@@ -21,6 +21,7 @@ from clinical_analytics.core.identifier_rules import (
     can_identify_patients,
     find_intervals,
     patient_id_is_row_key,
+    row_key_note,
 )
 from clinical_analytics.core.schema_inference import SchemaInferenceEngine
 from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
@@ -240,3 +241,56 @@ def test_patientIdIsRowKey_bySource_rowsUnlessRealPatientId(patient_id_meta: Any
 
     # Act / Assert
     assert patient_id_is_row_key(metadata) is expected
+
+
+@pytest.mark.parametrize(
+    ("patient_id_meta", "expected_start"),
+    [
+        pytest.param(
+            {"patient_id_source": "row_index", "row_number_column": "row_number"},
+            "No column in this file identifies a patient, so each row was numbered (“row_number”).",
+            id="row_index",
+        ),
+        pytest.param(
+            {"patient_id_source": "composite", "patient_id_columns": ["location_name", "sex", "year"]},
+            "No column in this file identifies a patient, so rows are told apart by “location_name”, “sex” and “year”.",
+            id="composite",
+        ),
+        pytest.param(
+            {"patient_id_source": "single_column", "patient_id_columns": ["FIPS"]},
+            "Rows are told apart by “FIPS”, which is not named as a patient ID.",
+            id="copy_not_named_id",
+        ),
+    ],
+)
+def test_rowKeyNote_rowKey_saysRowsNotPatientsAndHowToFix(patient_id_meta: Any, expected_start: str) -> None:
+    # Arrange
+    metadata = {"synthetic_id_metadata": {"patient_id": patient_id_meta}}
+
+    # Act
+    note = row_key_note(metadata)
+
+    # Assert
+    assert note.startswith(expected_start)
+    assert "Answers count rows, not patients." in note
+    assert "add a column with one ID for each patient" in note
+
+
+@pytest.mark.parametrize(
+    "patient_id_meta",
+    [
+        pytest.param({"patient_id_source": "existing"}, id="existing"),
+        pytest.param({"patient_id_source": "single_column", "patient_id_columns": ["MRN"]}, id="copy_of_named_id"),
+        pytest.param({}, id="empty"),
+        pytest.param(None, id="no_metadata"),
+    ],
+)
+def test_rowKeyNote_patientKey_saysNothing(patient_id_meta: Any) -> None:
+    # Arrange
+    metadata = {} if patient_id_meta is None else {"synthetic_id_metadata": {"patient_id": patient_id_meta}}
+
+    # Act
+    note = row_key_note(metadata)
+
+    # Assert
+    assert note == ""

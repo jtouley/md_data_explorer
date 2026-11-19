@@ -15,7 +15,7 @@ const ALLOWED_EXTENSIONS = new Set(['.csv', '.xlsx', '.xls', '.sav']);
 
 /**
  * @param {Record<string, unknown>|null|undefined} raw
- * @returns {{ upload_id: string, dataset_name: string, status: string, message: string, failed_checks: string[], quality: import('./dataCheckPanel.js').DataCheck | null, sheet_note: string }}
+ * @returns {{ upload_id: string, dataset_name: string, status: string, message: string, failed_checks: string[], quality: import('./dataCheckPanel.js').DataCheck | null, sheet_note: string, unit_note: string }}
  */
 export function normalizeUploadResponse(raw) {
   if (!raw || typeof raw !== 'object') {
@@ -27,6 +27,7 @@ export function normalizeUploadResponse(raw) {
       failed_checks: [],
       quality: null,
       sheet_note: '',
+      unit_note: '',
     };
   }
   return {
@@ -40,6 +41,8 @@ export function normalizeUploadResponse(raw) {
     quality: normalizeQuality(raw.quality),
     // Excel: which sheet was read and which were not. Shown at upload, never dropped.
     sheet_note: typeof raw.sheet_note === 'string' ? raw.sheet_note.trim() : '',
+    // No column identifies a patient: answers count rows, not patients. Shown at upload.
+    unit_note: typeof raw.unit_note === 'string' ? raw.unit_note.trim() : '',
   };
 }
 
@@ -55,10 +58,11 @@ export function uploadIsUsable(result) {
 }
 
 /**
- * Status line for an upload: "ready" with the sheet note and the data-check note, or, for
- * 'needs_review', the API's sentence naming the failed check and the next step, then the sheet
- * note. The sheet note (Excel: sheets not read) is shown in both: it is never dropped.
- * @param {{ status: string, message: string, sheet_note?: string }} result
+ * Status line for an upload: "ready" with the unit note, the sheet note and the data-check note,
+ * or, for 'needs_review', the API's sentence naming the failed check and the next step, then the
+ * unit and sheet notes. The unit note (answers count rows, not patients) and the sheet note
+ * (Excel: sheets not read) are shown in both: they are never dropped.
+ * @param {{ status: string, message: string, sheet_note?: string, unit_note?: string }} result
  * @param {string} name cohort or file name
  * @param {string|null} note from dataCheckStatusNote
  * @param {string} [unnamedHeadline] the ready sentence when there is no name
@@ -67,11 +71,16 @@ export function uploadIsUsable(result) {
 export function uploadResultText(result, name, note, unnamedHeadline = readyHeadline('')) {
   const shown = String(name || '').trim();
   if (result.status !== 'needs_review') {
-    return uploadStatusText(shown ? readyHeadline(shown) : unnamedHeadline, result.sheet_note, note);
+    return uploadStatusText(
+      shown ? readyHeadline(shown) : unnamedHeadline,
+      result.unit_note,
+      result.sheet_note,
+      note
+    );
   }
   const headline = shown ? `The cohort “${shown}” needs review.` : 'The cohort needs review.';
   const detail = result.message.trim() || 'A data check failed. Open the cohort details to see it.';
-  return uploadStatusText(`${headline} ${detail}`, result.sheet_note);
+  return uploadStatusText(`${headline} ${detail}`, result.unit_note, result.sheet_note);
 }
 
 /**

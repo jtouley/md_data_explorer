@@ -185,3 +185,34 @@ def patient_id_is_row_key(metadata: Mapping[str, object]) -> bool:
         names = [str(c) for c in columns] if isinstance(columns, list) else []
         return patient_key_by_name(names) is None
     return False
+
+
+def _quoted_list(names: list[str]) -> str:
+    quoted = [f"“{name}”" for name in names]
+    return quoted[0] if len(quoted) == 1 else ", ".join(quoted[:-1]) + f" and {quoted[-1]}"
+
+
+def row_key_note(metadata: Mapping[str, object]) -> str:
+    """The upload note when answers count rows, not patients, or "" when patient_id names patients.
+
+    Said at upload, in plain words, whenever ``patient_id_is_row_key``: what tells the rows apart
+    (a row number, a combination of columns, or a column not named as a patient ID), that every
+    count is a count of rows, and how to get patient counts. Column names only, never values.
+    """
+    if not patient_id_is_row_key(metadata):
+        return ""
+    synthetic = metadata.get("synthetic_id_metadata")
+    info = synthetic.get("patient_id") if isinstance(synthetic, Mapping) else None
+    source = info.get("patient_id_source") if isinstance(info, Mapping) else None
+    raw_columns = info.get("patient_id_columns") if isinstance(info, Mapping) else None
+    columns = [str(c) for c in raw_columns] if isinstance(raw_columns, list) else []
+    if source == "composite" and columns:
+        found = f"No column in this file identifies a patient, so rows are told apart by {_quoted_list(columns)}."
+    elif source == "single_column" and columns:
+        found = f"Rows are told apart by {_quoted_list(columns)}, which is not named as a patient ID."
+    else:
+        found = f"No column in this file identifies a patient, so each row was numbered (“{ROW_NUMBER_COLUMN}”)."
+    return (
+        f"{found} Answers count rows, not patients. To count patients, add a column with one ID for each "
+        "patient, named patient_id, and upload the file again."
+    )

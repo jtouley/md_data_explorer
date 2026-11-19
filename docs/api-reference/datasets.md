@@ -40,6 +40,8 @@ See [Dataset Registry](../architecture/dataset-registry.md) for details.
 - **409** - a dataset with this name already exists. Upload under another name (`dataset_name`), or delete the existing dataset first. The route has no overwrite option.
 - **400** - the extension or size is not accepted.
 
+A file with no column that identifies a patient still uploads (a `row_number` column is added, or a combination of columns tells the rows apart). Its 200 response carries `unit_note`, which says so in plain words: answers count rows, not patients, and adding a `patient_id` column with one ID per patient gives patient counts. `unit_note` is empty when `patient_id` names patients.
+
 Data checks at upload are warnings except the identifier checks (`*_not_null`, `*_no_duplicates`). A column with any empty value is a warning (never "passed"), and when a value has interval bound columns (`lower`/`upper`, or `<value>_lower`/`<value>_upper`) every row with all three present must have lower <= value <= upper (`<value>_interval`, a warning).
 
 `GET /api/datasets/{dataset_id}` reports each column's stored type in `schema` (`integer`, `number`, `string`, `boolean`, `date`, `timestamp`, ...).
