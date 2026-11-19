@@ -11,6 +11,7 @@ disagree on what was counted, and the answer is withheld (``ShownCountMismatchEr
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -85,7 +86,39 @@ def _expression(layer: Any, frame: pl.DataFrame, condition: Condition) -> pl.Exp
         if condition.kind == "complete" and frame.schema[column].is_float():
             present = present & ref.is_finite().fill_null(False)
         return present
+    if condition.kind == "isnull":
+        return ref.is_null()
+    if condition.kind == "outside":
+        return _outside(frame, column, condition.value)
+    if condition.kind == "upper_value":
+        values = frame.get_column(column).drop_nulls().unique()
+        if values.len() != 2:
+            raise _NotACountError
+        return (ref == pl.lit(values.max())).fill_null(False)
     raise ShownCountMismatchError(f"unknown condition kind {condition.kind!r}")
+
+
+class _NotACountError(Exception):
+    """An ``upper_value`` count on a column without exactly two values: no count is shown."""
+
+
+def _outside(frame: pl.DataFrame, column: str, bounds: Any) -> pl.Expr:
+    """Values outside ``(minimum, maximum)`` read as the plausibility check reads them: numbers as
+    they are, text through ``parse_numeric_text`` (missing tokens and blanks are no value)."""
+    from clinical_analytics.analysis.numeric_text import parse_numeric_text
+
+    minimum, maximum = bounds
+    series = frame.get_column(column)
+    if series.dtype == pl.String:
+        parsed = parse_numeric_text(series)
+        if parsed is None:
+            raise ShownCountMismatchError("values outside a range on text that is not numbers")
+        series = parsed.values
+    values = series.cast(pl.Float64, strict=False)
+    below = (values < minimum).fill_null(False)
+    above = (values > maximum).fill_null(False) if maximum is not None else pl.Series([False] * values.len())
+    outside = values.is_finite().fill_null(False) & (below | above)
+    return pl.lit(outside.alias("__outside"))
 
 
 def answer_sets(
@@ -116,16 +149,29 @@ def answer_sets(
         columns.append(entity_key)
     if refine is not None:
         columns.extend(refine.columns)
-    frame = layer.shown_rows(plan, columns)
-    if refine is not None:
-        frame = refine.apply(frame)
-    positions = frame.get_column(ROW_POSITION).to_numpy()
+    frames: dict[str, pl.DataFrame] = {}
+
+    def frame_for(scope: str) -> pl.DataFrame:
+        if scope not in frames:
+            if scope == "dataset":  # every row: a data note counts the whole dataset
+                every = dataclasses.replace(plan, filters=[], cohort_steps=[], group_by=None)
+                frames[scope] = layer.shown_rows(every, columns)
+            else:
+                cohort = layer.shown_rows(plan, columns)
+                frames[scope] = refine.apply(cohort) if refine is not None else cohort
+        return frames[scope]
+
     sets: list[ShownSet] = []
     for count in counts:
-        mask = pl.lit(True)
-        for condition in count.conditions:
-            mask = mask & _expression(layer, frame, condition)
-        flags = frame.with_columns(mask.alias("__shown")).get_column("__shown").to_numpy().astype(bool)
+        frame = frame_for(count.scope)
+        positions = frame.get_column(ROW_POSITION).to_numpy()
+        try:
+            flags = np.ones(frame.height, dtype=bool)
+            for condition in count.conditions:
+                column = frame.with_columns(_expression(layer, frame, condition).alias("__shown")).get_column("__shown")
+                flags &= column.fill_null(False).to_numpy().astype(bool)
+        except _NotACountError:
+            continue
         chosen = positions[flags]
         if count.unit == "counted" and entity_key is not None and entity_key != universe.patient_key:
             entity_of_row = layer.patient_of_row(entity_key)
@@ -142,7 +188,7 @@ def answer_sets(
             shown = ShownSet(unit=universe.patients_unit, positions=np.unique(reps[reps >= 0]))
         else:
             shown = ShownSet(unit=ROWS_UNIT, positions=np.unique(chosen))
-        if shown.size != count.value:
+        if count.value is not None and shown.size != count.value:
             raise ShownCountMismatchError("a shown count's set has another size than the answer shows")
         sets.append(shown)
     return sets

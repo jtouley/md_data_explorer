@@ -294,4 +294,4 @@ def test_descriptive_meanOfFlagOverHiddenN_sameOutputForTheWindow(cohort: int) -
 
     # Assert
     assert len(outputs) == 1
-    assert "The mean and SD of died are not shown because n is hidden (n hidden)." in outputs.pop()
+    assert "Statistics for died are not shown because n is hidden (n hidden)." in outputs.pop()

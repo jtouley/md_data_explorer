@@ -14,9 +14,11 @@ Every check is a DuckDB aggregate over the layer's base view (counts, a median, 
 one column): no column is copied into Python per question. Row and patient counts reuse the
 layer's cached base counts.
 
-Counts in sentences follow the small-cell rule (``line_count_text``): a count from 1 to 10, or
-one whose neighbour in its line is, reads "some". Sentences name columns, ranges and category
-labels held by at least ``MIN_CELL_SIZE`` rows, never a patient's value.
+A hold sentence names no count of the data checked (the answer that follows a confirmation
+would show counts beside it). A note added to an answer carries its count apart from its text
+(``result_presentation.counted_note``), so the presenter checks it, by the small-cell rule,
+against its own line and the counts that answer shows. Sentences name columns, ranges and category labels held by
+at least ``MIN_CELL_SIZE`` rows, never a patient's value.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import polars as pl
+import structlog
 
 from clinical_analytics.analysis.grouping import level_variants
 from clinical_analytics.analysis.numeric_text import all_missing_message, statistic_refusal
@@ -34,12 +37,15 @@ from clinical_analytics.contracts.builder import Implausible, find_plausibility_
 from clinical_analytics.contracts.builder import range_text as plausibility_text
 from clinical_analytics.contracts.config import MIN_CELL_SIZE, MISSINGNESS_WARN_PERCENT
 from clinical_analytics.contracts.declarations import Declarations, GrainDeclaration, LevelMapping
-from clinical_analytics.contracts.quality import RANGE_METRIC, QualityReport
+from clinical_analytics.contracts.quality import RANGE_METRIC, QualityCheckResult, QualityReport
 from clinical_analytics.core.identifier_rules import PATIENT_ROWS_ASKABLE_CONFIG_FLAG, ROW_KEY_CONFIG_FLAG
 from clinical_analytics.core.plan_values import plan_values
 from clinical_analytics.core.query_plan import QueryPlan
-from clinical_analytics.core.result_presentation import line_count_text
+from clinical_analytics.core.result_presentation import AMOUNT, DataNote, counted_note, text_note
 from clinical_analytics.core.schema_inference import patient_key_by_name
+from clinical_analytics.core.shown_counts import Condition
+
+logger = structlog.get_logger(__name__)
 
 _STATISTIC_INTENTS = frozenset({"DESCRIBE", "COMPARE_GROUPS"})
 # Report checks an answer already handles itself (hold or disclosure), so not repeated as notes.
@@ -78,7 +84,7 @@ class Findings:
 
     refusal: str | None = None
     holds: list[str] = field(default_factory=list)
-    notes: list[str] = field(default_factory=list)
+    notes: list[DataNote] = field(default_factory=list)
     grain_to_declare: GrainDeclaration | None = None
     levels_to_declare: list[LevelMapping] = field(default_factory=list)
     keyed: bool = False  # the dataset has a patient key, so every n can say what it counts
@@ -113,14 +119,19 @@ def grain_of(layer: Any) -> Grain:
     )
 
 
-def missing_key_note(grain: Grain, visits: bool) -> str | None:
-    """The note for rows with no patient ID, or None. The count follows the small-cell rule
-    (its line: the rows that have an ID). At visit grain those rows are in no patient count."""
+def missing_key_note(grain: Grain, visits: bool) -> DataNote | None:
+    """The note for rows with no patient ID, or None. Its count's line is the dataset's rows
+    (the rows with an ID are the rest). At visit grain those rows are in no patient count."""
     if grain.key is None or grain.missing_keys == 0:
         return None
-    amount = line_count_text(grain.missing_keys, [grain.rows - grain.missing_keys])
     counted = "; those rows are not counted as patients" if visits else ""
-    return f"Data check: {grain.key} is missing on {amount} rows{counted}."
+    key = grain.key.replace(AMOUNT, "")
+    return counted_note(
+        f"Data check: {key} is missing on {AMOUNT} rows{counted}.",
+        grain.missing_keys,
+        grain.rows,
+        rows=[Condition("isnull", grain.key)],
+    )
 
 
 def declared_visits(grain: Grain, declarations: Declarations, dataset_version: str | None) -> bool:
@@ -224,7 +235,14 @@ def _implausible_numeric(layer: Any, column: str) -> Implausible | None:
     count = int(values.aggregate(k=outside.cast("int64").sum()).to_polars().item() or 0)
     if count == 0:
         return None
-    return Implausible(column=column, count=count, present=int(present), bounds=plausibility_text(bounds))
+    return Implausible(
+        column=column,
+        count=count,
+        present=int(present),
+        bounds=plausibility_text(bounds),
+        minimum=float(bounds.minimum),
+        maximum=None if bounds.maximum is None else float(bounds.maximum),
+    )
 
 
 def implausible_in_layer(layer: Any, column: str) -> Implausible | None:
@@ -241,20 +259,31 @@ def implausible_in_layer(layer: Any, column: str) -> Implausible | None:
     return None
 
 
-def implausible_sentences(plan: QueryPlan, layer: Any) -> list[tuple[str, str, str]]:
-    """(column, hold sentence, note sentence) for each plan column with implausible values."""
-    found = []
+def implausible_sentences(plan: QueryPlan, layer: Any) -> list[tuple[str, str, DataNote]]:
+    """(column, hold sentence, note) for each plan column with implausible values. The hold names
+    no count: the same question's answer follows it once confirmed, and the hold's count beside
+    that answer's count would give back the difference (20 patients over 110 and 15 values over
+    122: 5 patients aged 111-122). The note's count is checked by the presenter against the
+    answer it is added to."""
+    found: list[tuple[str, str, DataNote]] = []
     for column in plan_columns(plan):
         result = implausible_in_layer(layer, column)
         if result is None:
             continue
-        amount = line_count_text(result.count, [result.present - result.count])
         name = short_name(column)
         hold = (
-            f"{name} has {amount} values outside {result.bounds}, which are likely entry errors. "
+            f"{name} has some values outside {result.bounds}, which are likely entry errors. "
             f"Correct them in the file, or confirm to include them in the answer."
         )
-        note = f"{name} has {amount} values outside {result.bounds} (likely entry errors), included as recorded."
+        note = counted_note(
+            f"{name.replace(AMOUNT, '')} has {AMOUNT} values outside {result.bounds.replace(AMOUNT, '')} "
+            f"(likely entry errors), included as recorded.",
+            result.count,
+            result.present,
+            rows=[Condition("outside", column, (result.minimum, result.maximum))]
+            if result.minimum is not None
+            else None,
+        )
         found.append((column, hold, note))
     return found
 
@@ -354,41 +383,78 @@ def share_refusal(layer: Any, key: str, plan: QueryPlan) -> str | None:
     return None
 
 
-def missingness_notes(layer: Any, columns: list[str], already: set[str]) -> list[str]:
+def missingness_notes(layer: Any, columns: list[str], already: set[str]) -> list[DataNote]:
     """A note for each plan column whose share of missing values is above
     ``MISSINGNESS_WARN_PERCENT``, measured now, so any column a question
     uses is flagged, whatever the upload named as analysis variables (a COUNT per plan column,
-    in DuckDB). The share is suppressed
-    with the rest of the line: a column with 1 to 10 missing (or present) rows reads "some"."""
+    in DuckDB). The share is a count (the app shows the row count), so it is a counted note:
+    "some" when 1 to 10 rows are missing or present, or when the missing rows are that close to a
+    count the answer shows."""
     view = layer.get_base_view()
     known = [c for c in columns if c in view.columns and short_name(c) not in already]
     rows = int(layer._base_count(None))
     if not known or rows == 0:
         return []
-    notes = []
+    notes: list[DataNote] = []
     for column in known:
         missing = rows - int(view[column].count().execute() or 0)
         if missing * 100 <= MISSINGNESS_WARN_PERCENT * rows:
             continue
-        amount = line_count_text(missing, [rows - missing])
-        share = f"{100 * missing / rows:.1f}%" if amount != "some" else "some"
-        notes.append(f"Data check: {short_name(column)} has {share} of its values missing.")
+        name = short_name(column).replace(AMOUNT, "")
+        notes.append(
+            counted_note(
+                f"Data check: {name} has {AMOUNT} of its values missing.",
+                missing,
+                rows,
+                "percent",
+                rows=[Condition("isnull", column)],
+            )
+        )
     return notes
 
 
-def report_notes(report: QualityReport | None, columns: list[str]) -> list[str]:
+def report_notes(report: QualityReport | None, columns: list[str]) -> list[DataNote]:
     """Failed or flagged checks of the dataset's latest quality report on the plan's columns,
-    and failed table-level checks, as sentences (messages are already small-cell suppressed)."""
+    and failed table-level checks, as notes (``_report_note``)."""
     if report is None:
         return []
     names = {short_name(column) for column in columns} | set(columns)
-    notes = []
+    notes: list[DataNote] = []
     for check in report.checks:
         if check.status not in ("failed", "warning", "review") or check.metric in _HANDLED_METRICS:
             continue
         if (check.column is None and check.status == "failed") or check.column in names:
-            notes.append(f"Data check: {check.message}.")
+            note = _report_note(check, report.row_count)
+            if note is not None:
+                notes.append(note)
     return notes
+
+
+def _report_note(check: QualityCheckResult, rows: int | str) -> DataNote | None:
+    """One report check as a note. The report suppressed its counts against the report's own
+    lines only, so a count it shows is carried apart from the text (the presenter checks it
+    against the answer). A hidden count is already "some", and its message is shown as written.
+    A row-count check names no count (the app shows the row count). A shown count whose place in
+    the message cannot be found is not shown at all (fail closed, logged).
+    """
+    if check.metric == "rowCount":
+        return text_note("Data check: the number of rows does not meet the dataset's contract.")
+    if not isinstance(check.count, int) or isinstance(check.count, bool) or check.count == 0:
+        return text_note(f"Data check: {check.message}.".replace(AMOUNT, ""))  # hidden ("some"), or no count
+    total = rows if isinstance(rows, int) and rows > 0 else None
+    head = f"{check.column or 'Table'}: "
+    if not check.message.startswith(head):
+        return None
+    body = check.message[len(head) :]
+    head = head.replace(AMOUNT, "")
+    if check.percent is not None and body.startswith(f"{check.percent:.1f}% ") and total is not None:
+        rest = body[len(f"{check.percent:.1f}%") :].replace(AMOUNT, "")
+        return counted_note(f"Data check: {head}{AMOUNT}{rest}.", check.count, total, "percent")
+    if body.startswith(f"{check.count} "):
+        rest = body[len(str(check.count)) :].replace(AMOUNT, "")
+        return counted_note(f"Data check: {head}{AMOUNT}{rest}.", check.count, total)
+    logger.warning("report_note_count_not_found", check_id=check.id, metric=check.metric)
+    return None
 
 
 def flagged_columns(report: QualityReport | None) -> set[str]:

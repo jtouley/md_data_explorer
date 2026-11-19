@@ -227,12 +227,16 @@ def _implausible(series: pl.Series) -> dict[str, Any] | None:
     return found.disclosure() if found else None
 
 
-def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
+def compute_descriptive_analysis(
+    df: pl.DataFrame, context: AnalysisContext, entity_key: str | None = None
+) -> dict[str, Any]:
     """
     Compute descriptive analysis using Polars-native operations.
 
     If context.primary_variable is set to a specific column, focus on that column.
-    If set to "all" or None, describe all columns.
+    If set to "all" or None, describe all columns. ``entity_key``: the patient key when rows are
+    visits, so the patients behind each value of a focused numeric column are counted
+    (``table_min_cell``).
 
     Returns serializable dict (no Polars objects).
     """
@@ -352,6 +356,14 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
                 implausible = _implausible(clean_series)
                 if implausible:
                     result["implausible"] = implausible
+                # A column that behaves like categories (a 0/1 flag stored as a measure, a dose of
+                # 0, 0.5 or 1): its mean is a share, sum of value x count over n, and with n it
+                # gives the patients at each value back. Recorded like a comparison of means
+                # (``table_statistic_refusal``); the presenter withholds the statistics on it.
+                keys = df.get_column(entity_key) if entity_key is not None and entity_key in df.columns else None
+                result["table_min_cell"] = (
+                    None if entity_key is not None and keys is None else _value_min_cell(analysis_series, keys)
+                )
 
                 # Add headline answer for the query
                 result["headline"] = f"The average {col} is **{result['mean']:.2f}**"
@@ -935,14 +947,15 @@ def compute_analysis_by_type(
     if analysis is None:
         return {"type": "unknown", "error": f"Unknown intent: {context.inferred_intent}"}
     keyed: dict[AnalysisIntent, Callable[[pl.DataFrame, AnalysisContext, str | None], dict[str, Any]]] = {
+        AnalysisIntent.DESCRIBE: compute_descriptive_analysis,
         AnalysisIntent.FIND_PREDICTORS: compute_predictor_analysis,
         AnalysisIntent.COMPARE_GROUPS: compute_comparison_analysis,
         AnalysisIntent.EXAMINE_SURVIVAL: compute_survival_analysis,
         AnalysisIntent.EXPLORE_RELATIONSHIPS: compute_relationship_analysis,
     }
     if context.inferred_intent in keyed:
-        # A model's level sizes and a tested table's cells count patients, so these need the
-        # key when rows are visits.
+        # A model's level sizes, a tested table's cells and the patients at each value of a
+        # described column count patients, so these need the key when rows are visits.
         result = keyed[context.inferred_intent](df, context, entity_key)
     else:
         result = analysis(df, context)
@@ -1046,6 +1059,22 @@ def _ambiguous_event_message(column: str, series: pl.Series, keys: pl.Series | N
         f"Cannot tell which value of {column} is the event (values: {values}). Recode it to 0/1, "
         f"or name the codes in the column header, e.g. '{column} 1: Yes 2: No'."
     )
+
+
+def _value_min_cell(values: pl.Series, keys: pl.Series | None = None) -> int | str:
+    """The fewest patients holding one present value of ``values`` when the column behaves like
+    categories (its statistics are then shares of those patients), else ``NO_COUNT_TABLE``.
+
+    Missing values (null, NaN, inf) are left out, as every statistic leaves them out. Patients
+    are counted as ``_level_sizes`` counts them (``keys``: the patient key of each row when rows
+    are visits). With no value left there is nothing to give back: ``NO_COUNT_TABLE``.
+    """
+    frame = pl.DataFrame({"value": values, **({"key": keys} if keys is not None else {})})
+    present = _complete_in(frame, ["value"])
+    sizes = _level_sizes(present.get_column("value"), present.get_column("key") if keys is not None else None)
+    if not sizes or not behaves_like_categories(sizes):
+        return NO_COUNT_TABLE
+    return min(int(n) for n in sizes.values())
 
 
 def _behaves_like_categories(series: pl.Series, keys: pl.Series | None = None) -> bool:

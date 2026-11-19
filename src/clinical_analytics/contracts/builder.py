@@ -139,10 +139,20 @@ class Implausible:
     count: int
     present: int
     bounds: str
+    # The range as numbers (the log of shown counts rebuilds the values outside it).
+    minimum: float | None = None
+    maximum: float | None = None
 
     def disclosure(self) -> dict[str, Any]:
         """The analysis-result shape the presenter reads (``implausible``)."""
-        return {"column": self.column, "count": self.count, "line_total": self.present, "bounds": self.bounds}
+        return {
+            "column": self.column,
+            "count": self.count,
+            "line_total": self.present,
+            "bounds": self.bounds,
+            "minimum": self.minimum,
+            "maximum": self.maximum,
+        }
 
 
 def _weighted_median(values: pl.Series, weights: pl.Series) -> float | None:
@@ -188,7 +198,12 @@ def implausible_values(series: pl.Series, weights: pl.Series | None = None) -> I
     if count == 0:
         return None
     return Implausible(
-        column=series.name, count=count, present=int(frame.get_column("w").sum()), bounds=range_text(bounds)
+        column=series.name,
+        count=count,
+        present=int(frame.get_column("w").sum()),
+        bounds=range_text(bounds),
+        minimum=float(bounds.minimum),
+        maximum=None if bounds.maximum is None else float(bounds.maximum),
     )
 
 

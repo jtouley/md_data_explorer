@@ -156,8 +156,9 @@ FULL_REASON: Final = (
     "that new ones can't be checked against them. Ask questions that reuse limits and groups already shown."
 )
 
-ConditionKind = Literal["eq", "eq_text", "event", "notnull", "complete", "recorded"]
+ConditionKind = Literal["eq", "eq_text", "event", "notnull", "complete", "recorded", "isnull", "outside", "upper_value"]
 CountUnit = Literal["counted", "rows"]
+CountScope = Literal["cohort", "dataset"]
 
 
 @dataclass(frozen=True)
@@ -170,6 +171,11 @@ class Condition:
     ``notnull``: has a value (NaN counts, as SQL ``count(column)`` counts it).
     ``complete``: has a finite value, a missing token in numbers stored as text excluded.
     ``recorded``: has a value as a share counts it (``SemanticLayer._share_sql``).
+    ``isnull``: has no value (NaN is a value, as SQL ``count(column)`` reads it).
+    ``outside``: a number (text read as one, as the plausibility check reads it) below
+    ``value[0]`` or above ``value[1]`` (None: no upper bound).
+    ``upper_value``: the larger of a column's two values in the cohort (a mean of a two-valued
+    column gives back how many have it); a count on a column with more values is not one shown.
     """
 
     kind: ConditionKind
@@ -179,15 +185,19 @@ class Condition:
 
 @dataclass(frozen=True)
 class ShownCount:
-    """A count an answer shows: ``value`` units of its cohort meeting every condition.
+    """A count an answer shows: ``value`` units of its cohort meeting every condition. ``value``
+    None: a count the reader works out (a mean of a 0/1 column times n), not printed, so its set's
+    size is not checked against it.
 
     ``unit``: "counted" is what the answer counts (patients once rows are declared visits, else
     rows); "rows" is rows whatever the grain (a statistic over visit rows reports its n in rows).
     """
 
-    value: int
+    value: int | None
     conditions: tuple[Condition, ...] = ()
     unit: CountUnit = "counted"
+    # "dataset": within every row (a data note's count), not the answer's cohort.
+    scope: CountScope = "cohort"
 
 
 @dataclass(frozen=True)

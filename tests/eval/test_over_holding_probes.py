@@ -17,7 +17,9 @@ from tests.eval.over_holding_probes import (
     ANSWERED,
     HELD,
     HELD_SINCE_NARROWING,
+    HIDDEN_FOR_PRIVACY,
     NARROWED,
+    WITHHELD,
     Probe,
     creatinine_frame,
 )
@@ -57,12 +59,13 @@ def test_overHoldingProbes_set_hasEveryQuestionOnce() -> None:
 
     # Act
     duplicates = {key for key in keys if keys.count(key) > 1}
-    unknown = NARROWED - set(keys)
+    unknown = (NARROWED | WITHHELD) - set(keys)
 
     # Assert
     assert duplicates == set()
     assert unknown == set()
-    assert len(ANSWERED) + len(HELD_SINCE_NARROWING) + len(HELD) == 87
+    assert NARROWED & WITHHELD == set()
+    assert len(ANSWERED) + len(HELD_SINCE_NARROWING) + len(HIDDEN_FOR_PRIVACY) + len(HELD) == 87
 
 
 @pytest.mark.slow
@@ -78,6 +81,24 @@ def test_overHoldingProbe_answerableQuestion_answeredWithTrueValue(probe: Probe)
     assert graded == "answered", (
         f"{probe.query!r}: {graded}, expected {expected!r}, "
         f"shown {(result.get('presentation') or {}).get('claim')!r}, reason {result.get('failure_reason')!r}"
+    )
+
+
+@pytest.mark.slow
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "probe", [pytest.param(probe, id=f"{probe.dataset}:{probe.query}") for probe in HIDDEN_FOR_PRIVACY]
+)
+def test_overHoldingProbe_shareLikeStatistic_hiddenNeverWrong(probe: Probe) -> None:
+    # Arrange: probe above (WITHHELD says why)
+
+    # Act
+    graded, result, expected = outcome(probe)
+
+    # Assert
+    assert graded == "hidden", (
+        f"{probe.query!r}: {graded}, expected hidden (true value {expected!r}), "
+        f"shown {(result.get('presentation') or {}).get('claim')!r}"
     )
 
 
