@@ -815,6 +815,8 @@ class UploadedDataset(ClinicalDataset):
             "column_count": self.metadata.get("column_count"),
             "columns": self.metadata.get("columns"),
             "variable_mapping": self.metadata.get("variable_mapping"),
+            # Datasets loaded from a link: URL, download time, size, SHA-256 (routes/dataset_url.py).
+            "source": self.metadata.get("source"),
         }
 
 
