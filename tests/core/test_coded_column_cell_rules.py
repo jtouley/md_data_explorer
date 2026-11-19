@@ -14,14 +14,16 @@ switched their checks off:
 
 One rule now decides ("behaves like categories", ``grouping.behaves_like_categories``): at most
 ``MAX_GROUP_LEVELS`` values, or all but ``MAX_STRAY_SHARE`` of the patients on that many, and
-not mostly one-patient values. Such a column's levels and cells are counted in patients and
-checked by ``is_small_level``. The presenter withholds a comparison of means whose cells were
-not recorded, and at visit grain group sizes count patients, not visits.
+(with three or more values) not mostly one-patient values. Such a column's levels and cells are
+counted in patients and checked by ``is_small_level``. The presenter withholds a comparison of
+means whose cells were not recorded, and at visit grain group sizes and shown cells count
+patients, not visits.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from datetime import date
 from typing import Any
 
 import numpy as np
@@ -59,7 +61,7 @@ def _frame(make_cohort_with_categorical: CohortFactory, columns: dict[str, list[
 
 
 def _dose_columns(
-    stray: list[tuple[float, int]] = (), low_events: int = 100, high_events: int = 5
+    stray: Sequence[tuple[float | None, int]] = (), low_events: int = 100, high_events: int = 5
 ) -> dict[str, list[Any]]:
     """Dose 0 for 500 patients (``low_events`` events) and 1 for 500 (``high_events``), plus a
     (dose, event) row for each ``stray``."""
@@ -90,10 +92,12 @@ class TestBehavesLikeCategories:
             pytest.param({0: 489, 1: 490, **{0.01 * k: 1 for k in range(1, 22)}}, True, id="21_strays_in_1000"),
             pytest.param({0: 400, 1: 400, **{0.001 * k: 1 for k in range(1, 201)}}, False, id="200_strays_in_1000"),
             pytest.param({v: 1 for v in range(12)}, False, id="every_value_one_patient"),
+            pytest.param({0: 1, 1: 1}, True, id="two_values_always_categories"),
             pytest.param({0: 3, 1: 3, 2: 1, 3: 1}, True, id="few_singletons"),
             pytest.param({}, True, id="empty"),
             pytest.param({v: "1" for v in range(30)}, True, id="sizes_not_counts_fail_closed"),
             pytest.param({v: None for v in range(30)}, True, id="null_sizes_fail_closed"),
+            pytest.param({**{v: 50 for v in range(30)}, 99: -5}, True, id="negative_size_fail_closed"),
         ],
     )
     def test_behavesLikeCategories_sizes_followShareRule(self, sizes: dict[Any, int], expected: bool) -> None:
@@ -398,6 +402,22 @@ class TestCorrelationStrayValues:
         assert _pair(result)["table_min_cell"] == exposed_events
         assert (_pair(result)["correlation"] is not None) is shown
 
+    def test_correlation_zeroOneAgainstFewSharedValues_isStillATable(
+        self, make_cohort_with_categorical: CohortFactory
+    ) -> None:
+        """A 0/1 column against at most 20 values is a table even when most of them are held by
+        one patient (main refused this pair; review of this change caught it being shown)."""
+        # Arrange
+        columns = {"exposure": [0.0, 1.0] * 10, "outcome": [float(v) for v in range(12)] + [50.0] * 4 + [60.0] * 4}
+        frame = _frame(make_cohort_with_categorical, columns)
+
+        # Act
+        result = compute_analysis_by_type(frame, _context(AnalysisIntent.EXPLORE_RELATIONSHIPS, **_CORRELATE))
+
+        # Assert
+        assert _pair(result)["table_min_cell"] == 1
+        assert _pair(result)["correlation"] is None
+
     def test_correlation_measurementExposure_isShownWithNoCountTable(
         self, make_cohort_with_categorical: CohortFactory
     ) -> None:
@@ -482,6 +502,26 @@ class TestVisitGrainCountsPatients:
         assert result["group_sizes"] == {"A": 30, "B": 3}
         b_rows = [row for row in presented["table"]["rows"] if row["treatment"] != "A"]
         assert all(row["median days"] == SECONDARY_SUPPRESSED for row in b_rows)
+
+    def test_survival_dateGroupColumn_countsEachGroup(self, make_cohort_with_categorical: CohortFactory) -> None:
+        """Review of this change: sizes looked up by the group's text raised KeyError for a date
+        group, which pandas spells '2020-01-01 00:00:00'."""
+        # Arrange
+        frame = _visits(make_cohort_with_categorical).with_columns(
+            pl.Series("cohort_start", [date(2020, 1, 1)] * 30 + [date(2021, 1, 1)] * 14)
+        )
+        context = _context(
+            AnalysisIntent.EXAMINE_SURVIVAL,
+            time_variable="days",
+            event_variable="status",
+            grouping_variable="cohort_start",
+        )
+
+        # Act
+        result = compute_analysis_by_type(frame, context, entity_key="patient_id")
+
+        # Assert
+        assert sorted(result["group_sizes"].values()) == [3, 30]
 
 
 class TestLeakDetectorCountsPatients:

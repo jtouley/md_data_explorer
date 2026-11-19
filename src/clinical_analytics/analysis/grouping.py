@@ -96,33 +96,38 @@ def behaves_like_categories(sizes: Mapping[object, object]) -> bool:
     behaves like categories, so a statistic of it is a statistic of its table of counts.
 
     One rule for a model's predictor, a compared outcome and a correlated column. A column
-    behaves like categories when it has at most ``MAX_GROUP_LEVELS`` values (a dose of 0, 0.5 or
-    1 is three groups of patients however it is stored: a slope over it, a group's mean or r
-    rests on, and with the totals other answers show gives back, the patients at each value), or
-    when all but ``MAX_STRAY_SHARE`` of its patients hold one of its ``MAX_GROUP_LEVELS`` most
-    common values (a few stray values do not make a coded column a measurement). Its table is
-    then counted over every value, stray ones included, and checked by ``is_small_level``.
+    behaves like categories when it has at most ``MAX_GROUP_LEVELS`` values, or when all but
+    ``MAX_STRAY_SHARE`` of its patients hold one of its ``MAX_GROUP_LEVELS`` most common values
+    (a few stray values do not make a coded column a measurement). Its table is then counted
+    over every value, stray ones included, and checked by ``is_small_level``.
+
+    Why up to ``MAX_GROUP_LEVELS`` and not two: a column with that few values can be cross-
+    tabulated (``grouping_problem``), and the crosstab shows every cell but the small ones and
+    their complements. A group's mean, a slope's odds ratio or r is one more linear equation in
+    those cells (a mean is the sum of value x cell over n), which with the line totals solves
+    the hidden ones: a dose of 0, 0.5 or 1 is three groups of patients however it is stored.
 
     A column with more values, spread over more patients, is a measurement and rests on no
-    table (``NO_COUNT_TABLE``). So is one where most patients hold a value nobody else has (12
-    patients, 12 blood pressures): each "cell" is one patient's own value, which the small-group
-    rules for sizes, means and medians already cover, and no value is a group to count. A size
-    that is not a count cannot be weighed, so the column is treated as categories (fail closed:
-    its table is then counted and checked).
+    table (``NO_COUNT_TABLE``): it cannot be cross-tabulated, and one equation does not pin its
+    many cells. So is a column of three or more values where most patients hold a value nobody
+    else has (12 patients, 12 blood pressures): its crosstab hides every cell and folds every
+    label, so there is nothing for one equation to complete, and the small-group rules for
+    sizes, means and medians already cover each patient's own value. Two values are always
+    categories, as before. A size that is not a positive count cannot be weighed, so the column
+    is then treated as categories (fail closed: its table is counted and checked).
     """
-    counts = sorted((int(n) for n in sizes.values() if isinstance(n, int | np.integer) and _is_count(n)), reverse=True)
-    if len(counts) != len(sizes):
+    if len(sizes) <= 2 or not all(_is_count(n) for n in sizes.values()):
         return True
+    counts = sorted((int(n) for n in sizes.values() if isinstance(n, int | np.integer)), reverse=True)
     total = sum(counts)
     if 2 * sum(1 for n in counts if n == 1) > total:
         return False
-    if len(counts) <= MAX_GROUP_LEVELS:
-        return True
-    return bool(sum(counts[MAX_GROUP_LEVELS:]) <= MAX_STRAY_SHARE * total)
+    return len(counts) <= MAX_GROUP_LEVELS or sum(counts[MAX_GROUP_LEVELS:]) <= MAX_STRAY_SHARE * total
 
 
 def _is_count(value: object) -> bool:
-    return isinstance(value, int | np.integer) and not isinstance(value, bool)
+    """A positive patient count (a present value has at least one patient)."""
+    return isinstance(value, int | np.integer) and not isinstance(value, bool) and int(value) > 0
 
 
 def is_small_level(count: object) -> bool:

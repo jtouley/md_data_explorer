@@ -13,6 +13,7 @@ import polars as pl
 from scipy import stats
 
 from clinical_analytics.analysis.grouping import (
+    MAX_GROUP_LEVELS,
     NO_COUNT_TABLE,
     SMALL_VALUE_MODEL_REFUSAL,
     TERM_NAME_CLASH_MODEL_REFUSAL,
@@ -615,18 +616,19 @@ def compute_comparison_analysis(
             **headline,
         }
 
-    # Binary or categorical outcome: contingency table (rows = outcome levels, columns = groups),
-    # each cell the patients with that level in that group (``_patients_in``: rows, or distinct
-    # patient keys when rows are visits).
+    # Binary or categorical outcome: contingency table (rows = outcome levels, columns = groups).
+    # ``table`` counts rows, the observations the test is run on. What is shown counts patients
+    # (``_patients_in``): at visit grain a patient with visits of both levels is in both cells, so
+    # that table is no contingency table to test, but its cells are what must not be 1-10.
     outcome_levels = analysis_df[outcome_col].unique().sort().to_list()
-    table = np.array(
-        [
-            [_patients_in(analysis_df.filter((pl.col(outcome_col) == lvl) & (pl.col(group_col) == g))) for g in groups]
-            for lvl in outcome_levels
-        ]
-    )
+    in_cell = [
+        [analysis_df.filter((pl.col(outcome_col) == lvl) & (pl.col(group_col) == g)) for g in groups]
+        for lvl in outcome_levels
+    ]
+    table = np.array([[cell.height for cell in line] for line in in_cell])
+    patients = np.array([[_patients_in(cell) for cell in line] for line in in_cell])
     contingency = [
-        {outcome_col: str(lvl), **{str(g): int(table[i, j]) for j, g in enumerate(groups)}}
+        {outcome_col: str(lvl), **{str(g): int(patients[i, j]) for j, g in enumerate(groups)}}
         for i, lvl in enumerate(outcome_levels)
     ]
     expected = stats.contingency.expected_freq(table)
@@ -640,9 +642,8 @@ def compute_comparison_analysis(
         event = binary_event_level(analysis_df[outcome_col])
         if event is not None and event in outcome_levels:
             event_row = outcome_levels.index(event)
-            # Over the group's patients: at visit grain a patient with and without the event
-            # is in both cells, so the column sum is not the group.
-            proportions = {str(g): float(table[event_row, j] / group_sizes[str(g)]) for j, g in enumerate(groups)}
+            # The share of the group's patients with the event (at visit grain, at any visit).
+            proportions = {str(g): float(patients[event_row, j] / group_sizes[str(g)]) for j, g in enumerate(groups)}
             result.update({"event_level": code_key(event), "group_proportions": proportions})
     result["table_min_cell"] = _table_min_cell(analysis_df[outcome_col], analysis_df[group_col], _keys_of(analysis_df))
     if table_statistic_refusal(result["table_min_cell"]) is not None:
@@ -988,12 +989,18 @@ def _level_sizes(values: pl.Series, keys: pl.Series | None = None) -> dict[Any, 
     return dict(zip(counts.get_column("value").to_list(), counts.get_column("__n").to_list(), strict=True))
 
 
+def _patients_of(keys: pl.Series) -> int:
+    """Patients among rows with these patient keys, as ``_level_sizes`` counts one value: the
+    distinct keys, never fewer than 1 when there is a row (a row with no key is still someone)."""
+    return 0 if keys.len() == 0 else max(1, keys.drop_nulls().n_unique())
+
+
 def _patients_in(frame: pl.DataFrame) -> int:
-    """Patients among the rows of a ``_with_key`` frame, as ``_level_sizes`` counts one value:
-    rows, or with a patient key its distinct keys, never fewer than 1 when there is a row."""
-    if frame.height == 0 or _KEY_COLUMN not in frame.columns:
+    """Patients among the rows of a ``_with_key`` frame: rows, or with a patient key
+    ``_patients_of`` its keys."""
+    if _KEY_COLUMN not in frame.columns:
         return frame.height
-    return max(1, frame.get_column(_KEY_COLUMN).drop_nulls().n_unique())
+    return _patients_of(frame.get_column(_KEY_COLUMN))
 
 
 def _table_min_cell(rows: pl.Series, columns: pl.Series, keys: pl.Series | None = None) -> int:
@@ -1358,13 +1365,14 @@ def compute_survival_analysis(
         group_medians: dict[str, float | None] = {}
         group_sizes: dict[str, int] = {}
         # Patients per group: distinct patient keys when rows are visits.
-        patients_per_group = {str(g): n for g, n in _level_sizes(analysis_df[group_col], keys).items()}
         for group, rows in analysis_df_pd.groupby(group_col, sort=True):
             fit = KaplanMeierFitter().fit(rows[time_col], rows[event_col])
             group_medians[str(group)] = (
                 None if np.isinf(fit.median_survival_time_) else float(fit.median_survival_time_)
             )
-            group_sizes[str(group)] = int(patients_per_group[str(group)])
+            # The pandas rows keep the Polars row positions, so the group's keys are found by
+            # position (never by the group's text, which pandas may spell differently).
+            group_sizes[str(group)] = len(rows) if keys is None else _patients_of(keys.gather(rows.index.to_numpy()))
         result.update({"group_medians": group_medians, "group_sizes": group_sizes})
         if len(group_sizes) >= 2:
             result["table_min_cell"] = _table_min_cell(analysis_df[group_col], analysis_df[event_col], keys)
@@ -1374,18 +1382,24 @@ def compute_survival_analysis(
     return result
 
 
-def _count_table_pair(first: pl.Series, second: pl.Series, keys: pl.Series | None) -> bool:
-    """Whether a correlation of two columns is a statistic of their table of counts, so that r
-    with the totals narrows its cells: each column is a coded category (``classify_variable``) or
-    behaves like categories (``grouping.behaves_like_categories``: at most ``MAX_GROUP_LEVELS``
-    values, or all but a few patients on that many). For two 0/1 columns r is phi; a 0/1 column
-    with 21 stray values is still, up to those few patients, a 0/1 column.
+def _counts_as_codes(series: pl.Series, keys: pl.Series | None) -> bool:
+    """Whether a correlated column is codes, so that r of it with another such column is a
+    statistic of their table of counts and, with the totals, narrows its cells: a coded category
+    (``classify_variable``) or a column that behaves like categories
+    (``grouping.behaves_like_categories``: at most ``MAX_GROUP_LEVELS`` values, or all but a few
+    patients on that many). For two 0/1 columns r is phi; a 0/1 column with 21 stray values is
+    still, up to those few patients, a 0/1 column. A pair with a measurement rests on no table,
+    except a column of at most two values against one of at most ``MAX_GROUP_LEVELS``
+    (``_two_by_levels``).
     """
+    return classify_variable(series) != "continuous" or _behaves_like_categories(series, keys)
 
-    def coded(series: pl.Series) -> bool:
-        return classify_variable(series) != "continuous" or _behaves_like_categories(series, keys)
 
-    return coded(first) and coded(second)
+def _two_by_levels(first: pl.Series, second: pl.Series) -> bool:
+    """A column of at most two values against one of at most ``MAX_GROUP_LEVELS``, whatever
+    their spread: r is then a difference of the second column's mean between the two groups,
+    and each of its values is a group of patients in the crosstab."""
+    return any(a.n_unique() <= 2 and b.n_unique() <= MAX_GROUP_LEVELS for a, b in ((first, second), (second, first)))
 
 
 def compute_relationship_analysis(
@@ -1394,7 +1408,7 @@ def compute_relationship_analysis(
     """
     Compute relationship analysis (correlations).
 
-    A correlation of two coded variables (``_count_table_pair``) is a statistic of their table of
+    A correlation of two coded variables (``_counts_as_codes``) is a statistic of their table of
     counts: for two 0/1 columns it is phi, which with the totals other answers show gives the
     2x2 back. Each pair records ``table_min_cell`` (the fewest patients in a non-empty cell, or
     ``NO_COUNT_TABLE`` for a pair with a measurement), and a pair that ``table_statistic_refusal``
@@ -1510,6 +1524,7 @@ def compute_relationship_analysis(
 
     # Compute correlation matrix using Polars
     keys = _keys_of(analysis_df)
+    codes = {var: _counts_as_codes(numeric_df[var], keys) for var in numeric_variables}  # once per column
     corr_data: list[dict[str, Any]] = []
     for i, var1 in enumerate(numeric_variables):
         for j, var2 in enumerate(numeric_variables):
@@ -1519,7 +1534,7 @@ def compute_relationship_analysis(
                 if i == j:
                     corr_val = 1.0
                 else:
-                    if _count_table_pair(numeric_df[var1], numeric_df[var2], keys):
+                    if (codes[var1] and codes[var2]) or _two_by_levels(numeric_df[var1], numeric_df[var2]):
                         min_cell = _table_min_cell(numeric_df[var1], numeric_df[var2], keys)
                     # Compute correlation using Polars
                     corr_result = numeric_df.select(pl.corr(var1, var2))
