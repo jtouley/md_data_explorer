@@ -235,7 +235,17 @@ def normalize_upload_to_table_list(
                 "sheets": staged.sheets,
             }
         ]
-        doc_files = []  # No docs for single-file uploads by default
+        # A notes block under the data (CDC WONDER) is the file's documentation, never data rows.
+        doc_files = (
+            [
+                DocFile(
+                    name=f"{table_name}_notes.txt", path=f"{table_name}_notes.txt", content=staged.export_notes.encode()
+                )
+            ]
+            if staged.export_notes.strip()
+            else []
+        )
+        zip_notes = list(staged.table_notes)
 
     # Handle external PDF/documentation files (standalone upload)
     if metadata and "external_pdf_bytes" in metadata:
@@ -663,6 +673,15 @@ def load_single_file_staged(file_bytes: bytes, filename: str) -> StagedTable:
     file_ext = Path(filename).suffix.lower()
     if file_ext in DELIMITERS:
         return read_csv_typed(file_bytes, separator=DELIMITERS[file_ext])
+    if file_ext == ".txt":
+        # A data .txt is tab-separated text (CDC WONDER exports); anything else is not a table.
+        first_line = file_bytes.split(b"\n", 1)[0]
+        if b"\t" not in first_line:
+            raise StagingError(
+                "This .txt file is not tab-separated, so it cannot be read as a table. Save the data as "
+                "CSV or tab-separated text (one row per line, columns separated by tabs) and upload it again."
+            )
+        return read_csv_typed(file_bytes, separator="\t")
     if file_ext in {".xlsx", ".xls"}:
         # The workbook's bytes decide the reader: openpyxl for .xlsx, xlrd for BIFF .xls.
         return read_excel_typed(file_bytes)
@@ -808,7 +827,7 @@ class UploadSecurityValidator:
     """
 
     # Allowlisted file extensions
-    ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".sav", ".xpt", ".zip"}
+    ALLOWED_EXTENSIONS = {".csv", ".tsv", ".txt", ".xlsx", ".xls", ".sav", ".xpt", ".zip"}
 
     # Maximum file size (100MB as per Phase 0 spec)
     MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024  # 100MB

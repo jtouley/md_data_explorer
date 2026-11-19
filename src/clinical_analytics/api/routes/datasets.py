@@ -493,8 +493,9 @@ class DatasetDeleteResponse(BaseModel):
     deleted_sessions: int = Field(..., description="Sessions (with their messages) deleted")
 
 
-# .zip: tables plus their documentation (ADR004), the multi-table path; .xpt: SAS transport (NHANES).
-ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".xlsx", ".xls", ".sav", ".xpt", ".zip"}
+# .zip: tables plus their documentation (ADR004), the multi-table path; .xpt: SAS transport (NHANES);
+# .tsv and .txt: tab-separated text (CDC WONDER exports, with their notes block as documentation).
+ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".tsv", ".txt", ".xlsx", ".xls", ".sav", ".xpt", ".zip"}
 
 # What to do next when an error-level check fails, by rule id suffix (contracts.builder._id_rules).
 _NEXT_STEP_BY_RULE_SUFFIX: dict[str, str] = {

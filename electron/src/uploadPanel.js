@@ -6,7 +6,16 @@
 import { normalizeQuality } from './dataCheckPanel.js';
 
 // Mirrors ALLOWED_UPLOAD_EXTENSIONS in api/routes/datasets.py.
-const ALLOWED_EXTENSIONS = new Set(['.csv', '.xlsx', '.xls', '.sav', '.xpt', '.zip']);
+const ALLOWED_EXTENSIONS = new Set([
+  '.csv',
+  '.tsv',
+  '.txt',
+  '.xlsx',
+  '.xls',
+  '.sav',
+  '.xpt',
+  '.zip',
+]);
 
 /**
  * Upload states the API sends. 'needs_review': the cohort is stored and can be asked, but an
@@ -152,7 +161,7 @@ export function renderUploadArea(container, handlers) {
 
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.csv,.xlsx,.xls,.sav,.xpt,.zip';
+  input.accept = '.csv,.tsv,.txt,.xlsx,.xls,.sav,.xpt,.zip';
   input.className = 'upload-file-input';
   input.dataset.testid = 'upload-file-input';
   input.addEventListener('change', () => {

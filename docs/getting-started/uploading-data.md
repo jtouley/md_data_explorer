@@ -5,6 +5,7 @@
 The desktop app's **Upload a file…** button accepts one file at a time (`ALLOWED_UPLOAD_EXTENSIONS` in `src/clinical_analytics/api/routes/datasets.py`):
 
 - **CSV files** (.csv)
+- **Tab-separated text** (.tsv, or .txt), such as a CDC WONDER export as downloaded. The notes block under the data (dataset, query, citation) is kept as the dataset's documentation, not as rows; "Total" subtotal rows are left out so nothing is counted twice; values WONDER withholds ("Suppressed", "Unreliable") are stored as missing, never 0, and the upload says how many in which column.
 - **Excel files** (.xlsx, and legacy .xls). Only the first sheet is read; the upload names any other sheet that holds data.
 - **SPSS files** (.sav)
 - **SAS transport files** (.xpt), as NHANES publishes them. Whole-number columns (codes such as 1/2) are stored as integers.

@@ -488,3 +488,36 @@ def test_uploadDataset_zipWithTwoWorkbooks_eachUnreadSheetNamedWithItsFile(test_
     assert body["_status_code"] == 200, body
     assert any(n.startswith("b.xlsx: Read 1 of 2 sheets") and "FollowUp" in n for n in body["cohort_notes"])
     assert not any(n.startswith("a.xlsx") for n in body["cohort_notes"])
+
+
+@pytest.mark.parametrize("extension", [".txt", ".tsv"])
+def test_uploadDataset_wonderExport_readyNotesAsDocsSuppressedMissing(
+    test_client: TestClient, isolated_data_home, make_wonder_export, extension: str
+):
+    # Arrange: a synthetic CDC WONDER export as downloaded (tab-separated .txt)
+    data = make_wonder_export(states=40)
+
+    # Act
+    body = _upload(test_client, f"wonder{extension}", data, f"wonder{extension[1:]}")
+    frame, meta = _stored(body["upload_id"])
+
+    # Assert: uploaded; the notes block is documentation, not rows; suppressed values are missing
+    assert body["_status_code"] == 200, body
+    assert frame.height == 40
+    assert frame["Deaths"].min() > 0
+    assert frame["Deaths"].null_count() == 5
+    assert "Query Parameters" in meta.get("doc_context", "")
+    assert any("withheld by the data source" in note for note in body["type_notes"])
+    assert "1 subtotal row (Notes: Total) was left out, so no row is counted twice." in body["cohort_notes"]
+
+
+def test_uploadDataset_txtNotTabSeparated_refused400SaysHowToFix(test_client: TestClient, isolated_data_home):
+    # Arrange: prose, not a table
+    data = ("Some notes about a study, written as prose and not as a table. " * 30).encode()
+
+    # Act
+    body = _upload(test_client, "notes.txt", data, "notes")
+
+    # Assert
+    assert body["_status_code"] == 400, body
+    assert "not tab-separated" in body["detail"]

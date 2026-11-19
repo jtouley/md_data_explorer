@@ -360,7 +360,7 @@ class TestLoadSingleFile:
         """Test that unsupported file type raises ValueError."""
         # Arrange
         file_bytes = b"some data"
-        filename = "data.txt"
+        filename = "data.json"  # .txt is read as tab-separated text (CDC WONDER exports)
 
         # Act & Assert
         with pytest.raises(ValueError, match="Unsupported file type"):
