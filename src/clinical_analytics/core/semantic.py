@@ -44,7 +44,10 @@ from clinical_analytics.core.query_plan import (
     generate_chart_spec,
     grouped_statistic,
 )
-from clinical_analytics.core.result_presentation import PATIENT_CELLS
+from clinical_analytics.core.result_presentation import (
+    ENCOUNTER_GROUP_CELLS,
+    ENCOUNTER_TOTAL_CELLS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -291,6 +294,28 @@ def _group_values(formatted: dict[str, Any]) -> list[Any]:
         return [g.get("group") for g in formatted.get("groups") or []]
     column = formatted.get("grouped_by")
     return [row.get(column) for row in formatted.get("group_counts") or []]
+
+
+def _is_most_query(query_text: str) -> bool:
+    """ "which site has the most patients": the headline names the largest group."""
+    lowered = query_text.lower()
+    return "most" in lowered and ("which" in lowered or "what" in lowered)
+
+
+def _patients_at_least(condition: str, patient: str = "_p") -> str:
+    """SQL aggregate: the patients behind the units meeting ``condition``, failing closed (#133):
+    distinct patient IDs, and never 0 for a non-empty set (units with no ID are someone)."""
+    return (
+        f"greatest(count(DISTINCT {patient}) FILTER (WHERE {condition}), "
+        f"CAST(count(*) FILTER (WHERE {condition}) > 0 AS INTEGER))"
+    )
+
+
+def _unit_excess(condition: str) -> str:
+    """SQL aggregate: units meeting ``condition`` minus the keyed patients behind them, which a
+    reader gets from an encounter count and the matching patient count (readmissions, and the
+    units with no patient ID)."""
+    return f"count(*) FILTER (WHERE {condition}) - count(DISTINCT _p) FILTER (WHERE {condition})"
 
 
 def _unit_has_value(recorded: str, equal: str, rollup: str | None) -> str:
@@ -2496,6 +2521,9 @@ class SemanticLayer:
                     formatted = self._entity_frequency(formatted, base_rows, entity)
 
         counted = self._count_entity_key(query_plan)
+        if counted and not formatted.get("error") and formatted.get("type") in ("proportion", "rate"):
+            # A share over units: what its roll-up and overlapping groups let a reader work out.
+            formatted["rollup_cells"] = self._rollup_cells(query_plan, counted)
         if (
             counted
             and self.patient_key
@@ -2559,7 +2587,8 @@ class SemanticLayer:
         # Grouped distinct units: the total is counted once per unit, never summed (a unit with
         # rows in two groups counts in both).
         if query_plan.group_by and "unit_total" in result_df.columns:
-            return self._format_unit_groups(result_df, query_plan.group_by)
+            query_text = getattr(context, "query_text", "") or getattr(context, "research_question", "") or ""
+            return self._format_unit_groups(result_df, query_plan.group_by, _is_most_query(query_text))
 
         # DataFrame result - check if grouped or simple count
         if result_df.height == 1 and result_df.width == 1:
@@ -2580,10 +2609,7 @@ class SemanticLayer:
 
             # Check for "most" query pattern
             query_text = getattr(context, "query_text", "") or getattr(context, "research_question", "")
-            is_most_query = False
-            if query_text:
-                query_lower = query_text.lower()
-                is_most_query = "most" in query_lower and ("which" in query_lower or "what" in query_lower)
+            is_most_query = _is_most_query(query_text or "")
 
             # Create headline
             if is_most_query and len(group_counts) > 0:
@@ -2613,7 +2639,7 @@ class SemanticLayer:
             }
 
     @staticmethod
-    def _format_unit_groups(result_df: pl.DataFrame, group_col: str) -> dict[str, Any]:
+    def _format_unit_groups(result_df: pl.DataFrame, group_col: str, is_most_query: bool = False) -> dict[str, Any]:
         """Distinct units per group with the total counted on its own (``_grouped_count_sql``).
 
         ``overlapping``: some unit is in more than one group, so the groups add up to more than
@@ -2631,7 +2657,7 @@ class SemanticLayer:
             "group_counts": group_counts,
             "overlapping": summed > total,
             "headline": f"Total count: **{total}**",
-            "is_most_query": False,
+            "is_most_query": is_most_query,
         }
         return formatted
 
@@ -3201,86 +3227,192 @@ class SemanticLayer:
             recorded += f" AND NOT ({missing_token_sql(quoted)})"
         return recorded, f"{quoted} = {_sql_literal(self._equality_value(view, column, value))}"
 
+    def _share_target(self, plan: "QueryPlan") -> tuple[str | None, Any]:
+        """(column, value) of the plan's share or rate, chosen by which field is set: a value of
+        0 or False is a value, never "no value" (``a or b`` would turn it into the other one)."""
+        if plan.proportion_column:
+            return plan.proportion_column, plan.proportion_value
+        if plan.rate_column:
+            return plan.rate_column, plan.rate_value
+        return None, None
+
     def _encounter_cells(self, plan: "QueryPlan", entity: str) -> dict[str, Any]:
         """The patients behind every encounter count an answer shows or lets a reader work out.
 
         An answer that counts admissions or tests shows encounter counts, but the small-cell rule
-        is about patients: 30 admissions of 2 patients is a cell of 2. So for each group: the
-        patients behind its units (recorded ones, for a share), behind its events and non-events,
-        and behind its complement (the units with no row in it: total minus the group); and
-        overall: the patients behind the total, the unrecorded units (n excluded), the units in
-        more than one group (the excess over the total) and the units the question's limits
-        removed (the dataset's count minus the total). The presenter hides every count whose
-        patients are 1-10 (``result_presentation.encounter_hidden``).
+        is about patients: 30 admissions of 2 patients is a cell of 2. For each set of units the
+        answer shows a count of (each group's units, events and non-events; the complement of a
+        group; the units in two groups; the total; the unrecorded units; the units the limits
+        removed), this counts:
+
+        - the patients behind it, failing closed on units with no patient ID (#133: a non-empty
+          set is at least 1 patient, never 0);
+        - the excess of units over keyed patients (units minus the patients a patient count
+          shows: 101 admissions of 100 patients gives the 1 readmitted patient);
+        - the patients with two or more of its units (readmitted patients).
+
+        The presenter hides every count where any of these is 1-10
+        (``result_presentation.encounter_hidden``).
         """
         patient = _quote_ident(str(self.patient_key))
         key = _quote_ident(entity)
-        column = plan.proportion_column or plan.rate_column
+        column, value = self._share_target(plan)
         with self._cohort_views_dropped():
             view = self._filtered_view(plan)
             if column:
-                recorded, equal = self._share_parts(view, column, plan.proportion_value or plan.rate_value)
+                recorded, equal = self._share_parts(view, column, value)
                 has_value = _unit_has_value(recorded, equal, plan.rollup)
                 included = "_r"
             else:
                 recorded, has_value, included = "TRUE", "FALSE", "TRUE"
             by = _quote_ident(plan.group_by) if plan.group_by else "NULL"
             base_sql = self.con.compile(self.get_base_view())
+            sets = {"": "_in", "event_": "_in AND _ev", "nonevent_": "_in AND NOT _ev"}
+            per_group = ", ".join(
+                f"{_patients_at_least(cond)} AS {name}patients, {_unit_excess(cond)} AS {name}excess"
+                for name, cond in sets.items()
+            )
+            readmitted = ", ".join(
+                f"count(*) FILTER (WHERE {count} >= 2) AS {name}readmitted"
+                for name, count in (("", "a"), ("event_", "e"), ("nonevent_", "ne"))
+            )
+            overall_sets = {
+                "total": "_k > 0",
+                "event": "_k > 0 AND _ev",
+                "nonevent": "_k > 0 AND NOT _ev",
+            }
+            overall = ", ".join(
+                f"(SELECT {_patients_at_least(cond)} FROM _units) AS all_{name}_patients, "
+                f"(SELECT {_unit_excess(cond)} FROM _units) AS all_{name}_excess"
+                for name, cond in overall_sets.items()
+            )
             sql = (
                 f"WITH _base_in AS ({base_sql}), "
                 f"_ug AS (SELECT {by} AS _g, {key} AS _u, max({patient}) AS _p, bool_or({recorded}) AS _r, "
                 f"{has_value} AS _ev FROM _cohort_in WHERE {key} IS NOT NULL GROUP BY 1, 2), "
-                f"_units AS (SELECT _u, max(_p) AS _p, bool_or(_r) AS _r, "
-                f"count(*) FILTER (WHERE {included}) AS _k FROM _ug GROUP BY 1), "
-                f"_names AS (SELECT DISTINCT _g FROM _ug), "
-                f"_per AS (SELECT _g, count(DISTINCT _p) FILTER (WHERE {included}) AS patients, "
-                f"count(DISTINCT _p) FILTER (WHERE {included} AND _ev) AS event_patients, "
-                f"count(DISTINCT _p) FILTER (WHERE {included} AND NOT _ev) AS nonevent_patients "
-                f"FROM _ug GROUP BY 1), "
-                f"_complement AS (SELECT n._g, count(DISTINCT u._p) AS complement_patients "
-                f"FROM _names n CROSS JOIN _units u WHERE u._k > 0 AND NOT EXISTS (SELECT 1 FROM _ug x "
-                f"WHERE x._u = u._u AND x._g IS NOT DISTINCT FROM n._g AND {included.replace('_r', 'x._r')}) "
-                f"GROUP BY 1) "
-                f"SELECT _per.*, coalesce(_complement.complement_patients, 0) AS complement_patients, "
-                f"(SELECT count(DISTINCT _p) FROM _units WHERE _k > 0) AS total_patients, "
-                f"(SELECT count(DISTINCT _p) FROM _units WHERE NOT _r) AS unrecorded_patients, "
-                f"(SELECT count(DISTINCT _p) FROM _units WHERE _k > 1) AS multi_patients, "
-                f"(SELECT count(DISTINCT {patient}) FROM _base_in WHERE {key} IS NOT NULL "
-                f"AND {key} NOT IN (SELECT _u FROM _units)) AS filtered_patients "
-                f"FROM _per LEFT JOIN _complement ON _per._g IS NOT DISTINCT FROM _complement._g"
+                f"_ugi AS (SELECT *, {included} AS _in FROM _ug), "
+                f"_units AS (SELECT _u, max(_p) AS _p, bool_or(_r) AS _r, bool_or(_in AND _ev) AS _ev, "
+                f"count(*) FILTER (WHERE _in) AS _k FROM _ugi GROUP BY 1), "
+                f"_pg AS (SELECT _g, _p, count(*) FILTER (WHERE _in) AS a, count(*) FILTER (WHERE _in AND _ev) AS e, "
+                f"count(*) FILTER (WHERE _in AND NOT _ev) AS ne FROM _ugi WHERE _p IS NOT NULL GROUP BY 1, 2), "
+                f"_po AS (SELECT _p, count(*) FILTER (WHERE _k > 0) AS a, count(*) FILTER (WHERE _k > 0 AND _ev) AS e, "
+                f"count(*) FILTER (WHERE _k > 0 AND NOT _ev) AS ne FROM _units WHERE _p IS NOT NULL GROUP BY 1), "
+                f"_names AS (SELECT DISTINCT _g FROM _ugi), "
+                f"_per AS (SELECT _g, {per_group} FROM _ugi GROUP BY 1), "
+                f"_reads AS (SELECT _g, {readmitted} FROM _pg GROUP BY 1), "
+                f"_complement AS (SELECT n._g, {_patients_at_least('TRUE', 'u._p')} AS complement_patients "
+                f"FROM _names n CROSS JOIN _units u WHERE u._k > 0 AND NOT EXISTS (SELECT 1 FROM _ugi x "
+                f"WHERE x._u = u._u AND x._g IS NOT DISTINCT FROM n._g AND x._in) GROUP BY 1), "
+                f"_removed AS (SELECT {key} AS _u, max({patient}) AS _p FROM _base_in WHERE {key} IS NOT NULL "
+                f"AND {key} NOT IN (SELECT _u FROM _units) GROUP BY 1) "
+                f"SELECT _per.*, coalesce(_reads.readmitted, 0) AS readmitted, "
+                f"coalesce(_reads.event_readmitted, 0) AS event_readmitted, "
+                f"coalesce(_reads.nonevent_readmitted, 0) AS nonevent_readmitted, "
+                f"coalesce(_complement.complement_patients, 0) AS complement_patients, {overall}, "
+                f"(SELECT {_patients_at_least('NOT _r')} FROM _units) AS unrecorded_patients, "
+                f"(SELECT {_patients_at_least('_k > 1')} FROM _units) AS multi_patients, "
+                f"(SELECT {_patients_at_least('TRUE')} FROM _removed) AS filtered_patients, "
+                f"(SELECT count(*) FILTER (WHERE a >= 2) FROM _po) AS all_total_readmitted, "
+                f"(SELECT count(*) FILTER (WHERE e >= 2) FROM _po) AS all_event_readmitted, "
+                f"(SELECT count(*) FILTER (WHERE ne >= 2) FROM _po) AS all_nonevent_readmitted "
+                f"FROM _per LEFT JOIN _reads ON _per._g IS NOT DISTINCT FROM _reads._g "
+                f"LEFT JOIN _complement ON _per._g IS NOT DISTINCT FROM _complement._g"
             )
             frame = self._duck_aggregate(view, sql)
-        totals = ("total_patients", "unrecorded_patients", "multi_patients", "filtered_patients")
-        cells: dict[str, Any] = {name: int(frame.get_column(name)[0] or 0) if frame.height else 0 for name in totals}
+        first = frame.row(0, named=True) if frame.height else {}
+        cells: dict[str, Any] = {
+            name: int(first.get(name) or 0)
+            for name in (*ENCOUNTER_TOTAL_CELLS, "unrecorded_patients", "multi_patients", "filtered_patients")
+        }
         cells["groups"] = [
-            {"group": row["_g"], **{name: int(row[name] or 0) for name in (*PATIENT_CELLS, "complement_patients")}}
+            {"group": row["_g"], **{name: int(row[name] or 0) for name in ENCOUNTER_GROUP_CELLS}}
             for row in frame.iter_rows(named=True)
+        ]
+        return cells
+
+    def _rollup_cells(self, plan: "QueryPlan", entity: str) -> dict[str, Any]:
+        """Counts behind a rolled-up share that a reader can work out from it and its neighbours.
+
+        - ``mixed``: units whose recorded rows hold both the value and another one, overall and per
+          group. The "ever" share minus the "always" share is exactly these.
+        - With overlapping groups, units by how their groups split: with the value in any group
+          (``event_any``: the ungrouped share's events), without it in some group
+          (``nonevent_any``), in two or more groups (``multi``), with the value in two or more
+          (``event_multi``), without it in two or more (``nonevent_multi``), and with it in one
+          group but not in another (``split``). Sums and differences of the shown groups' events
+          and non-events and the ungrouped answer are sums of these.
+
+        Each is counted in units and in patients (failing closed on units with no patient ID).
+        """
+        key = _quote_ident(entity)
+        patient = _quote_ident(str(self.patient_key)) if self.patient_key else key
+        column, value = self._share_target(plan)
+        if column is None:
+            return {}
+        with self._cohort_views_dropped():
+            view = self._filtered_view(plan)
+            recorded, equal = self._share_parts(view, column, value)
+            has_value = _unit_has_value(recorded, equal, plan.rollup)
+            by = _quote_ident(plan.group_by) if plan.group_by else "NULL"
+            unit_sets = {
+                "mixed": "_mixed",
+                "event_any": "_ke > 0",
+                "nonevent_any": "_kn > 0",
+                "multi": "_k > 1",
+                "event_multi": "_ke > 1",
+                "nonevent_multi": "_kn > 1",
+                "split": "_k > 1 AND _ke > 0 AND _kn > 0",
+            }
+            overall = ", ".join(
+                f"count(*) FILTER (WHERE {cond}) AS {name}, {_patients_at_least(cond)} AS {name}_patients"
+                for name, cond in unit_sets.items()
+            )
+            sql = (
+                f"WITH _ug AS (SELECT {by} AS _g, {key} AS _u, max({patient}) AS _p, bool_or({recorded}) AS _r, "
+                f"{has_value} AS _ev, bool_or({recorded} AND {equal}) AS _yes, "
+                f"bool_or({recorded} AND NOT ({equal})) AS _no FROM _cohort_in WHERE {key} IS NOT NULL GROUP BY 1, 2), "
+                f"_units AS (SELECT _u, max(_p) AS _p, count(*) FILTER (WHERE _r) AS _k, "
+                f"count(*) FILTER (WHERE _r AND _ev) AS _ke, count(*) FILTER (WHERE _r AND NOT _ev) AS _kn, "
+                f"bool_or(_yes) AND bool_or(_no) AS _mixed FROM _ug GROUP BY 1), "
+                f"_per AS (SELECT _g, count(*) FILTER (WHERE _yes AND _no) AS mixed, "
+                f"{_patients_at_least('_yes AND _no')} AS mixed_patients FROM _ug GROUP BY 1) "
+                f"SELECT (SELECT list({{'group': _g, 'mixed': mixed, 'mixed_patients': mixed_patients}}) FROM _per) "
+                f"AS groups, {overall} FROM _units"
+            )
+            frame = self._duck_aggregate(view, sql)
+        row = frame.row(0, named=True)
+        cells: dict[str, Any] = {name: int(row[name] or 0) for name in row if name != "groups"}
+        cells["groups"] = [
+            {"group": g["group"], "mixed": int(g["mixed"] or 0), "mixed_patients": int(g["mixed_patients"] or 0)}
+            for g in row["groups"] or []
         ]
         return cells
 
     def _uncovered_patients(self, plan: "QueryPlan", entity: str, shown: list[Any]) -> int:
         """Patients behind the units with no (recorded) row in any shown group: the total minus
-        the shown groups' union, which a reader learns when the groups partition the units."""
+        the shown groups' union, which a reader learns when the groups partition the units. A
+        non-empty set of units counts as at least 1 patient, units with no patient ID included."""
         patient = _quote_ident(str(self.patient_key))
         key = _quote_ident(entity)
         group = _quote_ident(str(plan.group_by))
-        column = plan.proportion_column or plan.rate_column
-        values = [value for value in shown if value is not None]
-        null_shown = "TRUE" if any(value is None for value in shown) else "FALSE"
+        column, value = self._share_target(plan)
+        values = [item for item in shown if item is not None]
+        null_shown = "TRUE" if any(item is None for item in shown) else "FALSE"
         with self._cohort_views_dropped():
             view = self._filtered_view(plan)
-            recorded = (
-                self._share_parts(view, column, plan.proportion_value or plan.rate_value)[0] if column else "TRUE"
-            )
+            recorded = self._share_parts(view, column, value)[0] if column else "TRUE"
             sql = (
                 f"WITH _ug AS (SELECT {group} AS _g, {key} AS _u, max({patient}) AS _p, bool_or({recorded}) AS _r "
-                f"FROM _cohort_in WHERE {key} IS NOT NULL GROUP BY 1, 2) "
-                f"SELECT count(DISTINCT _p) AS n FROM _ug u WHERE _r AND NOT EXISTS (SELECT 1 FROM _ug x "
-                f"WHERE x._u = u._u AND x._r AND (list_contains($shown, x._g) OR ({null_shown} AND x._g IS NULL)))"
+                f"FROM _cohort_in WHERE {key} IS NOT NULL GROUP BY 1, 2), "
+                f"_left AS (SELECT DISTINCT _u, _p FROM _ug u WHERE _r AND NOT EXISTS (SELECT 1 FROM _ug x "
+                f"WHERE x._u = u._u AND x._r AND (list_contains($shown, x._g) OR ({null_shown} AND x._g IS NULL)))) "
+                f"SELECT {_patients_at_least('TRUE')} AS n FROM _left"
             )
             compiled = _with_cohort_cte(self.con.compile(view), sql)
-            row = self.con.con.execute(compiled, {"shown": values}).fetchone()
-        return int(row[0] or 0) if row else 0
+            # Read every row before the block drops the cohort views: an unread result keeps
+            # them in use, and the next question's DROP VIEW would then fail.
+            rows = self.con.con.execute(compiled, {"shown": values}).fetchall()
+        return int(rows[0][0] or 0) if rows else 0
 
     def _execute_plan(self, plan: "QueryPlan") -> pd.DataFrame | pl.DataFrame:
         """Execute QueryPlan and return results DataFrame, with its cohort views dropped."""

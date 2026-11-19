@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias
 
 Statistic: TypeAlias = Literal["mean", "median", "min", "max", "std"]
+# How a value is rolled up over one unit's rows: on at least one row, or on every recorded row.
+Rollup: TypeAlias = Literal["any", "all"]
 # The statistic each word asks for. A plan carries one; a word is used only when it matches.
 STATISTIC_WORDS: dict[str, Statistic] = {
     "average": "mean",
@@ -130,7 +132,7 @@ class QueryPlan:
     # How a share's value is rolled up over the rows of one counted unit (``entity_key``) when it
     # differs between them: "any" (on at least one row), "all" (on every recorded row). Read from
     # the question's words (core.counting_unit), never guessed.
-    rollup: Literal["any", "all"] | None = None
+    rollup: Rollup | None = None
 
     def __post_init__(self) -> None:
         """A share asked "by <group>" is a rate per group, so make it one rate plan here.

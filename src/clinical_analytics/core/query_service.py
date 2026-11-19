@@ -757,18 +757,28 @@ class QueryService:
             return findings
         if grain.repeated and grain.key is not None and not visits and not unit.named:
             # The question did not say what it counts: ask once (patients, or encounters).
-            findings.holds.append(answer_checks.grain_hold_reason(grain.key, unit.candidate))
+            nouns = counting_unit.nouns_for(unit.candidate) if unit.candidate else ()
+            findings.holds.append(answer_checks.grain_hold_reason(grain.key, unit.candidate, nouns))
             findings.grain_to_declare = grain.declaration(dataset_version)
         if grain.repeated and grain.key is not None:
             # Checked before and after the confirmation: a share counts units rolled up over their
             # rows, and a value that differs between a unit's rows needs the question's roll-up.
             # A grouping that differs is answered (each unit counted in each of its groups).
+            key = plan.entity_key or grain.key
+            noun = "patient" if key == grain.key else counting_unit.singular(unit.words.noun)
+            varying = answer_checks.limits_varying(layer, key, plan)
             if plan.proportion_column or plan.rate_column:
-                key = plan.entity_key or grain.key
-                noun = "patient" if key == grain.key else counting_unit.singular(unit.words.noun)
-                findings.refusal = answer_checks.share_refusal(layer, key, plan, noun)
+                findings.refusal = answer_checks.share_refusal(layer, key, plan, noun, encounter=key != grain.key)
                 if findings.refusal and unit.words.ordered:
                     findings.refusal = counting_unit.ordered_rollup_reason(unit.words.ordered)
+                if findings.refusal is None and plan.rollup is not None and varying:
+                    # The limits pick rows before the roll-up, so "ever" would be read only on the
+                    # rows that meet them: not the patient's own "ever". Never answered silently.
+                    findings.refusal = counting_unit.limited_rollup_reason(varying, noun)
+            elif plan.intent == "COUNT" and varying and plan.rollup is None and (unit.named or visits):
+                # A count limited by a value that differs between a unit's rows counts the units
+                # with at least one row that meets the limits: say so and ask once.
+                findings.holds.append(counting_unit.count_rollup_hold(varying, noun))
             if findings.refusal:
                 return findings
             if unit.named and plan.entity_key == grain.key:
@@ -786,7 +796,9 @@ class QueryService:
         for _column, hold, note in answer_checks.implausible_sentences(plan, layer):
             findings.holds.append(hold)
             findings.notes.append(note)
-        null_keys = answer_checks.missing_key_note(grain, visits or grain.repeated)
+        null_keys = answer_checks.missing_key_note(
+            grain, visits or grain.repeated, encounter=unit.encounter_key is not None and plan.entity_key is not None
+        )
         if null_keys:
             findings.notes.append(null_keys)
         columns = answer_checks.plan_columns(plan)

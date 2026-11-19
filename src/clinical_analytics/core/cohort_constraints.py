@@ -959,11 +959,17 @@ def _ranked(columns: list[str], tokens: set[str]) -> list[tuple[str, int]]:
 
 
 def _share_group(lowered: str, columns: list[str], bound: set[str]) -> str | None:
-    """The column a share is asked by (the last "by/each/per <words>" that names one that is not
-    a limit or the share's own column), or None."""
+    """The column a share is asked by (the last "by/each/per <words>" whose every word names one
+    column that is not a limit or the share's own column), or None."""
     for match in reversed(list(_SHARE_GROUP.finditer(lowered))):
-        group = _best_column([c for c in columns if c not in bound], _tokens(match.group("group")))
-        if group is not None:
+        phrase = match.group("group")
+        if re.search(r"\d", phrase):
+            continue  # "by day 30" is a time, not a grouping
+        words = _tokens(phrase)
+        group = _best_column([c for c in columns if c not in bound], words)
+        # Every word of the phrase names the column ("region of birth" -> birth_region), so a
+        # phrase that only shares a word with one ("by day" -> day_of_week) is never a grouping.
+        if group is not None and words <= _tokens(group):
             return group
     return None
 

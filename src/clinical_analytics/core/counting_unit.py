@@ -24,8 +24,8 @@ from dataclasses import dataclass
 from typing import Any, Literal, TypeAlias
 
 from clinical_analytics.analysis.variable_types import short_name
+from clinical_analytics.core.query_plan import Rollup
 
-Rollup: TypeAlias = Literal["any", "all"]
 UnitKind: TypeAlias = Literal["patients", "encounters"]
 
 # Only nouns that limit nothing: "women", "adults" or "children" also limit the patients, so they
@@ -92,8 +92,13 @@ def read_units(question: str) -> UnitWords:
     older" counts tests; "in patients 65+, how many admissions" counts admissions.
     """
     text = question.lower()
-    head = _HEAD.search(text)
-    words = [(m.start(), m.group(0)) for m in _WORD.finditer(text)]
+    any_found, all_found = _matches(_ANY_PHRASES, text), _matches(_ALL_PHRASES, text)
+    # A noun inside a roll-up phrase ("on any visit") says when, not what is counted.
+    nouns_text = text
+    for phrase in (*any_found, *all_found):
+        nouns_text = nouns_text.replace(phrase, " " * len(phrase))
+    head = _HEAD.search(nouns_text)
+    words = [(m.start(), m.group(0)) for m in _WORD.finditer(nouns_text)]
     after = [w for at, w in words if head is not None and at >= head.end()]
     unit: UnitKind | None = None
     noun: str | None = None
@@ -104,7 +109,6 @@ def read_units(question: str) -> UnitWords:
         if word in ENCOUNTER_NOUNS:
             unit, noun = "encounters", word
             break
-    any_found, all_found = _matches(_ANY_PHRASES, text), _matches(_ALL_PHRASES, text)
     rollup: Rollup | None = "any" if any_found else ("all" if all_found else None)
     ordered = _ORDER_PHRASE.search(text)
     return UnitWords(
@@ -175,12 +179,40 @@ def encounter_spans_reason(encounter: str, patient: str, noun: str) -> str:
     )
 
 
-def rollup_choice(column: str, unit: str) -> str:
-    """The one plain choice for a share whose value differs between rows of one unit."""
+def rollup_choice(column: str, unit: str, every: bool = True) -> str:
+    """The one plain choice for a share whose value differs between rows of one unit. Each
+    wording it suggests reads back as that roll-up (``read_units``). ``every``: offer "always"
+    (not for encounters, where it is not supported)."""
     name = short_name(column)
+    if not every:
+        return (
+            f"{name} differs between rows of the same {unit}. Say 'ever' to count each {unit} with it on at "
+            f"least one row."
+        )
     return (
         f"{name} differs between rows of the same {unit}. Say which {unit}s to count: those with it on at "
-        f"least one row (for example 'ever' or 'on any visit'), or on every row ('always')."
+        f"least one row ('ever'), or on every row ('always')."
+    )
+
+
+def limited_rollup_reason(columns: list[str], unit: str) -> str:
+    """Refusal for a rolled-up share whose limits differ between a unit's rows."""
+    names = " and ".join(short_name(c) for c in columns)
+    verb = "differ" if len(columns) > 1 else "differs"
+    return (
+        f"{names} {verb} between rows of the same {unit}, so the limit would pick some of a {unit}'s rows and "
+        f"'ever' or 'always' would be read only on those, not on the {unit}'s whole record. Ask without that "
+        f"limit, or with a limit that is the same on every row of a {unit}."
+    )
+
+
+def count_rollup_hold(columns: list[str], unit: str) -> str:
+    """Hold for a count limited by values that differ between a unit's rows."""
+    names = " and ".join(short_name(c) for c in columns)
+    verb = "differ" if len(columns) > 1 else "differs"
+    return (
+        f"{names} {verb} between rows of the same {unit}, so this counts each {unit} with at least one row "
+        f"that meets the limits. Confirm to count them that way, or say 'ever' in the question."
     )
 
 
@@ -244,3 +276,8 @@ def pick_encounter_key(candidates: list[str], noun: str) -> str | None:
     if not named:
         named = [c for c in candidates if _GENERIC_ENCOUNTER_WORDS & parts(c)]
     return named[0] if len(named) == 1 else None
+
+
+def nouns_for(column: str) -> tuple[str, ...]:
+    """The encounter nouns a question can use to count ``column`` (``pick_encounter_key``)."""
+    return tuple(noun for noun in ("admissions", "tests", "visits") if pick_encounter_key([column], noun) == column)

@@ -116,13 +116,17 @@ def grain_of(layer: Any) -> Grain:
     )
 
 
-def missing_key_note(grain: Grain, visits: bool) -> str | None:
+def missing_key_note(grain: Grain, visits: bool, encounter: bool = False) -> str | None:
     """The note for rows with no patient ID, or None. The count follows the small-cell rule
-    (its line: the rows that have an ID). At visit grain those rows are in no patient count."""
+    (its line: the rows that have an ID). At visit grain those rows are in no patient count; in
+    an encounter count their encounters are counted, and each is someone for the small-cell rule."""
     if grain.key is None or grain.missing_keys == 0:
         return None
     amount = line_count_text(grain.missing_keys, [grain.rows - grain.missing_keys])
-    counted = "; those rows are not counted as patients" if visits else ""
+    if encounter:
+        counted = "; their encounters are counted, and each counts as at least one patient when small counts are hidden"
+    else:
+        counted = "; those rows are not counted as patients" if visits else ""
     return f"Data check: {grain.key} is missing on {amount} rows{counted}."
 
 
@@ -133,9 +137,11 @@ def declared_visits(grain: Grain, declarations: Declarations, dataset_version: s
     return stored is not None and stored == grain.declaration(dataset_version)
 
 
-def grain_hold_reason(key: str, encounter: str | None = None) -> str:
-    """The hold for repeated patient IDs; with an encounter ID it offers that count as well."""
-    choice = f", or ask for admissions, tests or visits to count each {encounter} once" if encounter is not None else ""
+def grain_hold_reason(key: str, encounter: str | None = None, nouns: tuple[str, ...] = ()) -> str:
+    """The hold for repeated patient IDs; with an encounter ID it also offers the encounter count,
+    naming only the nouns that column can count (``counting_unit.nouns_for``)."""
+    asked = " or ".join(nouns)
+    choice = f", or ask for {asked} to count each {encounter} once" if encounter is not None and nouns else ""
     return (
         f"Some IDs in {key} appear on more than one row, so a row may be a visit rather than a patient. "
         f"Confirm that rows are visits to count each patient once{choice}."
@@ -331,7 +337,20 @@ def varies_refusal(column: str, counted: str) -> str:
     )
 
 
-def share_refusal(layer: Any, key: str, plan: QueryPlan, unit: str = "patient") -> str | None:
+def limits_varying(layer: Any, key: str, plan: QueryPlan) -> list[str]:
+    """The plan's limit columns (filters and cohort steps) whose value differs between rows of
+    one unit (distinct ``key``), in plan order: a limit on them picks rows, not units."""
+    columns = set(layer.get_base_view().columns)
+    limited: list[str] = []
+    for column in [*(f.column for f in plan.filters), *(s.column for s in plan.cohort_steps)]:
+        if column in columns and column != key and column not in limited:
+            limited.append(column)
+    return [c for c in limited if varies_within_patient(layer, key, c, nulls_are_values=True)]
+
+
+def share_refusal(
+    layer: Any, key: str, plan: QueryPlan, unit: str = "patient", *, encounter: bool = False
+) -> str | None:
     """At visit grain a share counts units (distinct ``key``: patients, or the encounters the
     question asked for), each rolled up over its rows. When the outcome differs between a unit's
     rows, the roll-up must come from the question ("ever", "always": ``plan.rollup``); without
@@ -350,7 +369,7 @@ def share_refusal(layer: Any, key: str, plan: QueryPlan, unit: str = "patient") 
         and outcome in columns
         and varies_within_patient(layer, key, outcome, nulls_are_values=False)
     ):
-        return rollup_choice(outcome, unit)
+        return rollup_choice(outcome, unit, every=not encounter)
     return None
 
 

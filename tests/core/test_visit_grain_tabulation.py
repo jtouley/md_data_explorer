@@ -62,12 +62,12 @@ def _tests_frame(in_both_years: int = 15, null_keys: int = 0) -> pl.DataFrame:
 
 
 def _screening_frame() -> pl.DataFrame:
-    """Two visits for each of 120 patients; region is one value per patient. Screened at the
+    """Two visits for each of 360 patients; region is one value per patient. Screened at the
     first visit when i % 3 == 0, at the second when i % 2 == 0; every 10th patient's second
-    visit records nothing."""
+    visit records nothing. Every region has many patients screened at one visit and not the other."""
     rows: list[dict[str, Any]] = []
-    for i in range(120):
-        region = ("North", "South", "East")[i % 3 if i < 60 else i % 2]
+    for i in range(360):
+        region = ("North", "South", "East")[i % 3]
         first = "yes" if i % 3 == 0 else "no"
         second = None if i % 10 == 0 else ("yes" if i % 2 == 0 else "no")
         rows.append({"patient_id": f"P{i:03d}", "visit_id": f"V{i:03d}a", "region": region, "screened": first})
@@ -78,12 +78,15 @@ def _screening_frame() -> pl.DataFrame:
 def _admissions_frame(legionella_patients: int = 3) -> pl.DataFrame:
     """Admissions: 60 patients with one admission each (pathogen by i % 2), plus
     ``legionella_patients`` patients with four Legionella admissions each (12 admissions from 3
-    patients). Admission A000 has a second pathogen written as a second row (Influenza, its only
-    one), and A001-A015 a second one too (S. aureus), so 16 admissions have two pathogens."""
+    patients), and 15 S. pneumoniae patients readmitted once. Admission A000 has a second
+    pathogen written as a second row (Influenza, its only one), and A001-A015 a second one too
+    (S. aureus), so 16 admissions have two pathogens."""
     rows: list[dict[str, Any]] = []
     for i in range(60):
         pathogen = ("S. pneumoniae", "None identified")[i % 2]
         rows.append({"patient_id": f"P{i:03d}", "encounter_id": f"A{i:03d}", "pathogen": pathogen})
+    for i in range(0, 30, 2):  # 15 S. pneumoniae patients readmitted once with it
+        rows.append({"patient_id": f"P{i:03d}", "encounter_id": f"R{i:03d}", "pathogen": "S. pneumoniae"})
     rows.append({"patient_id": "P000", "encounter_id": "A000", "pathogen": "Influenza"})
     for i in range(1, 16):
         rows.append({"patient_id": f"P{i:03d}", "encounter_id": f"A{i:03d}", "pathogen": "S. aureus"})
@@ -142,7 +145,7 @@ class TestPatientsPerGroup:
         total = positive.get_column("patient_id").n_unique()
 
         # Act
-        result = _ask(service, "how many patients tested positive each year?", _positive_by_year())
+        result = _ask(service, "how many patients ever tested positive each year?", _positive_by_year())
 
         # Assert: 30 in 2021 and 30 in 2022 (P015-P029 in both, P030-P044 only in 2022), 45 in all
         assert not result.requires_confirmation and result.failure_reason is None
@@ -158,7 +161,7 @@ class TestPatientsPerGroup:
         service = QueryService(make_semantic_layer(data=frame))
 
         # Act
-        result = _ask(service, "how many patients tested positive each year?", _positive_by_year())
+        result = _ask(service, "how many patients ever tested positive each year?", _positive_by_year())
 
         # Assert: no patient is in both years, so the years add up to the total (no overlap note)
         assert _table(result) == {display_level("test_year", "2021"): 30, display_level("test_year", "2022"): 15}
@@ -170,7 +173,7 @@ class TestPatientsPerGroup:
         service = QueryService(make_semantic_layer(data=_tests_frame(in_both_years=3)))
 
         # Act
-        result = _ask(service, "how many patients tested positive each year?", _positive_by_year())
+        result = _ask(service, "how many patients ever tested positive each year?", _positive_by_year())
 
         # Assert
         table = present_analysis(result.analysis)["table"]
@@ -187,7 +190,7 @@ class TestPatientsPerGroup:
         # Assert: asked once, offering both readings, never guessed
         assert result.requires_confirmation is True
         assert "Confirm that rows are visits to count each patient once" in result.failure_reason
-        assert "or ask for admissions, tests or visits to count each encounter_id once" in result.failure_reason
+        assert "or ask for admissions or tests or visits to count each encounter_id once" in result.failure_reason
 
 
 class TestOverlapHidden:
@@ -306,7 +309,7 @@ class TestRollups:
 
 class TestEncounterCounts:
     def test_ask_admissions_countsDistinctEncountersNotRowsOrPatients(self, make_semantic_layer: Any) -> None:
-        # Arrange: 76 + 12 rows, 72 admissions, 63 patients
+        # Arrange: 91 + 12 rows, 87 admissions, 63 patients
         frame = _admissions_frame()
         service = QueryService(make_semantic_layer(data=frame))
         plan = QueryPlan(intent="COUNT", confidence=0.99)
@@ -315,8 +318,8 @@ class TestEncounterCounts:
         result = _ask(service, "how many admissions were there?", plan)
 
         # Assert
-        assert (frame.height, frame.get_column("encounter_id").n_unique()) == (88, 72)
-        assert result.claim == "Total count: 72 visits."
+        assert (frame.height, frame.get_column("encounter_id").n_unique()) == (103, 87)
+        assert result.claim == "Total count: 87 visits. Each is one admission (a distinct encounter_id)."
 
     def test_ask_admissionsByPathogen_groupOfFewPatientsHiddenWhateverItsAdmissions(
         self, make_semantic_layer: Any
@@ -331,7 +334,7 @@ class TestEncounterCounts:
         # Assert: the labels of Legionella and Influenza (1 patient) are never shown
         shown = _table(result)
         assert "Legionella" not in shown and "Influenza" not in shown
-        assert (shown["S. pneumoniae"], shown["None identified"], shown["S. aureus"]) == (30, 30, 15)
+        assert (shown["S. pneumoniae"], shown["None identified"], shown["S. aureus"]) == (45, 30, 15)
         assert "An admission with rows in more than one pathogen is counted in each" in result.claim
 
     def test_ask_encounterSharedByTwoPatients_refused(self, make_semantic_layer: Any) -> None:
@@ -558,10 +561,10 @@ class TestEncounterPatientCells:
         # Act
         result = _ask(service, "how many admissions were there by ward?", plan)
 
-        # Assert: without suppression A=120, B=115 and 200 in all would show the 2 patients' 35
-        table = present_analysis(result.analysis)["table"]
-        assert table is not None
-        assert all(row["count"] == SECONDARY_SUPPRESSED for row in table["rows"])
+        # Assert: without suppression A=120, B=115 and 200 in all would show the 2 patients' 35;
+        # the 2 readmitted patients (200 admissions of 167 patients) also hide the total
+        assert result.claim == "Total count hidden."
+        assert present_analysis(result.analysis)["table"] is None
 
     def test_ask_testsWithOnlyAnAdmissionId_refused(self, make_semantic_layer: Any) -> None:
         # Arrange: the only encounter ID is the admission's
@@ -580,7 +583,8 @@ class TestEncounterPatientCells:
         # Arrange: wards C (12 admissions, 2 patients) and D (13 admissions, 3 patients) are hidden;
         # the total minus A and B would give their 25 admissions, all of 5 patients
         rows: list[dict[str, Any]] = []
-        for ward, admissions, patients in (("A", 50, 50), ("B", 40, 40), ("C", 12, 2), ("D", 13, 3)):
+        # A: 65 admissions of 50 patients (15 readmitted), so readmissions overall are not few.
+        for ward, admissions, patients in (("A", 65, 50), ("B", 40, 40), ("C", 12, 2), ("D", 13, 3)):
             for i in range(admissions):
                 rows.append({"patient_id": f"{ward}{i % patients:02d}", "encounter_id": f"{ward}{i:03d}", "ward": ward})
         service = QueryService(make_semantic_layer(data=pl.DataFrame(rows)))
@@ -593,3 +597,299 @@ class TestEncounterPatientCells:
         table = present_analysis(result.analysis)["table"]
         assert table is not None
         assert all(row["count"] == SECONDARY_SUPPRESSED for row in table["rows"])
+
+
+# --------------------------------------------------------------------------- second review: repros
+
+
+def _hidden_everywhere(result: Any) -> bool:
+    """No share, rate or count of the answer is shown (withheld, refused, or every cell hidden)."""
+    if result.claim is None:
+        return True
+    table = present_analysis(result.analysis)["table"]
+    if table is None:
+        return True
+    shown = [c for c in table["columns"] if c in ("proportion", "rate", "count")]
+    return all(row[c] == SECONDARY_SUPPRESSED for row in table["rows"] for c in shown)
+
+
+class TestSecondReview:
+    def test_ask_everRateByOverlappingYear_bothYearEventsNotDerivable(self, make_semantic_layer: Any) -> None:
+        # Arrange: 80 patients tested in 2021 and 2022; 30 positive each year, 5 of them in both, so
+        # 30 + 30 - 55 (the ungrouped "ever" events) would give the 5
+        rows: list[dict[str, Any]] = []
+        for i in range(80):
+            rows.append(
+                {"patient_id": f"P{i:02d}", "test_year": "2021", "result": "positive" if i < 30 else "negative"}
+            )
+            rows.append(
+                {"patient_id": f"P{i:02d}", "test_year": "2022", "result": "positive" if 25 <= i < 55 else "negative"}
+            )
+        service = QueryService(make_semantic_layer(data=pl.DataFrame(rows)))
+        plan = QueryPlan(
+            intent="COUNT",
+            proportion_column="result",
+            proportion_value="positive",
+            group_by="test_year",
+            confidence=0.99,
+        )
+
+        # Act
+        result = _ask(service, "what share of patients ever tested positive, by test year?", plan)
+
+        # Assert
+        assert _hidden_everywhere(result)
+
+    def test_ask_everAndAlways_fewPatientsChanged_bothWithheld(self, make_semantic_layer: Any) -> None:
+        # Arrange: 40 screened at both visits, 5 at one only: ever 45% - always 40% of 100 = 5
+        rows: list[dict[str, Any]] = []
+        for i in range(100):
+            first, second = ("yes", "yes") if i < 40 else (("yes", "no") if i < 45 else ("no", "no"))
+            rows += [
+                {"patient_id": f"P{i:03d}", "visit_id": f"V{i}a", "screened": first},
+                {"patient_id": f"P{i:03d}", "visit_id": f"V{i}b", "screened": second},
+            ]
+        service = QueryService(make_semantic_layer(data=pl.DataFrame(rows)))
+        plan = QueryPlan(intent="COUNT", proportion_column="screened", proportion_value="yes", confidence=0.99)
+
+        # Act
+        ever = _ask(service, "what share of patients were ever screened?", plan)
+        always = _ask(service, "what share of patients were always screened?", plan)
+
+        # Assert
+        assert _hidden_everywhere(ever) and _hidden_everywhere(always)
+
+    @pytest.mark.parametrize("value", [pytest.param(0, id="zero"), pytest.param(1, id="one")])
+    def test_ask_encounterShareOfValue_zeroAndOneAlike_fewPatientsHidden(
+        self, make_semantic_layer: Any, value: int
+    ) -> None:
+        # Arrange: 30 unvaccinated admissions (value 0) of 3 patients, 60 vaccinated of 60
+        rows = [{"patient_id": f"P{i:03d}", "encounter_id": f"A{i:03d}", "vaccinated": 1} for i in range(60)]
+        rows += [{"patient_id": f"R{k % 3}", "encounter_id": f"C{k:03d}", "vaccinated": 0} for k in range(30)]
+        service = QueryService(make_semantic_layer(data=pl.DataFrame(rows)))
+        plan = QueryPlan(intent="COUNT", proportion_column="vaccinated", proportion_value=value, confidence=0.99)
+
+        # Act
+        result = _ask(service, "what share of admissions had vaccinated?", plan)
+
+        # Assert: the 3 patients behind one side hide the share whichever value is asked
+        assert _hidden_everywhere(result)
+
+    @pytest.mark.parametrize("group_by", [pytest.param(None, id="total"), pytest.param("ward", id="by_ward")])
+    def test_ask_admissionsOneReadmission_notDerivableFromPatients(
+        self, make_semantic_layer: Any, group_by: str | None
+    ) -> None:
+        # Arrange: 100 patients, one readmitted: 101 admissions minus 100 patients gives 1
+        rows = [
+            {"patient_id": f"P{i:03d}", "encounter_id": f"A{i:03d}", "ward": ("medical", "surgical")[i % 2]}
+            for i in range(100)
+        ]
+        rows.append({"patient_id": "P000", "encounter_id": "A999", "ward": "medical"})
+        service = QueryService(make_semantic_layer(data=pl.DataFrame(rows)))
+
+        # Act
+        plan = QueryPlan(intent="COUNT", group_by=group_by, confidence=0.99)
+        result = _ask(service, "how many admissions were there?", plan)
+
+        # Assert
+        assert result.claim == "Total count hidden."
+
+    def test_ask_admissionsWithNoPatientId_failClosedAndNoteAgrees(self, make_semantic_layer: Any) -> None:
+        # Arrange: 60 patients, 20 of them readmitted; 15 Legionella admissions with no patient ID
+        rows = [
+            {"patient_id": f"P{i:03d}", "encounter_id": f"{kind}{i:03d}", "pathogen": ("S. pneumoniae", "None")[i % 2]}
+            for kind, count in (("A", 60), ("B", 20))
+            for i in range(count)
+        ]
+        rows += [{"patient_id": None, "encounter_id": f"L{k:02d}", "pathogen": "Legionella"} for k in range(15)]
+        frame = pl.DataFrame(rows, schema={"patient_id": pl.String, "encounter_id": pl.String, "pathogen": pl.String})
+        service = QueryService(make_semantic_layer(data=frame))
+        plan = QueryPlan(intent="COUNT", group_by="pathogen", confidence=0.99)
+
+        # Act
+        result = _ask(service, "how many admissions by pathogen?", plan)
+
+        # Assert: Legionella (0 keyed patients) is never shown, and the note does not say the
+        # unkeyed rows are left out of a total that counts them
+        assert "Legionella" not in _table(result)
+        assert "their encounters are counted" in result.claim
+        assert "not counted as patients" not in result.claim
+
+    def test_presentRate_encounterGroupWithoutCells_hidden(self) -> None:
+        # Arrange: cells came back for one group only
+        analysis = {
+            "type": "rate",
+            "column": "vaccinated",
+            "value": 1,
+            "group_col": "ward",
+            "groups": [
+                {"group": "A", "rate": 0.5, "events": 30, "n": 60},
+                {"group": "B", "rate": 0.5, "events": 30, "n": 60},
+            ],
+            "n_used": 120,
+            "n_excluded": 0,
+            "n_filtered_out": 0,
+            "encounter_cells": {
+                **dict.fromkeys(
+                    ("all_total_patients", "all_event_patients", "all_nonevent_patients", "unrecorded_patients"), 120
+                ),
+                **dict.fromkeys(
+                    (
+                        "all_total_excess",
+                        "all_total_readmitted",
+                        "all_event_excess",
+                        "all_event_readmitted",
+                        "all_nonevent_excess",
+                        "all_nonevent_readmitted",
+                        "multi_patients",
+                        "filtered_patients",
+                    ),
+                    0,
+                ),
+                "groups": [
+                    {
+                        "group": "A",
+                        **dict.fromkeys(("patients", "event_patients", "nonevent_patients", "complement_patients"), 60),
+                        **dict.fromkeys(("excess", "readmitted", "event_excess", "event_readmitted"), 0),
+                        **dict.fromkeys(("nonevent_excess", "nonevent_readmitted"), 0),
+                    }
+                ],
+            },
+        }
+
+        # Act
+        table = present_analysis(analysis)["table"]
+
+        # Assert: B has no cells, so it is hidden (and, with one group left, so is A)
+        assert table is not None
+        assert all(row["rate"] == SECONDARY_SUPPRESSED for row in table["rows"])
+
+    def test_ask_everShareWithLimitThatVariesByVisit_refused(self, make_semantic_layer: Any) -> None:
+        # Arrange: age differs between a patient's visits (60s, then 70s)
+        rows: list[dict[str, Any]] = []
+        for i in range(100):
+            first, second = ("yes", "yes") if i < 30 else (("yes", "no") if i < 60 else ("no", "no"))
+            rows += [
+                {"patient_id": f"P{i:03d}", "visit_id": f"V{i}a", "smoker": first, "age": 60 + i % 10},
+                {"patient_id": f"P{i:03d}", "visit_id": f"V{i}b", "smoker": second, "age": 70 + i % 10},
+            ]
+        service = QueryService(make_semantic_layer(data=pl.DataFrame(rows)))
+        plan = QueryPlan(
+            intent="COUNT",
+            proportion_column="smoker",
+            proportion_value="yes",
+            cohort_steps=[CohortStep("gt", "age", 69)],
+            confidence=0.99,
+        )
+
+        # Act
+        result = _ask(service, "what share of patients older than 69 ever smoked?", plan)
+
+        # Assert: never "30%" for a true 60%
+        assert result.claim is None
+        assert result.failure_reason.startswith("age differs between rows of the same patient")
+
+    @pytest.mark.parametrize(
+        ("question", "held"),
+        [
+            pytest.param("how many patients are smokers?", True, id="no_rollup_held"),
+            pytest.param("how many patients ever smoked?", False, id="ever_answered"),
+        ],
+    )
+    def test_ask_countLimitedByVaryingValue_heldUnlessRolledUp(
+        self, make_semantic_layer: Any, question: str, held: bool
+    ) -> None:
+        # Arrange
+        rows: list[dict[str, Any]] = []
+        for i in range(100):
+            first, second = ("yes", "yes") if i < 30 else (("yes", "no") if i < 60 else ("no", "no"))
+            rows += [
+                {"patient_id": f"P{i:03d}", "smoker": first},
+                {"patient_id": f"P{i:03d}", "smoker": second},
+            ]
+        service = QueryService(make_semantic_layer(data=pl.DataFrame(rows)))
+        plan = QueryPlan(intent="COUNT", cohort_steps=[CohortStep("eq", "smoker", "yes")], confidence=0.99)
+
+        # Act
+        result = _ask(service, question, plan)
+
+        # Assert
+        assert result.requires_confirmation is held
+        if held:
+            assert "counts each patient with at least one row that meets the limits" in result.failure_reason
+        else:
+            assert result.claim.startswith("Total count: 60 patients.")
+
+    def test_rollupChoice_suggestedWording_readsBackAsARollup(self) -> None:
+        # Arrange
+        question = "what share of patients were screened on any visit?"
+
+        # Act
+        words = read_units(question)
+
+        # Assert: "on any visit" is when, not what is counted
+        assert (words.unit, words.rollup) == ("patients", "any")
+
+    def test_peelCohort_byTimePhrase_neverAGrouping(self) -> None:
+        # Arrange
+        columns = ["patient_id", "day_of_week", "died"]
+
+        # Act
+        peeled = peel_cohort("what share of patients died by day 30?", columns, lambda c: ["yes", "no"])
+
+        # Assert
+        assert peeled.locked_group is None
+
+    def test_ask_oneRowPerPatientShare_fewMissing_shareStillShown(self, make_semantic_layer: Any) -> None:
+        # Arrange: 500 patients, 5 with the outcome missing (as main shows it)
+        rows = [
+            {"patient_id": f"P{i:03d}", "died": None if i < 5 else ("yes" if i % 5 == 0 else "no")} for i in range(500)
+        ]
+        frame = pl.DataFrame(rows, schema={"patient_id": pl.String, "died": pl.String})
+        service = QueryService(make_semantic_layer(data=frame))
+        plan = QueryPlan(intent="COUNT", proportion_column="died", proportion_value="yes", confidence=0.99)
+
+        # Act
+        result = _ask(service, "what share of patients died?", plan)
+
+        # Assert
+        assert result.claim.startswith("20.0% of patients had died = yes (n hidden)")
+
+    def test_presentRate_overlappingWithoutRollupCells_everyRateHidden(self) -> None:
+        # Arrange: overlapping groups, but the counts behind them are missing
+        analysis = {
+            "type": "rate",
+            "column": "result",
+            "value": "positive",
+            "group_col": "test_year",
+            "overlapping": True,
+            "n_used": 100,
+            "n_excluded": 0,
+            "n_filtered_out": 0,
+            "groups": [
+                {"group": "2021", "rate": 0.5, "events": 30, "n": 60},
+                {"group": "2022", "rate": 0.5, "events": 30, "n": 60},
+            ],
+        }
+
+        # Act
+        table = present_analysis(analysis)["table"]
+
+        # Assert
+        assert table is not None
+        assert all(row["rate"] == SECONDARY_SUPPRESSED for row in table["rows"])
+
+    def test_ask_partitionWithHiddenGroupThenNextQuestion_answersBoth(self, make_semantic_layer: Any) -> None:
+        # Arrange: a rate by encounter whose hidden groups make the layer count the patients in
+        # no shown group (a parameterised query that must not keep the cohort views in use)
+        service = QueryService(make_semantic_layer(data=_admission_share_frame()))
+        plan = QueryPlan(
+            intent="COUNT", proportion_column="vaccine", proportion_value="yes", group_by="year", confidence=0.99
+        )
+
+        # Act
+        first = _ask(service, "what share of admissions had a vaccine by year?", plan)
+        second = _ask(service, "how many admissions were there?", QueryPlan(intent="COUNT", confidence=0.99))
+
+        # Assert: the second question runs (it raised ResourceInUse before)
+        assert first.claim is not None and second.claim is not None

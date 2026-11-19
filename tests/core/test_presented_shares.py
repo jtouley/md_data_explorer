@@ -155,9 +155,10 @@ def test_rate_smallCellInGroup_hidesThatRate(make_semantic_layer) -> None:
     # Act
     _execution, shown = _present(layer, plan)
 
-    # Assert
+    # Assert: North's rate is hidden too: with it shown, the ungrouped share (33 events) minus
+    # North's 30 would give South's 3 (events are suppressed down their line, as n is)
     rates = {row["site"]: row["rate"] for row in shown["table"]["rows"]}
-    assert rates == {"North": 0.5, "South": SECONDARY_SUPPRESSED}
+    assert rates == {"North": SECONDARY_SUPPRESSED, "South": SECONDARY_SUPPRESSED}
     assert "0.075" not in shown["claim"] and "7.5%" not in shown["claim"]
 
 
