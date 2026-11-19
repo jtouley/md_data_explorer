@@ -59,22 +59,27 @@ class SqlCatalog:
         return next((c for c in self.columns if c.is_id), None)
 
     def view_sql(self) -> str:
-        """The view over the stored Parquet: the contract's columns only, level merges applied."""
-        merges = {m.column: m for m in self.levels}
+        """The view over the stored Parquet: the contract's columns only, level merges applied.
+
+        A column can have several confirmed merges (one per canonical level: f/female to F, m/male
+        to M); each becomes one WHEN of the column's CASE, so every merge applies.
+        """
+        merges: dict[str, list[LevelMapping]] = {}
+        for mapping in self.levels:
+            if mapping.spellings:
+                merges.setdefault(mapping.column, []).append(mapping)
         select = []
         for col in self.columns:
             ref = exp.column(col.name, quoted=True)
-            mapping = merges.get(col.name)
             value: exp.Expr = ref
-            if mapping is not None and col.logical_type == "string" and mapping.spellings:
-                value = (
-                    exp.case()
-                    .when(
-                        exp.In(this=ref, expressions=[exp.Literal.string(s) for s in mapping.spellings]),
-                        exp.Literal.string(mapping.canonical),
+            if col.logical_type == "string" and merges.get(col.name):
+                case = exp.case()
+                for mapping in merges[col.name]:
+                    spellings = [exp.Literal.string(s) for s in mapping.spellings]
+                    case = case.when(
+                        exp.In(this=ref.copy(), expressions=spellings), exp.Literal.string(mapping.canonical)
                     )
-                    .else_(ref)
-                )
+                value = case.else_(ref.copy())
             select.append(exp.alias_(value, col.name, quoted=True))
         reader = exp.func("read_parquet", exp.Literal.string(str(self.parquet_path)))
         query = exp.select(*select).from_(reader)

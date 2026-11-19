@@ -9,8 +9,9 @@ Read-only and sandboxed at the engine, whatever the validator lets through:
   or install or load an extension;
 * the catalog it could write to is its own in-memory one, dropped when the question ends, so
   nothing persists and nothing reaches the semantic layer, the store or another question;
-* a timer interrupts a query that runs longer than the limit; memory and threads are capped,
-  and spilling to disk is off;
+* one deadline per sandbox (the limit, from when it opens): a timer interrupts the statement
+  running when it passes, so a whole answer, however many statements it runs, holds its slot
+  for at most the limit; memory and threads are capped, and spilling to disk is off;
 * at most ``SQL_SANDBOX_SLOTS`` sandboxes are open at once, each with the share of
   ``DUCKDB_MEMORY_BUDGET`` reserved for it (``nl_query_config``), so the cached layers and the
   sandboxes together stay within the budget.
@@ -19,6 +20,7 @@ Read-only and sandboxed at the engine, whatever the validator lets through:
 from __future__ import annotations
 
 import threading
+import time
 from types import TracebackType
 
 import duckdb
@@ -54,11 +56,19 @@ _COULD_NOT_RUN = {
 }
 
 
+def sandbox_memory_limit() -> nl_query_config.DuckdbMemoryLimit:
+    """The sandbox's share of ``DUCKDB_MEMORY_BUDGET`` when governed SQL is on. With it off, the
+    route answers 404 and no sandbox takes a share; one opened anyway (tests, tools) gets the
+    standalone per-layer limit, as every DuckDB outside the API's cache does."""
+    return nl_query_config.SQL_SANDBOX_MEMORY_LIMIT or nl_query_config.DUCKDB_MEMORY_LIMIT
+
+
 class SandboxConnection:
     """One sandboxed connection over ``catalog``. Use as a context manager."""
 
     def __init__(self, catalog: SqlCatalog, *, timeout_s: float | None = None) -> None:
-        """Open the sandbox, waiting up to ``timeout_s`` (default ``TIMEOUT_SECONDS``) for a slot.
+        """Open the sandbox, waiting up to ``timeout_s`` (default ``TIMEOUT_SECONDS``) for a slot;
+        every statement it then runs shares one deadline, ``timeout_s`` after it opened.
 
         Raises:
             ValueError: ``timeout_s`` is not positive (0 must never mean "no limit").
@@ -70,15 +80,17 @@ class SandboxConnection:
             raise ValueError(f"timeout_s must be positive, got {timeout_s!r}")
         if not catalog.parquet_path.is_file():
             raise SqlRefusedError("This dataset's stored data is missing. Upload it again.")
-        self._timeout_s = timeout_s
         if not _SLOTS.acquire(timeout=timeout_s):
             raise SqlBusyError(BUSY)
         self._slot = True
+        opened = False
         try:
             self._con = self._open(catalog)
-        except BaseException:
-            self._release()
-            raise
+            opened = True
+        finally:
+            if not opened:  # whatever stopped it (a refusal, an interrupt): the slot is freed
+                self._release()
+        self._deadline = time.monotonic() + timeout_s
 
     @staticmethod
     def _open(catalog: SqlCatalog) -> duckdb.DuckDBPyConnection:
@@ -99,21 +111,23 @@ class SandboxConnection:
                 "threads": nl_query_config.DUCKDB_THREADS,
             },
         )
+        configured = False
         try:
             path = str(catalog.parquet_path.resolve())
             con.execute("SET allowed_paths = ?", [[path]])
             con.execute("SET enable_external_access = false")
             con.execute("SET max_temp_directory_size = '0B'")
-            con.execute(f"SET memory_limit = '{nl_query_config.SQL_SANDBOX_MEMORY_LIMIT.sql}'")
+            con.execute(f"SET memory_limit = '{sandbox_memory_limit().sql}'")
             try:
                 con.execute(catalog.view_sql())
             except duckdb.Error as e:
                 logger.warning("governed_sql_view_failed", error_type=type(e).__name__)
                 raise SqlRefusedError(UNREADABLE) from e
             con.execute("SET lock_configuration = true")
-        except BaseException:
-            con.close()
-            raise
+            configured = True
+        finally:
+            if not configured:
+                con.close()
         return con
 
     def _release(self) -> None:
@@ -133,7 +147,10 @@ class SandboxConnection:
         statements = duckdb.extract_statements(sql)
         if len(statements) != 1 or statements[0].type != duckdb.StatementType.SELECT:
             raise SqlRefusedError("Only SELECT queries can run: the data is read-only.")
-        timer = threading.Timer(self._timeout_s, self._con.interrupt)
+        remaining = self._deadline - time.monotonic()
+        if remaining <= 0:
+            raise SqlRefusedError(TIMED_OUT)
+        timer = threading.Timer(remaining, self._con.interrupt)
         timer.start()
         try:
             frame = pl.from_arrow(self._con.query(sql).to_arrow_table())

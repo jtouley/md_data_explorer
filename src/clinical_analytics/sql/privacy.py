@@ -284,41 +284,43 @@ def _try(expression: exp.Expr | None) -> exp.Expr:
 
 
 def _core_sql(query: GovernedQuery, conditions: _Conditions) -> str:
-    """The measures per group, each aggregate over the rows meeting the WHERE's and its own terms."""
+    """The measures per group, each aggregate over the rows meeting the WHERE's and its own terms.
+
+    The aggregates run in an inner query (a count as a whole number, the rest as DOUBLE: sum() of
+    an integer is HUGEINT, which would arrive as a Decimal and be sent as text). The arithmetic
+    around them runs in the outer query, on DOUBLE and inside TRY, so no count, hidden or shown,
+    can make the query fail (DuckDB allows no aggregate inside TRY, hence the two levels).
+    """
     dimension = _try(query.dimension) if query.dimension is not None else None
-    rewritten = [
-        exp.Filter(
+    double = exp.DataType.build("DOUBLE")
+    inner: list[exp.Expr] = [exp.alias_(dimension.copy(), "__d")] if dimension is not None else []
+    for k, agg in enumerate(query.aggregates):
+        aggregate: exp.Expr = exp.Filter(
             this=agg.function.copy(),
             expression=exp.Where(this=conditions.predicate(conditions.where_mask | conditions.of_aggregate[k])),
         )
-        for k, agg in enumerate(query.aggregates)
-    ]
+        if agg.kind != "count":
+            aggregate = exp.Cast(this=aggregate, to=double.copy())
+        inner.append(exp.alias_(aggregate, f"__a{k}"))
+    select = exp.select(*inner).from_(config.TABLE_NAME)
+    if dimension is not None:
+        select = select.group_by(dimension.copy())
 
     def measure(template: exp.Expr) -> exp.Expr:
         if isinstance(template, exp.Column):  # one aggregate as it is: a count stays a whole number
-            k = int(template.name.removeprefix(AGG_MARKER))
-            if query.aggregates[k].kind == "count":
-                return rewritten[k].copy()
-            # sum() of an integer is HUGEINT, which arrives as a Decimal and would be sent as text.
-            return exp.Cast(this=rewritten[k].copy(), to=exp.DataType.build("DOUBLE"))
+            return exp.column(f"__a{template.name.removeprefix(AGG_MARKER)}")
 
         def fill(node: exp.Expr) -> exp.Expr:
             if isinstance(node, exp.Column) and node.name.startswith(AGG_MARKER):
-                aggregate = rewritten[int(node.name.removeprefix(AGG_MARKER))].copy()
-                return exp.Cast(this=aggregate, to=exp.DataType.build("DOUBLE"))  # no overflow error
+                column = exp.column(f"__a{node.name.removeprefix(AGG_MARKER)}")
+                return exp.Cast(this=column, to=double.copy())
             return node
 
-        return template.transform(fill)
+        return exp.Try(this=template.copy().transform(fill))
 
-    columns: list[exp.Expr] = []
-    if dimension is not None:
-        columns.append(exp.alias_(dimension.copy(), "__d"))
-    columns += [exp.alias_(measure(m.template), f"__m{i}") for i, m in enumerate(query.measures)]
-    select = exp.select(*columns).from_(config.TABLE_NAME)
-    if dimension is not None:
-        select = select.group_by(dimension.copy())
-    wrapped = exp.select("*").from_(select.subquery("__core")).limit(config.MAX_GROUPS + 1)
-    return render(wrapped)
+    outer: list[exp.Expr] = [exp.column("__d")] if dimension is not None else []
+    outer += [exp.alias_(measure(m.template), f"__m{i}") for i, m in enumerate(query.measures)]
+    return render(exp.select(*outer).from_(select.subquery("__core")).limit(config.MAX_GROUPS + 1))
 
 
 def _group_key(value: Any) -> Any:

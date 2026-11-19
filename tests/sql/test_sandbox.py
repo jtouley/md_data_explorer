@@ -11,10 +11,16 @@ import pytest
 from open_data_contract_standard.model import OpenDataContractStandard
 
 from clinical_analytics.contracts.config import UNIFIED_OBJECT_NAME
-from clinical_analytics.core import nl_query_config
 from clinical_analytics.sql.catalog import ColumnSpec, SqlCatalog
 from clinical_analytics.sql.errors import SqlRefusedError
-from clinical_analytics.sql.sandbox import BUSY, TIMED_OUT, UNREADABLE, SandboxConnection, SqlBusyError
+from clinical_analytics.sql.sandbox import (
+    BUSY,
+    TIMED_OUT,
+    UNREADABLE,
+    SandboxConnection,
+    SqlBusyError,
+    sandbox_memory_limit,
+)
 from tests.sql.conftest import synthetic_cohort
 
 
@@ -96,6 +102,16 @@ def test_sandbox_slowQuery_interruptedAtTimeout(catalog: SqlCatalog) -> None:
     # Act / Assert
     with SandboxConnection(catalog, timeout_s=0.2) as sandbox, pytest.raises(SqlRefusedError, match=TIMED_OUT):
         sandbox.run_unsuppressed(sql)
+
+
+def test_sandbox_manyStatements_shareOneDeadline(catalog: SqlCatalog) -> None:
+    # Arrange: each statement finishes well inside the limit, but together they pass it
+    sandbox = SandboxConnection(catalog, timeout_s=0.3)
+
+    # Act / Assert: the slot is held for the limit at most, not the limit per statement
+    with sandbox, pytest.raises(SqlRefusedError, match=TIMED_OUT):
+        for _ in range(100):
+            sandbox.run_unsuppressed("SELECT count(*) AS n FROM range(20000000)")
 
 
 @pytest.mark.parametrize("timeout_s", [0, -1.0, float("nan")])
@@ -184,7 +200,7 @@ def test_sandbox_failedOpen_freesItsSlot(catalog: SqlCatalog) -> None:
 def test_sandbox_memoryLimit_isTheSandboxShare(catalog: SqlCatalog) -> None:
     # Arrange
     expected = duckdb.connect()
-    expected.execute(f"SET memory_limit = '{nl_query_config.SQL_SANDBOX_MEMORY_LIMIT.sql}'")
+    expected.execute(f"SET memory_limit = '{sandbox_memory_limit().sql}'")
     want = expected.execute("SELECT current_setting('memory_limit')").fetchone()
 
     # Act

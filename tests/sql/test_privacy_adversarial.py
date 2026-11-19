@@ -17,6 +17,7 @@ from typing import Any
 import polars as pl
 import polars.testing
 import pytest
+from sqlglot import exp
 
 from clinical_analytics.analysis.grouping import FOLD_LABELS
 from clinical_analytics.contracts.declarations import LevelMapping
@@ -29,7 +30,9 @@ from clinical_analytics.sql.privacy import (
     PatientRowsUnconfirmedError,
     SqlAnswer,
     _ordered,
+    answer_query,
 )
+from clinical_analytics.sql.sandbox import SandboxConnection
 from clinical_analytics.sql.validate import validate_sql
 from tests.sql.conftest import N_PATIENTS, synthetic_cohort
 
@@ -511,6 +514,27 @@ def test_privacy_confirmedLevelMerge_appliedInTheView(
     assert _numbers(answer, "n") == {"F": 150, "M": 150}
 
 
+def test_privacy_severalLevelMergesOnOneColumn_everyOneApplied(
+    make_sql_catalog: Callable[..., SqlCatalog], ask_sql: Ask
+) -> None:
+    # Arrange: f/female confirmed as F and m/male as M, two merges on one column
+    spelled = {0: "F", 1: "M", 2: "female", 3: "male", 4: "f", 5: "m"}
+    df = synthetic_cohort().with_columns(
+        pl.int_range(pl.len()).mod(6).replace_strict(spelled, return_dtype=pl.String).alias("sex")
+    )
+    merges = (
+        LevelMapping(column="sex", spellings=("f", "female"), canonical="F"),
+        LevelMapping(column="sex", spellings=("m", "male"), canonical="M"),
+    )
+    catalog = make_sql_catalog(df, levels=merges)
+
+    # Act
+    answer = ask_sql("SELECT sex, count(*) AS n FROM unified GROUP BY sex", catalog)
+
+    # Assert: the same groups as the question box, whichever merge was confirmed last
+    assert _numbers(answer, "n") == {"F": 150, "M": 150}
+
+
 @pytest.mark.parametrize("confirmed_rows", [None, N_PATIENTS - 1, N_PATIENTS + 1, 0])
 def test_privacy_noIdentifier_refusedUntilOneRowPerPatientConfirmedOnTheseRows(
     make_sql_catalog: Callable[..., SqlCatalog], ask_sql: Ask, confirmed_rows: int | None
@@ -589,12 +613,44 @@ def test_privacy_dataDependentError_neverFailsTheQuery(
     assert answer is None or answer.rows
 
 
-def test_privacy_castAroundSummary_refusedBecauseItCanFail(ask_sql: Ask) -> None:
-    # Arrange: CAST(1e300 AS INT) fails, so a cast over a count could fail only for some counts
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT CAST(count_if(ward = 'ICU') * 1e300 AS INT) AS n FROM unified",
+        # Reported on #106: BIGINT overflow for 3 ICU patients with 4e18, none with 2e18
+        "SELECT TRY_CAST(count(*) FILTER (WHERE ward = 'ICU') AS BIGINT) * TRY_CAST(4e18 AS BIGINT) AS n FROM unified",
+        "SELECT TRY_CAST(count_if(ward = 'ICU') AS HUGEINT) * 4e37 AS n FROM unified",
+    ],
+)
+def test_privacy_castAroundSummary_refusedBecauseItCanFail(ask_sql: Ask, sql: str) -> None:
+    # Arrange: a cast back to an integer type can overflow for some counts and not others
 
     # Act / Assert
     with pytest.raises(SqlRefusedError, match="around a summary"):
-        ask_sql("SELECT CAST(count_if(ward = 'ICU') * 1e300 AS INT) AS n FROM unified")
+        ask_sql(sql)
+
+
+@pytest.mark.parametrize("multiplier", ["2e18", "4e18"])
+def test_privacy_measureThatOverflowsForSomeCounts_sameRefusalWhateverTheCount(
+    make_sql_catalog: Callable[..., SqlCatalog], multiplier: str
+) -> None:
+    # Arrange: past the validator, a measure whose BIGINT product overflows for 3 ICU patients
+    # with 4e18 but not with 2e18; the arithmetic runs inside TRY, so neither can fail
+    catalog = make_sql_catalog()
+    query = validate_sql("SELECT count(*) FILTER (WHERE ward = 'ICU') AS n FROM unified", catalog)
+    bigint = exp.DataType.build("BIGINT")
+    template = exp.Mul(
+        this=exp.TryCast(this=exp.column("__agg0"), to=bigint.copy()),
+        expression=exp.TryCast(this=exp.Literal.number(multiplier), to=bigint.copy()),
+    )
+    crafted = dataclasses.replace(query, measures=(dataclasses.replace(query.measures[0], template=template),))
+
+    # Act
+    with SandboxConnection(catalog) as sandbox, pytest.raises(SqlRefusedError) as refused:
+        answer_query(crafted, sandbox, catalog)
+
+    # Assert: the small count's refusal, never "could not run"
+    assert refused.value.reason == WITHHELD
 
 
 # ---------------------------------------------------------------------------------------------

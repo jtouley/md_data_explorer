@@ -72,11 +72,12 @@ _SCALAR_NODES: tuple[type[exp.Expr], ...] = (
     exp.Greatest, exp.Least, exp.StartsWith, exp.Contains, exp.DPipe,
 )  # fmt: skip
 # Around aggregates in a measure: arithmetic and rounding only, on DOUBLE (sql.privacy casts
-# each aggregate), so no value can make it fail. CAST is left out: CAST(1e300 AS INT) fails, and a
-# failure that depends on a count would answer "is it 4 or more?" without showing the count.
+# each aggregate, and runs the arithmetic inside TRY), so no value can make it fail. Casts are left
+# out, TRY_CAST included: casting a count back to BIGINT makes ``count * 4e18`` overflow for some
+# counts and not others, and a failure that depends on a count tells a reader the count.
 _MEASURE_NODES: tuple[type[exp.Expr], ...] = (
     exp.Literal, exp.Paren, exp.Add, exp.Sub, exp.Mul, exp.Div, exp.Neg,
-    exp.Round, exp.TryCast, exp.DataType, exp.Nullif, exp.Coalesce,
+    exp.Round, exp.Nullif, exp.Coalesce,
 )  # fmt: skip
 _VALUE_AGGS: tuple[type[exp.Expr], ...] = (
     exp.Sum, exp.Avg, exp.Median, exp.PercentileCont, exp.Stddev, exp.StddevSamp, exp.Variance,
