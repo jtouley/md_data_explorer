@@ -19,6 +19,7 @@ import structlog
 
 from clinical_analytics.analysis.grouping import grouping_problem
 from clinical_analytics.analysis.variable_types import short_name
+from clinical_analytics.contracts.config import MIN_CELL_SIZE
 from clinical_analytics.contracts.declarations import (
     Declarations,
     DeclarationStore,
@@ -771,14 +772,12 @@ class QueryService:
                 findings.refusal = answer_checks.share_refusal(layer, key, plan, noun, encounter=key != grain.key)
                 if findings.refusal and unit.words.ordered:
                     findings.refusal = counting_unit.ordered_rollup_reason(unit.words.ordered)
-                if findings.refusal is None and plan.rollup is not None and varying:
-                    # The limits pick rows before the roll-up, so "ever" would be read only on the
-                    # rows that meet them: not the patient's own "ever". Never answered silently.
+                if findings.refusal is None and varying:
+                    # A limit that differs between a unit's rows picks rows, not units: the share
+                    # (and any roll-up) would be read only on those rows. Refused, never held.
                     findings.refusal = counting_unit.limited_rollup_reason(varying, noun)
-            elif plan.intent == "COUNT" and varying and plan.rollup is None and (unit.named or visits):
-                # A count limited by a value that differs between a unit's rows counts the units
-                # with at least one row that meets the limits: say so and ask once.
-                findings.holds.append(counting_unit.count_rollup_hold(varying, noun))
+            elif plan.intent == "COUNT" and varying:
+                findings.refusal = self._varying_count_refusal(plan, key, varying, noun)
             if findings.refusal:
                 return findings
             if unit.named and plan.entity_key == grain.key:
@@ -806,6 +805,25 @@ class QueryService:
         findings.notes.extend(answer_checks.report_notes(report, columns))
         findings.notes.extend(answer_checks.missingness_notes(layer, columns, answer_checks.flagged_columns(report)))
         return findings
+
+    def _varying_count_refusal(self, plan: QueryPlan, key: str, varying: list[str], noun: str) -> str | None:
+        """Why a count limited by values that differ between a unit's rows is not answered, or None.
+
+        Without a roll-up word it is refused: "how many patients with year under 2021" next to
+        the patients per year would give the patients in two years. With "ever" and one such
+        limit it is answered as the units with a matching row, unless 1-10 units have both a
+        matching and a non-matching recorded row: then "ever yes" + "ever no" - all units gives
+        them. Two such limits ("ever smoked" and "older than 69") are refused: the limit would
+        pick the rows the roll-up is read on.
+        """
+        if plan.rollup is None:
+            return counting_unit.varying_count_reason(varying, noun, suggest_ever=len(varying) == 1)
+        if len(varying) > 1:
+            return counting_unit.limited_rollup_reason(varying, noun)
+        mixed = self.semantic_layer.limit_mixed_units(plan, key, varying[0])
+        if mixed is None or any(0 < count < MIN_CELL_SIZE for count in mixed):
+            return counting_unit.changed_value_reason(varying[0], noun)
+        return None
 
     def _counting_unit(self, question: str, plan: QueryPlan) -> _CountingUnit:
         """The counted unit and roll-up the question names, on data whose patient IDs repeat.

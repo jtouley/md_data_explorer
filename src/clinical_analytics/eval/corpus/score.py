@@ -27,7 +27,7 @@ from typing import Any, Literal, TypeAlias
 from clinical_analytics.analysis.grouping import FOLD_LABELS
 from clinical_analytics.analysis.variable_types import display_level
 from clinical_analytics.api.services.query_service import UNEXPECTED_FAILURE_MESSAGE
-from clinical_analytics.eval.headless import HIDDEN, TOTAL_COUNT, presented_answer
+from clinical_analytics.eval.headless import HIDDEN, TOTAL_COUNT, count_grain, presented_answer
 
 Grade: TypeAlias = Literal["RIGHT", "WRONG", "HELD", "ERROR"]
 Status: TypeAlias = Literal["completed", "failed", "awaiting_confirmation", "timeout", "error"]
@@ -245,7 +245,7 @@ def _grade_value(question: dict[str, Any], oracle: OracleAnswer, presentation: d
     shown = presented_answer(presentation)
     if kind == "count":
         match = TOTAL_COUNT.match(claim)
-        said = match.group(2) if match else None
+        said = count_grain(match.group(2)) if match else None
         # "rows" claims no grain: a dataset with no patient ID says it counts rows, never
         # patients. The number decides: equal to the patient count means rows are patients here.
         # A claimed grain that differs ("patients" for visits, "visits" for patients) is wrong.

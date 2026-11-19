@@ -196,23 +196,32 @@ def rollup_choice(column: str, unit: str, every: bool = True) -> str:
 
 
 def limited_rollup_reason(columns: list[str], unit: str) -> str:
-    """Refusal for a rolled-up share whose limits differ between a unit's rows."""
+    """Refusal for a share, or a rolled-up count, whose limits differ between a unit's rows."""
     names = " and ".join(short_name(c) for c in columns)
     verb = "differ" if len(columns) > 1 else "differs"
     return (
         f"{names} {verb} between rows of the same {unit}, so the limit would pick some of a {unit}'s rows and "
-        f"'ever' or 'always' would be read only on those, not on the {unit}'s whole record. Ask without that "
-        f"limit, or with a limit that is the same on every row of a {unit}."
+        f"the answer would be read only on those, not on the {unit}'s whole record. Ask with a limit that is "
+        f"the same on every row of a {unit}."
     )
 
 
-def count_rollup_hold(columns: list[str], unit: str) -> str:
-    """Hold for a count limited by values that differ between a unit's rows."""
+def varying_count_reason(columns: list[str], unit: str, suggest_ever: bool) -> str:
+    """Refusal for a count limited by values that differ between a unit's rows, with no roll-up.
+    "ever" is suggested only where it would be answered (one such limit)."""
     names = " and ".join(short_name(c) for c in columns)
     verb = "differ" if len(columns) > 1 else "differs"
+    reason = f"{names} {verb} between rows of the same {unit}, so a limit on it picks rows, not {unit}s."
+    if suggest_ever:
+        return f"{reason} Say 'ever' to count each {unit} with it on at least one row."
+    return f"{reason} Ask with a limit that is the same on every row of a {unit}."
+
+
+def changed_value_reason(column: str, unit: str) -> str:
+    """Refusal for an "ever" count when few units have the value on one row and not another."""
     return (
-        f"{names} {verb} between rows of the same {unit}, so this counts each {unit} with at least one row "
-        f"that meets the limits. Confirm to count them that way, or say 'ever' in the question."
+        f"Fewer than 11 {unit}s have {short_name(column)} that meets the limit on one row and not on another, "
+        f"so this count next to the other answers would let them be worked out. It is not shown."
     )
 
 

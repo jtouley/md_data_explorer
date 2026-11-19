@@ -388,7 +388,9 @@ def _rollup_withheld(analysis: Mapping[str, Any]) -> bool:
     return isinstance(cells, Mapping) and bool(cells) and _cells_small(cells, _MIXED_CELLS)
 
 
-def _rates_hidden_by_lines(analysis: Mapping[str, Any], groups: Sequence[Mapping[str, Any]]) -> set[int]:
+def _rates_hidden_by_lines(
+    analysis: Mapping[str, Any], groups: Sequence[Mapping[str, Any]], seed: set[int] | None = None
+) -> set[int]:
     """Rates to hide because the ungrouped answer gives a line total for a count behind them.
 
     The ungrouped share shows the total events (and non-events), and its "ever" and "always"
@@ -396,28 +398,40 @@ def _rates_hidden_by_lines(analysis: Mapping[str, Any], groups: Sequence[Mapping
     groups', so a rate hidden alone would be given back by subtraction: each count is
     suppressed down its line (primary + secondary). With overlapping groups the line is a union,
     checked like the groups' n (``overlap_hidden``). A group without its counts fails closed.
+
+    ``seed``: rates already hidden for another reason (their n, their patients). They are hidden
+    cells of every line, so the line hides a second cell beside them instead of showing the rest
+    (total minus the shown groups would give a seeded rate's events back). The units whose value
+    changed are one line, in units; a group whose changed units come from 1-10 patients is a
+    seed of it.
     """
     every = set(range(len(groups)))
     events = [g.get("events") for g in groups]
     non_events = [
         int(g["n"]) - int(g["events"]) if _is_count(g.get("n")) and _is_count(g.get("events")) else None for g in groups
     ]
+    seeded = set(seed or ())
     lines: list[tuple[list[Any], Any]] = []
     cells = analysis.get("rollup_cells")
     if isinstance(cells, Mapping) and cells:
-        found = {repr(g.get("group")): g for g in cells.get("groups") or []}
-        for name in _MIXED_CELLS:
-            lines.append(([found.get(repr(g.get("group")), {}).get(name) for g in groups], cells.get(name)))
-    hidden: set[int] = set()
+        found = [
+            {
+                **dict.fromkeys(_MIXED_CELLS),
+                **next((c for c in cells.get("groups") or [] if repr(c.get("group")) == repr(g.get("group"))), {}),
+            }
+            for g in groups
+        ]
+        seeded |= {i for i, c in enumerate(found) if _small_patients(c.get("mixed_patients")) and c.get("mixed")}
+        lines.append(([c.get("mixed") for c in found], cells.get("mixed")))
+    hidden: set[int] = set(seeded)
     if analysis.get("overlapping"):
         for counts, total in lines:
-            hidden |= overlap_hidden(counts, total)
+            hidden |= overlap_hidden(counts, total, forced=seeded)
         return hidden
     for counts in [events, non_events, *(counts for counts, _total in lines)]:
         if any(not _is_count(c) for c in counts):
             return every
-        found_hidden = _suppress_lines(dict(enumerate(counts)), [list(range(len(counts)))])
-        hidden |= found_hidden
+        hidden |= _suppress_lines(dict(enumerate(counts)), [list(range(len(counts)))], hidden=set(seeded))
     return hidden
 
 
@@ -1340,12 +1354,9 @@ def _present_count(analysis: Mapping[str, Any]) -> Presentation:
         return {"claim": claim, "table": _fold_rows(_table(rows, count_columns=("count",)), small, fold.label)}
     if _total_hidden(analysis, total):
         return {"claim": _hidden_total_claim(analysis, total), "table": None}
-    unit = f" {_unit(analysis)}" if _unit(analysis) else ""
+    # What was counted, in the question's own noun for encounters ("admissions"), else the grain.
+    unit = f" {_units_word(analysis)}" if _units_word(analysis) else ""
     claim = f"Total count: {total}{unit}." if total is not None else None
-    counted_noun = analysis.get("unit_noun")
-    if claim and isinstance(counted_noun, str) and counted_noun and analysis.get("counted_by"):
-        # "visits" is the grain word every count uses; the sentence names what was counted.
-        claim += f" Each is one {counted_noun} (a distinct {analysis['counted_by']})."
     return {"claim": claim, "table": None}
 
 
@@ -1459,7 +1470,6 @@ def _present_rate(analysis: Mapping[str, Any]) -> Presentation:
     by_units = bool(analysis.get("overlapping")) or encounter is not None
     split = _split_rates_hidden(analysis)
     every_rate = split is None or _rollup_withheld(analysis)
-    by_line = _rates_hidden_by_lines(analysis, groups)
     if by_units:
         # A unit in two groups (the groups do not add up to n), or encounters (the patients
         # behind each count are checked): ``unit_groups_hidden``.
@@ -1482,19 +1492,22 @@ def _present_rate(analysis: Mapping[str, Any]) -> Presentation:
     else:
         small_groups = _small_parts(sizes, hidden)
     rows, parts, withheld = [], [], False
+    # Rates hidden on their own, then every line through them completed (``_rates_hidden_by_lines``).
+    alone = {
+        index
+        for index, g in enumerate(groups)
+        if every_rate
+        or _unchecked(str(g.get("group")), g.get("n"), hidden)
+        or _counts_small(g.get("events"), g.get("n"))
+        or _cells_small(encounter[index] if encounter is not None else None, _GROUP_RATE_CELLS)
+        or index in (split or set())
+    }
+    by_line = _rates_hidden_by_lines(analysis, groups, alone)
     for index, g in enumerate(groups):
-        key, n, events = str(g.get("group")), g.get("n"), g.get("events")
+        key, n = str(g.get("group")), g.get("n")
         rate = _num(g.get("rate"))
         label = _group_label(group_col, g.get("group"))
-        behind = encounter[index] if encounter is not None else None
-        rate_hidden = (
-            every_rate
-            or _unchecked(key, n, hidden)
-            or _counts_small(events, n)
-            or _cells_small(behind, _GROUP_RATE_CELLS)
-            or index in (split or set())
-            or index in by_line
-        )
+        rate_hidden = index in alone or index in by_line
         withheld = withheld or rate_hidden
         rows.append(
             {

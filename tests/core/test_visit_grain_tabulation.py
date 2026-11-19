@@ -181,11 +181,14 @@ class TestPatientsPerGroup:
         assert all(row["count"] == SECONDARY_SUPPRESSED for row in table["rows"])
 
     def test_ask_unitNotNamed_heldWithAPlainChoice(self, make_semantic_layer: Any) -> None:
+        """With no limit on a value that differs by visit, the only question is the grain."""
         # Arrange
         service = QueryService(make_semantic_layer(data=_tests_frame()))
 
-        # Act: "how many tested positive" says neither patients nor tests
-        result = _ask(service, "how many tested positive each year?", _positive_by_year())
+        # Act: "how many were there" says neither patients nor tests
+        result = _ask(
+            service, "how many were there each year?", QueryPlan(intent="COUNT", group_by="test_year", confidence=0.99)
+        )
 
         # Assert: asked once, offering both readings, never guessed
         assert result.requires_confirmation is True
@@ -319,7 +322,7 @@ class TestEncounterCounts:
 
         # Assert
         assert (frame.height, frame.get_column("encounter_id").n_unique()) == (103, 87)
-        assert result.claim == "Total count: 87 visits. Each is one admission (a distinct encounter_id)."
+        assert result.claim == "Total count: 87 admissions."
 
     def test_ask_admissionsByPathogen_groupOfFewPatientsHiddenWhateverItsAdmissions(
         self, make_semantic_layer: Any
@@ -402,6 +405,7 @@ class TestReadUnits:
             pytest.param("share with protective igg on any check", None, None, "any", id="on_any"),
             pytest.param("share always screened", None, None, "all", id="always"),
             pytest.param("how many tested positive?", None, None, None, id="none"),
+            pytest.param("how many tested positive on any visit?", None, None, "any", id="occasion_noun_not_unit"),
             pytest.param("", None, None, None, id="empty"),
         ],
     )
@@ -796,7 +800,7 @@ class TestSecondReview:
             pytest.param("how many patients ever smoked?", False, id="ever_answered"),
         ],
     )
-    def test_ask_countLimitedByVaryingValue_heldUnlessRolledUp(
+    def test_ask_countLimitedByVaryingValue_refusedUnlessRolledUp(
         self, make_semantic_layer: Any, question: str, held: bool
     ) -> None:
         # Arrange
@@ -813,10 +817,10 @@ class TestSecondReview:
         # Act
         result = _ask(service, question, plan)
 
-        # Assert
-        assert result.requires_confirmation is held
+        # Assert: refused (never held: a confirmation could not make it right), or answered
         if held:
-            assert "counts each patient with at least one row that meets the limits" in result.failure_reason
+            assert result.claim is None and not result.requires_confirmation
+            assert "differs between rows of the same patient, so a limit on it picks rows" in result.failure_reason
         else:
             assert result.claim.startswith("Total count: 60 patients.")
 
@@ -893,3 +897,129 @@ class TestSecondReview:
 
         # Assert: the second question runs (it raised ResourceInUse before)
         assert first.claim is not None and second.claim is not None
+
+
+# --------------------------------------------------------------------------- verification review
+
+
+def _years_frame() -> pl.DataFrame:
+    """Patients by year: 35 in 2019 only, 35 in 2020 only, 5 in 2019 and 2020, 20 in 2019 and
+    2021, 40 in 2021 only (2019: 60, 2020: 40, 2021: 60; 135 patients)."""
+    rows: list[dict[str, Any]] = []
+    spans = [([2019], 35), ([2020], 35), ([2019, 2020], 5), ([2019, 2021], 20), ([2021], 40)]
+    number = 0
+    for years, patients in spans:
+        for _ in range(patients):
+            rows += [{"patient_id": f"P{number:03d}", "year": year} for year in years]
+            number += 1
+    return pl.DataFrame(rows)
+
+
+class TestVerificationReview:
+    @pytest.mark.parametrize(
+        "question",
+        [
+            pytest.param("how many patients with year under 2021?", id="under"),
+            pytest.param("how many patients with year below 2021?", id="below"),
+        ],
+    )
+    def test_ask_realParser_countLimitedOnOverlappingYear_refusedEvenConfirmed(
+        self, make_semantic_layer: Any, question: str
+    ) -> None:
+        # Arrange: 2019 (60) + 2020 (40) - "year under 2021" (95) would give the 5 in both years
+        service = QueryService(make_semantic_layer(data=_years_frame()))
+
+        # Act: the real parser and word accounting; a held plan is confirmed
+        first = service.ask(question, dataset_id="years")
+        result = (
+            service.ask(question, dataset_id="years", confirmed=True, confirm_plan_hash=first.plan_hash)
+            if first.requires_confirmation
+            else first
+        )
+
+        # Assert
+        assert result.claim is None
+        assert "year differs between rows of the same patient" in (result.failure_reason or "")
+
+    def test_ask_everCountsOfEachValue_fewChanged_refused(self, make_semantic_layer: Any) -> None:
+        # Arrange: "ever yes" (45) + "ever no" (60) - patients (100) would give the 5 who changed
+        rows: list[dict[str, Any]] = []
+        for i in range(100):
+            first, second = ("yes", "yes") if i < 40 else (("yes", "no") if i < 45 else ("no", "no"))
+            rows += [{"patient_id": f"P{i:03d}", "screened": first}, {"patient_id": f"P{i:03d}", "screened": second}]
+        service = QueryService(make_semantic_layer(data=pl.DataFrame(rows)))
+
+        # Act
+        results = [
+            _ask(
+                service,
+                f"how many patients were ever screened {value}?",
+                QueryPlan(intent="COUNT", cohort_steps=[CohortStep("eq", "screened", value)], confidence=0.99),
+            )
+            for value in ("yes", "no")
+        ]
+
+        # Assert
+        assert all(r.claim is None and r.failure_reason.startswith("Fewer than 11 patients") for r in results)
+
+    def test_ask_rateHiddenForItsPatients_notGivenBackByTheOtherWard(self, make_semantic_layer: Any) -> None:
+        # Arrange: ward A's 20 positive admissions are 3 patients'; ward B is large. The ungrouped
+        # share (85 of 190) minus B's 65 would give A's 20
+        rows = [{"patient_id": f"R{k % 3}", "encounter_id": f"A{k:03d}", "ward": "A", "pos": "y"} for k in range(20)]
+        rows += [
+            {"patient_id": f"S{k:03d}", "encounter_id": f"AS{k:03d}{j}", "ward": "A", "pos": "n"}
+            for k in range(20)
+            for j in range(2)
+        ]
+        for k in range(100):
+            rows.append(
+                {"patient_id": f"T{k:03d}", "encounter_id": f"B{k:03d}", "ward": "B", "pos": "y" if k < 50 else "n"}
+            )
+            if k < 15:
+                rows.append({"patient_id": f"T{k:03d}", "encounter_id": f"BB{k:03d}", "ward": "B", "pos": "y"})
+            if 50 <= k < 65:
+                rows.append({"patient_id": f"T{k:03d}", "encounter_id": f"BN{k:03d}", "ward": "B", "pos": "n"})
+        service = QueryService(make_semantic_layer(data=pl.DataFrame(rows)))
+        plan = QueryPlan(intent="COUNT", rate_column="pos", rate_value="y", group_by="ward", confidence=0.99)
+
+        # Act
+        result = _ask(service, "what share of admissions were pos by ward?", plan)
+
+        # Assert: with A's rate hidden, B's is hidden too
+        assert _hidden_everywhere(result)
+
+    def test_ask_everCountWithAgeLimitThatVaries_refused(self, make_semantic_layer: Any) -> None:
+        # Arrange: "older than 69 ever smoked" would read "ever" only on the rows over 69 (30, not 60)
+        rows: list[dict[str, Any]] = []
+        for i in range(100):
+            first, second = ("yes", "yes") if i < 30 else (("yes", "no") if i < 60 else ("no", "no"))
+            rows += [
+                {"patient_id": f"P{i:03d}", "smoker": first, "age": 60 + i % 10},
+                {"patient_id": f"P{i:03d}", "smoker": second, "age": 70 + i % 10},
+            ]
+        service = QueryService(make_semantic_layer(data=pl.DataFrame(rows)))
+        plan = QueryPlan(
+            intent="COUNT",
+            cohort_steps=[CohortStep("gt", "age", 69), CohortStep("eq", "smoker", "yes")],
+            confidence=0.99,
+        )
+
+        # Act
+        result = _ask(service, "how many patients older than 69 ever smoked?", plan)
+
+        # Assert: refused, and the reason does not suggest "ever" (it is already there)
+        assert result.claim is None
+        assert result.failure_reason.startswith("age and smoker differ between rows of the same patient")
+        assert "Say 'ever'" not in result.failure_reason
+
+    def test_ask_unitNotNamedAndLimitVaries_refusedOnTheFirstQuestion(self, make_semantic_layer: Any) -> None:
+        # Arrange: the grain hold would fire too; the refusal comes first, so no confirmation of
+        # the grain can lead to the limited count
+        service = QueryService(make_semantic_layer(data=_tests_frame()))
+
+        # Act
+        result = _ask(service, "how many tested positive each year?", _positive_by_year())
+
+        # Assert
+        assert result.claim is None and not result.requires_confirmation
+        assert result.failure_reason.startswith("result differs between rows of the same patient")

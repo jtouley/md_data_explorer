@@ -7,6 +7,7 @@ behind the scenes based on dataset configurations. No more custom Python
 mapping logic - just define your logic in YAML and let Ibis compile to SQL.
 """
 
+import dataclasses
 import hashlib
 import json
 import logging
@@ -3226,6 +3227,46 @@ class SemanticLayer:
         if view[column].type().is_string() and is_numeric_text(*self.base_value_counts(column)):
             recorded += f" AND NOT ({missing_token_sql(quoted)})"
         return recorded, f"{quoted} = {_sql_literal(self._equality_value(view, column, value))}"
+
+    def limit_mixed_units(self, plan: "QueryPlan", entity: str, column: str) -> tuple[int, int] | None:
+        """(units, patients) with both a recorded row of ``column`` that meets the plan's limits on
+        it and one that does not, within the plan's other limits; None when that can't be told.
+
+        "Ever yes" plus "ever no" minus all units gives these units, so an "ever" count limited
+        on ``column`` is shown only when they are 0 or at least the threshold. Rows are counted
+        per unit (matching rows inside the recorded ones), so no limit has to be negated.
+        Patients fail closed on units with no patient ID (#133).
+        """
+        others = dataclasses.replace(
+            plan,
+            filters=[f for f in plan.filters if f.column != column],
+            cohort_steps=[step for step in plan.cohort_steps if step.column != column],
+            group_by=None,
+            proportion_column=None,
+            rate_column=None,
+        )
+        key = _quote_ident(entity)
+        patient = _quote_ident(self.patient_key) if self.patient_key else key
+        with self._cohort_views_dropped():
+            try:
+                matched = self.con.compile(self._filtered_view(dataclasses.replace(plan, group_by=None)))
+                recorded_view = self._filtered_view(others)
+                recorded_view = recorded_view.filter(recorded_view[column].notnull())
+                recorded = self.con.compile(recorded_view)
+            except CohortStepError:
+                return None
+            sql = (
+                f"WITH _m AS ({matched}), _o AS ({recorded}), "
+                f"_mu AS (SELECT {key} AS _u, count(*) AS m FROM _m WHERE {key} IS NOT NULL GROUP BY 1), "
+                f"_ou AS (SELECT {key} AS _u, max({patient}) AS _p, count(*) AS r FROM _o "
+                f"WHERE {key} IS NOT NULL GROUP BY 1), "
+                f"_mixed AS (SELECT _ou._u, _ou._p FROM _ou JOIN _mu USING (_u) WHERE _ou.r > _mu.m) "
+                f"SELECT count(*), {_patients_at_least('TRUE')} FROM _mixed"
+            )
+            rows = self.con.con.execute(sql).fetchall()
+        if not rows:
+            return None
+        return int(rows[0][0] or 0), int(rows[0][1] or 0)
 
     def _share_target(self, plan: "QueryPlan") -> tuple[str | None, Any]:
         """(column, value) of the plan's share or rate, chosen by which field is set: a value of
