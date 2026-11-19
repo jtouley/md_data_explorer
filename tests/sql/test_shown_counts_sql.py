@@ -177,3 +177,51 @@ class TestPositionColumns:
             _sql("SELECT count(*) AS n FROM unified WHERE age >= 65", catalog, log)
         assert shown.claim is not None
         assert refused.value.reason == WITHHELD_REASON
+
+
+class TestTimeZones:
+    def test_acrossPaths_timestampWithTimeZone_localZoneNotUtc_oneLog(
+        self,
+        make_sql_catalog: Callable[..., SqlCatalog],
+        make_semantic_layer: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Arrange: the review's timezone split. A timestamp-with-time-zone column is read as text
+        # in the session's zone; this process runs in New York, the layer's ibis session in UTC.
+        # Both paths must number and fingerprint the rows alike, so they share one log
+        import datetime as dt
+        import time
+
+        from clinical_analytics.sql.privacy import _universe
+
+        monkeypatch.setenv("TZ", "America/New_York")
+        time.tzset()
+        try:
+            start = dt.datetime(2024, 1, 1, 23, 30, tzinfo=dt.UTC)
+            frame = _cohort().with_columns(
+                pl.Series(
+                    "seen_at", [start + dt.timedelta(hours=i) for i in range(120)], dtype=pl.Datetime("us", "UTC")
+                )
+            )
+            catalog, log = make_sql_catalog(frame), MemoryShownCountLog()
+            layer = make_semantic_layer(
+                data=frame, config_overrides={"init_params": {"source_path": str(catalog.parquet_path)}}
+            )
+            shown = _ask_box(
+                QueryService(layer, shown_log=log),
+                QueryPlan(intent="COUNT", cohort_steps=[CohortStep("le", "age", 65)], confidence=0.99),
+            )
+
+            # Act
+            with SandboxConnection(catalog) as sandbox:
+                sql_rows = _universe(sandbox, catalog)
+            with pytest.raises(SqlRefusedError) as refused:
+                _sql("SELECT count(*) AS n FROM unified WHERE age >= 65", catalog, log)
+
+            # Assert
+            assert sql_rows.fingerprint == layer.row_fingerprint()
+            assert shown.claim is not None
+            assert refused.value.reason == WITHHELD_REASON
+        finally:
+            monkeypatch.delenv("TZ")
+            time.tzset()

@@ -36,6 +36,7 @@ import binascii
 import hashlib
 import hmac
 import json
+import os
 import secrets
 import threading
 import zlib
@@ -52,7 +53,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from clinical_analytics.contracts.config import SHOWN_COUNTS_DIRNAME
 from clinical_analytics.core.nl_query_config import SMALL_CELL_THRESHOLD
-from clinical_analytics.storage.atomic import atomic_write_bytes
+from clinical_analytics.storage.atomic import atomic_write, atomic_write_bytes
 from clinical_analytics.storage.metadata_lock import FileLockTimeoutError, file_lock
 
 logger = structlog.get_logger()
@@ -73,6 +74,9 @@ MILP_TIME_LIMIT_S: Final = 10.0
 # Residual below which a 0/1 region counts as a combination of shown sets.
 SPAN_TOLERANCE: Final = 1e-6
 ROWS_UNIT: Final = "rows"
+# The session time zone of every DuckDB connection that reads rows as text for a digest (the
+# layer's, the SQL sandbox's): a timestamp with a time zone is cast to text in it.
+DIGEST_TIME_ZONE: Final = "UTC"
 
 
 def _quoted(column: str) -> str:
@@ -97,9 +101,10 @@ def _value_text(column: str) -> str:
 
 def row_tiebreak_sql(columns: Sequence[str]) -> str:
     """Orders rows whose values are the same multiset in different columns (a=1, b=2 and a=2,
-    b=1): their values in column-name order. Rows equal in every column still tie; they are
-    interchangeable, since every condition holds for both or neither."""
-    values = [_value_text(c) for c in sorted(columns)]
+    b=1): their values in ``columns``' order, which ``content_columns`` sets by the columns'
+    values, not names. Rows equal in every column still tie; they are interchangeable, since
+    every condition holds for both or neither."""
+    values = [_value_text(c) for c in columns]
     return f"sha256(concat_ws(chr(31), {', '.join(values)}))" if values else "''"
 
 
@@ -117,23 +122,40 @@ def fingerprint_sql(columns: Sequence[str], source: str) -> str:
     )
 
 
-# Columns an upload makes up (a patient_id built from other columns, a row index, or a copy of a
-# column): left out of a row's digest, so the same rows uploaded with and without one match.
-SYNTHESIZED_COLUMNS: Final = ("patient_id",)
+def synthesized_columns(config: Any) -> tuple[str, ...]:
+    """The columns an upload made up (``identifier_rules.SYNTHESIZED_COLUMNS_CONFIG_KEY``: a
+    patient_id built from other columns or copied, a row number), from a layer's config. Left out
+    of a row's digest, so the same rows uploaded with and without one, or in another row order,
+    match."""
+    from clinical_analytics.core.identifier_rules import SYNTHESIZED_COLUMNS_CONFIG_KEY
+
+    found = (config or {}).get(SYNTHESIZED_COLUMNS_CONFIG_KEY) if isinstance(config, dict) else None
+    return tuple(str(c) for c in found) if isinstance(found, list | tuple) else ()
 
 
-def distinct_values_sql(columns: Sequence[str], source: str) -> str:
-    """One row: per column, how many distinct values (as text, missing as one value) it holds."""
-    counts = ", ".join(f"count(DISTINCT coalesce(CAST({_quoted(c)} AS VARCHAR), chr(0)))" for c in columns)
-    return f"SELECT {counts or '0'} FROM {source}"
+def column_profile_sql(columns: Sequence[str], source: str) -> str:
+    """One row: per column, how many distinct values it holds (as text, missing as one value),
+    then a digest of its values (SHA-256 of them sorted): a name-free key for the column."""
+    parts = []
+    for c in columns:
+        value = _value_text(c)
+        parts.append(f"count(DISTINCT {value})")
+        parts.append(f"sha256(coalesce(string_agg({value}, chr(31) ORDER BY {value}), ''))")
+    return f"SELECT {', '.join(parts) or '0'} FROM {source}"
 
 
-def content_columns(columns: Sequence[str], distinct: Sequence[int], synthesized: Sequence[str]) -> list[str]:
-    """The columns a row's digest reads: those that tell rows apart (more than one value: a column
-    holding one value everywhere, added or dropped, does not change which rows are which) and
-    that the upload did not make up. ``distinct``: ``distinct_values_sql``'s row."""
+def content_columns(columns: Sequence[str], profile: Sequence[Any], synthesized: Sequence[str]) -> list[str]:
+    """The columns a row's digest reads, in a name-free order. ``profile``: ``column_profile_sql``'s
+    row. Kept: columns that tell rows apart (more than one value: a column holding one value
+    everywhere, added or dropped, does not change which rows are which) and that the upload did
+    not make up. Ordered by their values' digest, then (two columns with the same values) by
+    their place in the file, never by name, so the row-order tie-break (``row_tiebreak_sql``)
+    does not move when a column is renamed."""
     made_up = set(synthesized)
-    return [c for c, n in zip(columns, distinct, strict=True) if int(n) > 1 and c not in made_up]
+    kept = [
+        (str(profile[2 * i + 1]), i, c) for i, c in enumerate(columns) if int(profile[2 * i]) > 1 and c not in made_up
+    ]
+    return [c for _, _, c in sorted(kept)]
 
 
 WITHHELD_REASON: Final = (
@@ -323,16 +345,20 @@ class _StoredLog(BaseModel):
     format: Literal[3]
     rows: int = Field(ge=0)
     fingerprint: str = Field(min_length=1)
+    # Which install key the file was written under (a digest of it, never the key): a log under
+    # another key is found and withholds, never silently orphaned.
+    key_id: str = Field(min_length=1)
     sets: list[_StoredSet] = Field(max_length=MAX_LOGGED_SETS)
 
 
-def _encode(state: _State, fingerprint: str) -> bytes:
+def _encode(state: _State, fingerprint: str, key_id: str) -> bytes:
     """The file for ``state``; ``fingerprint`` is what the file records for its rows (the file
     log stores a keyed digest of the rows' fingerprint, never the fingerprint itself)."""
     stored = _StoredLog(
         format=LOG_FORMAT,
         rows=state.rows,
         fingerprint=fingerprint,
+        key_id=key_id,
         sets=[
             _StoredSet(
                 unit=e.unit,
@@ -345,7 +371,7 @@ def _encode(state: _State, fingerprint: str) -> bytes:
     return json.dumps(stored.model_dump(mode="json"), separators=(",", ":")).encode("utf-8")
 
 
-def _decode(data: bytes, universe: Universe, fingerprint: str) -> _State:
+def _decode(data: bytes, universe: Universe, fingerprint: str, key_id: str) -> _State:
     """The stored log, checked: these rows (count and the recorded ``fingerprint``), each bitmap
     the size stored.
 
@@ -356,6 +382,8 @@ def _decode(data: bytes, universe: Universe, fingerprint: str) -> _State:
         stored = _StoredLog.model_validate_json(data)
     except pydantic.ValidationError as e:
         raise ShownLogUnavailableError(f"shown-count log is invalid ({e.error_count()} errors)") from e
+    if stored.key_id != key_id:
+        raise ShownLogUnavailableError("shown-count log was written under another install key")
     if stored.rows != universe.rows or not hmac.compare_digest(stored.fingerprint, fingerprint):
         raise ShownLogUnavailableError("shown-count log belongs to other rows")
     state = _State(rows=stored.rows, fingerprint=universe.fingerprint, entries=[], index=set())
@@ -690,6 +718,11 @@ class MemoryShownCountLog(ShownCountLog):
 INSTALL_KEY_NAME: Final = ".install_key"
 
 
+def _key_id(key: bytes) -> str:
+    """Which install key a log was written under: a digest of the key, never the key."""
+    return hashlib.sha256(b"shown-count-log-key-id:" + key).hexdigest()[:32]
+
+
 class FileShownCountLog(ShownCountLog):
     """``<data_dir>/shown_counts/<keyed digest of the rows' fingerprint>.json``, one file per set
     of rows.
@@ -706,28 +739,52 @@ class FileShownCountLog(ShownCountLog):
     def __init__(self, data_dir: Path) -> None:
         super().__init__()
         self.data_dir = data_dir
+        self._checked_key: bytes | None = None
 
     @property
     def _root(self) -> Path:
         return self.data_dir / SHOWN_COUNTS_DIRNAME
 
     def _key(self) -> bytes:
-        """The install key, made on first use.
+        """The install key, made once under a lock and read back (no two processes make two),
+        the directory 0700 and the key 0600. Checked once per log object: every log under the
+        directory was written under this key.
 
         Raises:
-            ShownLogUnavailableError: it can't be read or made, or logs exist without it.
+            ShownLogUnavailableError: it can't be read or made, logs exist without it, or a log was
+                written under another key (every answer is withheld until that is resolved).
         """
+        if self._checked_key is not None:
+            return self._checked_key
         path = self._root / INSTALL_KEY_NAME
         try:
-            if not path.exists():
-                if any(self._root.glob("*.json")):
-                    raise ShownLogUnavailableError("shown-count logs exist but their install key is gone")
-                atomic_write_bytes(path, secrets.token_bytes(32), exclusive=True)
-            key = path.read_bytes()
-        except OSError as e:
+            self._root.mkdir(mode=0o700, parents=True, exist_ok=True)
+            os.chmod(self._root, 0o700)
+            with file_lock(self._root / f"{INSTALL_KEY_NAME}.lock"):
+                if not path.exists():
+                    if any(self._root.glob("*.json")):
+                        raise ShownLogUnavailableError("shown-count logs exist but their install key is gone")
+
+                    def write(part: Path) -> None:
+                        fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                        with os.fdopen(fd, "wb") as handle:
+                            handle.write(secrets.token_bytes(32))
+
+                    atomic_write(path, write, exclusive=True)
+                key = path.read_bytes()
+        except (OSError, FileLockTimeoutError) as e:
             raise ShownLogUnavailableError(f"shown-count install key unavailable: {type(e).__name__}") from e
         if len(key) != 32:
             raise ShownLogUnavailableError("shown-count install key is invalid")
+        key_id = _key_id(key)
+        for log_file in self._root.glob("*.json"):
+            try:
+                written_under = json.loads(log_file.read_bytes()).get("key_id")
+            except (OSError, ValueError, AttributeError) as e:
+                raise ShownLogUnavailableError("a shown-count log can't be read") from e
+            if written_under != key_id:
+                raise ShownLogUnavailableError("a shown-count log was written under another install key")
+        self._checked_key = key
         return key
 
     def _keyed(self, universe: Universe) -> str:
@@ -754,10 +811,10 @@ class FileShownCountLog(ShownCountLog):
             return None
         except OSError as e:
             raise ShownLogUnavailableError(f"shown-count log unreadable: {type(e).__name__}") from e
-        return _decode(data, universe, self._keyed(universe))
+        return _decode(data, universe, self._keyed(universe), _key_id(self._key()))
 
     def _save(self, universe: Universe, state: _State) -> None:
         try:
-            atomic_write_bytes(self._path(universe), _encode(state, self._keyed(universe)))
+            atomic_write_bytes(self._path(universe), _encode(state, self._keyed(universe), _key_id(self._key())))
         except OSError as e:
             raise ShownLogUnavailableError(f"shown-count log not saved: {type(e).__name__}") from e

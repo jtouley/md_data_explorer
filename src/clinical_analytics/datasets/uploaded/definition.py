@@ -20,10 +20,9 @@ from clinical_analytics.core.dataset import ClinicalDataset, Granularity
 from clinical_analytics.core.identifier_rules import (
     PATIENT_ROWS_ASKABLE_CONFIG_FLAG,
     ROW_KEY_CONFIG_FLAG,
-    SYNTHESIZED_ID_CONFIG_FLAG,
+    SYNTHESIZED_COLUMNS_CONFIG_KEY,
     added_id_columns,
     patient_id_is_row_key,
-    patient_id_synthesized,
     rows_may_be_patients,
 )
 from clinical_analytics.core.schema import UnifiedCohort
@@ -655,7 +654,7 @@ class UploadedDataset(ClinicalDataset):
             "variable_types": safe_get(self.metadata, "variable_types", {}),
             # A synthesized patient_id keys rows: answers say "rows", never "patients".
             ROW_KEY_CONFIG_FLAG: patient_id_is_row_key(self.metadata or {}),
-            SYNTHESIZED_ID_CONFIG_FLAG: patient_id_synthesized(self.metadata or {}),
+            SYNTHESIZED_COLUMNS_CONFIG_KEY: added_id_columns(self.metadata or {}),
             # Rows may be confirmed one per patient ("Is each row one patient?"): only then does a
             # stored confirmation make answers count patients.
             PATIENT_ROWS_ASKABLE_CONFIG_FLAG: rows_may_be_patients(self.metadata or {}),
@@ -764,7 +763,7 @@ class UploadedDataset(ClinicalDataset):
             "variable_types": metadata_dict.get("variable_types", {}),
             # A synthesized patient_id keys rows: answers say "rows", never "patients".
             ROW_KEY_CONFIG_FLAG: patient_id_is_row_key(metadata_dict),
-            SYNTHESIZED_ID_CONFIG_FLAG: patient_id_synthesized(metadata_dict),
+            SYNTHESIZED_COLUMNS_CONFIG_KEY: added_id_columns(metadata_dict),
             PATIENT_ROWS_ASKABLE_CONFIG_FLAG: rows_may_be_patients(metadata_dict),
         }
         return config

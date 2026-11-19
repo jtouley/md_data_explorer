@@ -25,6 +25,7 @@ from clinical_analytics.core.shown_counts import (
     UNAVAILABLE_REASON,
     WITHHELD_REASON,
     FileShownCountLog,
+    MemoryShownCountLog,
 )
 
 
@@ -518,7 +519,7 @@ class TestStableFingerprint:
     ) -> None:
         # Arrange: the review's b5. "65 or younger" is shown on one upload; "65 or older" on the
         # same rows uploaded another way would give the 5 aged exactly 65 (65 + 60 - 120)
-        from clinical_analytics.core.identifier_rules import SYNTHESIZED_ID_CONFIG_FLAG
+        from clinical_analytics.core.identifier_rules import SYNTHESIZED_COLUMNS_CONFIG_KEY
 
         base = _patients()
         overrides: dict[str, Any] = {}
@@ -530,7 +531,7 @@ class TestStableFingerprint:
             "made-up id": base.with_columns(("R" + pl.int_range(pl.len()).cast(pl.String)).alias("patient_id")),
         }[variant]
         if variant == "made-up id":  # the upload synthesized patient_id: not part of the rows' content
-            overrides = {SYNTHESIZED_ID_CONFIG_FLAG: True}
+            overrides = {SYNTHESIZED_COLUMNS_CONFIG_KEY: ["patient_id"]}
             base = base.with_columns(("Q" + pl.int_range(pl.len()).cast(pl.String)).alias("patient_id"))
         first = make_semantic_layer(data=base, workspace_name="first", config_overrides=overrides or None)
         second = make_semantic_layer(data=other, workspace_name="second", config_overrides=overrides or None)
@@ -581,4 +582,119 @@ class TestPatientUnitByContent:
         result = _ask(QueryService(second, data_dir=tmp_path), _count(CohortStep("ge", "age", 65)))
 
         # Assert
+        assert _withheld(result)
+
+
+class TestRowNumbering:
+    def test_rowPositions_columnRenamed_samePositions(self, make_semantic_layer: Any) -> None:
+        # Arrange: the review's c4b. Rows whose values are the same multiset in two columns
+        # (flag_a=0, flag_b=1 and flag_a=1, flag_b=0) tie on the digest; renaming a column must
+        # not change how the tie is broken
+        from clinical_analytics.core.semantic import ROW_POSITION
+
+        rows = [{"patient_id": f"P{i:03d}", "flag_a": k, "flag_b": 1 - k} for i in range(30) for k in (0, 1)]
+        frame = pl.DataFrame(rows)
+        first = make_semantic_layer(data=frame, workspace_name="first")
+        second = make_semantic_layer(data=frame.rename({"flag_a": "z_flag"}), workspace_name="second")
+
+        # Act
+        one = first._positioned_view().select([ROW_POSITION, "patient_id", "flag_a"]).to_polars()
+        two = second._positioned_view().select([ROW_POSITION, "patient_id", "z_flag"]).to_polars()
+
+        # Assert
+        assert first.row_fingerprint() == second.row_fingerprint()
+        assert one.sort(ROW_POSITION).rows() == two.sort(ROW_POSITION).rows()
+
+    def test_ask_noIdUploadShuffled_rowNumberLeftOut_sharesOneLog(
+        self, make_semantic_layer: Any, tmp_path: Path
+    ) -> None:
+        # Arrange: a file with no ID column; the upload numbered its rows (row_number, file order).
+        # The same rows in another order get other row numbers, but are the same rows
+        from clinical_analytics.core.identifier_rules import SYNTHESIZED_COLUMNS_CONFIG_KEY
+
+        base = _patients().drop("patient_id")
+        numbered = base.with_row_index("row_number")
+        shuffled = base.sample(fraction=1.0, shuffle=True, seed=3).with_row_index("row_number")
+        overrides = {SYNTHESIZED_COLUMNS_CONFIG_KEY: ["row_number"], "column_mapping": {}}
+        first = make_semantic_layer(data=numbered, workspace_name="first", config_overrides=overrides)
+        second = make_semantic_layer(data=shuffled, workspace_name="second", config_overrides=overrides)
+        _ask(QueryService(first, data_dir=tmp_path), _count(CohortStep("le", "age", 65)))
+
+        # Act
+        result = _ask(QueryService(second, data_dir=tmp_path), _count(CohortStep("ge", "age", 65)))
+
+        # Assert
+        assert first.row_fingerprint() == second.row_fingerprint()
+        assert _withheld(result)
+
+    def test_rowFingerprint_thenAnotherQuery_runs(self, make_semantic_layer: Any) -> None:
+        # Arrange: the review's c2. The fingerprint's result is read to the end
+        layer = make_semantic_layer(data=_patients())
+
+        # Act
+        layer.row_fingerprint()
+        rows = layer.get_base_row_count()
+
+        # Assert
+        assert rows == 120
+
+
+class TestCountsInNotesAndStatistics:
+    """#146's counts: data notes with a count, and statistics of two-valued columns."""
+
+    def test_ask_missingIdNoteWritten_itsRowsLogged(self, make_semantic_layer: Any) -> None:
+        # Arrange: 30 rows with no ID beside 120 patients; the answer's note says "missing on 30
+        # rows"
+        frame = pl.concat(
+            [_patients(), _patients().head(30).with_columns(pl.lit(None, dtype=pl.String).alias("patient_id"))]
+        )
+        service = QueryService(make_semantic_layer(data=frame))
+        first = _ask(service, _count())
+
+        # Act: the logged sets include the note's 30 rows with no ID
+        log = service.shown_log
+        assert isinstance(log, MemoryShownCountLog)
+        (state,) = log._states.values()
+
+        # Assert: the note is written with its count, and its rows are in the log
+        assert first.claim is not None and "30 rows" in first.claim
+        assert 30 in [entry.size for entry in state.entries]
+
+    def test_presentWithCounts_noteWithoutRows_neverWritesItsCount(self) -> None:
+        # Arrange: a counted note whose rows are not named (a quality-report range check)
+        from clinical_analytics.core.result_presentation import AMOUNT, counted_note, present_with_counts
+
+        note = counted_note(f"Data check: age: {AMOUNT} values outside 0–122.", 40, 400)
+        analysis = {"type": "count", "total_count": 200, "data_notes": [note]}
+
+        # Act
+        presentation, counts = present_with_counts(analysis)
+
+        # Assert: shown as "some", and only the total is logged
+        assert presentation["claim"] is not None
+        assert "some values outside" in presentation["claim"]
+        assert [c.value for c in counts or []] == [200]
+
+    def test_ask_meanOfZeroOneBySex_eventsLogged(self, make_semantic_layer: Any) -> None:
+        # Arrange: died 0/1; "mean died by sex" with each group's n gives each group's deaths
+        # back. They are logged as the rows at 1, so "women who died, aged under 65" (5 fewer than
+        # the women who died) is withheld
+        frame = _patients().with_columns(
+            pl.when(pl.int_range(pl.len()) < 40)
+            .then(1)
+            .when(pl.int_range(pl.len()) >= 115)
+            .then(1)
+            .otherwise(0)
+            .alias("died")
+        )
+        service = QueryService(make_semantic_layer(data=frame))
+        mean = _ask(service, QueryPlan(intent="DESCRIBE", metric="died", group_by="sex", confidence=0.99))
+
+        # Act
+        result = _ask(
+            service, _count(CohortStep("eq", "sex", "F"), CohortStep("eq", "died", 1), CohortStep("lt", "age", 65))
+        )
+
+        # Assert
+        assert mean.claim is not None
         assert _withheld(result)

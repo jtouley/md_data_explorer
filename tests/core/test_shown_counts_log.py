@@ -281,7 +281,7 @@ class TestFileLog:
         # Assert: the rows' fingerprint appears only as a keyed digest (name and file)
         path = _log_file(tmp_path)
         stored = json.loads(path.read_text())
-        assert set(stored) == {"format", "rows", "fingerprint", "sets"}
+        assert set(stored) == {"format", "rows", "fingerprint", "key_id", "sets"}
         assert set(stored["sets"][0]) == {"unit", "size", "bits"}
         assert UNIVERSE.fingerprint not in path.read_text() and UNIVERSE.fingerprint not in path.name
 
@@ -553,3 +553,42 @@ class TestReviewTwo:
 
         # Assert
         assert all(v.shown or v.reason in (WITHHELD_REASON, shown_counts.NOT_CHECKED_REASON) for v in verdicts)
+
+
+class TestInstallKeyHandling:
+    def test_key_permissions_ownerOnly(self, tmp_path: Path) -> None:
+        # Arrange / Act
+        FileShownCountLog(tmp_path).admit("d1", "v1", UNIVERSE, [_rows(0, 50)])
+
+        # Assert
+        root = tmp_path / shown_counts.SHOWN_COUNTS_DIRNAME
+        assert root.stat().st_mode & 0o777 == 0o700
+        assert (root / shown_counts.INSTALL_KEY_NAME).stat().st_mode & 0o777 == 0o600
+
+    def test_admit_keyReplacedWhileLogsExist_withholdsEverything(self, tmp_path: Path) -> None:
+        # Arrange: a log written under one key; the key file then replaced by another
+        FileShownCountLog(tmp_path).admit("d1", "v1", UNIVERSE, [_rows(0, 50)])
+        key = tmp_path / shown_counts.SHOWN_COUNTS_DIRNAME / shown_counts.INSTALL_KEY_NAME
+        key.write_bytes(bytes(32))
+
+        # Act: other rows, whose log would be new under the new key
+        verdict = FileShownCountLog(tmp_path).admit(
+            "d2", "v1", Universe(rows=ROWS, fingerprint="other"), [_rows(0, 50)]
+        )
+
+        # Assert
+        assert (verdict.shown, verdict.reason) == (False, UNAVAILABLE_REASON)
+
+    def test_key_madeByManyAtOnce_oneKey(self, tmp_path: Path) -> None:
+        # Arrange: eight logs (threads) make the key at the same time
+        from concurrent.futures import ThreadPoolExecutor
+
+        def make(_: int) -> bytes:
+            return FileShownCountLog(tmp_path)._key()
+
+        # Act
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            keys = set(pool.map(make, range(8)))
+
+        # Assert
+        assert len(keys) == 1

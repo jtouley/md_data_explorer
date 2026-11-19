@@ -23,7 +23,13 @@ from sqlglot import exp
 from clinical_analytics.contracts.config import UNIFIED_OBJECT_NAME
 from clinical_analytics.contracts.declarations import LevelMapping
 from clinical_analytics.contracts.quality import is_id_property, is_restricted_property
-from clinical_analytics.core.shown_counts import content_columns, distinct_values_sql, fingerprint_sql, row_number_sql
+from clinical_analytics.core.shown_counts import (
+    DIGEST_TIME_ZONE,
+    column_profile_sql,
+    content_columns,
+    fingerprint_sql,
+    row_number_sql,
+)
 from clinical_analytics.sql.errors import SqlRefusedError
 from clinical_analytics.sql.render import render
 
@@ -55,8 +61,8 @@ class SqlCatalog:
     columns: tuple[ColumnSpec, ...]
     parquet_path: Path
     levels: tuple[LevelMapping, ...] = ()
-    # Stored columns the upload made up, left out of a row's digest (shown_counts.SYNTHESIZED_COLUMNS,
-    # when the layer's config says patient_id was made up): the same set the question box leaves out.
+    # Stored columns the upload made up, left out of a row's digest (shown_counts.synthesized_columns
+    # of the layer's config): the same set the question box leaves out.
     synthesized: tuple[str, ...] = ()
 
     def column(self, name: str) -> ColumnSpec | None:
@@ -160,5 +166,6 @@ def _digest_columns(parquet_path: Path, synthesized: tuple[str, ...]) -> tuple[s
     columns = list(pl.read_parquet_schema(parquet_path))
     reader = render(exp.func("read_parquet", exp.Literal.string(str(parquet_path))))
     with duckdb.connect(":memory:") as con:
-        distinct = con.execute(distinct_values_sql(columns, reader)).fetchone()
-    return tuple(content_columns(columns, list(distinct or [])[: len(columns)], synthesized))
+        con.execute(f"SET TimeZone = '{DIGEST_TIME_ZONE}'")
+        profile = con.execute(column_profile_sql(columns, reader)).fetchall()
+    return tuple(content_columns(columns, list(profile[0]), synthesized))

@@ -176,17 +176,10 @@ def find_intervals(schema: Mapping[str, pl.DataType]) -> list[Interval]:
 # combination of columns, or a copy of a column not named as a patient ID), so it keys rows, not
 # patients. ``core.answer_checks.patient_key`` then finds no patient key and every n counts rows.
 ROW_KEY_CONFIG_FLAG: Final = "patient_id_is_row_key"
-# Semantic-layer config flag: the upload made up patient_id (from other columns, a row index, or a
-# copy of one column). The log of shown counts leaves it out of a row's digest (core.shown_counts).
-SYNTHESIZED_ID_CONFIG_FLAG: Final = "patient_id_synthesized"
-
-
-def patient_id_synthesized(metadata: Mapping[str, object]) -> bool:
-    """Whether the upload made up patient_id (``synthetic_id_metadata.patient_id`` from a
-    composite, a row index or a single copied column), whatever it then keys."""
-    synthetic = metadata.get("synthetic_id_metadata")
-    info = synthetic.get("patient_id") if isinstance(synthetic, Mapping) else None
-    return isinstance(info, Mapping) and info.get("patient_id_source") in ("composite", "row_index", "single_column")
+# Semantic-layer config key: the columns the upload added to the file (``added_id_columns``: a made-up
+# patient_id, or the row number of a file with no ID). The log of shown counts leaves them out of a
+# row's digest (core.shown_counts): a row number follows the file's row order, not the row.
+SYNTHESIZED_COLUMNS_CONFIG_KEY: Final = "synthesized_columns"
 
 
 def patient_id_is_row_key(metadata: Mapping[str, object]) -> bool:

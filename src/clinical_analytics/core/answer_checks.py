@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Final
 
 import polars as pl
 import structlog
@@ -430,6 +430,10 @@ def report_notes(report: QualityReport | None, columns: list[str]) -> list[DataN
     return notes
 
 
+# The quality report's missing-values check (contracts.quality): its count is the rows with no value.
+NULL_METRIC: Final = "nullValues"
+
+
 def _report_note(check: QualityCheckResult, rows: int | str) -> DataNote | None:
     """One report check as a note. The report suppressed its counts against the report's own
     lines only, so a count it shows is carried apart from the text (the presenter checks it
@@ -447,12 +451,15 @@ def _report_note(check: QualityCheckResult, rows: int | str) -> DataNote | None:
         return None
     body = check.message[len(head) :]
     head = head.replace(AMOUNT, "")
+    # The rows behind the count, for the log of shown counts: named only for missing values
+    # (every row with none); any other check's count is never written ("some").
+    counted_rows = [Condition("isnull", check.column)] if check.metric == NULL_METRIC and check.column else None
     if check.percent is not None and body.startswith(f"{check.percent:.1f}% ") and total is not None:
         rest = body[len(f"{check.percent:.1f}%") :].replace(AMOUNT, "")
-        return counted_note(f"Data check: {head}{AMOUNT}{rest}.", check.count, total, "percent")
+        return counted_note(f"Data check: {head}{AMOUNT}{rest}.", check.count, total, "percent", rows=counted_rows)
     if body.startswith(f"{check.count} "):
         rest = body[len(str(check.count)) :].replace(AMOUNT, "")
-        return counted_note(f"Data check: {head}{AMOUNT}{rest}.", check.count, total)
+        return counted_note(f"Data check: {head}{AMOUNT}{rest}.", check.count, total, rows=counted_rows)
     logger.warning("report_note_count_not_found", check_id=check.id, metric=check.metric)
     return None
 

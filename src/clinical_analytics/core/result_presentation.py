@@ -1638,10 +1638,11 @@ def _note_with_count(note: Any, shown: set[int]) -> tuple[str | None, ShownCount
     if isinstance(note, Mapping) and note.get("counted") is not False and "count" in note:
         rows = note.get("rows")
         if not isinstance(rows, ShownCount):
-            text = note.get("text")
-            if isinstance(text, str) and text.count(AMOUNT) == 1:
-                return text.replace(AMOUNT, WITHHELD_AMOUNT), None
-            return None, None
+            # The rows behind the count are not named, so it could not be logged: never written.
+            # Checked on a copy of ``shown``: a count not written adds nothing to it.
+            if _note_sentence(note, set(shown)) is None:
+                return None, None  # malformed: dropped, as _note_sentence drops it
+            return str(note.get("text")).replace(AMOUNT, WITHHELD_AMOUNT), None
         count, total = note.get("count"), note.get("total")
         withheld = not _is_count(count) or _note_count_withheld(
             int(count), int(total) if _is_count(total) else None, shown
