@@ -14,6 +14,7 @@ from scipy import stats
 
 from clinical_analytics.analysis.grouping import (
     SMALL_VALUE_MODEL_REFUSAL,
+    TERM_NAME_CLASH_MODEL_REFUSAL,
     grouping_problem,
     is_small_level,
     predictor_model_refusal,
@@ -949,7 +950,7 @@ def _term_sizes(
             sizes.update(
                 {f"{column}_{level}": min(n, reference) for level, n in levels.items() if level != min(levels)}
             )
-        elif kind == "binary" or _two_valued(frame[column]):
+        elif _coded(frame, column, kind, categorical):
             sizes[column] = min(_level_sizes(frame[column], keys).values())
         else:
             sizes[column] = None
@@ -1104,6 +1105,10 @@ def compute_predictor_analysis(
     if categorical:
         analysis_df_pd = pd.get_dummies(analysis_df_pd, columns=categorical, drop_first=True, dtype=int)
     model_predictors = [c for c in analysis_df_pd.columns if c != outcome_col]
+    if sorted(model_predictors) != sorted(term_sizes):
+        # Two predictors made one term name (a column "site_West" beside "site" with a level
+        # West): the sizes stored under it are one predictor's, not the other's (fail closed).
+        return {**base, "error": TERM_NAME_CLASH_MODEL_REFUSAL}
 
     try:
         _, summary_df = run_logistic_regression(analysis_df_pd, outcome_col, model_predictors)

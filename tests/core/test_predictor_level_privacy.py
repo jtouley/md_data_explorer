@@ -24,6 +24,7 @@ from clinical_analytics.analysis.compute import (
 from clinical_analytics.analysis.grouping import (
     SMALL_CELL_MODEL_REFUSAL,
     SMALL_VALUE_MODEL_REFUSAL,
+    TERM_NAME_CLASH_MODEL_REFUSAL,
     UNRECORDED_SIZES_MODEL_REFUSAL,
     is_small_level,
 )
@@ -514,6 +515,42 @@ class TestPredictorLabelLeaks:
         # Assert
         assert leaks == {"dose"}
 
+    def test_predictorLabelLeaks_outcomeNotInFrame_checksPredictorsOnly(
+        self, make_cohort_with_categorical: CohortFactory
+    ) -> None:
+        # Arrange: the question's outcome is not a column of the dataset frame
+        frame = _cohort(make_cohort_with_categorical, 3)
+        presentation = {"claim": "Logistic regression of missing on treatment_West.", "table": None}
+
+        # Act
+        leaks = predictor_label_leaks(presentation, frame, ["treatment"], "missing", SMALL_CELL_THRESHOLD)
+
+        # Assert: the small level is still flagged, and no cell check runs without the outcome
+        assert leaks == {"treatment_West"}
+
+    def test_predictorLabelLeaks_nonFiniteRows_notCountedAsALevel(
+        self, make_cohort_with_categorical: CohortFactory
+    ) -> None:
+        # Arrange: dose 5 or 10 mg (9 of 328 at 5 mg had the event) plus NaN rows the model drops
+        frame = _two_by_two(
+            make_cohort_with_categorical,
+            {("A", "Yes"): 9, ("A", "No"): 319, ("B", "Yes"): 40, ("B", "No"): 773, ("C", "No"): 20},
+        ).with_columns(
+            pl.when(pl.col("treatment") == "A")
+            .then(5.0)
+            .when(pl.col("treatment") == "B")
+            .then(10.0)
+            .otherwise(float("nan"))
+            .alias("dose")
+        )
+        presentation = {"claim": "Logistic regression of status = Yes on dose.", "table": None}
+
+        # Act
+        leaks = predictor_label_leaks(presentation, frame, ["dose"], "status", SMALL_CELL_THRESHOLD)
+
+        # Assert: two values once NaN is dropped, so the single term "dose" is flagged
+        assert leaks == {"dose"}
+
     def test_predictorLabelLeaks_slopeWithManyValues_notFlaggedForCells(
         self, make_cohort_with_categorical: CohortFactory
     ) -> None:
@@ -900,6 +937,32 @@ class TestComputePredictorUnkeyedRows:
             assert result["error"] == SMALL_CELL_MODEL_REFUSAL
         else:
             assert result["cell_sizes"] == {"treatment_None": keyed_events}
+
+    def test_computePredictor_termNameClash_refusedNamingNeither(
+        self, make_cohort_with_categorical: CohortFactory, site_context: AnalysisContext
+    ) -> None:
+        # Arrange: a continuous column named "treatment_West" beside treatment's 3-patient level West;
+        # both would be the term "treatment_West", and the slope's size would hide the level's
+        frame = _two_by_two(
+            make_cohort_with_categorical,
+            {
+                ("West", "Yes"): 1,
+                ("West", "No"): 2,
+                ("East", "Yes"): 40,
+                ("East", "No"): 40,
+                ("North", "Yes"): 40,
+                ("North", "No"): 40,
+            },
+        ).with_columns(pl.col("age").alias("treatment_West"))
+        site_context.predictor_variables = ["treatment", "treatment_West"]
+
+        # Act
+        result = compute_predictor_analysis(frame, site_context)
+
+        # Assert
+        assert result["error"] == TERM_NAME_CLASH_MODEL_REFUSAL
+        assert "West" not in result["error"]
+        assert "summary" not in result
 
     def test_computePredictor_unkeyedRowsOnlyLevel_refused(
         self, make_cohort_with_categorical: CohortFactory, site_context: AnalysisContext

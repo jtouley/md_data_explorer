@@ -360,6 +360,10 @@ def predictor_label_leaks(
     shown = [str((presentation or {}).get("claim") or ""), *shown_labels(presentation)]
     columns = [column for column in [*predictors, *([outcome] if outcome else [])] if column in frame.columns]
     complete = frame.select(columns).drop_nulls()
+    # Compute fits on finite values only: NaN or inf in a float column is not a level.
+    floats = [column for column, dtype in complete.schema.items() if dtype.is_float()]
+    if floats:
+        complete = complete.filter(pl.all_horizontal(pl.col(floats).is_finite()))
     labels: set[str] = set()
 
     def terms(column: str, values: list[Any]) -> set[str]:
@@ -378,7 +382,7 @@ def predictor_label_leaks(
         if column == outcome:
             continue
         labels |= terms(column, small)
-        if outcome is None:
+        if outcome is None or outcome not in complete.columns:
             continue
         cell_levels = _small_cell_levels(complete, column, outcome, threshold)
         present = complete.get_column(column).unique().to_list()

@@ -51,6 +51,14 @@ SMALL_CELL_MODEL_REFUSAL: Final = (
     f"so this model can't be shown without letting their number be worked out. Try a broader predictor or "
     f"a more common outcome."
 )
+# A model whose fitted terms are not exactly the terms its sizes were counted for: two predictors
+# give the same term name (a column "site_West" beside "site" with level West), so one term's size
+# would stand for the other's. Withheld (fail closed); names neither column, since one of them
+# may be the label of a small level.
+TERM_NAME_CLASH_MODEL_REFUSAL: Final = (
+    "Two predictors give this model the same term name, so it can't be checked for small groups and "
+    "is not shown. Rename one of the columns or leave it out."
+)
 # A stored model whose group sizes are missing (a payload from before they were recorded): it is
 # withheld (fail closed), but no value is small, so none is blamed.
 UNRECORDED_SIZES_MODEL_REFUSAL: Final = (
