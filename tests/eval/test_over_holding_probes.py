@@ -11,7 +11,7 @@ import pytest
 
 from clinical_analytics.eval.catalog import repo_root
 from clinical_analytics.eval.headless import ask, classify_presented, register_frame
-from tests.eval.adversarial_probes import own_frame
+from tests.eval.adversarial_probes import geo_frame, own_frame
 from tests.eval.over_holding_probes import (
     ANSWERABLE,
     ANSWERED,
@@ -29,6 +29,7 @@ def _frames() -> dict[str, pl.DataFrame]:
         "coh": pl.read_csv(repo_root() / "tests" / "fixtures" / "synthetic" / "cohort.csv"),
         "own": own_frame(),
         "creat": creatinine_frame(),
+        "geo": geo_frame(),
     }
     for name, frame in frames.items():
         register_frame(f"overhold_{name}", frame)
@@ -61,7 +62,7 @@ def test_overHoldingProbes_set_hasEveryQuestionOnce() -> None:
     # Assert
     assert duplicates == set()
     assert unknown == set()
-    assert len(ANSWERED) + len(HELD_SINCE_NARROWING) + len(HELD) == 75
+    assert len(ANSWERED) + len(HELD_SINCE_NARROWING) + len(HELD) == 87
 
 
 @pytest.mark.slow

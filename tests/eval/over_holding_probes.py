@@ -8,7 +8,7 @@ produce a wrong answer (a stored number bound by a label digit, a reversed propo
 dropped filter, statin non-users read as users, an ambiguous number or list); it must stay
 held or refused.
 
-Three frames: the committed synthetic cohort, the second review's generated frame
+Four frames: the committed synthetic cohort, the second review's generated frame
 (adversarial_probes.own_frame) and a small seeded frame with a Creatinine column holding 2.2
 next to a diabetes type column holding "Type 2".
 """
@@ -32,7 +32,7 @@ Truth = Callable[[pl.DataFrame], Any]
 
 @dataclass(frozen=True)
 class Probe:
-    dataset: str  # "coh", "own" or "creat"
+    dataset: str  # "coh", "own", "creat" or "geo" (adversarial_probes.geo_frame)
     query: str
     truth: Truth | None  # None: must hold or refuse
     group_by: str | None = None
@@ -220,6 +220,16 @@ ANSWERABLE: tuple[Probe, ...] = (
     Probe("own", "are men more likely to be readmitted?", by("Gender", rate(READMITTED)), group_by="Gender"),
     # A label digit binds the label, never a stored number of another column.
     Probe("creat", "how many patients with type 2 diabetes?", count(c("diabetes_type") == "Type 2")),
+    # Grammar words never select a stored value (aggregate-data triage #4): "count" is not
+    # "Count Lake" nor the start of "Las Animas County"; "by", "per", "number" name no value.
+    Probe("geo", "count by sex", by("sex", size), group_by="sex"),
+    Probe("geo", "number of patients by sex", by("sex", size), group_by="sex"),
+    Probe("geo", "how many patients per sex?", by("sex", size), group_by="sex"),
+    Probe("geo", "count by state", by("state", size), group_by="state"),
+    Probe("geo", "how many patients in Las Animas County?", count(c("location_name") == "Las Animas County")),
+    Probe("geo", "how many patients in count lake?", count(c("location_name") == "Count Lake")),
+    Probe("geo", "count in las animas county", count(c("location_name") == "Las Animas County")),
+    Probe("geo", "how many patients in north dakota?", count(c("state") == "North Dakota")),
 )
 
 # Answerable questions that hold again since #93 was narrowed to changes that cannot invert or
@@ -297,4 +307,9 @@ HELD: tuple[Probe, ...] = (
     Probe("coh", "how many patients by ldl?", None),
     Probe("coh", "average age by bmi", None),
     Probe("coh", "compare ldl by age", None),
+    # A word several values share ("county", "dakota") selects none of them: never the longest.
+    Probe("geo", "average mx by county", None),
+    Probe("geo", "count by county", None),
+    Probe("geo", "how many patients in a county?", None),
+    Probe("geo", "how many patients in dakota?", None),
 )

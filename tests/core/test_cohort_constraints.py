@@ -165,6 +165,25 @@ def test_attachCohort_parsedIntent_keepsItsConfidence(confidence: float) -> None
         pytest.param(
             ["Type 1", "Type 2", "None"], "how many patients with type diabetes?", None, id="tie_binds_nothing"
         ),
+        # "count" prefix-matches "county" in every value: a longer value must not win the tie.
+        pytest.param(
+            ["Colorado", "Adams County", "Las Animas County", "El Paso County"],
+            "count by sex",
+            None,
+            id="count_is_not_the_longest_county",
+        ),
+        pytest.param(
+            ["Colorado", "Adams County", "Las Animas County", "El Paso County"],
+            "average rate by county",
+            None,
+            id="county_names_no_one_county",
+        ),
+        pytest.param(
+            ["Colorado", "Adams County", "Las Animas County", "El Paso County"],
+            "count in las animas county",
+            "Las Animas County",
+            id="named_county_still_binds",
+        ),
     ],
 )
 def test_peelCohort_storedValues_bindMostSpecificAndNeverATie(
@@ -506,3 +525,299 @@ def test_executeQueryPlan_unappliedWords_listedOnceEach(
     # Assert
     assert result["success"] is False
     assert expected in result["failure_reason"]
+
+
+# --- value words: whole words only, grammar never, ambiguity holds (aggregate triage #4) ------
+
+_GEO_COLUMNS = ["location_name", "state", "sex", "mx"]
+_GEO_VALUES: dict[str, list[Any]] = {
+    "location_name": ["Colorado", "Las Animas County", "Adams County", "El Paso County", "Count Lake"],
+    "state": ["New Mexico", "North Dakota", "South Dakota"],
+    "sex": ["Male", "Female", "Total"],
+    "mx": [101.5, 220.25, 349.75],
+}
+
+
+def _geo_hits(query: str) -> list[tuple[str, Any]]:
+    from clinical_analytics.core.cohort_constraints import _value_hits
+
+    hits = _value_hits(query.lower(), _GEO_COLUMNS, lambda column: _GEO_VALUES[column])
+    return [(column, value) for column, value, _at in hits]
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param("count by sex", id="count_isNotCounty"),
+        pytest.param("count", id="count_alone"),
+        pytest.param("number of patients per state", id="number_per"),
+        pytest.param("how many patients by state?", id="how_many_by"),
+        pytest.param("total count", id="total_isNotSexTotal"),
+        pytest.param("average mx by county", id="county_sharedByCounties"),
+        pytest.param("how many patients in a county?", id="county_noLongestWins"),
+        pytest.param("how many in the counties?", id="counties_plural_shared"),
+        pytest.param("how many patients in dakota?", id="dakota_sharedByStates"),
+        pytest.param("mean mx per year", id="mean_per"),
+        pytest.param("", id="empty"),
+    ],
+)
+def test_valueHits_grammarOrSharedWord_bindsNoValue(query: str) -> None:
+    # Arrange: query above
+
+    # Act
+    hits = _geo_hits(query)
+
+    # Assert
+    assert hits == []
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        pytest.param("how many patients in las animas county?", [("location_name", "Las Animas County")], id="full"),
+        pytest.param("how many patients in adams county?", [("location_name", "Adams County")], id="two_words"),
+        pytest.param("how many patients in las animas?", [("location_name", "Las Animas County")], id="partial"),
+        pytest.param("how many patients in count lake?", [("location_name", "Count Lake")], id="count_lake"),
+        pytest.param("how many in north dakota?", [("state", "North Dakota")], id="more_words_named"),
+        pytest.param("average mx in new mexico", [("state", "New Mexico")], id="state"),
+        pytest.param("count of women in colorado", [("location_name", "Colorado"), ("sex", "Female")], id="two"),
+    ],
+)
+def test_valueHits_wholeWordsNamed_bindsThatValue(query: str, expected: list[tuple[str, Any]]) -> None:
+    # Arrange: query above
+
+    # Act
+    hits = _geo_hits(query)
+
+    # Assert
+    assert sorted(hits) == sorted(expected)
+
+
+@pytest.mark.parametrize(
+    ("word", "part", "expected"),
+    [
+        pytest.param("county", "county", True, id="same"),
+        pytest.param("statins", "statin", True, id="plural"),
+        pytest.param("counties", "county", True, id="plural_ies_sharedStem"),
+        pytest.param("diabetic", "diabetes", True, id="sharedStem_bothGoOn"),
+        pytest.param("count", "county", False, id="prefix_ofValueWord"),
+        pytest.param("county", "count", False, id="valueWord_isPrefix"),
+        pytest.param("northern", "north", False, id="northern_isNotNorth"),
+        pytest.param("diabet", "diabetes", False, id="truncated"),
+        pytest.param("lake", "lakewood", False, id="lake_isNotLakewood"),
+        # Adjectives made from a value word name it, either way round (#123 review, item 2).
+        pytest.param("asthmatic", "asthma", True, id="adjective_tic"),
+        pytest.param("asthmatics", "asthma", True, id="adjective_plural"),
+        pytest.param("asthma", "asthmatic", True, id="adjective_valueIsTheAdjective"),
+        pytest.param("alcoholic", "alcohol", True, id="adjective_ic"),
+        pytest.param("cancerous", "cancer", True, id="adjective_ous"),
+        pytest.param("european", "europe", True, id="adjective_an"),
+        pytest.param("african", "africa", True, id="adjective_n_afterA"),
+        pytest.param("insomniac", "insomnia", True, id="adjective_c_afterA"),
+        # Any other extension is a different word, and a short word is never a stem.
+        pytest.param("headache", "head", False, id="headache_isNotHead"),
+        pytest.param("liver", "live", False, id="liver_isNotLive"),
+        pytest.param("controlled", "control", False, id="controlled_isNotControl"),
+        pytest.param("septic", "sept", False, id="septic_isNotMonthSept_shortStem"),
+        pytest.param("asian", "asia", False, id="asian_shortStem_holds"),
+        pytest.param("lower", "low", False, id="lower_isNotLow"),
+        pytest.param("cancerously", "cancer", False, id="adjective_plusMore_isNot"),
+        pytest.param("", "asthma", False, id="empty_word"),
+    ],
+)
+def test_namesWord_pair_matchesWholeWordsOnly(word: str, part: str, expected: bool) -> None:
+    # Arrange
+    from clinical_analytics.core.cohort_constraints import _names_word
+
+    # Act
+    named = _names_word(word, part)
+
+    # Assert
+    assert named is expected
+
+
+@pytest.mark.parametrize("word", ["count", "number", "how", "many", "total", "by", "per", "each", "average", "mean"])
+def test_questionFormWords_grammarWord_isInSharedVocabulary(word: str) -> None:
+    # Arrange
+    from clinical_analytics.core.question_vocabulary import QUESTION_FORM_WORDS
+
+    # Act
+    present = word in QUESTION_FORM_WORDS
+
+    # Assert
+    assert present
+
+
+# --- a value that is also a statistic word, and adjectives of a value (#123 review of #102) -------
+
+_TRIAL_COLUMNS = ["arm", "diagnosis", "age"]
+_TRIAL_VALUES: dict[str, list[Any]] = {
+    "arm": ["Standard", "Experimental", "Placebo"],
+    "diagnosis": ["Asthma", "Cancer", "Head injury", "Hypertension"],
+    "age": [40, 55, 70],
+}
+
+
+def _trial_hits(query: str, values: dict[str, list[Any]] | None = None) -> list[tuple[str, Any]]:
+    from clinical_analytics.core.cohort_constraints import _value_hits
+
+    stored = values or _TRIAL_VALUES
+    hits = _value_hits(query.lower(), list(stored), lambda column: stored[column])
+    return [(column, value) for column, value, _at in hits]
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        pytest.param("how many patients in the standard arm?", [("arm", "Standard")], id="standard_arm"),
+        pytest.param("average age in the standard arm", [("arm", "Standard")], id="standard_withStatistic"),
+        pytest.param("Standard arm average age", [("arm", "Standard")], id="standard_first"),
+        pytest.param(
+            "standard deviation of age in the standard arm", [("arm", "Standard")], id="phraseAndValue_bindsValue"
+        ),
+        pytest.param("standard deviation of age", [], id="phrase_isGrammar"),
+        pytest.param("standard deviations of age by arm", [], id="phrase_plural_isGrammar"),
+        pytest.param("standard-deviation of age", [], id="phrase_hyphen_isGrammar"),
+        pytest.param("how many asthmatic patients?", [("diagnosis", "Asthma")], id="asthmatic"),
+        pytest.param("average age of asthmatics", [("diagnosis", "Asthma")], id="asthmatics"),
+        pytest.param("how many cancerous patients", [("diagnosis", "Cancer")], id="cancerous"),
+        pytest.param("how many patients with headache?", [], id="headache_isNotHeadInjury"),
+        pytest.param("how many with controlled hypertension", [("diagnosis", "Hypertension")], id="controlled_unused"),
+        pytest.param("", [], id="empty"),
+    ],
+)
+def test_valueHits_statisticWordOrAdjectiveOfValue_bindsOnlyTheNamedValue(
+    query: str, expected: list[tuple[str, Any]]
+) -> None:
+    # Arrange: query above
+
+    # Act
+    hits = _trial_hits(query)
+
+    # Assert
+    assert hits == expected
+
+
+def test_valueHits_adjectiveNamesTwoValues_bindsNeither() -> None:
+    # Arrange: "asthmatic" is a whole word of one value and an adjective of the other
+    values = {"diagnosis": ["Asthma", "Asthmatic bronchitis", "Cancer"]}
+
+    # Act
+    hits = _trial_hits("how many asthmatic patients?", values)
+
+    # Assert
+    assert hits == []
+
+
+def test_valueHits_northern_stillHolds() -> None:
+    # Arrange: "northern" is not North plus an adjective ending, so the whole-word rule stands
+    values = {"region": ["North", "South"]}
+
+    # Act
+    hits = _trial_hits("how many patients in the northern region?", values)
+
+    # Assert
+    assert hits == []
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        pytest.param("how many patients in the standard arm?", None, id="loneStandard_asksNothing"),
+        pytest.param("standard arm average age", "mean", id="standardFirst_averageAsked"),
+        pytest.param("standard deviation of age", "std", id="phrase_asksStd"),
+        pytest.param("median age", "median", id="median"),
+        pytest.param("", None, id="empty"),
+    ],
+)
+def test_askedStatistic_loneStandard_isNotAStatistic(query: str, expected: str | None) -> None:
+    # Arrange
+    from clinical_analytics.core.cohort_constraints import asked_statistic
+
+    # Act
+    asked = asked_statistic(query)
+
+    # Assert
+    assert asked == expected
+
+
+def test_withoutStatisticPhrases_phrase_blankedAtSamePositions() -> None:
+    # Arrange
+    from clinical_analytics.core.question_vocabulary import QUESTION_FORM_WORDS, without_statistic_phrases
+
+    text = "standard deviation of age in the standard arm"
+
+    # Act
+    masked = without_statistic_phrases(text)
+
+    # Assert
+    assert len(masked) == len(text)
+    assert masked.split() == ["of", "age", "in", "the", "standard", "arm"]
+    assert masked.index("standard") == text.rindex("standard")
+    assert "standard" not in QUESTION_FORM_WORDS
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param("patient counts by location_name", id="counts_plural"),
+        pytest.param("show totals by sex", id="totals_plural"),
+        pytest.param("counted by state", id="counted"),
+        pytest.param("counting patients per state", id="counting"),
+        pytest.param("medians of mx by year", id="medians_isNotMedia"),
+    ],
+)
+def test_valueHits_inflectedGrammarWord_bindsNoValue(query: str) -> None:
+    # Arrange: query above
+
+    # Act
+    hits = _geo_hits(query)
+
+    # Assert
+    assert hits == []
+
+
+@pytest.mark.parametrize(
+    ("query", "values", "expected"),
+    [
+        pytest.param("how many patients with weight loss", {"city": ["Los Angeles", "Denver"]}, [], id="loss_isNotLos"),
+        pytest.param(
+            "how many in los angeles", {"city": ["Los Angeles", "Denver"]}, [("city", "Los Angeles")], id="los_named"
+        ),
+        pytest.param(
+            "how many had a protocol deviation",
+            {"event": ["Protocol deviation", "Adverse event"]},
+            [("event", "Protocol deviation")],
+            id="loneDeviation_namesValue",
+        ),
+    ],
+)
+def test_valueHits_pluralAndLoneDeviation_bindOnlyTheNamedValue(
+    query: str, values: dict[str, list[Any]], expected: list[tuple[str, Any]]
+) -> None:
+    # Arrange: values above
+
+    # Act
+    hits = _trial_hits(query, values)
+
+    # Assert
+    assert hits == expected
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        pytest.param("how many had a protocol deviation", None, id="loneDeviation_asksNothing"),
+        pytest.param("standard deviation of ldl", "std", id="phrase_std"),
+        pytest.param("standard-deviation of ldl", "std", id="phraseHyphen_std"),
+    ],
+)
+def test_askedStatistic_deviationAlone_isNotAStatistic(query: str, expected: str | None) -> None:
+    # Arrange
+    from clinical_analytics.core.cohort_constraints import asked_statistic
+
+    # Act
+    asked = asked_statistic(query)
+
+    # Assert
+    assert asked == expected

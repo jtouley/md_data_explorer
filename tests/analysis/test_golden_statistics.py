@@ -28,7 +28,7 @@ from clinical_analytics.analysis.compute import (
     compute_predictor_analysis,
     compute_survival_analysis,
 )
-from clinical_analytics.analysis.grouping import HIDDEN_GROUPS_LABEL
+from clinical_analytics.analysis.grouping import HIDDEN_GROUPS_LABEL, SMALL_CELL_TEST_REFUSAL
 from clinical_analytics.core.analysis_types import AnalysisContext
 from clinical_analytics.core.result_presentation import present_analysis
 from clinical_analytics.datasets.demo import get_demo_csv_path
@@ -103,20 +103,22 @@ class TestGoldenComparison:
         assert not math.isclose(result["p_value"], pooled_p, rel_tol=0.01)
         assert result["df"] < 10  # Welch-Satterthwaite df driven by the n=5, high-variance arm
 
-    def test_compare_sparse2x2_usesFisherExactWithPlantedTable(self, load_synthetic_dataset):
+    @pytest.mark.slow
+    @pytest.mark.integration
+    def test_compare_sparse2x2_withholdsFisherForPlantedSmallCells(self, load_synthetic_dataset):
         # Arrange: generator wrote exposed 3/4 infected, unexposed 1/16 infected
         df = load_synthetic_dataset("sparse_cells")
         planted = np.array([[15, 1], [1, 3]])  # rows: infection 0,1; columns: exposed no, yes
-        ref_or, ref_p = stats.fisher_exact(planted)
 
         # Act
         result = compute_comparison_analysis(df, _context(primary_variable="infection", grouping_variable="exposed"))
 
-        # Assert
-        assert result["test_type"] == "fisher_exact"
-        assert result["min_expected_count"] < 5
-        assert result["p_value"] == pytest.approx(ref_p, rel=REL)
-        assert result["odds_ratio"] == pytest.approx(ref_or, rel=REL)
+        # Assert: the table is the planted one, but its cells of 1 and 3 withhold the test: the
+        # p-value with the margins would give them back
+        assert [[row["no"], row["yes"]] for row in result["contingency"]] == planted.tolist()
+        assert result["table_min_cell"] == planted.min() == 1
+        for key in ("test_type", "p_value", "odds_ratio", "min_expected_count"):
+            assert key not in result
         assert result["event_level"] == "1"
         assert result["group_proportions"] == pytest.approx({"no": 1 / 16, "yes": 3 / 4}, rel=REL)
 
@@ -176,6 +178,8 @@ class TestGoldenComparison:
         assert result["n_excluded"] == df["ldl"].null_count()
         assert ref_means["North"] < ref_means["South"] < ref_means["West"]
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_compare_demoOutcomeByHypertension_matchesContingencyReference(self):
         # Arrange: the bundled "Load sample" cohort (shipped in the package, same generator)
         df = pl.read_csv(get_demo_csv_path())
@@ -192,14 +196,37 @@ class TestGoldenComparison:
         # Act
         result = compute_comparison_analysis(df, _context(primary_variable="outcome", grouping_variable="hypertension"))
 
-        # Assert: expected counts are all >= 5, so chi-square (Yates-corrected for 2x2), not Fisher
+        # Assert: expected counts are all >= 5, so chi-square (Yates-corrected for 2x2), not Fisher;
+        # the demo table has a cell of 9, so the test is withheld; the shares are still computed
         assert ref_expected.min() >= 5
+        assert result["table_min_cell"] == table.min() == 9
+        assert "p_value" not in result
+        assert result["group_proportions"] == pytest.approx(ref_props, rel=REL)
+        assert result["n_used"] == df.height == 80
+
+    @pytest.mark.slow
+    @pytest.mark.integration
+    def test_compare_demoOutcomeByHypertensionTwice_matchesChiSquareReference(self):
+        # Arrange: the demo cohort stacked twice, so every cell has at least 11 patients
+        df = pl.concat([pl.read_csv(get_demo_csv_path())] * 2)
+        counts = df.group_by("outcome", "hypertension").len()
+        table = np.array(
+            [
+                [counts.filter((pl.col("outcome") == y) & (pl.col("hypertension") == g))["len"].sum() for g in (0, 1)]
+                for y in (0, 1)
+            ]
+        )
+        ref_chi2, ref_p, ref_dof, ref_expected = stats.chi2_contingency(table)
+
+        # Act
+        result = compute_comparison_analysis(df, _context(primary_variable="outcome", grouping_variable="hypertension"))
+
+        # Assert
+        assert table.min() >= 11 and ref_expected.min() >= 5
         assert result["test_type"] == "chi_square"
         assert result["chi2"] == pytest.approx(ref_chi2, rel=REL)
         assert result["p_value"] == pytest.approx(ref_p, rel=REL)
         assert result["dof"] == ref_dof == 1
-        assert result["group_proportions"] == pytest.approx(ref_props, rel=REL)
-        assert result["n_used"] == df.height == 80
 
 
 class TestGoldenPredictor:
@@ -301,8 +328,11 @@ class TestGoldenSurvival:
 
 
 class TestGoldenPresentation:
-    def test_present_sparseComparison_namesFisherAndWithholdsPercentages(self, load_synthetic_dataset):
-        # Arrange: 3 of 4 exposed infected; any percentage for a group of 4 reveals the count
+    @pytest.mark.slow
+    @pytest.mark.integration
+    def test_present_sparseComparison_withholdsTestAndPercentages(self, load_synthetic_dataset):
+        # Arrange: 3 of 4 exposed infected; any percentage for a group of 4 reveals the count,
+        # and so does Fisher's p-value with the margins
         df = load_synthetic_dataset("sparse_cells")
         analysis = compute_comparison_analysis(df, _context(primary_variable="infection", grouping_variable="exposed"))
 
@@ -310,9 +340,8 @@ class TestGoldenPresentation:
         presentation = present_analysis(analysis)
 
         # Assert
-        assert "Fisher's exact test" in presentation["claim"]
+        assert presentation["claim"] == SMALL_CELL_TEST_REFUSAL
         assert "75%" not in presentation["claim"] and "6%" not in presentation["claim"]
-        assert "withheld" in presentation["claim"]
         shown = [v for row in presentation["table"]["rows"] for k, v in row.items() if k != "infection"]
         assert all(v == "suppressed" or (isinstance(v, int) and (v == 0 or v >= 11)) for v in shown)
 
@@ -359,7 +388,7 @@ class TestEdgeInputs:
 
     def test_compare_gradeText_staysCategorical(self):
         # Arrange
-        df = pl.DataFrame({"grade": ["Grade 1", "Grade 2", "Grade 3"] * 10, "arm": ["a", "b", "c"] * 10})
+        df = pl.DataFrame({"grade": ["Grade 1", "Grade 2", "Grade 3"] * 11, "arm": ["a", "b", "c"] * 11})
 
         # Act
         result = compute_comparison_analysis(df, _context(primary_variable="grade", grouping_variable="arm"))

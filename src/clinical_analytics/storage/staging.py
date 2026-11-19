@@ -30,9 +30,9 @@ from __future__ import annotations
 
 import io
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
-from typing import Final, Literal
+from typing import Any, Final, Literal
 
 import polars as pl
 import structlog
@@ -181,12 +181,36 @@ class ColumnTypeNote:
 
 
 @dataclass(frozen=True)
+class ExcelSheets:
+    """What was read from a workbook: the first sheet only, and the rows of it that are notes.
+
+    ``skipped`` names the other sheets that hold data; ``empty`` counts the other sheets with no
+    values. ``footnote_rows`` counts the rows below the data, after a blank row, that were read
+    as notes ("Source: ..."), not data.
+    """
+
+    read: str
+    skipped: tuple[str, ...] = ()
+    empty: int = 0
+    footnote_rows: int = 0
+
+    def as_dict(self) -> dict[str, str | int | list[str]]:
+        return {
+            "read": self.read,
+            "skipped": list(self.skipped),
+            "empty": self.empty,
+            "footnote_rows": self.footnote_rows,
+        }
+
+
+@dataclass(frozen=True)
 class StagedTable:
     """One typed table plus what staging decided about it."""
 
     data: pl.DataFrame
     notes: tuple[ColumnTypeNote, ...] = ()
     units: dict[str, str] = field(default_factory=dict)
+    sheets: ExcelSheets | None = None  # Excel only: the sheet read and the sheets skipped
 
 
 def is_id_column_name(name: str) -> bool:
@@ -684,7 +708,11 @@ def detect_header_row(rows: list[list[object]], max_rows: int = HEADER_SCAN_ROWS
 
     Skips title rows above the real header (a merged "Study cohort" banner).
     """
-    scores = [_header_score(r) for r in rows[:max_rows]]
+    scanned = rows[:max_rows]
+    # Score each row against the widest one: a sheet can store a one-cell title banner as a
+    # one-cell row, which is "fully filled" only relative to its own length.
+    width = max((len(r) for r in scanned), default=0)
+    scores = [_header_score(list(r) + [None] * (width - len(r))) for r in scanned]
     if not scores or max(scores) <= _HEADER_MIN_SCORE:
         return 0
     return scores.index(max(scores))
@@ -696,6 +724,19 @@ def read_excel_rows(file_bytes: bytes) -> list[list[object]]:
     Raises:
         StagingError: the workbook cannot be read.
     """
+    return _read_first_sheet(file_bytes)[0]
+
+
+def _read_first_sheet(file_bytes: bytes) -> tuple[list[list[object]], ExcelSheets]:
+    """The first sheet's rows, plus its name and the names of the other sheets that hold data.
+
+    Only the first sheet is loaded. The others are named so the upload can say they were not
+    read: a workbook whose data spans sheets must never look fully loaded. Empty sheets (an
+    unused "Sheet2") are not named.
+
+    Raises:
+        StagingError: the workbook cannot be read or has no sheet.
+    """
     import zipfile
 
     import openpyxl
@@ -706,9 +747,36 @@ def read_excel_rows(file_bytes: bytes) -> list[list[object]]:
     except (InvalidFileException, zipfile.BadZipFile, KeyError, OSError) as e:
         raise StagingError(f"The Excel file could not be read: {type(e).__name__}") from e
     try:
-        return [list(r) for r in wb.worksheets[0].iter_rows(values_only=True)]
+        if not wb.worksheets:
+            raise StagingError("The Excel file has no sheets")
+        first, *others = wb.worksheets
+        # Read-only mode trusts each sheet's declared size, and some exporters declare A1:A1
+        # (IHME's workbooks do): every row would come back one cell wide, title only.
+        for sheet in wb.worksheets:
+            sheet.reset_dimensions()
+        rows = [list(r) for r in first.iter_rows(values_only=True)]
+        skipped = tuple(sheet.title for sheet in others if _sheet_has_values(sheet))
+        return rows, ExcelSheets(read=first.title, skipped=skipped, empty=len(others) - len(skipped))
     finally:
         wb.close()
+
+
+# What openpyxl raises on a cell it cannot parse (a date serial out of range, a bad number).
+_SHEET_CELL_ERRORS: Final = (ValueError, OverflowError, KeyError, TypeError)
+
+
+def _sheet_has_values(sheet: Any) -> bool:
+    """True when any cell of the sheet holds a value (stops at the first one).
+
+    Only the first sheet is read. Another sheet that cannot even be scanned counts as holding
+    data: it is named as not read, and it never fails the upload of the sheet that is read.
+    """
+    try:
+        rows = sheet.iter_rows(values_only=True)
+        return any(cell is not None and str(cell).strip() for row in rows for cell in row)
+    except _SHEET_CELL_ERRORS as e:
+        logger.warning("staging_excel_other_sheet_unscannable", error_type=type(e).__name__)
+        return True
 
 
 def read_excel_typed(file_bytes: bytes, header_row: int | None = None) -> StagedTable:
@@ -721,17 +789,81 @@ def read_excel_typed(file_bytes: bytes, header_row: int | None = None) -> Staged
     Raises:
         StagingError: the workbook cannot be read or has no header row.
     """
-    rows = read_excel_rows(file_bytes)
+    rows, sheets = _read_first_sheet(file_bytes)
     if header_row is None:
         header_row = detect_header_row(rows)
     if len(rows) <= header_row:
         raise StagingError("The Excel sheet has no header row")
-    headers = _unique_headers(rows[header_row])
-    width = len(headers)
-    body = [[_cell_text(v) for v in (r + [None] * width)[:width]] for r in rows[header_row + 1 :]]
+    # Each row comes back as long as its last stored cell (reset_dimensions), so the table is as
+    # wide as its widest row: a column with data under a blank header cell is kept as
+    # column_N, never cut off. Footnote rows are split off first, so a note written further
+    # right never adds a column.
+    span = max(len(row) for row in rows[header_row:])
+    body = [[_cell_text(v) for v in (r + [None] * span)[:span]] for r in rows[header_row + 1 :]]
+    body, footnote_rows = _split_footnotes(body)
+    width = max([len(rows[header_row])] + [_last_filled(row) for row in body])
+    headers = _unique_headers((rows[header_row] + [None] * width)[:width])
+    body = [row[:width] for row in body]
+    if footnote_rows:
+        logger.info("staging_excel_footnote_rows_dropped", rows=footnote_rows)
     # Trailing all-empty rows are sheet formatting, not data lines (unlike in a CSV).
     text = _drop_trailing_blank_rows(pl.DataFrame(body, schema=dict.fromkeys(headers, pl.String), orient="row"))
-    return stage_text_frame(text, header_row_number=header_row + 1)
+    staged = stage_text_frame(text, header_row_number=header_row + 1)
+    return replace(staged, sheets=replace(sheets, footnote_rows=footnote_rows))
+
+
+def _filled(row: list[str | None]) -> list[str]:
+    return [value for value in row if value is not None and value.strip()]
+
+
+def _last_filled(row: list[str | None]) -> int:
+    """How far into the row its last filled cell is (0 for a blank row)."""
+    return max((at + 1 for at, value in enumerate(row) if value is not None and value.strip()), default=0)
+
+
+def _is_footnote(row: list[str | None]) -> bool:
+    """One filled cell, in a table of two or more columns, that reads as prose: two or more
+    words, and either two of them with letters or a sentence ending ("Source: ...", "Note:
+    rates per 100,000", "Generated 2026.").
+
+    In a one-column table every row has one filled cell, so none is a footnote there. An ID
+    such as "MRN 0012" has one word with letters and no sentence ending, and a number has no
+    space, so a row that names a patient is never read as a footnote. A footnote row leaves
+    the data, so the upload always reports how many rows it read as notes.
+    """
+    filled = _filled(row)
+    if len(row) < 2 or len(filled) != 1:
+        return False
+    text = filled[0].strip()
+    words = text.split()
+    if len(words) < 2:
+        return False
+    lettered = sum(1 for word in words if any(char.isalpha() for char in word))
+    return lettered >= 2 or (lettered >= 1 and text[-1] in ".:;")
+
+
+def _split_footnotes(body: list[list[str | None]]) -> tuple[list[list[str | None]], int]:
+    """The rows above any footnotes at the end of a sheet, and how many footnote rows there were.
+
+    A footnote block is one or more footnote rows (``_is_footnote``) at the end of the sheet with
+    a blank row above it. Without that blank row the rows are data-adjacent and stay data (and a
+    row with no ID and no values still fails). Blank rows around footnotes go with them.
+    """
+    end = len(body)
+    footnotes = 0
+    while True:
+        last = end
+        while last > 0 and not _filled(body[last - 1]):
+            last -= 1
+        first = last
+        while first > 0 and _is_footnote(body[first - 1]):
+            first -= 1
+        # The block must stand below a blank row, with data above that.
+        if first == last or first == 0 or _filled(body[first - 1]):
+            break
+        footnotes += last - first
+        end = first
+    return body[:end], footnotes
 
 
 # --- the report shown to the user -------------------------------------------------------------
@@ -756,6 +888,42 @@ _NOTE_TEXT: Final[dict[str, str]] = {
     "ambiguous_dates": "kept as text: dates could be day/month or month/day and nothing in the file settles which",
     "not_dates": "kept as text: {n} values are not dates",
 }
+
+
+def describe_sheets(sheets: dict[str, object] | None) -> str:
+    """The upload note for a workbook, or "" when nothing in it was left out.
+
+    Only the first sheet is read. When another sheet holds data, the note says which sheet was
+    read out of how many and names every sheet that was not, so the user never takes one sheet's
+    answers for the whole workbook's. Footnote rows below the data are counted too.
+    """
+    if not sheets:
+        return ""
+    raw_skipped = sheets.get("skipped")
+    skipped = [str(name) for name in raw_skipped] if isinstance(raw_skipped, list) else []
+    empty = _count(sheets.get("empty"))
+    footnotes = _count(sheets.get("footnote_rows"))
+    lines: list[str] = []
+    if skipped:
+        unread = [f"“{name}”" for name in skipped]
+        if empty:
+            unread.append("1 empty sheet" if empty == 1 else f"{empty} empty sheets")
+        names = unread[0] if len(unread) == 1 else ", ".join(unread[:-1]) + f" and {unread[-1]}"
+        lines.append(
+            f"Read 1 of {1 + len(skipped) + empty} sheets: “{sheets.get('read', '')}”. Not read: {names}. "
+            "To use another sheet, save it as its own file and upload it."
+        )
+    if footnotes == 1:
+        lines.append("1 row below the data, after a blank row, was read as a note and left out of the data.")
+    elif footnotes > 1:
+        lines.append(
+            f"{footnotes} rows below the data, after a blank row, were read as notes and left out of the data."
+        )
+    return " ".join(lines)
+
+
+def _count(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
 
 def describe_column_types(notes: list[dict[str, str | int]], units: dict[str, str], small_cell_limit: int) -> list[str]:

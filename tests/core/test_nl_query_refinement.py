@@ -469,3 +469,103 @@ def test_parse_query_refinement_handles_llm_failure_with_fallback(
 
     # Should have reasonable confidence (even with fallback)
     assert result.confidence >= 0.5, "Should have reasonable confidence even with fallback"
+
+
+# Long-format aggregate export shape (one row per location x sex x cause x year), synthetic.
+_AGGREGATE_EXPORT = {
+    "row_number": list(range(1, 13)),
+    "measure_name": ["Deaths"] * 12,
+    "location_name": ["Colorado", "Adams County", "Denver County"] * 4,
+    "sex_name": ["Male", "Female", "Both", "Male", "Female", "Both"] * 2,
+    "cause_name": ["Neoplasms"] * 6 + ["Cardiovascular diseases"] * 6,
+    "year": [2019] * 6 + [2021] * 6,
+    "val": [101.5, 98.25, 99.5, 220.0, 210.75, 215.5, 103.0, 97.0, 100.25, 222.5, 209.0, 214.0],
+}
+
+
+@pytest.mark.parametrize(
+    ("history", "query", "expected"),
+    [
+        pytest.param(None, "count by cause_name", "cause_name", id="first_question"),
+        pytest.param([], "count by cause_name", "cause_name", id="empty_history"),
+        pytest.param(
+            [{"query": "count by sex_name", "intent": "COUNT", "group_by": "sex_name", "metric": None}],
+            "count by cause_name",
+            "cause_name",
+            id="after_count_by_other_column",
+        ),
+        pytest.param(
+            [{"query": "count by cause_name", "intent": "COUNT", "group_by": "cause_name", "metric": None}],
+            "count by location_name",
+            "location_name",
+            id="after_count_by_cause",
+        ),
+        pytest.param(
+            [{"query": "average val by sex_name", "intent": "DESCRIBE", "group_by": "sex_name", "metric": "val"}],
+            "count by sex_name",
+            "sex_name",
+            id="after_describe_same_column",
+        ),
+    ],
+)
+def test_parseQuery_columnNamedExactlyAfterEarlierQuestion_groupsByThatColumn(
+    make_semantic_layer,
+    mock_llm_calls,
+    nl_query_engine_with_cached_model,
+    history: list[dict] | None,
+    query: str,
+    expected: str,
+) -> None:
+    """A later question in a session is not a refinement unless it inherited the previous plan:
+    "count by cause_name" must group by the column it names, wherever it falls in the session."""
+    # Arrange
+    semantic = make_semantic_layer(dataset_name="aggregate_export", data=_AGGREGATE_EXPORT)
+    engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
+
+    # Act
+    result = engine.parse_query(query=query, conversation_history=history)
+
+    # Assert
+    assert result.intent_type == "COUNT"
+    assert result.grouping_variable == expected
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_primary"),
+    [
+        pytest.param("exclude statin users", None, id="refinementPhrase_extractionSkipped"),
+        pytest.param("only statin users", None, id="onlyPhrase_extractionSkipped"),
+    ],
+)
+def test_parseQuery_confidentRefinementPhrase_filteredWordNeverBecomesTheMeasure(
+    make_semantic_layer,
+    mock_llm_calls,
+    nl_query_engine_with_cached_model,
+    query: str,
+    expected_primary: str | None,
+) -> None:
+    """A refinement the parser read with confidence ("exclude statin users") must not turn the
+    word it filters out into the measure: "compare statin by statin" is never planned."""
+    from unittest.mock import patch
+
+    from clinical_analytics.core.nl_query_engine import QueryIntent
+
+    # Arrange
+    semantic = make_semantic_layer(
+        dataset_name="refine",
+        data={"patient_id": ["P1", "P2", "P3", "P4"], "ldl": [100.0, 150.0, 120.0, 90.0], "statin": [0, 1, 1, 0]},
+    )
+    engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
+    history = [{"query": "compare ldl by statin", "intent": "COMPARE_GROUPS", "group_by": "statin", "metric": "ldl"}]
+    parsed = QueryIntent(intent_type="COMPARE_GROUPS", grouping_variable="statin", confidence=0.9)
+
+    # Act
+    with (
+        patch.object(engine, "_pattern_match", return_value=None),
+        patch.object(engine, "_semantic_match", return_value=None),
+        patch.object(engine, "_llm_parse", return_value=parsed),
+    ):
+        result = engine.parse_query(query=query, conversation_history=history)
+
+    # Assert
+    assert result.primary_variable == expected_primary
