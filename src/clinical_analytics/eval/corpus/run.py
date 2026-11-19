@@ -65,6 +65,16 @@ from clinical_analytics.eval.corpus.fetch import (
     load_corpus,
     table_path,
 )
+from clinical_analytics.eval.corpus.scenario import (
+    BlankResult,
+    Scenario,
+    ScenarioError,
+    SkippedQuestion,
+    blank_results,
+    blanks_markdown,
+    parse_scenario,
+    split,
+)
 from clinical_analytics.eval.corpus.score import (
     AGGREGATE,
     SMALL_MAX,
@@ -164,6 +174,11 @@ class RunReport:
     started_at: str
     settings: dict[str, Any]
     results: list[QuestionResult] = field(default_factory=list)
+    # Fellow scenarios only (questions/fellow_*.yaml): questions not asked because the app lacks
+    # a capability, the abstract (as a dict) and one result per blank.
+    skipped: list[SkippedQuestion] = field(default_factory=list)
+    scenario: dict[str, Any] | None = None
+    blanks: list[BlankResult] = field(default_factory=list)
 
     def counts(self, held_out: bool | None = None) -> dict[str, int]:
         """Grades over every question, or only the held-out (True) or tuned-on (False) ones."""
@@ -190,13 +205,7 @@ class RunReport:
 # ---------------------------------------------------------------------------- questions/oracles
 
 
-def load_questions(dataset: str) -> list[dict[str, Any]]:
-    """The dataset's questions, in order.
-
-    Raises:
-        AcceptanceError: the file is missing, not YAML, or not a ``dataset_id`` and a list of
-            ``questions``, or a follow-up comes before its parent.
-    """
+def _question_file(dataset: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     path = QUESTIONS_DIR / f"{dataset}.yaml"
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -204,6 +213,36 @@ def load_questions(dataset: str) -> list[dict[str, Any]]:
         questions = [{**shared, **item} for item in raw["questions"]]
     except (OSError, yaml.YAMLError, KeyError, TypeError) as error:
         raise AcceptanceError(f"questions for {dataset} could not be read from {path}: {error!r}") from error
+    return raw, questions
+
+
+def load_scenario(dataset: str) -> Scenario | None:
+    """The abstract the dataset's questions fill (fellow scenarios), or None.
+
+    Raises:
+        AcceptanceError: the questions cannot be read, or the scenario and its blanks disagree.
+    """
+    raw, questions = _question_file(dataset)
+    try:
+        return parse_scenario(raw, questions)
+    except ScenarioError as error:
+        raise AcceptanceError(f"questions for {dataset}: {error}") from error
+
+
+def load_questions(dataset: str) -> list[dict[str, Any]]:
+    """The dataset's questions, in order.
+
+    Raises:
+        AcceptanceError: the file is missing, not YAML, or not a ``dataset_id`` and a list of
+            ``questions``, a follow-up comes before its parent, or its scenario block (if any)
+            disagrees with the questions' blanks.
+    """
+    _, questions = _question_file(dataset)
+    load_scenario(dataset)
+    try:
+        split(questions)
+    except ScenarioError as error:
+        raise AcceptanceError(f"questions for {dataset}: {error}") from error
     seen: set[str] = set()
     for question in questions:
         parent = question.get("follow_up_of")
@@ -608,6 +647,8 @@ def run(
     keep_work: bool = False,
 ) -> RunReport:
     questions = load_questions(dataset)
+    scenario = load_scenario(dataset)
+    asked, skipped = split(questions)
     corpus = load_corpus()
     zip_path = fetch_dataset(dataset, cache_dir, seed_dirs, corpus=corpus)
     files_dir = zip_path.parent / "files"
@@ -619,7 +660,7 @@ def run(
         truth: dict[str, OracleAnswer] = load_oracles(dataset).answers(oracle_input)
     except pl.exceptions.PolarsError as error:
         raise AcceptanceError(f"oracles for {dataset} do not run on {oracle_input.name}: {error}") from error
-    missing = [q["id"] for q in questions if q["id"] not in truth]
+    missing = [q["id"] for q in asked if q["id"] not in truth]
     if missing:
         raise AcceptanceError(f"no oracle answer for {missing}")
 
@@ -630,6 +671,8 @@ def run(
         git_head=_git_head(app_src.parent if app_src else REPO_ROOT),
         started_at=datetime.now(UTC).isoformat(timespec="seconds"),
         settings={"timeout_s": timeout_s, "llm_timeout_s": llm_timeout_s, "ollama_base_url": ollama_base_url},
+        skipped=skipped,
+        scenario=scenario.model_dump() if scenario else None,
     )
     work = Path(tempfile.mkdtemp(prefix="mdde-accept-"))
     api = Api(work, server_env(work, secrets.token_urlsafe(32), model, ollama_base_url, llm_timeout_s, app_src))
@@ -649,7 +692,9 @@ def run(
             report.settings["upload"] = f"csv only; ZIP rejected: {str(error)[:200]}"
             dataset_id = api.upload(oracle_input, dataset, declared)
         report.settings["upload_s"] = round(time.monotonic() - upload_started, 1)
-        report.results = ask_all(api, dataset_id, questions, truth, model, timeout_s)
+        report.results = ask_all(api, dataset_id, asked, truth, model, timeout_s)
+        if scenario is not None:
+            report.blanks = blank_results(scenario, questions, report.results)
     finally:
         api.stop()
         report.settings["server_exit_code"] = api.proc.returncode
@@ -712,7 +757,10 @@ def markdown(report: RunReport) -> str:
             f"| {result.id} | {split} | {result.grade} | {'LEAK' if result.leak else ''} | {result.tier or '-'} | "
             f"{result.llm} | {result.latency_s:.1f} | {reason} |"
         )
-    return "\n".join(lines) + "\n"
+    text = "\n".join(lines) + "\n"
+    if report.scenario is not None:
+        text += "\n" + blanks_markdown(Scenario.model_validate(report.scenario), report.blanks, report.skipped)
+    return text
 
 
 def write_results(report: RunReport, results_dir: Path) -> Path:

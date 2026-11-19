@@ -177,3 +177,34 @@ def make_fake_api(monkeypatch: pytest.MonkeyPatch) -> Callable[..., FakeApi]:
         return FakeApi(clock, finish_at or {}, falls_back or set(), fail or {})
 
     return make
+
+
+@pytest.fixture
+def fellow_oracles() -> ModuleType:
+    """The shared fellow-scenario oracle module, loaded by path as the harness loads it."""
+    path = Path(__file__).parent / "oracles" / "fellow_hospital.py"
+    spec = importlib.util.spec_from_file_location("fellow_hospital_oracle_under_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture
+def write_extract(tmp_path: Path) -> Callable[[str, list[str]], Path]:
+    """Factory: a small hand-written synthetic extract (header plus rows) as a CSV file."""
+
+    def write(header: str, rows: list[str]) -> Path:
+        path = tmp_path / f"extract_{len(list(tmp_path.iterdir()))}.csv"
+        path.write_text("\n".join([header, *rows]) + "\n", encoding="utf-8")
+        return path
+
+    return write
+
+
+@pytest.fixture
+def corpus_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A fresh corpus cache (MDDE_BENCH_CACHE) under tmp_path, so generated extracts land there."""
+    cache = tmp_path / "corpus-cache"
+    monkeypatch.setenv("MDDE_BENCH_CACHE", str(cache))
+    return cache

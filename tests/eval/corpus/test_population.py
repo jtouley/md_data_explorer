@@ -18,6 +18,7 @@ import yaml
 from clinical_analytics.eval.corpus import oracle_kit as kit
 from clinical_analytics.eval.corpus.fetch import CorpusDataset, build_zip
 from clinical_analytics.eval.corpus.run import QUESTIONS_DIR, QuestionResult, RunReport, load_questions, markdown
+from clinical_analytics.eval.corpus.scenario import split
 from clinical_analytics.eval.corpus.score import ApiOutcome, OracleAnswer, score
 
 # Rows overlap on purpose: "Both" beside Female and Male, and "US" beside two states.
@@ -324,10 +325,11 @@ class TestQuestionFiles:
 
         # Act
         ids = [q["id"] for q in questions]
+        asked, _skipped = split(questions)  # a `needs:` question is skipped and has no oracle yet
 
         # Assert
         assert len(ids) == len(set(ids))
-        assert set(ids) == _oracle_ids(dataset)
+        assert {q["id"] for q in asked} == _oracle_ids(dataset)
         assert all(q.get("expect", "answer") in ("answer", "held") for q in questions)
 
     @pytest.mark.parametrize(
