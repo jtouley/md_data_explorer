@@ -37,7 +37,7 @@ User-typed SQL runs through `src/clinical_analytics/sql/`. What it guarantees fo
 
 **Residual risks (not covered):**
 
-- **Differences between answers whose conditions are not nested, or that group differently:** `count(A and B)` then `count(A and C)`, two GROUP BY expressions that differ by a few patients, or the same condition written two ways (`age > 65`, `65 < age`). An answer never reads earlier answers. The risk is per **dataset version**, not per session: anyone who can query the version can run the two questions in different chats, so the planned mitigation is a ledger of shown counts kept per dataset version (ADR013 section 4). A per-session ledger would be reset by starting a new chat.
+- **Differences between answers whose conditions are not nested, or that group differently** are now checked by the log of shown counts (ADR013 section 12), on this path and the question box, per **dataset version** (not per session: a new chat would reset it; not per user: the app has none). An answer is withheld when an atom or a pair region of 1-10 patients becomes a linear combination of counts already shown. Still residual: a small region only a union of several atoms isolates, bounds from inequalities, and counts shown only in notes.
 - **The group-count limit** (`MAX_GROUPS`) refuses a query by how many groups it has, which a crafted grouping can make depend on a few patients; it is the same cross-query class as above.
 - **Means of continuous columns** (more than 20 distinct values) reveal sums; many quantiles across queries trace values. Quantiles are limited to 0.1, 0.25, 0.5, 0.75 and 0.9.
 - **Visit-level data** (an ID on more than one row) is refused, not supported.

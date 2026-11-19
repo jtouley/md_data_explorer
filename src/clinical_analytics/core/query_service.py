@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import polars as pl
 import structlog
 
@@ -30,6 +31,7 @@ from clinical_analytics.contracts.quality import QualityReport
 from clinical_analytics.contracts.store import latest_report
 from clinical_analytics.core import answer_checks
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
+from clinical_analytics.core.answer_sets import ShownCountMismatchError, answer_sets, layer_universe
 from clinical_analytics.core.conversation_manager import ConversationManager
 from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line, plan_fingerprint
 from clinical_analytics.core.log_redaction import error_fields
@@ -37,8 +39,16 @@ from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRE
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 from clinical_analytics.core.plan_values import absent_value_reason, plan_values
 from clinical_analytics.core.query_plan import CohortStepError, QueryPlan
-from clinical_analytics.core.result_presentation import present_analysis
+from clinical_analytics.core.result_presentation import Presentation, present_with_counts
 from clinical_analytics.core.semantic import SemanticLayer
+from clinical_analytics.core.shown_counts import (
+    UNAVAILABLE_REASON,
+    FileShownCountLog,
+    MemoryShownCountLog,
+    ShownCount,
+    ShownCountLog,
+    Verdict,
+)
 from clinical_analytics.core.word_accounting import (
     coded_grouping_reason,
     explain_hold,
@@ -237,6 +247,7 @@ class QueryService:
         semantic_layer: SemanticLayer,
         declarations: DeclarationStore | None = None,
         data_dir: Path | None = None,
+        shown_log: ShownCountLog | None = None,
     ) -> None:
         """
         Initialize query service with semantic layer.
@@ -246,6 +257,8 @@ class QueryService:
             declarations: Where confirmed grain and category mappings are stored (default: this
                 process only; the API passes the data directory's file store)
             data_dir: Data directory holding quality reports; None: answers carry no report notes
+            shown_log: The log of counts already shown per dataset version (ADR013 section 12);
+                default: the data directory's file log, or this service's memory with none
         """
         self.semantic_layer = semantic_layer
         self.declarations: DeclarationStore = declarations if declarations is not None else MemoryDeclarationStore()
@@ -253,6 +266,10 @@ class QueryService:
         # holds for this service only, never under a key another dataset could share.
         self._unsaved = MemoryDeclarationStore()
         self.data_dir = data_dir
+        # Every answer passes the log before it is returned: there is no way to ask without it.
+        if shown_log is None:
+            shown_log = FileShownCountLog(data_dir) if data_dir is not None else MemoryShownCountLog()
+        self.shown_log = shown_log
         self.nl_engine = NLQueryEngine(semantic_layer)
         self.conversation_manager = ConversationManager()
 
@@ -649,7 +666,15 @@ class QueryService:
                             issues.append({"message": str(analysis["error"]), "severity": "error"})
                         else:
                             analysis = self._with_findings(analysis, findings, query_plan)
-                            claim = present_analysis(analysis).get("claim")
+                            presentation, shown = present_with_counts(analysis)
+                            verdict = self._admit_shown(prepared, query_plan, analysis, presentation, shown)
+                            if verdict.shown:
+                                claim = presentation.get("claim")
+                            else:
+                                # Withheld whole: nothing of it is returned, and nothing is logged.
+                                analysis, result = None, None
+                                failure_reason = verdict.reason
+                                issues.append({"message": str(verdict.reason), "severity": "error"})
         except CohortStepError as e:
             # Already plain language: say why the limit could not be applied.
             failure_reason = str(e)
@@ -671,6 +696,39 @@ class QueryService:
             plan_line=plan_line,
             plan_hash=plan_hash,
         )
+
+    def _admit_shown(
+        self,
+        prepared: _Prepared,
+        plan: QueryPlan,
+        analysis: dict[str, Any],
+        presentation: Presentation,
+        shown: list[ShownCount] | None,
+    ) -> Verdict:
+        """Check the answer's shown counts against the counts already shown for this dataset
+        version, and log them if it may be shown (``core.shown_counts``). Locked (``_finish``).
+
+        An answer whose presenter does not list what it shows, or whose sets can't be rebuilt
+        with the sizes it shows, is withheld: it can't be checked.
+        """
+        if presentation.get("claim") is None and presentation.get("table") is None:
+            return Verdict(shown=True)  # nothing is shown
+        log = logger.bind(dataset_key=prepared.declaration_key, analysis_type=analysis.get("type"))
+        if shown is None:
+            log.error("shown_counts_not_listed")
+            return Verdict(shown=False, reason=UNAVAILABLE_REASON)
+        if not shown:
+            return Verdict(shown=True)
+        if plan.entity_key and analysis.get("unit") is None:
+            return Verdict(shown=True)  # distinct values of another entity (wards), not patients
+        try:
+            universe = layer_universe(self.semantic_layer)
+            sets = answer_sets(self.semantic_layer, plan, shown, universe)
+        except (ShownCountMismatchError, CohortStepError, duckdb.Error, pl.exceptions.PolarsError) as e:
+            log.error("shown_counts_not_rebuilt", **error_fields(e))
+            return Verdict(shown=False, reason=UNAVAILABLE_REASON)
+        key = prepared.declaration_key or "unsaved"
+        return self.shown_log.admit(key, prepared.dataset_version, universe, sets)
 
     def _store(self, dataset_key: str | None) -> tuple[DeclarationStore, str]:
         """The store and key for a dataset's declarations: in memory for this service when the

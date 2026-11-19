@@ -123,6 +123,7 @@ class SandboxConnection:
             con.execute(f"SET memory_limit = '{sandbox_memory_limit().sql}'")
             try:
                 con.execute(catalog.view_sql())
+                con.execute(catalog.positioned_view_sql())
             except duckdb.Error as e:
                 logger.warning("governed_sql_view_failed", error_type=type(e).__name__)
                 raise SqlRefusedError(UNREADABLE) from e

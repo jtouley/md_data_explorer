@@ -27,6 +27,9 @@ LogicalType: TypeAlias = Literal[
     "string", "integer", "number", "boolean", "date", "timestamp", "time", "array", "object"
 ]
 _NUMERIC: frozenset[str] = frozenset({"integer", "number", "boolean"})
+# The view with row positions the log of shown counts reads, and its position column.
+POSITIONED_VIEW = "__mdde_positioned"
+POSITIONED_COLUMN = "__mdde_row_position"
 
 
 @dataclass(frozen=True)
@@ -64,11 +67,36 @@ class SqlCatalog:
         A column can have several confirmed merges (one per canonical level: f/female to F, m/male
         to M); each becomes one WHEN of the column's CASE, so every merge applies.
         """
+        reader = exp.func("read_parquet", exp.Literal.string(str(self.parquet_path)))
+        return f'CREATE VIEW "{UNIFIED_OBJECT_NAME}" AS {render(exp.select(*self._columns()).from_(reader))}'
+
+    def positioned_view_sql(self) -> str:
+        """The same view with each row's position in the Parquet (``file_row_number``, the layer's
+        ``rowid``) as ``POSITIONED_COLUMN``, named ``POSITIONED_VIEW``: read only by the log of
+        shown counts (``sql.privacy``); a query can't name it (the validator reads one table)."""
+        position = exp.alias_(exp.column("file_row_number"), POSITIONED_COLUMN, quoted=True)
+        query = exp.select(position, *self._columns()).from_(self._positioned_reader())
+        return f'CREATE VIEW "{POSITIONED_VIEW}" AS {render(query)}'
+
+    def fingerprint_sql(self) -> str:
+        """Row count and a hash of every stored row with its position: the same value as
+        ``SemanticLayer.row_fingerprint`` on the layer that reads this Parquet."""
+        reader = render(exp.select(exp.Star()).from_(self._positioned_reader()))
+        return (
+            "SELECT count(*) AS n, bit_xor(hash(file_row_number, *COLUMNS(* EXCLUDE (file_row_number)))) AS h "
+            f"FROM ({reader})"
+        )
+
+    def _positioned_reader(self) -> exp.Expr:
+        flag = exp.EQ(this=exp.column("file_row_number"), expression=exp.true())
+        return exp.func("read_parquet", exp.Literal.string(str(self.parquet_path)), flag)
+
+    def _columns(self) -> list[exp.Expr]:
         merges: dict[str, list[LevelMapping]] = {}
         for mapping in self.levels:
             if mapping.spellings:
                 merges.setdefault(mapping.column, []).append(mapping)
-        select = []
+        select: list[exp.Expr] = []
         for col in self.columns:
             ref = exp.column(col.name, quoted=True)
             value: exp.Expr = ref
@@ -81,9 +109,7 @@ class SqlCatalog:
                     )
                 value = case.else_(ref.copy())
             select.append(exp.alias_(value, col.name, quoted=True))
-        reader = exp.func("read_parquet", exp.Literal.string(str(self.parquet_path)))
-        query = exp.select(*select).from_(reader)
-        return f'CREATE VIEW "{UNIFIED_OBJECT_NAME}" AS {render(query)}'
+        return select
 
     @classmethod
     def from_contract(

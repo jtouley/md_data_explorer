@@ -22,12 +22,14 @@ from sqlglot import exp
 from clinical_analytics.analysis.grouping import FOLD_LABELS
 from clinical_analytics.contracts.declarations import LevelMapping
 from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED
+from clinical_analytics.core.shown_counts import MemoryShownCountLog
 from clinical_analytics.sql.catalog import SqlCatalog
 from clinical_analytics.sql.errors import SqlRefusedError
 from clinical_analytics.sql.privacy import (
     NO_VALUE_LABEL,
     WITHHELD,
     PatientRowsUnconfirmedError,
+    ShownLogTarget,
     SqlAnswer,
     _ordered,
     answer_query,
@@ -647,7 +649,7 @@ def test_privacy_measureThatOverflowsForSomeCounts_sameRefusalWhateverTheCount(
 
     # Act
     with SandboxConnection(catalog) as sandbox, pytest.raises(SqlRefusedError) as refused:
-        answer_query(crafted, sandbox, catalog)
+        answer_query(crafted, sandbox, catalog, shown_log=ShownLogTarget(MemoryShownCountLog(), "test", "v1"))
 
     # Assert: the small count's refusal, never "could not run"
     assert refused.value.reason == WITHHELD
