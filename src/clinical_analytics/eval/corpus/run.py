@@ -887,27 +887,38 @@ class _LoadedTable(BaseModel):
     columns: list[Any]
 
 
+class _AddedColumns(BaseModel):
+    """The part of the detail's ``metadata`` the upload check reads: columns the app added."""
+
+    added_columns: list[str] = Field(default_factory=list)
+
+
 class _DatasetDetail(BaseModel):
     # Read from the API's "tables"; named apart from Ibis's `.tables` (tests/core/test_ibis_duckdb_compat.py).
     loaded_tables: list[_LoadedTable] = Field(alias="tables", min_length=1, max_length=1)
+    metadata: _AddedColumns = Field(default_factory=_AddedColumns)
 
 
 def table_shape(detail: dict[str, Any]) -> tuple[int, int]:
-    """(rows, columns) of the one table in a ``GET /api/datasets/{id}`` body.
+    """(rows, columns) of the one table in a ``GET /api/datasets/{id}`` body. Columns are the
+    file's own: an ID column the upload added (``metadata.added_columns``) is not counted, so the
+    count compares with corpus.yaml's pin of the source file.
 
     Raises:
         AcceptanceError: not exactly one table, or a table without an integer ``row_count`` and
             a ``columns`` list.
     """
     try:
-        (table,) = _DatasetDetail.model_validate(detail).loaded_tables
+        parsed = _DatasetDetail.model_validate(detail)
+        (table,) = parsed.loaded_tables
     except ValidationError as error:
         problems = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in error.errors())
         raise AcceptanceError(
             f"GET /api/datasets/{{id}} did not return exactly one table with an integer row_count and "
             f"a columns list ({problems})"
         ) from error
-    return table.row_count, len(table.columns)
+    added = set(parsed.metadata.added_columns)
+    return table.row_count, sum(1 for column in table.columns if str(column) not in added)
 
 
 def check_load(

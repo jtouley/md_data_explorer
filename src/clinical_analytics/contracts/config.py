@@ -123,10 +123,15 @@ CENSORED_TEXT_WORDS: Final[tuple[str, ...]] = ("blq", "bql", "nd", "<lod", "<loq
 NEAR_NUMERIC_SHARE: Final = 0.95
 NAMED_UNREADABLE_MAX: Final = 3
 
-# Missingness is flagged (above MISSINGNESS_WARN_PERCENT) only for the columns the upload names
-# as analysis variables. Every other column's missingness is measured and listed, not flagged:
-# an optional column (a second phone number) is not a data-quality problem (L1).
-MISSINGNESS_MEASURE_ONLY_PERCENT: Final = 100.0
+# A column with any empty value is a warning at upload, never "passed": an incomplete column
+# reported as passed hides that answers on it leave rows out. (Answers still note missingness
+# above MISSINGNESS_WARN_PERCENT for the columns a question uses: core.answer_checks.)
+MISSINGNESS_ALLOWED_PERCENT: Final = 0.0
+
+# A value and its interval bounds (core.identifier_rules.find_intervals): every row where all
+# three are present must have lower <= value <= upper. A warning: the upload is kept.
+SEVERITY_INTERVAL: Final[Severity] = "warning"
+INTERVAL_RULE_SUFFIX: Final = "_interval"
 
 # Contract logicalType versus the data's type: a column checked as one type and queried as
 # another is how a check passes on data the answers never read.

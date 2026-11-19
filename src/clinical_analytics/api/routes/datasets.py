@@ -30,8 +30,9 @@ from clinical_analytics.api.dependencies import (
 )
 from clinical_analytics.api.models import database as db_models
 from clinical_analytics.api.routes.queries import forget_query_service
+from clinical_analytics.contracts.builder import logical_type
 from clinical_analytics.contracts.errors import ContractDamagedError, ContractError
-from clinical_analytics.contracts.quality import QualityNotRun, QualityReport
+from clinical_analytics.contracts.quality import QualityCheckResult, QualityNotRun, QualityReport
 from clinical_analytics.contracts.service import check_upload
 from clinical_analytics.contracts.store import latest_report
 from clinical_analytics.core.log_redaction import error_fields, text_fingerprint
@@ -43,9 +44,11 @@ from clinical_analytics.storage.dataset_deletion import (
     purge_dataset_files,
     validate_dataset_id,
 )
+from clinical_analytics.storage.staging import StagingError
 from clinical_analytics.ui.storage.user_datasets import (
     UploadSecurityValidator,
     UserDatasetStorage,
+    duplicate_name_message,
 )
 
 logger = structlog.get_logger()
@@ -181,9 +184,9 @@ def get_dataset(dataset_id: str) -> DatasetDetail:
         dataset = UploadedDatasetFactory.create_dataset(dataset_id)
         info = dataset.get_info()
 
-        # Build schema from columns
+        # Types as stored (the typed Parquet the queries read), as contract logical types
         columns = info.get("columns", [])
-        schema = {col: "unknown" for col in columns}  # Type inference would go here
+        schema = _stored_column_types(dataset, columns)
 
         # Build table info
         tables = [
@@ -215,6 +218,24 @@ def get_dataset(dataset_id: str) -> DatasetDetail:
         raise HTTPException(
             status_code=500, detail=f"Could not load this dataset ({type(e).__name__}). Try reloading it."
         ) from e
+
+
+def _stored_column_types(dataset: Any, columns: list[str]) -> dict[str, str]:
+    """Each column's stored type ("integer", "number", "string", "date", ...), read from the
+    stored data's schema (no rows are read). A listed column missing from the store is
+    "missing", so a stale column list never passes for a typed one. When the stored data is
+    gone or unreadable every column is "missing": the details still open (the metadata is
+    intact), and the failure is logged, never a 500."""
+    from clinical_analytics.datasets.uploaded.definition import SemanticLayerBuildError
+
+    try:
+        dataset.load()
+        stored = dataset.data.collect_schema()
+    except (FileNotFoundError, SemanticLayerBuildError) as e:
+        logger.warning("dataset_stored_types_unreadable", error_type=type(e).__name__)
+        return dict.fromkeys(columns, "missing")
+    names = columns or list(stored)
+    return {col: logical_type(stored[col]) if col in stored else "missing" for col in names}
 
 
 @router.get("/datasets/{dataset_id}/preview", response_model=DatasetPreview)
@@ -388,8 +409,19 @@ class DatasetUploadResponse(BaseModel):
 
     upload_id: str = Field(..., description="Created upload identifier")
     dataset_name: str = Field(..., description="Display name for the dataset")
-    status: Literal["ready", "failed"] = Field(..., description="Upload processing status")
-    message: str = Field("", description="Human-readable status message")
+    status: Literal["ready", "needs_review", "failed"] = Field(
+        ...,
+        description=(
+            "ready: stored and every error-level data check passed. needs_review: stored and "
+            "queryable, but an error-level check failed (named in failed_checks and message)"
+        ),
+    )
+    message: str = Field(
+        "", description="Human-readable status message; for needs_review, the failed check and what to do"
+    )
+    failed_checks: list[str] = Field(
+        default_factory=list, description="Ids of the error-level data checks that failed (needs_review)"
+    )
     quality: QualityReport | QualityNotRun | None = Field(
         None, description="This upload's data-quality report, or status 'not_run' with a reason"
     )
@@ -405,6 +437,13 @@ class DatasetUploadResponse(BaseModel):
         default="",
         description="Excel uploads: the sheet that was read and the other sheets with data that were not",
     )
+    unit_note: str = Field(
+        default="",
+        description=(
+            "Set when no column identifies a patient: what tells the rows apart, that answers count "
+            "rows, not patients, and how to get patient counts. Empty when patient_id names patients"
+        ),
+    )
 
 
 def _upload_type_notes(storage: UserDatasetStorage, upload_id: str) -> list[str]:
@@ -417,6 +456,13 @@ def _upload_type_notes(storage: UserDatasetStorage, upload_id: str) -> list[str]
     return describe_column_types(
         metadata.get(COLUMN_TYPES_KEY) or [], metadata.get(COLUMN_UNITS_KEY) or {}, SMALL_CELL_THRESHOLD
     )
+
+
+def _upload_unit_note(storage: UserDatasetStorage, upload_id: str) -> str:
+    """Rows, not patients: said at upload when the stored patient_id is a row key ("" otherwise)."""
+    from clinical_analytics.core.identifier_rules import row_key_note
+
+    return row_key_note(storage.get_upload_metadata(upload_id) or {})
 
 
 def _upload_sheet_note(storage: UserDatasetStorage, upload_id: str) -> str:
@@ -447,6 +493,57 @@ class DatasetDeleteResponse(BaseModel):
 
 ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".xlsx", ".xls", ".sav"}
 
+# What to do next when an error-level check fails, by rule id suffix (contracts.builder._id_rules).
+_NEXT_STEP_BY_RULE_SUFFIX: dict[str, str] = {
+    "_no_duplicates": (
+        "Questions that count patients will first ask you to confirm that rows are visits. "
+        "If each row should be one patient, fix the repeated IDs and upload the file again."
+    ),
+    "_not_null": ("Rows without an ID are not counted as patients. Fill in the missing IDs and upload the file again."),
+}
+_NEXT_STEP_DEFAULT = "Open the cohort details to see the check, then fix the file and upload it again."
+
+
+def _failed_error_checks(quality: QualityReport | QualityNotRun) -> list[QualityCheckResult]:
+    """Error-level checks that failed. A hidden count ("review") is at least 1, so on an
+    error-level check it is a failure too (the count itself stays hidden)."""
+    if not isinstance(quality, QualityReport):
+        return []
+    return [c for c in quality.checks if c.severity == "error" and c.status in ("failed", "review")]
+
+
+def _review_message(failed: list[QualityCheckResult]) -> str:
+    """'Uploaded, but a data check failed: patient_id: 127 repeated values. <next step>'."""
+    found = "; ".join(c.message for c in failed)
+    lead = (
+        "Uploaded, but a data check failed" if len(failed) == 1 else f"Uploaded, but {len(failed)} data checks failed"
+    )
+    steps: list[str] = []
+    for check in failed:
+        step = next((v for k, v in _NEXT_STEP_BY_RULE_SUFFIX.items() if check.id.endswith(k)), _NEXT_STEP_DEFAULT)
+        if step not in steps:
+            steps.append(step)
+    return f"{lead}: {found}. {' '.join(steps)}"
+
+
+def _upload_response(
+    storage: UserDatasetStorage, upload_id: str, dataset_name: str, message: str, quality: QualityReport | QualityNotRun
+) -> DatasetUploadResponse:
+    """ "ready" only when no error-level check failed; else "needs_review", naming the checks."""
+    failed = _failed_error_checks(quality)
+    return DatasetUploadResponse(
+        upload_id=upload_id,
+        dataset_name=dataset_name,
+        status="needs_review" if failed else "ready",
+        message=_review_message(failed) if failed else message,
+        failed_checks=[c.id for c in failed],
+        quality=quality,
+        type_notes=_upload_type_notes(storage, upload_id),
+        cohort_notes=_upload_cohort_notes(storage, upload_id),
+        sheet_note=_upload_sheet_note(storage, upload_id),
+        unit_note=_upload_unit_note(storage, upload_id),
+    )
+
 
 @router.post("/datasets/sample", response_model=DatasetUploadResponse)
 def load_sample_dataset() -> DatasetUploadResponse:
@@ -475,14 +572,8 @@ def load_sample_dataset() -> DatasetUploadResponse:
     # Reloading the sample overwrites the same upload_id; drop the cached layer like /upload does.
     invalidate_semantic_layer_cache(upload_id)
     log.info("dataset_sample_load_completed", upload_id=upload_id)
-    return DatasetUploadResponse(
-        upload_id=upload_id,
-        dataset_name=display_name,
-        status="ready",
-        message=message or "Sample cohort loaded",
-        quality=_upload_quality(storage, upload_id),
-        type_notes=_upload_type_notes(storage, upload_id),
-        cohort_notes=_upload_cohort_notes(storage, upload_id),
+    return _upload_response(
+        storage, upload_id, display_name, message or "Sample cohort loaded", _upload_quality(storage, upload_id)
     )
 
 
@@ -528,15 +619,31 @@ async def upload_dataset(
     }
 
     storage = UserDatasetStorage()
+    # A name already in use is a conflict the user resolves (another name, or delete the old
+    # dataset), not a server failure. Checked before parsing, and again on the save's answer
+    # (another upload may take the name meanwhile). There is no overwrite option on this route.
+    if any(meta.get("dataset_name") == display_name for meta in storage.list_uploads()):
+        log.info("dataset_upload_name_taken")
+        raise HTTPException(status_code=409, detail=duplicate_name_message(display_name))
     # Parsing, DuckDB and Parquet writes block: keep them off the event loop.
-    success, message, upload_id = await asyncio.to_thread(
-        storage.save_upload,
-        file_bytes=file_bytes,
-        original_filename=filename,
-        metadata=metadata,
-    )
+    try:
+        success, message, upload_id = await asyncio.to_thread(
+            storage.save_upload,
+            file_bytes=file_bytes,
+            original_filename=filename,
+            metadata=metadata,
+            raise_staging_errors=True,
+        )
+    except StagingError as e:
+        # The file cannot be read as a table: the user's file, not a server fault. Staging
+        # messages are written for the user and never quote cell values.
+        log.warning("dataset_upload_unreadable", error_type=type(e).__name__)
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     if not success or upload_id is None:
+        if message == duplicate_name_message(display_name):
+            log.info("dataset_upload_name_taken")
+            raise HTTPException(status_code=409, detail=message)
         # Never "ready" unless the stored version answered the upload-time query-view probe.
         log.error("dataset_upload_failed", message=message)
         raise HTTPException(status_code=500, detail=message)
@@ -544,17 +651,15 @@ async def upload_dataset(
     # A save can reuse an existing upload_id (e.g. overwrite); drop any cached layer so the
     # next query reads the new data instead of the previous upload's DuckDB view.
     invalidate_semantic_layer_cache(upload_id)
-    log.info("dataset_upload_completed", upload_id=upload_id)
-    return DatasetUploadResponse(
+    quality = await asyncio.to_thread(_upload_quality, storage, upload_id)
+    response = _upload_response(storage, upload_id, display_name, message, quality)
+    log.info(
+        "dataset_upload_completed",
         upload_id=upload_id,
-        dataset_name=display_name,
-        status="ready",
-        message=message,
-        quality=await asyncio.to_thread(_upload_quality, storage, upload_id),
-        type_notes=_upload_type_notes(storage, upload_id),
-        cohort_notes=_upload_cohort_notes(storage, upload_id),
-        sheet_note=_upload_sheet_note(storage, upload_id),
+        status=response.status,
+        failed_checks=len(response.failed_checks),
     )
+    return response
 
 
 @router.delete("/datasets/{dataset_id}", response_model=DatasetDeleteResponse)

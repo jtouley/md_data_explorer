@@ -1012,6 +1012,29 @@ def _cast_id_columns(df: pl.DataFrame) -> pl.DataFrame:
 _USER_MESSAGE_ERRORS: Final = (StagingError, UploadError, SecurityError, DataQualityError)
 
 
+def duplicate_name_message(dataset_name: str) -> str:
+    """Why an upload under a name already in use is refused, and the two ways forward."""
+    return (
+        f"A dataset named '{dataset_name}' already exists. To keep both, upload this file under "
+        "another name. To replace it, delete the existing dataset, then upload this file."
+    )
+
+
+def no_data_rows_message(filename: str, columns: int) -> str:
+    """Why a file whose header has no rows under it is refused, and what to do (no cell values)."""
+    width = "1 column" if columns == 1 else f"{columns} columns"
+    if Path(filename).suffix.lower() in (".xlsx", ".xls"):
+        return (
+            f"No data rows were found in this file. Only a header row with {width} was read from the "
+            "first sheet. Check that the data is on the first sheet, under its header row. If it is, "
+            "open the file, save that sheet as CSV, and upload the CSV."
+        )
+    return (
+        f"No data rows were found in this file. Only a header row with {width} was read. "
+        "Add the data rows under the header row and upload the file again."
+    )
+
+
 def _upload_failure_reason(e: BaseException) -> str:
     """A reason for the user that never quotes cell values.
 
@@ -1631,6 +1654,7 @@ class UserDatasetStorage:
         metadata: dict[str, Any],
         progress_cb: Callable[[int, str], None] | None = None,
         overwrite: bool = False,
+        raise_staging_errors: bool = False,
     ) -> tuple[bool, str, str | None]:
         """
         Save uploaded file with security validation.
@@ -1644,9 +1668,15 @@ class UserDatasetStorage:
                 Progress callbacks are best-effort: a failing callback is logged (``_notify_progress``)
                 and never breaks the save.
             overwrite: If True, allow overwriting existing dataset with same name (Phase 4.2)
+            raise_staging_errors: If True, a file that cannot be read raises ``StagingError``
+                (its message is written for the user) instead of returning a failure, so the
+                API can answer 400 rather than 500.
 
         Returns:
             Tuple of (success, message, upload_id)
+
+        Raises:
+            StagingError: only with ``raise_staging_errors``, when the file cannot be read.
         """
         # Security validation
         # Progress callback is best-effort: don't let UI errors break storage
@@ -1686,12 +1716,7 @@ class UserDatasetStorage:
                 if same_dataset:
                     if not overwrite:
                         # Reject duplicate without overwrite flag
-                        return (
-                            False,
-                            f"Dataset '{dataset_name}' already exists. "
-                            "Use a different name or enable overwrite to update.",
-                            None,
-                        )
+                        return False, duplicate_name_message(dataset_name), None
                     else:
                         # Overwrite mode: preserve existing upload_id and version_history
                         existing_upload_id = existing_meta.get("upload_id")
@@ -1772,6 +1797,10 @@ class UserDatasetStorage:
             _notify_progress(progress_cb, 20, "Normalizing upload to table list...")
 
             tables, table_metadata = normalize_upload_to_table_list(file_bytes, original_filename, metadata)
+            # A file with a header and no data rows answers nothing: refuse it before an ID is
+            # added, so a row number on zero rows never makes it look "ready".
+            if all(t["data"].height == 0 for t in tables):
+                raise StagingError(no_data_rows_message(original_filename, tables[0]["data"].width if tables else 0))
 
             # Mark all existing versions as inactive (the drift check below reads stored metadata)
             if existing_version_history is not None:
@@ -1799,15 +1828,17 @@ class UserDatasetStorage:
                 # Update table with patient_id
                 tables[0]["data"] = df_with_id
 
-                # Verify patient_id exists before saving
-                if "patient_id" not in df_with_id.columns:
+                # Verify an ID exists before saving: patient_id, or the row number added when no
+                # column identifies a patient (answers then count rows, never patients)
+                has_row_number = id_metadata.get("patient_id_source") == "row_index"
+                if "patient_id" not in df_with_id.columns and not has_row_number:
                     logger.error(
                         f"patient_id column missing after ensure_patient_id! Columns: {list(df_with_id.columns)}"
                     )
                     raise ValueError("Failed to create patient_id column")
                 logger.info(
-                    f"Successfully ensured patient_id exists. DataFrame shape: {df_with_id.shape}, "
-                    f"columns: {list(df_with_id.columns)}"
+                    f"Ensured an ID column ({'row number' if has_row_number else 'patient_id'}). "
+                    f"DataFrame shape: {df_with_id.shape}"
                 )
 
             df = tables[0]["data"]
@@ -1974,6 +2005,9 @@ class UserDatasetStorage:
             return True, success_message, upload_id
 
         except (UploadError, SecurityError, OSError, RuntimeError, ValueError, pl.exceptions.PolarsError) as e:
+            if raise_staging_errors and isinstance(e, StagingError):
+                logger.warning("save_upload_unreadable_file", error_type=type(e).__name__)
+                raise
             logger.error("save_upload_failed", error_type=type(e).__name__)
             _notify_progress(progress_cb, 100, f"Error: {_upload_failure_reason(e)}")
             return False, f"Error saving upload: {_upload_failure_reason(e)}", None

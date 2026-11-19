@@ -6,6 +6,7 @@ no single-column identifier is found.
 """
 
 import polars as pl
+import pytest
 
 from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
 
@@ -177,7 +178,7 @@ class TestEnsurePatientId:
         df = pl.DataFrame(
             {
                 "race": ["A", "A", "B", "B", "C", "C"],  # 50% unique
-                "gender": ["M", "F", "M", "F", "M", "F"],  # 33% unique
+                "gender": ["M", "F", "X", "M", "F", "X"],  # 50% unique, 3 levels (categorical)
                 "age": [50, 51, 52, 53, 54, 55],  # 100% unique but continuous type
             }
         )
@@ -205,9 +206,10 @@ class TestEnsurePatientId:
 
         result_df, metadata = VariableTypeDetector.ensure_patient_id(df)
 
-        assert metadata["patient_id_source"] is None
-        # DataFrame should be returned unchanged (no patient_id added)
-        assert "patient_id" not in result_df.columns or result_df["patient_id"].is_null().all()
+        # No patient ID is made up: rows are numbered, and answers count rows
+        assert metadata["patient_id_source"] == "row_index"
+        assert "patient_id" not in result_df.columns
+        assert result_df["row_number"].to_list() == [1, 2, 3]
 
     def test_ensure_patient_id_with_pandas_input(self):
         """Test that pandas DataFrame is handled correctly."""
@@ -235,8 +237,8 @@ class TestCompositeIdentifierIntegration:
         # Dataset where no single column is >95% unique, but combination is 100% unique
         df = pl.DataFrame(
             {
-                "Race": ["Black", "Black", "White", "White", "Black", "Black"],  # 33% unique
-                "Gender": ["M", "F", "M", "F", "M", "F"],  # 33% unique
+                "Race": ["Black", "Black", "White", "White", "Asian", "Asian"],  # 50% unique
+                "Gender": ["M", "F", "X", "M", "F", "X"],  # 50% unique, 3 levels (categorical)
                 "Age": [50, 51, 52, 53, 54, 55],  # 100% unique but continuous (not identifier type)
             }
         )
@@ -258,7 +260,7 @@ class TestCompositeIdentifierIntegration:
         df = pl.DataFrame(
             {
                 "race": ["A", "A", "B", "B", "C", "C"],  # 50% unique
-                "gender": ["M", "F", "M", "F", "M", "F"],  # 33% unique
+                "gender": ["M", "F", "X", "M", "F", "X"],  # 50% unique, 3 levels (categorical)
                 "age": [50, 51, 52, 53, 54, 55],  # All unique but continuous
             }
         )
@@ -321,7 +323,7 @@ class TestEnsurePatientIdLogging:
         df3 = pl.DataFrame(
             {
                 "race": ["A", "A", "B", "B", "C", "C"],  # 50% unique
-                "gender": ["M", "F", "M", "F", "M", "F"],  # 33% unique
+                "gender": ["M", "F", "X", "M", "F", "X"],  # 50% unique, 3 levels (categorical)
                 "age": [50, 51, 52, 53, 54, 55],  # 100% unique but continuous (not identifier type)
             }
         )
@@ -330,8 +332,50 @@ class TestEnsurePatientIdLogging:
         # Age might be detected as identifier, or composite might be used
         # Check for either path
         has_single = any("Found single-column identifier" in record.message for record in caplog.records)
-        has_composite = any("Creating composite identifier" in record.message for record in caplog.records)
-        has_success = any("Successfully created composite patient_id" in record.message for record in caplog.records)
+        has_composite = any("Creating composite row key" in record.message for record in caplog.records)
 
-        # Either single column or composite should be logged
-        assert has_single or (has_composite and has_success)
+        # age is a measurement, never an ID: the (race, gender) row key is used
+        assert has_composite and not has_single
+
+
+class TestPatientIdNeverFromMeasurements:
+    """Float columns are measurements: never an ID source, never renamed away (IHME-style rates)."""
+
+    def test_ensure_patient_id_unique_float_column_not_renamed(self):
+        # Arrange: rate estimates where the upper bound is unique on every row
+        df = pl.DataFrame(
+            {
+                "location": ["A", "A", "B", "B"],
+                "sex": ["Male", "Female", "Male", "Female"],
+                "mx": [534.1, 410.2, 515.1, 398.7],
+                "upper": [548.2, 420.9, 528.4, 409.3],
+            }
+        )
+
+        # Act
+        result_df, metadata = VariableTypeDetector.ensure_patient_id(df)
+
+        # Assert: no float column became the ID, and both measurements are still there
+        assert metadata["patient_id_source"] != "single_column"
+        assert {"mx", "upper"} <= set(result_df.columns)
+        assert not set(metadata["patient_id_columns"] or []) & {"mx", "upper"}
+
+    @pytest.mark.parametrize("float_col", ["mx", "lower"])
+    def test_find_composite_identifier_float_column_excluded(self, float_col):
+        # Arrange: location + float would be unique; location + year is the real key
+        df = pl.DataFrame(
+            {
+                # First, and repeated once (continuous, not an identifier), as IHME's mx was
+                float_col: [5.5, 6.1, 7.2, 5.5, 9.4, 1.05, 2.2, 3.3, 4.4],
+                "location_id": [1, 1, 1, 2, 2, 2, 3, 3, 3],
+                "year_id": [1980, 1981, 1982] * 3,
+            }
+        )
+
+        # Act
+        result = VariableTypeDetector.find_composite_identifier_candidates(df)
+
+        # Assert
+        assert result is not None
+        assert float_col not in result
+        assert set(result) == {"location_id", "year_id"}

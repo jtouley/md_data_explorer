@@ -55,6 +55,9 @@ class TestScoreCounts:
             pytest.param("Total count: 1141 patients.", 1141, "RIGHT", id="exact"),
             pytest.param("Total count: 1140 patients.", 1141, "WRONG", id="off_by_one"),
             pytest.param("Total count: 1141 visits.", 1141, "WRONG", id="wrong_grain"),
+            # A dataset with no patient ID says "rows": no grain is claimed, so the number decides.
+            pytest.param("Total count: 1141 rows.", 1141, "RIGHT", id="rows_equalToPatients"),
+            pytest.param("Total count: 1500 rows.", 1141, "WRONG", id="rows_moreThanPatients"),
             pytest.param("Total count: <11.", 7, "RIGHT", id="small_total_hidden"),
             pytest.param("Total count: <11.", 500, "HELD", id="large_total_withheld"),
             pytest.param("No answer.", 1141, "WRONG", id="nothing_shown"),

@@ -289,3 +289,18 @@ def test_buildContract_noIdAndTextAge_bundledOdcsJsonSchemaValidates(make_contra
 
     # Assert (raises on any violation)
     jsonschema.validate(document, json.loads(OpenDataContractStandard.json_schema()))
+
+
+def test_buildContract_copiedIdSource_restrictedLikeTheIdNeverChecked(make_contract):
+    # Arrange: patient_id copied from subject_id; the copy's source holds the same IDs
+    df = pl.DataFrame(
+        {"patient_id": [f"S{i}" for i in range(20)], "subject_id": [f"S{i}" for i in range(20)], "age": [40, 50] * 10}
+    )
+
+    # Act
+    props = _props(make_contract(df, id_source_columns=("subject_id",)))
+
+    # Assert: restricted (never echoed by a data check, only coarsened by SQL), not a second ID
+    assert props["subject_id"]["classification"] == "restricted"
+    assert props["subject_id"].get("required") is not True
+    assert "classification" not in props["age"]

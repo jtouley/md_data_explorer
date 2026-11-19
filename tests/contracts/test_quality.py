@@ -63,7 +63,7 @@ def test_measure_cohortWithDefects_matchesIndependentPolarsCounts(cohort_with_de
 
 def test_runQuality_cohortWithDefects_statusesAndSuppressedMessages(cohort_with_defects, make_contract):
     # Arrange
-    contract = make_contract(cohort_with_defects, analysis_columns=("ldl",))
+    contract = make_contract(cohort_with_defects)
 
     # Act
     report = run_quality(cohort_with_defects.lazy(), contract)
@@ -90,7 +90,7 @@ def test_runQuality_cleanSyntheticCohort_onlyLdlMissingnessFlagged(load_syntheti
     df = load_synthetic_dataset("cohort")
 
     # Act
-    report = run_quality(df.lazy(), make_contract(df, analysis_columns=("ldl",)))
+    report = run_quality(df.lazy(), make_contract(df))
 
     # Assert
     assert report.summary == ["ldl: 5.8% missing"]
@@ -110,7 +110,7 @@ def test_runQuality_cleanSyntheticCohort_onlyLdlMissingnessFlagged(load_syntheti
     ],
     ids=[
         "none_missing",
-        "one_missing_5pct_boundary_passes",
+        "one_missing_hidden",
         "boundary_10_suppressed",
         "count_11_complement_9_suppressed",
         "count_and_complement_11_shown",
@@ -123,8 +123,8 @@ def test_runQuality_missingCounts_suppressedBelowMinCell(
     # Arrange
     df = pl.DataFrame({"patient_id": [f"P{i}" for i in range(len(ldl))], "ldl": pl.Series(ldl, dtype=pl.Float64)})
 
-    # Act: ldl is an analysis variable, so its missingness is flagged above 5%
-    check = _by_id(run_quality(df.lazy(), make_contract(df, analysis_columns=("ldl",))))["ldl_missing"]
+    # Act: any empty value is flagged
+    check = _by_id(run_quality(df.lazy(), make_contract(df)))["ldl_missing"]
 
     # Assert
     assert (check.count, check.percent, check.status) == (expected_count, expected_percent, expected_status)
