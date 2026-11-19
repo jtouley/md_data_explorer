@@ -159,12 +159,13 @@ def _label_leak(result: dict[str, Any], workspace: Path | None) -> str | None:
         return None
     frame = frame_for(result["dataset_id"], workspace)
     columns = [c for c in (result.get("group_by"), result.get("metric")) if c]
-    leaked = shown_labels(result["presentation"]) & small_level_labels(frame, columns, SMALL_CELL_THRESHOLD)
+    entity_key = result.get("entity_key")
+    leaked = shown_labels(result["presentation"]) & small_level_labels(frame, columns, SMALL_CELL_THRESHOLD, entity_key)
     if result.get("intent") == "FIND_PREDICTORS":
         # A regression names a level as its term ("site_West") and the outcome's value in its claim.
         predictors = list(result.get("predictors") or [])
         leaked |= predictor_label_leaks(
-            result["presentation"], frame, predictors, result.get("metric"), SMALL_CELL_THRESHOLD
+            result["presentation"], frame, predictors, result.get("metric"), SMALL_CELL_THRESHOLD, entity_key
         )
     return f"{result['query']!r} shows labels of small levels: {sorted(leaked)[:5]}" if leaked else None
 
@@ -206,6 +207,7 @@ def _ask_plan(dataset_id: str, plan: QueryPlan, confirm: bool, predictors: tuple
         "metric": plan.metric,
         "intent": plan.intent,
         "predictors": list(predictors),
+        "entity_key": service.semantic_layer.count_entity_key,
         "presentation": present_analysis(result.analysis) if success else {"claim": None, "table": None},
     }
 

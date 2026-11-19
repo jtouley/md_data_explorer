@@ -606,10 +606,13 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
     outcome_name = short_name(outcome)
     p_clause = f"{test} {_fmt_p(p)}" if p is not None else None
 
-    if test_type in ("welch_t_test", "t_test", "anova") and "table_min_cell" in analysis:
-        # An outcome with two measured values: each group's mean gives back how many of its
-        # patients had each value, so the means and the test follow the table rule compute applied.
-        mean_refusal = table_statistic_refusal(analysis.get("table_min_cell"))
+    if test_type in ("welch_t_test", "t_test", "anova"):
+        # An outcome that behaves like categories (``behaves_like_categories``): each group's mean
+        # gives back how many of its patients had each value, so the means and the test follow
+        # the table rule compute applied. Compute records ``table_min_cell`` for every comparison
+        # of means (``NO_COUNT_TABLE`` for a measurement); a payload without it skipped that
+        # check, or was stored before it, and is withheld (fail closed).
+        mean_refusal = table_statistic_refusal(analysis.get("table_min_cell"), may_rest_on_no_table=True)
         if mean_refusal is not None:
             return {"claim": mean_refusal, "table": None}
     if test_type in ("welch_t_test", "t_test", "anova"):
