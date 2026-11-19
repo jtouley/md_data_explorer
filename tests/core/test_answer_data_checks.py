@@ -966,7 +966,7 @@ class TestNullPatientKeys:
         # Assert: never held as repeated IDs; rows without an ID are not called patients
         note = f"Data check: patient_id is missing on {amount} rows."
         assert _shown(result) == f"ANSWER Total count: 100 rows. {note}"
-        assert result.analysis["data_notes"] == [note]
+        assert [(n["count"], n["total"]) for n in result.analysis["data_notes"]] == [(missing, 100)]
 
     def test_ask_nullKeysAtVisitGrain_countsNonNullPatientsOnly(self, make_semantic_layer: Any) -> None:
         # Arrange: 170 patients over 200 visit rows, plus 15 rows with no ID
