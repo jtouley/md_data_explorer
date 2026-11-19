@@ -37,6 +37,17 @@ UNTESTABLE_ANOVA = (
 # sample_context_survival, sample_context_relationship, sample_context_count
 
 
+def _sparse_two_by_two(event: str, other: str) -> pl.DataFrame:
+    """A 11 ``event`` / 200 ``other``, B 11 / 11: every cell has at least 11 patients (a smaller
+    cell withholds the test), and the expected count of B x event is 2.1, so Fisher's test runs."""
+    return pl.DataFrame(
+        {
+            "score": [event] * 11 + [other] * 200 + [event] * 11 + [other] * 11,
+            "category": ["A"] * 211 + ["B"] * 22,
+        }
+    )
+
+
 class TestComputeDescriptiveAnalysis:
     """Test compute_descriptive_analysis function."""
 
@@ -280,11 +291,12 @@ class TestComputeComparisonAnalysis:
 
     def test_compute_comparison_analysis_chi_square_for_categorical(self):
         """Chi-square for a categorical outcome when every expected count is at least 5."""
-        # Arrange: 2x2 with cells 12/8 and 6/14 (all expected counts >= 9)
+        # Arrange: 2x2 with cells 24/16 and 12/28 (all expected counts >= 18; every cell >= 11,
+        # so the test is not withheld for a small cell)
         df = pl.DataFrame(
             {
-                "outcome": ["Yes"] * 12 + ["No"] * 8 + ["Yes"] * 6 + ["No"] * 14,
-                "group": ["A"] * 20 + ["B"] * 20,
+                "outcome": ["Yes"] * 24 + ["No"] * 16 + ["Yes"] * 12 + ["No"] * 28,
+                "group": ["A"] * 40 + ["B"] * 40,
             }
         )
         context = AnalysisContext()
@@ -1060,13 +1072,8 @@ class TestComputeMissingAndDegenerateInputs:
 
     @pytest.mark.parametrize("other_level", ["alive", "survived"], ids=["alive", "survived"])
     def test_compute_comparison_fisherOtherLevelRenamed_oddsRatioUnchanged(self, other_level, sample_context_compare):
-        # Arrange: A has 1 dead / 8 other, B has 8 dead / 1 other; odds of death B vs A = 8 / (1/8) = 64
-        df = pl.DataFrame(
-            {
-                "score": ["dead"] + [other_level] * 8 + ["dead"] * 8 + [other_level],
-                "category": ["A"] * 9 + ["B"] * 9,
-            }
-        )
+        # Arrange: _SPARSE_2X2 (A 11 dead / 200 other, B 11 / 11): odds of death B vs A = 200 / 11
+        df = _sparse_two_by_two("dead", other_level)
 
         # Act
         result = compute_comparison_analysis(df, sample_context_compare)
@@ -1074,12 +1081,12 @@ class TestComputeMissingAndDegenerateInputs:
         # Assert
         assert result["test_type"] == "fisher_exact"
         assert result["event_level"] == "dead"
-        assert result["odds_ratio"] == pytest.approx(64.0)
+        assert result["odds_ratio"] == pytest.approx(200 / 11)
         assert (result["odds_ratio_group"], result["odds_ratio_reference"]) == ("B", "A")
 
     def test_compute_comparison_fisherUnknownEventLevel_omitsOddsRatio(self, sample_context_compare):
         # Arrange: text codes 1/2 have no stated event, so the ratio has no orientation
-        df = pl.DataFrame({"score": ["1"] + ["2"] * 8 + ["1"] * 8 + ["2"], "category": ["A"] * 9 + ["B"] * 9})
+        df = _sparse_two_by_two("1", "2")
 
         # Act
         result = compute_comparison_analysis(df, sample_context_compare)
@@ -1169,34 +1176,35 @@ class TestComputeDegenerateGroupsReview:
 
     def test_compute_comparison_textZeroOneOutcome_reportsEventLevelOne(self, sample_context_compare):
         # Arrange: 0/1 stored as text; the numbers parse to floats
-        df = pl.DataFrame({"score": ["1"] + ["0"] * 8 + ["1"] * 8 + ["0"], "category": ["A"] * 9 + ["B"] * 9})
+        df = _sparse_two_by_two("1", "0")
 
         # Act
         result = compute_comparison_analysis(df, sample_context_compare)
 
         # Assert
         assert result["event_level"] == "1"
-        assert result["odds_ratio"] == pytest.approx(64.0)
+        assert result["odds_ratio"] == pytest.approx(200 / 11)
 
 
 class TestComputeNonFiniteEffectEstimates:
     """Effect estimates are a finite number or None in the payload; p-values are kept."""
 
     @pytest.mark.parametrize(
-        ("dead_a", "dead_b", "expected_or"),
+        ("dead_a", "alive_a", "dead_b", "alive_b", "expected_or"),
         [
-            (0, 8, None),  # no event in the reference group A: OR is inf
-            (1, 9, None),  # every patient in B has the event: OR is inf
-            (8, 0, 0.0),  # no event in B: OR is 0, which is finite
+            (0, 200, 11, 11, None),  # no event in the reference group A: OR is inf
+            (11, 200, 11, 0, None),  # every patient in B has the event: OR is inf
+            (11, 11, 0, 200, 0.0),  # no event in B: OR is 0, which is finite
         ],
         ids=["zero_event_reference", "zero_non_event_group", "zero_event_group"],
     )
     def test_compute_comparison_fisherZeroCell_reportsNoneNotInf(
-        self, dead_a, dead_b, expected_or, sample_context_compare
+        self, dead_a, alive_a, dead_b, alive_b, expected_or, sample_context_compare
     ):
-        # Arrange: 9 patients per group
-        outcome = ["dead"] * dead_a + ["alive"] * (9 - dead_a) + ["dead"] * dead_b + ["alive"] * (9 - dead_b)
-        df = pl.DataFrame({"score": outcome, "category": ["A"] * 9 + ["B"] * 9})
+        # Arrange: every non-empty cell has at least 11 patients (a 0 is not a small cell), and
+        # an expected count is below 5, so Fisher's test is run and shown
+        outcome = ["dead"] * dead_a + ["alive"] * alive_a + ["dead"] * dead_b + ["alive"] * alive_b
+        df = pl.DataFrame({"score": outcome, "category": ["A"] * (dead_a + alive_a) + ["B"] * (dead_b + alive_b)})
 
         # Act
         result = compute_comparison_analysis(df, sample_context_compare)
