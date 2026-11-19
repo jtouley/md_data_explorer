@@ -293,7 +293,14 @@ def _format_share_result(frame: pl.DataFrame, plan: "QueryPlan", group: str | No
             **base,
         }
     groups = [
-        {"group": row[group], "rate": row["rate"], "events": int(row["events"]), "n": int(row["n"])}
+        {
+            "group": row[group],
+            "rate": row["rate"],
+            "events": int(row["events"]),
+            "n": int(row["n"]),
+            # The group's size (n plus its rows without a value): presentation suppresses the difference.
+            "n_rows": int(row["n_rows"]),
+        }
         for row in frame.iter_rows(named=True)
     ]
     return {

@@ -318,6 +318,60 @@ def test_privacy_meanWithFewMissingValues_hidden(ask_sql: Ask) -> None:
     assert _numbers(answer, "m") == {}
 
 
+SHARES = [
+    pytest.param("SELECT avg(died) AS share FROM unified", id="avg_of_flag"),
+    pytest.param("SELECT count_if(died = 1) / count(died) AS share FROM unified", id="events_over_recorded"),
+    pytest.param("SELECT sex, avg(died) AS share FROM unified GROUP BY sex", id="avg_of_flag_by_sex"),
+    pytest.param(
+        "SELECT sex, count_if(died = 1) / count(died) AS share FROM unified GROUP BY sex",
+        id="events_over_recorded_by_sex",
+    ),
+]
+
+
+@pytest.mark.parametrize("sql", SHARES)
+@pytest.mark.parametrize("missing", [1, 3, 10])
+def test_privacy_shareWithFewMissingInDenominator_neverShown(
+    make_sql_catalog: Callable[..., SqlCatalog], ask_sql: Ask, sql: str, missing: int
+) -> None:
+    """A share over the patients with a value recorded: with 1-10 missing, its n lies in a window
+    of ten a reader knows (the patients, shown elsewhere), and a precise share pins one n of it."""
+    # Arrange: ``missing`` women have no value for died
+    frame = synthetic_cohort().with_columns(
+        pl.when(pl.int_range(pl.len()) < 2 * missing, (pl.int_range(pl.len()) % 2) == 0)
+        .then(None)
+        .otherwise(pl.col("died"))
+        .alias("died")
+    )
+    catalog = make_sql_catalog(frame)
+
+    # Act
+    answer = _shown(ask_sql, sql, catalog)
+
+    # Assert: withheld whole (ungrouped), or no group's share shown where its n is hidden
+    assert frame.get_column("died").null_count() == missing
+    assert _numbers(answer, "share").get("F") is None
+    assert _numbers(answer, "share").get("") is None
+
+
+def test_privacy_shareWithElevenMissing_shownWithItsN(
+    make_sql_catalog: Callable[..., SqlCatalog], ask_sql: Ask
+) -> None:
+    # Arrange: 11 patients have no value for died, so n is shown and so may the share be
+    frame = synthetic_cohort().with_columns(
+        pl.when(pl.int_range(pl.len()).is_between(100, 110)).then(None).otherwise(pl.col("died")).alias("died")
+    )
+    truth = frame.select(pl.col("died").mean()).item()
+
+    # Act
+    answer = _shown(ask_sql, "SELECT avg(died) AS share, count(died) AS n FROM unified", make_sql_catalog(frame))
+
+    # Assert
+    assert answer is not None
+    assert answer.rows[0]["n"] == N_PATIENTS - 11
+    assert answer.rows[0]["share"] == pytest.approx(round(truth, 4))
+
+
 # ---------------------------------------------------------------------------------------------
 # Ranking, ordering and limits
 # ---------------------------------------------------------------------------------------------
