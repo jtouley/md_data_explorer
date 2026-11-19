@@ -272,8 +272,13 @@ def test_idea6_precision_widestIntervalsAcrossStatesAndCauses(test_client, isola
     shown = result["table"]["rows"]
     assert len(shown) == oracle.height
     top = oracle.row(0, named=True)
+    # Widths are rounded to 3 places, so several groups can tie for widest; any of them may lead.
+    tied_for_widest = {
+        f"{row['location_name']} · {row['cause_name']}"
+        for row in oracle.filter(pl.col("width") == top["width"]).iter_rows(named=True)
+    }
     assert shown[0]["relative width"] == top["width"]
-    assert shown[0]["group"] == f"{top['location_name']} · {top['cause_name']}"
+    assert shown[0]["group"] in tied_for_widest
 
 
 def test_aggregateQuestion_undeclaredUpload_refused(test_client, isolated_data_home, make_public_table):
