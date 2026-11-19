@@ -111,8 +111,9 @@ def split_file_sets(members: list[TextMember]) -> tuple[list[FileSet], list[Text
     return sets, singles
 
 
-def read_file_set(file_set: FileSet) -> StagedTable:
+def read_file_set(file_set: FileSet, *, public: bool = False) -> StagedTable:
     """Read a file set as one staged table, with the file name (and folder) as columns.
+    ``public``: the upload was declared public estimates and accepted (``stage_declared``).
 
     Raises:
         StagingError: a file cannot be parsed, or a row has no ID and no values.
@@ -144,7 +145,7 @@ def read_file_set(file_set: FileSet) -> StagedTable:
         extra.append(pl.Series(SOURCE_FOLDER_COLUMN, folders).repeat_by(pl.Series(rows_per_file)).explode())
     with_names = pl.concat([pl.DataFrame(extra), text], how="horizontal")
 
-    staged = stage_text_frame(with_names)
+    staged = stage_text_frame(with_names, public=public)
     files = len(file_set.members)
     note = ColumnTypeNote(id_column, "String", "from_file_names", files, files)
     logger.info("zip_file_set_read", files=len(file_set.members), rows=with_names.height, columns=with_names.width)

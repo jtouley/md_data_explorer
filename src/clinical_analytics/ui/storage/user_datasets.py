@@ -24,6 +24,7 @@ Uploads made before this layout (``{id}.csv``) are converted to it on first load
 (``UserDatasetStorage.stored_dataset``).
 """
 
+import functools
 import hashlib
 import io
 import json
@@ -40,10 +41,10 @@ from typing import Any, Final
 import polars as pl
 import structlog
 
-from clinical_analytics.core.identifier_rules import SOURCE_FORMAT_KEY
+from clinical_analytics.core.identifier_rules import ROW_NUMBER_COLUMN, SOURCE_FORMAT_KEY
 from clinical_analytics.core.schema import DataQualityError, NoCohortAnchorError
 from clinical_analytics.storage import atomic
-from clinical_analytics.storage.file_sets import TextMember, read_file_set, split_file_sets
+from clinical_analytics.storage.file_sets import FileSet, TextMember, read_file_set, split_file_sets
 from clinical_analytics.storage.metadata_lock import (
     METADATA_LOCK_TIMEOUT_S,
     FileLockTimeoutError,
@@ -146,6 +147,17 @@ class DatasetChangedError(UploadError):
     """Another save changed the dataset's active version while this one ran (retry the upload)."""
 
 
+def _declared_estimates(df: pl.DataFrame, metadata: dict[str, Any]) -> bool:
+    """A table declared public population estimates at upload whose rows look like estimates
+    (ADR014). Not when it has a patient_id or any column named as a patient ID: detection refuses
+    those, so the usual patient-ID rules apply and the real ID is kept."""
+    if metadata.get("population_estimates") is not True or ROW_NUMBER_COLUMN in df.columns:
+        return False
+    from clinical_analytics.core.estimates import detect_frame
+
+    return detect_frame(df) is not None
+
+
 def active_version_id(metadata: dict[str, Any] | None) -> str | None:
     """The version readers see: the active ``version_history`` entry, else a legacy ``dataset_version``."""
     if not metadata:
@@ -217,7 +229,7 @@ def normalize_upload_to_table_list(
         # Multi-table: extract from ZIP
         # One expansion budget for the tables and the documentation (zip-bomb guard).
         budget = ZipExpansionBudget()
-        read = read_zip_tables(file_bytes, budget=budget)
+        read = read_zip_tables(file_bytes, budget=budget, declared=_declared(metadata))
         tables = read.table_list
 
         # Extract documentation files from ZIP (Phase 1: ADR004)
@@ -227,7 +239,9 @@ def normalize_upload_to_table_list(
         logger.info("zip_documentation_files", files=len(doc_files), tables_read_as_docs=len(read.as_docs))
     else:
         # Single-file: wrap in list (becomes multi-table with 1 table)
-        staged = load_single_file_staged(file_bytes, filename)
+        staged = stage_declared(
+            lambda public: load_single_file_staged(file_bytes, filename, public=public), _declared(metadata)
+        )
         table_name = Path(filename).stem  # Use original filename stem
         tables = [
             {
@@ -523,12 +537,56 @@ class ZipRead:
     source_format: str = ""  # "cdc_wonder" when any table is a CDC WONDER export
 
 
-def extract_zip_tables(file_bytes: bytes) -> list[dict[str, Any]]:
+def _declared(metadata: dict[str, Any] | None) -> bool:
+    return bool(metadata and metadata.get("population_estimates") is True)
+
+
+def _read_file_set_staged(file_set: FileSet, public: bool) -> StagedTable:
+    return read_file_set(file_set, public=public)
+
+
+def _load_member_staged(content: bytes, filename: str, public: bool) -> StagedTable:
+    return load_single_file_staged(content, filename, public=public)
+
+
+def stage_declared(stage: Callable[[bool], StagedTable], declared: bool) -> StagedTable:
+    """Stage a table; for an upload declared public estimates, read the source's own markers ("<10",
+    "(D)", "*") as suppression only once the table is accepted as public (ADR014 §7).
+
+    Order: stage without the public markers; run detection and the public-shape guard on that
+    (columns that only the markers would turn into numbers read as those numbers, unflagged); then
+    check the table staged with the markers too. A declared file that is refused stays exactly as an undeclared
+    one would be staged: a patient file's "<5" stays text.
+    """
+    from clinical_analytics.contracts.config import SUPPRESSED_FLAG_SUFFIX
+    from clinical_analytics.core.estimates import detect_frame
+
+    plain = stage(False)
+    if not declared:
+        return plain
+    public = stage(True)
+    marked = [
+        c
+        for c in plain.data.columns
+        if plain.data.schema[c] == pl.String
+        and f"{c}{SUPPRESSED_FLAG_SUFFIX}" in public.data.columns
+        and f"{c}{SUPPRESSED_FLAG_SUFFIX}" not in plain.data.columns
+    ]
+    # The marked columns read as the numbers they hold (a marker is a missing value here, with no
+    # suppression flag yet): they are values, never keys, and nothing else differs from ``plain``.
+    unflagged = plain.data.with_columns(public.data.get_column(c) for c in marked)
+    if detect_frame(unflagged) is None or detect_frame(public.data) is None:
+        logger.info("declared_table_staged_as_undeclared", marked_columns=len(marked))
+        return plain
+    return public
+
+
+def extract_zip_tables(file_bytes: bytes, declared: bool = False) -> list[dict[str, Any]]:
     """The tables of a ZIP (``read_zip_tables``), without the files read as documentation."""
-    return read_zip_tables(file_bytes).table_list
+    return read_zip_tables(file_bytes, declared=declared).table_list
 
 
-def read_zip_tables(file_bytes: bytes, budget: ZipExpansionBudget | None = None) -> ZipRead:
+def read_zip_tables(file_bytes: bytes, budget: ZipExpansionBudget | None = None, declared: bool = False) -> ZipRead:
     """
     Extract tables from ZIP archive.
 
@@ -576,16 +634,17 @@ def read_zip_tables(file_bytes: bytes, budget: ZipExpansionBudget | None = None)
     notes: list[str] = []
     try:
         for fs in file_sets:
-            staged_tables.append((fs.name, read_file_set(fs)))
+            # Declared public: markers read only once the set is accepted as public (stage_declared).
+            staged_tables.append((fs.name, stage_declared(functools.partial(_read_file_set_staged, fs), declared)))
     except StagingError as e:
         raise UploadFileError(str(e)) from e
     singles = [(entry, name, ext, content) for entry, name, ext, content in members if entry not in in_set]
     sheet_notes: list[str] = []
     for entry, name, ext, content in singles:
         try:
-            staged = load_single_file_staged(content, f"{name}{ext}")
+            staged = stage_declared(functools.partial(_load_member_staged, content, f"{name}{ext}"), declared)
             staged_tables.append((name, staged))
-            # A notes block under the data (CDC WONDER) is documentation; rows left out are said.
+            # A notes block under the data (CDC WONDER) is documentation, and the upload says so.
             if staged.export_notes.strip():
                 as_docs.append(DocFile(name=f"{name}_notes.txt", path=entry, content=staged.export_notes.encode()))
             notes.extend(f"{Path(entry).name}: {note}" for note in staged.table_notes)
@@ -692,7 +751,7 @@ def _check_tab_separated_text(file_bytes: bytes) -> None:
         raise StagingError(f"This .txt file is not tab-separated, so it cannot be read as a table. {_TXT_HOW_TO_FIX}")
 
 
-def load_single_file_staged(file_bytes: bytes, filename: str) -> StagedTable:
+def load_single_file_staged(file_bytes: bytes, filename: str, *, public: bool = False) -> StagedTable:
     """
     Load a single file (CSV/TSV/PSV, Excel, SAS transport, SPSS) as one typed table with its notes.
 
@@ -706,13 +765,13 @@ def load_single_file_staged(file_bytes: bytes, filename: str) -> StagedTable:
     """
     file_ext = Path(filename).suffix.lower()
     if file_ext in DELIMITERS:
-        return read_csv_typed(file_bytes, separator=DELIMITERS[file_ext])
+        return read_csv_typed(file_bytes, separator=DELIMITERS[file_ext], public=public)
     if file_ext == ".txt":
         _check_tab_separated_text(file_bytes)
-        return read_csv_typed(file_bytes, separator="\t")
+        return read_csv_typed(file_bytes, separator="\t", public=public)
     if file_ext in {".xlsx", ".xls"}:
         # The workbook's bytes decide the reader: openpyxl for .xlsx, xlrd for BIFF .xls.
-        return read_excel_typed(file_bytes)
+        return read_excel_typed(file_bytes, public=public)
     if file_ext == ".xpt":
         return read_xport_typed(file_bytes)
     if file_ext == ".sav":
@@ -2168,7 +2227,22 @@ class UserDatasetStorage:
                 from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
 
                 logger.info(f"Ensuring patient_id exists for upload {upload_id}")
-                df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(tables[0]["data"])
+                if _declared_estimates(tables[0]["data"], metadata):
+                    # A declared table of estimates (ADR014): its rows are groups, not patients, so
+                    # no data column becomes patient_id; rows are numbered and counted as rows.
+                    df_with_id = (
+                        tables[0]["data"]
+                        .with_row_index(ROW_NUMBER_COLUMN, offset=1)
+                        .with_columns(pl.col(ROW_NUMBER_COLUMN).cast(pl.Int64))
+                    )
+                    id_metadata = {
+                        "patient_id_source": "row_index",
+                        "patient_id_columns": None,
+                        "row_number_column": ROW_NUMBER_COLUMN,
+                        "population_estimates": True,  # never asked "Is each row one patient?"
+                    }
+                else:
+                    df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(tables[0]["data"])
 
                 logger.info(
                     f"Patient ID creation result: source={id_metadata['patient_id_source']}, "

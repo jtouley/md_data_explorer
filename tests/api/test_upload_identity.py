@@ -92,14 +92,16 @@ def test_getDataset_populationEstimates_reportsStoredColumnTypes(
 
 
 @pytest.mark.parametrize(
-    "question",
+    ("question", "answered"),
     [
-        pytest.param("count by sex", id="count"),
-        pytest.param("average mx by cause_name", id="mean"),
+        pytest.param("count by sex", True, id="count"),
+        # A mean of an estimate column on an undeclared estimates file is refused by aggregate
+        # mode (#139): each row would be treated as one person. The refusal must not say patients.
+        pytest.param("average mx by cause_name", False, id="mean-undeclared-estimates-refused"),
     ],
 )
 def test_question_keylessUpload_countsRowsNeverPatients(
-    upload: Callable[..., Any], make_population_estimates: Callable[..., pl.DataFrame], question: str
+    upload: Callable[..., Any], make_population_estimates: Callable[..., pl.DataFrame], question: str, answered: bool
 ) -> None:
     # Arrange
     from clinical_analytics.api import dependencies
@@ -117,6 +119,11 @@ def test_question_keylessUpload_countsRowsNeverPatients(
             )
 
     # Assert: on main the answer said "n=... patients"
+    if not answered:
+        assert result.analysis is None
+        assert "population estimates" in (result.failure_reason or "")
+        assert not re.search(r"\bpatients?\b", result.claim or "")
+        return
     assert result.analysis is not None, result.failure_reason
     assert result.analysis.get("unit") == "rows"
     assert "rows" in (result.claim or "")

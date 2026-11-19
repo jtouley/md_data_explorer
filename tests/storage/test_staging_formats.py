@@ -286,46 +286,43 @@ def test_stageTextFrame_headersDifferOnlyInCase_failsNamingThem(headers: list[st
     assert f"Columns {named} differ only in upper and lower case" in str(raised.value)
 
 
-# --- CDC WONDER exports: tab-separated, a notes block, suppressed values (synthetic) ------------
+# --- CDC WONDER exports: tab-separated, a notes block (synthetic) ------------------------------
+# Source words ("Suppressed", "12.3 (Unreliable)") become flag columns (aggregate mode's
+# split_source_flags) in a WONDER-shaped or declared file only; "Total" rows stay for aggregate mode.
 
 
-def test_readCsvTyped_wonderExport_notesBlockIsDocsTotalsLeftOutSuppressedMissing(make_wonder_export) -> None:
-    # Arrange: 40 states; every 7th suppressed (deaths and rate), every 5th rate unreliable
+def test_readCsvTyped_wonderExport_notesBlockIsDocsSuppressedFlaggedNeverZero(make_wonder_export) -> None:
+    # Arrange: 40 states (every 7th suppressed, every 5th rate unreliable), a Total row, notes block
     data = make_wonder_export(states=40)
 
     # Act
     staged = read_csv_typed(data, separator="\t")
 
-    # Assert: data rows only; the "Total" subtotal and the notes block are not rows
+    # Assert: 40 states plus the Total row (aggregate mode reads it); no notes line is a row
     frame = staged.data
-    assert frame.height == 40
-    assert "Notes" not in frame.columns
-    assert frame.schema["Deaths"] == pl.Int64
-    assert frame.schema["Crude Rate"] == pl.Float64
-    # Suppressed is missing, never 0
-    suppressed_rows = frame.filter(pl.col("State Code").cast(pl.Int64) % 7 == 0)
-    assert suppressed_rows["Deaths"].null_count() == suppressed_rows.height == 5
-    assert frame["Deaths"].min() > 0
-    assert frame["Crude Rate"].null_count() == 5 + 7  # 5 suppressed, 7 more unreliable (5, 10, ..., 40)
-    reasons = {(n.column, n.reason): n.failed_values for n in staged.notes}
-    assert reasons[("Deaths", "source_suppressed")] == 5
-    assert reasons[("Crude Rate", "source_suppressed")] == 12
+    assert frame.height == 41
+    assert not frame["State"].cast(pl.String).str.contains("Dataset|Query|---").fill_null(False).any()
     assert "Dataset: Synthetic Underlying Cause of Death" in staged.export_notes
-    assert "Query Date" in staged.export_notes
-    assert staged.table_notes == ("1 subtotal row (Notes: Total) was left out, so no row is counted twice.",)
+    assert staged.table_notes == (
+        "The notes under the data (5 lines: dataset, query, citation) were kept as the dataset's "
+        "documentation, not as rows.",
+    )
+    assert staged.source_format == "cdc_wonder"
+    # Suppressed: missing plus a flag, never 0; unreliable: its number plus a flag
+    assert frame.schema["Deaths"] == pl.Int64
+    assert frame["Deaths"].null_count() == 5
+    assert frame["Deaths"].drop_nulls().min() > 0
+    assert frame["Deaths suppressed"].sum() == 5
+    assert frame.schema["Crude Rate"] == pl.Float64
+    assert frame["Crude Rate unreliable"].sum() == 7
 
 
 @pytest.mark.parametrize(
-    ("states", "total_row", "expected_rows", "expected_notes"),
-    [
-        pytest.param(12, False, 12, (), id="no_total_row"),
-        pytest.param(
-            1, True, 1, ("1 subtotal row (Notes: Total) was left out, so no row is counted twice.",), id="one_state"
-        ),
-    ],
+    ("states", "total_row", "expected_rows"),
+    [pytest.param(12, False, 12, id="no_total_row"), pytest.param(1, True, 2, id="one_state")],
 )
-def test_readCsvTyped_wonderExportShapes_rowsAndNotes(
-    make_wonder_export, states: int, total_row: bool, expected_rows: int, expected_notes: tuple[str, ...]
+def test_readCsvTyped_wonderExportShapes_rowsAreDataOnly(
+    make_wonder_export, states: int, total_row: bool, expected_rows: int
 ) -> None:
     # Arrange
     data = make_wonder_export(states=states, total_row=total_row)
@@ -335,11 +332,11 @@ def test_readCsvTyped_wonderExportShapes_rowsAndNotes(
 
     # Assert
     assert staged.data.height == expected_rows
-    assert staged.table_notes == expected_notes
+    assert len(staged.table_notes) == 1
 
 
 def test_readCsvTyped_unreliableAsCategory_keptAsText() -> None:
-    # Arrange: "Unreliable" is one of a text column's categories, not a withheld number
+    # Arrange: "Unreliable" is one of a text column's categories
     rows = [f"P{i:03d}\t{'Unreliable' if i % 3 == 0 else 'Reliable'}\t{i}" for i in range(30)]
     data = ("\n".join(["patient_id\treporting\tvisits", *rows]) + "\n").encode()
 
@@ -349,7 +346,7 @@ def test_readCsvTyped_unreliableAsCategory_keptAsText() -> None:
     # Assert
     assert staged.data.schema["reporting"] == pl.String
     assert staged.data["reporting"].null_count() == 0
-    assert not [n for n in staged.notes if n.reason == "source_suppressed"]
+    assert staged.data.columns == ["patient_id", "reporting", "visits"]
 
 
 def test_readCsvTyped_noNotesBlock_exportNotesEmpty() -> None:
@@ -362,41 +359,18 @@ def test_readCsvTyped_noNotesBlock_exportNotesEmpty() -> None:
     # Assert
     assert staged.export_notes == ""
     assert staged.table_notes == ()
+    assert staged.source_format == ""
     assert staged.data.height == 2
 
 
-def test_describeColumnTypes_sourceSuppressed_smallCountNeverShown() -> None:
-    # Arrange: 3 of 40 values withheld; a count from 1 to 10 is never shown
-    from clinical_analytics.storage.staging import describe_column_types
-
-    notes = [
-        {
-            "column": "Deaths",
-            "stored_type": "Int64",
-            "reason": "source_suppressed",
-            "failed_values": 3,
-            "checked_values": 40,
-        }
-    ]
-
-    # Act
-    lines = describe_column_types(notes, {}, 11)
-
-    # Assert
-    assert lines == [
-        "Deaths: fewer than 11 values were withheld or not given by the data source (Suppressed, Unreliable, "
-        "Not Applicable) and are stored as missing, never as 0; sums and counts leave them out."
-    ]
-
-
 def test_readCsvTyped_dashLineInOrdinaryCsv_neverHidesRows() -> None:
-    # Arrange: a "---" line in a file that is not a WONDER export (review of #123, finding 1)
+    # Arrange: a "---" line in a file that is not a WONDER export
     data = b"patient_id,age,comment\n1,40,ok\n2,50,x\n---\n3,60,y\n4,70,z\n"
 
     # Act
     staged = read_csv_typed(data)
 
-    # Assert: every row is data; nothing goes to documentation
+    # Assert
     assert staged.data.height == 5
     assert staged.export_notes == ""
 
@@ -410,45 +384,8 @@ def test_readCsvTyped_notesHeaderButDataBelowDashes_neverHidesRows(make_wonder_e
     # Act
     staged = read_csv_typed(data, separator="\t")
 
-    # Assert: not split; the rows below stay in the file the user sees as data
+    # Assert
     assert staged.export_notes == ""
-
-
-@pytest.mark.parametrize(
-    "marker",
-    [
-        pytest.param("2.1 (Unreliable)", id="flaggedNumber"),
-        pytest.param("Not Applicable", id="notApplicable"),
-        pytest.param("unreliable", id="lowercase"),
-    ],
-)
-def test_readCsvTyped_wonderMarkerForms_storedMissingNeverText(marker: str) -> None:
-    # Arrange
-    # WONDER-shaped: first header "Notes" (markers are read only in that shape)
-    rows = [f"\tS{i:02d}\t{marker if i % 4 == 0 else f'{10 + i}.5'}" for i in range(24)]
-    data = ("\n".join(["Notes\tState\tCrude Rate", *rows]) + "\n").encode()
-
-    # Act
-    staged = read_csv_typed(data, separator="\t")
-
-    # Assert
-    assert staged.data.schema["Crude Rate"] == pl.Float64
-    assert staged.data["Crude Rate"].null_count() == 6
-    assert [n.reason for n in staged.notes if n.column == "Crude Rate"] == ["source_suppressed"]
-
-
-def test_readCsvTyped_suppressedInColumnThatStaysText_markerKept() -> None:
-    # Arrange: thousands separators keep the column text, so "Suppressed" must stay as written
-    rows = [f"\tS{i:02d}\t{'Suppressed' if i % 5 == 0 else '1,234'}" for i in range(20)]
-    data = ("\n".join(["Notes\tState\tDeaths", *rows]) + "\n").encode()
-
-    # Act
-    staged = read_csv_typed(data, separator="\t")
-
-    # Assert
-    assert staged.data.schema["Deaths"] == pl.String
-    assert staged.data["Deaths"].null_count() == 0
-    assert not [n for n in staged.notes if n.reason == "source_suppressed"]
 
 
 @pytest.mark.parametrize("separator", [",", "\t"], ids=["csv", "tsv"])

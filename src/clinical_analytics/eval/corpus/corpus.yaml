@@ -57,6 +57,94 @@ datasets:
         - {name: data_dictionary.txt, from: data_description.txt, make: copy}
       sha256: a3639ebca2068df992230516e3608924daed23ca2be7532cd978a14e6ecae7ae  # deterministic: sorted, stored, fixed metadata
 
+  # ---- Population (aggregate) datasets. Each row is a published estimate for a place x period
+  # x stratum, not a patient. All are republished by their source (living: true): a checksum
+  # mismatch means the source was refreshed; re-snapshot and re-baseline the answers. The corpus
+  # manifest records no dictionary file for the CDC sets; their column descriptions are on the
+  # landing page (dictionary_url). rows/columns are the loaded table as uploaded with the
+  # population-estimates declaration (columns include the row key synthesized at upload); the app
+  # does not read ZIP uploads yet, so the table goes up alone (load_upload: table).
+  - name: cdc_leading_causes_death
+    title: 'NCHS - Leading Causes of Death: United States (1999-2017)'
+    landing_page: https://data.cdc.gov/NCHS/NCHS-Leading-Causes-of-Death-United-States/bi63-dtpu
+    license:
+      id: US-Government-Public-Domain
+      url: https://www.usa.gov/government-works
+      terms: 'Public domain (U.S. Government work). Cite NCHS. Note: the old dataset id bi63-vtsv now returns 404; use bi63-dtpu.'
+    grain: 'aggregate: state x year x cause'
+    rows: 10868
+    columns: 7
+    load_upload: table
+    id_column: composite key (Year, State, Cause Name)
+    living: true
+    files:
+      - path: leading_causes_of_death.csv
+        url: https://data.cdc.gov/api/views/bi63-dtpu/rows.csv?accessType=DOWNLOAD
+        kind: table
+        sha256: 1971e6664c76457a5c32e4c86aa103ba404b7be5d17ddb6e6dfc0075479c85d9
+        bytes: 842709
+    dictionary_url: https://data.cdc.gov/NCHS/NCHS-Leading-Causes-of-Death-United-States/bi63-dtpu
+    upload_package:
+      zip: cdc_leading_causes_death.zip
+      sha256: 02f40c459187de1045487282bbc00e6da3b275c3151d9a366ef31fbdfbe6ed56  # deterministic: sorted, stored, fixed metadata
+      contents:
+        - {name: leading_causes_of_death.csv, from: leading_causes_of_death.csv, make: copy}
+
+  - name: cdc_respnet_rates
+    title: RESP-NET Rates and Clinical Data (COVID-NET, FluSurv-NET, RSV-NET)
+    landing_page: https://data.cdc.gov/Public-Health-Surveillance/RESP-NET-Rates-and-Clinical-Data/kvib-3txy
+    license:
+      id: US-Government-Public-Domain
+      url: https://www.usa.gov/government-works
+      terms: "Public domain (U.S. Government work). Cite CDC RESP-NET. Updated weekly: checksum WILL drift; harness should treat mismatch as 'refreshed' not 'corrupt' and re-snapshot."
+    grain: 'aggregate: network x season x week x site x age x sex x race'
+    rows: 125988
+    columns: 13
+    load_upload: table
+    id_column: composite key
+    missing_tokens: ['blank (Rate Type null for some rows)']
+    living: true
+    files:
+      - path: respnet_rates.csv
+        url: https://data.cdc.gov/api/views/kvib-3txy/rows.csv?accessType=DOWNLOAD
+        kind: table
+        sha256: 6ea38d27ec598497609240ff4c19c40b33e007f245695964f9f559912fe68a1d
+        bytes: 15196988
+    dictionary_url: https://data.cdc.gov/Public-Health-Surveillance/RESP-NET-Rates-and-Clinical-Data/kvib-3txy
+    upload_package:
+      zip: cdc_respnet_rates.zip
+      sha256: 37cf5821725b92c0f21ae982c9b1397849216e9fa8cc4462b1ab51c154be7870  # deterministic: sorted, stored, fixed metadata
+      contents:
+        - {name: respnet_rates.csv, from: respnet_rates.csv, make: copy}
+
+  - name: cdc_chronic_disease_indicators_immunization
+    title: U.S. Chronic Disease Indicators (CDI) - Immunization topic subset
+    landing_page: https://data.cdc.gov/Chronic-Disease-Indicators/U-S-Chronic-Disease-Indicators/hksd-2xuw
+    license:
+      id: ODbL-1.0
+      url: http://opendatacommons.org/licenses/odbl/1.0/
+      terms: 'data.cdc.gov metadata lists ODbL 1.0 for this dataset (not public domain): attribute CDC, share-alike for derived databases.'
+    grain: 'aggregate: state x year x stratification (sex / age / race) x indicator'
+    rows: 23925
+    columns: 35
+    load_upload: table
+    id_column: composite key (yearstart, locationabbr, questionid, datavaluetypeid, stratificationid1)
+    missing_tokens: ["blank with footnote symbol '*' or '****' (suppressed / insufficient sample)"]
+    living: true
+    files:
+      - path: cdi_immunization.csv
+        url: https://data.cdc.gov/resource/hksd-2xuw.csv?$where=topic%3D%27Immunization%27&$order=%3Aid&$limit=100000
+        kind: table
+        note: Deterministic SoQL subset (topic='Immunization', ordered by :id) of a 398,793-row dataset.
+        sha256: cc9523d3a5b4adb8af63a1f6a4cb676676d316e02bec96972ec736826a9676db
+        bytes: 7619300
+    dictionary_url: https://data.cdc.gov/Chronic-Disease-Indicators/U-S-Chronic-Disease-Indicators/hksd-2xuw
+    upload_package:
+      zip: cdc_chronic_disease_indicators_immunization.zip
+      sha256: 6acffe2112c3f5f4cab57b91c48b32766f8b7ccc646937970a707081747e7fa9  # deterministic: sorted, stored, fixed metadata
+      contents:
+        - {name: cdi_immunization.csv, from: cdi_immunization.csv, make: copy}
+
   # Synthetic fellow case-study extracts (ID fellows' research guide, case studies 1-4). Generated
   # locally by eval/corpus/synthetic_hospital.py from the seed; nothing is downloaded. The sha256
   # pins make a generator change fail the fetch until its oracles are reviewed and the pins updated.
