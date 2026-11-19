@@ -486,6 +486,28 @@ const clinicalAPI = {
   },
 
   /**
+   * Download a public data file from an HTTPS link and load it like an uploaded file.
+   * The engine does the download; the response includes `source` (link, date, SHA-256).
+   * @param {string} url
+   * @param {string} [datasetName]
+   * @returns {Promise<Object>}
+   */
+  async loadDatasetFromUrl(url, datasetName) {
+    const body = { url };
+    if (datasetName) body.dataset_name = datasetName;
+    const response = await apiFetch(`${API_BASE_URL}/api/datasets/from-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw httpFailureError(response, data);
+    }
+    return data;
+  },
+
+  /**
    * Delete a dataset and everything derived from it (files, tables, sessions, results).
    * @param {string} datasetId
    * @returns {Promise<{ dataset_id: string, removed_paths: number, dropped_tables: number, deleted_sessions: number }>}

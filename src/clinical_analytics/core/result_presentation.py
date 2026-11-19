@@ -20,8 +20,10 @@ from clinical_analytics.analysis.grouping import (
     HIDDEN_GROUPS_LABEL,
     MAX_GROUP_LEVELS,
     OTHER_LABEL,
+    SMALL_CELL_TEST_REFUSAL,
     is_small_level,
     predictor_model_refusal,
+    table_statistic_refusal,
     too_many_levels_message,
 )
 from clinical_analytics.analysis.sample_floors import (
@@ -604,6 +606,12 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
     outcome_name = short_name(outcome)
     p_clause = f"{test} {_fmt_p(p)}" if p is not None else None
 
+    if test_type in ("welch_t_test", "t_test", "anova") and "table_min_cell" in analysis:
+        # An outcome with two measured values: each group's mean gives back how many of its
+        # patients had each value, so the means and the test follow the table rule compute applied.
+        mean_refusal = table_statistic_refusal(analysis.get("table_min_cell"))
+        if mean_refusal is not None:
+            return {"claim": mean_refusal, "table": None}
     if test_type in ("welch_t_test", "t_test", "anova"):
         sizes = {str(g): group_sizes.get(str(g)) for g in group_means}
         hidden = suppress_with_exclusions(analysis, sizes, floor=MIN_GROUP_N * max(len(sizes), 1))
@@ -666,6 +674,11 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
         return {"claim": claim, "table": _fold_rows(_table(rows), fold, small_groups.label)}
 
     # chi-square / Fisher on a contingency table (rows = outcome levels, columns = groups)
+    # With a cell of 1-10 patients the test is withheld, with the rule compute applied
+    # (``table_statistic_refusal`` on the recorded ``table_min_cell``): a payload that skipped
+    # compute's check, or one stored before the cells were recorded, shows no p-value, test
+    # name, significance or expected-count warning either (fail closed).
+    test_refusal = table_statistic_refusal(analysis.get("table_min_cell"))
     contingency = [dict(row) for row in analysis.get("contingency") or []]
     cells = {(i, j): row.get(g) for i, row in enumerate(contingency) for j, g in enumerate(groups)}
     lines = [[(i, j) for j in range(len(groups))] for i in range(len(contingency))]
@@ -678,7 +691,9 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
     proportions = analysis.get("group_proportions") or {}
     event_level = analysis.get("event_level")
     claim = None
-    if p is not None:
+    if test_refusal is not None:
+        claim = test_refusal
+    elif p is not None:
         significance = "statistically significant" if p < 0.05 else "not statistically significant"
         if proportions and event_level is not None and not withheld:
             shares = " and ".join(
@@ -785,25 +800,44 @@ def _present_predictor(analysis: Mapping[str, Any]) -> Presentation:
 
 
 def _present_relationship(analysis: Mapping[str, Any]) -> Presentation:
-    pairs = [
-        {"variable 1": c.get("var1"), "variable 2": c.get("var2"), "r": _num(c.get("correlation"))}
-        for c in analysis.get("correlations") or []
-        if c.get("var1") != c.get("var2")
-    ]
-    pairs.sort(key=lambda r: abs(r["r"]) if r["r"] is not None else -1.0, reverse=True)
+    # A correlation of two coded variables is a statistic of their table of counts (for two 0/1
+    # columns, phi): withheld when a cell holds 1-10 patients, by the rule compute applied
+    # (``table_statistic_refusal`` on each pair's ``table_min_cell``; not recorded: withheld).
+    # A withheld pair sorts last with its r hidden, so its place in the order says nothing of r.
+    refusals: list[str] = []
+    pairs: list[dict[str, Any]] = []
+    for c in analysis.get("correlations") or []:
+        if c.get("var1") == c.get("var2"):
+            continue
+        refusal = table_statistic_refusal(c.get("table_min_cell"), may_rest_on_no_table=True)
+        if refusal is not None:
+            refusals.append(refusal)
+        pairs.append(
+            {
+                "variable 1": c.get("var1"),
+                "variable 2": c.get("var2"),
+                "r": SECONDARY_SUPPRESSED if refusal is not None else _num(c.get("correlation")),
+            }
+        )
+    pairs.sort(key=lambda r: abs(r["r"]) if isinstance(r["r"], float) else -1.0, reverse=True)
     # n_observations + its exclusions (+ filtered-out rows) is the row count, as for n_used
     sample = {**analysis, "n_used": analysis.get("n_observations")}
     n_clause = _n_clause(sample, suppress_with_exclusions(sample, {}, floor=MIN_CORRELATION_N))
     claim = None
-    if pairs and pairs[0]["r"] is not None:
+    if pairs and isinstance(pairs[0]["r"], float):
         top = pairs[0]
         r = top["r"]
         strength = "strong" if abs(r) >= 0.5 else "moderate" if abs(r) >= 0.3 else "weak"
+        shown = "The strongest correlation shown" if refusals else "The strongest correlation"
         claim = _with_details(
-            f"The strongest correlation was {strength}: {top['variable 1']} and {top['variable 2']}",
+            f"{shown} was {strength}: {top['variable 1']} and {top['variable 2']}",
             [f"r={_fmt(r)}", n_clause],
         )
         claim += "."
+    if refusals:
+        # One sentence for every withheld pair; the small-cell one when any pair has a small cell.
+        reason = SMALL_CELL_TEST_REFUSAL if SMALL_CELL_TEST_REFUSAL in refusals else refusals[0]
+        claim = f"{claim} {reason}" if claim else reason
     return {"claim": claim, "table": _table(pairs)}
 
 
@@ -837,7 +871,14 @@ def _present_survival(analysis: Mapping[str, Any]) -> Presentation:
             ]
             + ([f"{folded.label} not shown"] if folded else [])
         )
+        # The log-rank test, with group sizes and the event total, narrows each group's events:
+        # withheld with a group x event cell of 1-10 patients, by the rule compute applied. A
+        # payload with a log-rank result but no recorded cells is withheld too (fail closed).
         logrank = _num(analysis.get("logrank_p_value"))
+        tested = logrank is not None or "table_min_cell" in analysis
+        logrank_refusal = table_statistic_refusal(analysis.get("table_min_cell")) if tested else None
+        if logrank_refusal is not None:
+            logrank = None
         claim = _with_details(
             f"Median time to {event} ({time_col}) by {group_col}: {medians_text}",
             [f"log-rank {_fmt_p(logrank)}" if logrank is not None else None, n_clause],
@@ -845,6 +886,8 @@ def _present_survival(analysis: Mapping[str, Any]) -> Presentation:
         claim += ". Unadjusted."
         if small:
             claim += " Medians are not shown for groups whose size is hidden to protect privacy."
+        if logrank_refusal is not None:
+            claim += f" {logrank_refusal}"
         rows = [
             {
                 group_col: display_level(group_col, g),
