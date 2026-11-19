@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import polars as pl
 import pytest
 
-from clinical_analytics.analysis.grouping import MAX_GROUP_LEVELS, is_small_level
+from clinical_analytics.analysis.grouping import MAX_GROUP_LEVELS, SMALL_CELL_TEST_REFUSAL, is_small_level
 from clinical_analytics.api.services.query_service import AsyncQueryService
 from clinical_analytics.core.result_presentation import to_json_safe
 
@@ -654,6 +654,7 @@ class TestQueryResultSmallCells:
             "group_proportions": proportions,
             "odds_ratio": 45.0,
             "p_value": 0.0198,
+            "table_min_cell": 1,  # a payload that skipped compute's check still shows no test
             "n_used": 20,
             "n_excluded": 0,
             "summary": [{"timeline": 3.0, "at_risk": 4, "observed": 1}],
@@ -669,8 +670,9 @@ class TestQueryResultSmallCells:
             analysis=analysis,
         )
         stored = await async_query_service.execute_query(lease=new_lease(), query="death by arm?", dataset_id="ds")
-        # cell counts, group sizes, proportions (and their complements) and the odds ratio
-        forbidden = {15.0, 1.0, 3.0, 16.0, 4.0, 45.0}
+        # cell counts, group sizes, proportions (and their complements), the odds ratio and the
+        # p-value (with the margins and direction it gives the cells back)
+        forbidden = {15.0, 1.0, 3.0, 16.0, 4.0, 45.0, 0.0198, 0.02}
         forbidden |= {round(v, 4) for p in proportions.values() for v in (p, 1 - p, 100 * p, 100 * (1 - p))}
 
         async def found(_query_id: str) -> tuple[Any, Any]:
@@ -680,8 +682,8 @@ class TestQueryResultSmallCells:
         with patch("clinical_analytics.api.routes.queries.find_query_result", side_effect=found):
             body = TestClient(app).get(f"/api/queries/{stored.query_id}").json()
 
-        # Assert: walk the whole body (confidence 0.9 and the p-value are allowed)
-        assert body["result_data"]["claim"].startswith("The distribution of died differed by arm")
+        # Assert: walk the whole body (confidence 0.9 is allowed)
+        assert body["result_data"]["claim"] == SMALL_CELL_TEST_REFUSAL
         leaked = sorted({n for n in _numbers_in(body) if n in forbidden or round(n, 4) in forbidden})
         assert leaked == [], f"GET body {body} shows {leaked}"
 

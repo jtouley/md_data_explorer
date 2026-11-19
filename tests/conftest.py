@@ -5,11 +5,14 @@ Pytest configuration and fixtures for clinical analytics tests.
 import os
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 import pytest
 import yaml
+from open_data_contract_standard.model import OpenDataContractStandard
 
 # Runtime data (uploads, DuckDB store, session DB) goes to a throwaway data home, never the
 # developer's real one or the checkout. Set before any clinical_analytics import.
@@ -1716,6 +1719,30 @@ def get_dataset_by_name(dataset_registry):
 
 
 @pytest.fixture
+def make_contract() -> Callable[..., OpenDataContractStandard]:
+    """Factory: ODCS contract for ``df`` with test defaults (upload u1, version v1, id patient_id).
+
+    Shared by the data-contract tests and the governed SQL tests (the contract is SQL's schema).
+    """
+    from datetime import UTC, datetime
+
+    from clinical_analytics.contracts.builder import ContractInputs, build_contract
+
+    def _make(df: pl.DataFrame, **overrides: Any) -> OpenDataContractStandard:
+        fields: dict[str, Any] = {
+            "upload_id": "u1",
+            "dataset_version": "v1",
+            "dataset_name": "test cohort",
+            "id_column": "patient_id",
+            "created_at": datetime(2026, 11, 3, tzinfo=UTC),
+        }
+        fields.update(overrides)
+        return build_contract(df, ContractInputs(**fields))
+
+    return _make
+
+
+@pytest.fixture
 def upload_storage(tmp_path):
     """
     Create UserDatasetStorage with temp directory.
@@ -1872,6 +1899,58 @@ def all_nulls_patient_df(make_patient_value_df):
     DRY principle: Uses factory fixture to avoid duplication.
     """
     return make_patient_value_df("all_nulls")
+
+
+# ============================================================================
+# Local HTTPS source for the URL fetcher (no real internet in tests)
+# ============================================================================
+
+
+@pytest.fixture(scope="session")
+def https_test_certificate(tmp_path_factory):
+    """Throwaway self-signed certificate for the made-up *.example.test sites."""
+    from fixtures.https_server import make_certificate
+
+    return make_certificate(tmp_path_factory.mktemp("https-cert"))
+
+
+@pytest.fixture
+def local_https_source(https_test_certificate, monkeypatch):
+    """A running LocalHttpsSource; the URL fetcher's DNS, TCP connect and trust store point at it.
+
+    Fake names resolve per ``FAKE_DNS``; the fetcher's own public-address check still runs, and
+    a connection to anything but a fake public address fails the test.
+    """
+    import ipaddress
+    import socket
+
+    from fixtures.https_server import FAKE_DNS, LocalHttpsSource
+
+    from clinical_analytics.storage import url_fetch
+
+    source = LocalHttpsSource(*https_test_certificate)
+    public = {a for addrs in FAKE_DNS.values() for a in addrs if ipaddress.ip_address(a).is_global}
+    real_getaddrinfo = socket.getaddrinfo
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        if host in FAKE_DNS:
+            return [
+                (socket.AF_INET6 if ":" in a else socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (a, port))
+                for a in FAKE_DNS[host]
+            ]
+        return real_getaddrinfo(host, port, *args, **kwargs)
+
+    def fake_open_tcp(address, port, timeout):
+        source.connections.append(address)
+        assert address in public, f"fetcher connected to non-public address {address}"
+        return socket.create_connection(("127.0.0.1", source.port), timeout=timeout)
+
+    monkeypatch.setattr(url_fetch.socket, "getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr(url_fetch, "_open_tcp", fake_open_tcp)
+    monkeypatch.setattr(url_fetch, "_tls_context", source.client_context)
+    source.start()
+    yield source
+    source.stop()
 
 
 # ============================================================================

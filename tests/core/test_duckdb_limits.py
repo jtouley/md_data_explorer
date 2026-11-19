@@ -164,8 +164,9 @@ def test_configImport_defaults_cachedLayerLimitIsBudgetOverCacheSize() -> None:
     assert nl_query_config.SEMANTIC_LAYER_CACHE_SIZE == 4
 
 
-def _import_config_with_yaml(tmp_path: Path, yaml_text: str) -> subprocess.CompletedProcess[str]:
-    """Import nl_query_config in a fresh process whose nl_query.yaml is ``yaml_text``."""
+def _import_config_with_yaml(tmp_path: Path, yaml_text: str, then: str = "") -> subprocess.CompletedProcess[str]:
+    """Import nl_query_config in a fresh process whose nl_query.yaml is ``yaml_text``, then run
+    the statement ``then`` (with the module as ``c``)."""
     config = tmp_path / "nl_query.yaml"
     config.write_text(yaml_text)
     script = (
@@ -174,8 +175,14 @@ def _import_config_with_yaml(tmp_path: Path, yaml_text: str) -> subprocess.Compl
         "load = loader.load_nl_query_config\n"
         f"loader.load_nl_query_config = lambda config_path=None: load(Path({str(config)!r}))\n"
         "import clinical_analytics.core.nl_query_config\n"
+        "c = clinical_analytics.core.nl_query_config\n"
+        f"{then}\n"
     )
-    env = {key: value for key, value in os.environ.items() if not key.startswith(("DUCKDB_", "SEMANTIC_LAYER_"))}
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("DUCKDB_", "SEMANTIC_LAYER_", "ENABLE_SQL_QUERIES"))
+    }
     return subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True, check=False)
 
 
@@ -197,6 +204,43 @@ def test_configImport_badYamlBudgetOrCacheSize_failsAtStartup(tmp_path: Path, ya
     # Assert
     assert completed.returncode != 0
     assert message in completed.stderr
+
+
+@pytest.mark.parametrize(
+    ("enabled", "layer_share", "sandbox_share"), [("false", "10GB", "None"), ("true", "8GB", "8GB")]
+)
+def test_configImport_sqlSandbox_takesItsOwnShareOfTheBudget(
+    tmp_path: Path, enabled: str, layer_share: str, sandbox_share: str
+) -> None:
+    # Arrange: 40GB over 4 layers, plus one SQL sandbox when governed SQL is on
+    yaml_text = f'semantic_layer_cache_size: "4"\nduckdb_memory_budget: "40GB"\nenable_sql_queries: {enabled}\n'
+
+    # Act
+    completed = _import_config_with_yaml(
+        tmp_path,
+        yaml_text,
+        "s = c.SQL_SANDBOX_MEMORY_LIMIT\n"
+        "print(c.CACHED_LAYER_MEMORY_LIMIT.sql, s.sql if s else s, c.SQL_SANDBOX_SLOTS)",
+    )
+
+    # Assert: layers and sandboxes together stay within the budget when SQL is on
+    assert completed.returncode == 0, completed.stderr
+    layer, sandbox, slots = completed.stdout.split()
+    assert (layer, sandbox, slots) == (layer_share, sandbox_share, "1")
+
+
+@pytest.mark.parametrize(("enabled", "starts"), [("false", True), ("true", False)])
+def test_configImport_smallBudgetWithSqlOff_startsAsBefore(tmp_path: Path, enabled: str, starts: bool) -> None:
+    # Arrange: 4% over 4 layers is 1% each (the floor); one more share for a sandbox is 0.8%
+    yaml_text = f'semantic_layer_cache_size: "4"\nduckdb_memory_budget: "4%"\nenable_sql_queries: {enabled}\n'
+
+    # Act
+    completed = _import_config_with_yaml(tmp_path, yaml_text)
+
+    # Assert: only governed SQL's extra share can stop startup, and the message names it
+    assert (completed.returncode == 0) is starts, completed.stderr
+    if not starts:
+        assert "1 SQL sandbox(es) (enable_sql_queries)" in completed.stderr
 
 
 def test_configImport_goodYamlCacheSize_used(tmp_path: Path) -> None:

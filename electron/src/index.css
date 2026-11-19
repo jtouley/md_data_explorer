@@ -1852,6 +1852,78 @@ ul {
   font-size: var(--fs-sm);
 }
 
+/* Load from a link: in-page form below the cohort switcher */
+.dataset-link-area {
+  margin-top: var(--sp-2);
+}
+
+.dataset-link-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+}
+
+.dataset-link-title {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: var(--lh-md);
+}
+
+.dataset-link-label {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: var(--lh-sm);
+  color: var(--text-1);
+}
+
+.dataset-link-input {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-md);
+  color: var(--text-1);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+}
+
+.dataset-link-input[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.dataset-link-hint,
+.dataset-link-error {
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+  color: var(--text-2);
+}
+
+.dataset-link-error {
+  color: var(--danger);
+}
+
+.dataset-link-form .result-confirm-actions {
+  margin-top: var(--sp-3);
+}
+
+.dataset-link-form .btn-reject,
+.dataset-link-form .btn-primary {
+  min-height: 32px;
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-sm);
+}
+
+.dataset-source-text {
+  overflow-wrap: anywhere;
+  color: var(--text-2);
+  user-select: text;
+}
+
 /* ==========================================================================
    Narrow windows
    ========================================================================== */

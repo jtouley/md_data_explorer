@@ -13,11 +13,14 @@ import polars as pl
 from scipy import stats
 
 from clinical_analytics.analysis.grouping import (
+    MAX_GROUP_LEVELS,
+    NO_COUNT_TABLE,
     SMALL_VALUE_MODEL_REFUSAL,
     TERM_NAME_CLASH_MODEL_REFUSAL,
     grouping_problem,
     is_small_level,
     predictor_model_refusal,
+    table_statistic_refusal,
 )
 from clinical_analytics.analysis.numeric_text import statistic_refusal
 from clinical_analytics.analysis.sample_floors import (
@@ -157,6 +160,40 @@ def _drop_missing(df: pl.DataFrame) -> pl.DataFrame:
     """
     complete = df.drop_nulls()
     return complete.filter(_finite_rows(complete))
+
+
+# The patient key carried beside an analysis' columns when rows are visits; a name no dataset
+# column has, so it never collides with the outcome or a group.
+_KEY_COLUMN = "\x00patient_key"
+
+
+def _with_key(df: pl.DataFrame, columns: list[str], entity_key: str | None) -> pl.DataFrame:
+    """``columns`` of the rows complete in them (``_drop_missing``), plus ``_KEY_COLUMN`` (the
+    patient key) when rows are visits. A row with no key is kept: it is still someone
+    (``_level_sizes``). ``entity_key`` must be a column of ``df``."""
+    frame = df.select([*columns, *([pl.col(entity_key).alias(_KEY_COLUMN)] if entity_key is not None else [])])
+    return _complete_in(frame, columns)
+
+
+def _unread_key_refusal(df: pl.DataFrame, entity_key: str | None, kind: str) -> dict[str, Any] | None:
+    """The refusal of a ``kind`` analysis whose rows are visits but whose patient key column was
+    not read: no cell's patients can be counted, so nothing is shown (fail closed). None when
+    rows are patients or the key is there."""
+    if entity_key is None or entity_key in df.columns:
+        return None
+    from clinical_analytics.core.semantic import ENTITY_KEY_MISSING_REASON  # semantic imports compute
+
+    return {"type": kind, "error": ENTITY_KEY_MISSING_REASON}
+
+
+def _complete_in(df: pl.DataFrame, columns: list[str]) -> pl.DataFrame:
+    """Rows of ``df`` with no null and no NaN/inf in ``columns`` (other columns may be null)."""
+    return df.filter(pl.all_horizontal(pl.col(columns).is_not_null()) & _finite_rows(df.select(columns)))
+
+
+def _keys_of(df: pl.DataFrame) -> pl.Series | None:
+    """The patient key of each row of a ``_with_key`` frame, or None when rows are patients."""
+    return df.get_column(_KEY_COLUMN) if _KEY_COLUMN in df.columns else None
 
 
 # Spread at or below this fraction of the values' magnitude is float noise, not variation:
@@ -414,7 +451,9 @@ def _compute_headline_answer(
     }
 
 
-def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
+def compute_comparison_analysis(
+    df: pl.DataFrame, context: AnalysisContext, entity_key: str | None = None
+) -> dict[str, Any]:
     """
     Compare an outcome across groups, choosing the test from what the outcome measures.
 
@@ -435,6 +474,14 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
     there, so the two are not directly comparable. The ratio does not depend on what the
     non-event level is called, is None for a zero cell, and is omitted when the event level is
     unknown.
+
+    The test of a table (its p-value, chi-square, odds ratio and expected-count warning) is not
+    recorded when any non-empty cell of the table holds 1-10 patients: with the group and outcome
+    totals other answers show, and the direction a claim states, the p-value is monotone in the
+    cells and gives a cell back. ``table_min_cell`` records the fewest patients in a cell and
+    ``table_statistic_refusal`` decides, here and again in the presenter. ``entity_key``: the
+    patient key when rows are visits (``SemanticLayer.count_entity_key``); cells then count
+    distinct patients, never rows (``_level_sizes``).
     Returns serializable dict (no Polars objects).
     """
     df, _ = _apply_context_filters(df, context)
@@ -444,9 +491,12 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
 
     if outcome_col is None or group_col is None:
         return {"type": "comparison", "error": "Missing required columns for comparison"}
+    unkeyed = _unread_key_refusal(df, entity_key, "comparison")
+    if unkeyed is not None:
+        return unkeyed
 
     n_in_scope = df.height
-    analysis_df = _drop_missing(df.select([outcome_col, group_col]))
+    analysis_df = _with_key(df, [outcome_col, group_col], entity_key)
     n_used = analysis_df.height
     n_excluded = n_in_scope - n_used
 
@@ -461,7 +511,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
         converted = parsed.values if parsed is not None else None
         if converted is not None:
             # Missing-value tokens ("n/a", ".") became null: exclude and count them.
-            analysis_df = _drop_missing(analysis_df.with_columns(converted.alias(outcome_col)))
+            analysis_df = _complete_in(analysis_df.with_columns(converted.alias(outcome_col)), [outcome_col, group_col])
             n_used = analysis_df.height
             n_excluded = n_in_scope - n_used
             if n_used < MIN_COMPARISON_N:
@@ -500,6 +550,14 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
     }
 
     if outcome_kind == "continuous":
+        two_valued = _two_valued(analysis_df[outcome_col])
+        if two_valued:
+            # Two measured values (a dose of 0 or 5): a group's mean is low + (high - low) * k / n,
+            # so with n shown it gives the count k back. The means and the test then follow the
+            # table rule on the outcome x group table, here and in the presenter.
+            base["table_min_cell"] = _table_min_cell(
+                analysis_df[outcome_col], analysis_df[group_col], _keys_of(analysis_df)
+            )
         implausible = _implausible(analysis_df[outcome_col])
         if implausible:
             base["implausible"] = implausible
@@ -512,6 +570,8 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
             if min(len(a), len(b)) < MIN_GROUP_N or _constant_groups(groups, group_data):
                 # Zero within-group variance: scipy returns p=0 with t=inf and the Welch df is NaN.
                 return {**base, "error": _untestable_groups_message("A t-test", outcome_col, group_col, "each")}
+            if two_valued and (refusal := table_statistic_refusal(base["table_min_cell"])) is not None:
+                return {**base, "error": refusal}
             statistic, p_value = stats.ttest_ind(a, b, equal_var=False)
             var_a, var_b = np.var(a, ddof=1) / len(a), np.var(b, ddof=1) / len(b)
             se_diff = float(np.sqrt(var_a + var_b))
@@ -536,6 +596,8 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
         if too_small or len(_constant_groups(groups, group_data)) == n_groups:
             # No within-group variation: scipy returns F=inf and p=0.
             return {**base, "error": _untestable_groups_message("An ANOVA", outcome_col, group_col, "at least one")}
+        if two_valued and (refusal := table_statistic_refusal(base["table_min_cell"])) is not None:
+            return {**base, "error": refusal}
         statistic, p_value = stats.f_oneway(*group_data)
         return {
             **base,
@@ -563,7 +625,6 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
         **base,
         "contingency": contingency,
         "contingency_index_col": outcome_col,
-        "min_expected_count": float(expected.min()),
     }
     event_row: int | None = None
     if outcome_kind == "binary":
@@ -572,6 +633,11 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
             event_row = outcome_levels.index(event)
             proportions = {str(g): float(table[event_row, j] / table[:, j].sum()) for j, g in enumerate(groups)}
             result.update({"event_level": code_key(event), "group_proportions": proportions})
+    result["table_min_cell"] = _table_min_cell(analysis_df[outcome_col], analysis_df[group_col], _keys_of(analysis_df))
+    if table_statistic_refusal(result["table_min_cell"]) is not None:
+        # No test, odds ratio or expected-count warning: each, with the totals, narrows the cells.
+        return result
+    result["min_expected_count"] = float(expected.min())
     if table.shape == (2, 2) and expected.min() < 5:
         _, p_value = stats.fisher_exact(table)  # two-sided p does not depend on row or column order
         result.update({"test_type": "fisher_exact", "p_value": float(p_value)})
@@ -856,9 +922,16 @@ def compute_analysis_by_type(
     analysis = analyses.get(context.inferred_intent)
     if analysis is None:
         return {"type": "unknown", "error": f"Unknown intent: {context.inferred_intent}"}
-    if context.inferred_intent == AnalysisIntent.FIND_PREDICTORS:
-        # A model's level sizes count patients, so it needs the key when rows are visits.
-        result = compute_predictor_analysis(df, context, entity_key)
+    keyed: dict[AnalysisIntent, Callable[[pl.DataFrame, AnalysisContext, str | None], dict[str, Any]]] = {
+        AnalysisIntent.FIND_PREDICTORS: compute_predictor_analysis,
+        AnalysisIntent.COMPARE_GROUPS: compute_comparison_analysis,
+        AnalysisIntent.EXAMINE_SURVIVAL: compute_survival_analysis,
+        AnalysisIntent.EXPLORE_RELATIONSHIPS: compute_relationship_analysis,
+    }
+    if context.inferred_intent in keyed:
+        # A model's level sizes and a tested table's cells count patients, so these need the
+        # key when rows are visits.
+        result = keyed[context.inferred_intent](df, context, entity_key)
     else:
         result = analysis(df, context)
     # The rows the question's filters removed (plan filters or legacy context.filters), counted
@@ -902,6 +975,37 @@ def _level_sizes(values: pl.Series, keys: pl.Series | None = None) -> dict[Any, 
             .agg(pl.col("key").drop_nulls().n_unique().clip(lower_bound=1).alias("__n"))
         )
     return dict(zip(counts.get_column("value").to_list(), counts.get_column("__n").to_list(), strict=True))
+
+
+def _table_min_cell(rows: pl.Series, columns: pl.Series, keys: pl.Series | None = None) -> int:
+    """The fewest patients in any non-empty cell of the ``rows`` x ``columns`` table.
+
+    Each cell counts patients as ``_level_sizes`` does: rows, or with ``keys`` (rows are visits)
+    its distinct patient keys, never fewer than 1. A combination nobody has is no cell, so the
+    minimum is never 0. Recorded as ``table_min_cell`` and decided by ``table_statistic_refusal``.
+    ``rows`` and ``columns`` hold one value per row and no null: a null would drop its row from
+    every cell and could hide a small one, so it is refused loudly.
+    """
+    if rows.null_count() or columns.null_count():
+        raise ValueError("A table's rows and columns must not be null when its cells are counted")
+    if rows.len() == 0 or rows.len() != columns.len() or (keys is not None and keys.len() != rows.len()):
+        raise ValueError("A table's rows, columns and patient keys must be non-empty and of one length")
+    # Each (row value, column value) pair as one integer: dense ranks never join two cells,
+    # whatever characters the values contain, and compare numbers as numbers (-0.0 and 0.0 are
+    # one level, as in the contingency table).
+    row_rank, column_rank = _dense_rank(rows), _dense_rank(columns)
+    width = column_rank.n_unique() + 1  # dense ranks run 1..n_unique
+    cell = row_rank * width + column_rank
+    return min(int(n) for n in _level_sizes(cell, keys).values())
+
+
+def _dense_rank(values: pl.Series) -> pl.Series:
+    """1, 2, ... by value: numbers and booleans as numbers, anything else as text."""
+    if values.dtype == pl.Boolean:
+        values = values.cast(pl.Int8)
+    elif not values.dtype.is_numeric():
+        values = values.cast(pl.Utf8)
+    return values.rank("dense").cast(pl.Int64)
 
 
 def _ambiguous_event_message(column: str, series: pl.Series, keys: pl.Series | None = None) -> str:
@@ -1145,12 +1249,21 @@ def compute_predictor_analysis(
     }
 
 
-def compute_survival_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
+def compute_survival_analysis(
+    df: pl.DataFrame, context: AnalysisContext, entity_key: str | None = None
+) -> dict[str, Any]:
     """
     Kaplan-Meier survival, overall and by group, with a log-rank test across groups.
 
     The event column is recoded explicitly to 0/1 (event level reported). Medians are from
     each group's own fit; the overall median is from an ungrouped fit.
+
+    The log-rank test compares each group's observed events with those expected; with the group
+    sizes and event total other answers show it narrows each group's events (with every event at
+    one time it is the chi-square of the group x event table). So it is not recorded when a
+    group holds 1-10 patients with, or 1-10 without, the event: ``table_min_cell``, decided by
+    ``table_statistic_refusal`` here and in the presenter. ``entity_key``: the patient key when
+    rows are visits; the cells then count distinct patients (``_level_sizes``).
 
     Returns serializable dict (no Polars objects).
     """
@@ -1166,10 +1279,14 @@ def compute_survival_analysis(df: pl.DataFrame, context: AnalysisContext) -> dic
 
     if time_col is None or event_col is None:
         return {"type": "survival", "error": "Time and event variables required for survival analysis"}
+    unkeyed = _unread_key_refusal(df, entity_key, "survival")
+    if unkeyed is not None:
+        return unkeyed
 
     columns = [time_col, event_col] + ([group_col] if group_col else [])
     n_in_scope = df.height
-    analysis_df = _drop_missing(df.select(columns))
+    analysis_df = _with_key(df, columns, entity_key)
+    keys = _keys_of(analysis_df)
     n_used = analysis_df.height
     base: dict[str, Any] = {
         "type": "survival",
@@ -1192,10 +1309,11 @@ def compute_survival_analysis(df: pl.DataFrame, context: AnalysisContext) -> dic
         }
     event_level = binary_event_level(analysis_df[event_col])
     if event_level is None:
-        return {**base, "error": _ambiguous_event_message(event_col, analysis_df[event_col])}
+        return {**base, "error": _ambiguous_event_message(event_col, analysis_df[event_col], keys)}
     analysis_df = analysis_df.with_columns(pl.col(event_col).eq(pl.lit(event_level)).cast(pl.Int64).alias(event_col))
     n_events = int(analysis_df[event_col].sum())
 
+    analysis_df = analysis_df.select(columns)
     # PANDAS EXCEPTION: lifelines takes pandas inputs
     analysis_df_pd = analysis_df.to_pandas()
 
@@ -1222,14 +1340,42 @@ def compute_survival_analysis(df: pl.DataFrame, context: AnalysisContext) -> dic
             group_sizes[str(group)] = len(rows)
         result.update({"group_medians": group_medians, "group_sizes": group_sizes})
         if len(group_sizes) >= 2:
-            logrank = run_logrank_test(analysis_df_pd, time_col, event_col, group_col)
-            result.update({"logrank_p_value": logrank["p_value"], "logrank_statistic": logrank["test_statistic"]})
+            result["table_min_cell"] = _table_min_cell(analysis_df[group_col], analysis_df[event_col], keys)
+            if table_statistic_refusal(result["table_min_cell"]) is None:
+                logrank = run_logrank_test(analysis_df_pd, time_col, event_col, group_col)
+                result.update({"logrank_p_value": logrank["p_value"], "logrank_statistic": logrank["test_statistic"]})
     return result
 
 
-def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
+def _count_table_pair(first: pl.Series, second: pl.Series) -> bool:
+    """Whether a correlation of two columns is a statistic of their table of counts, so that r
+    with the totals narrows its cells:
+
+    * both are codes: each takes at most two values or is a coded category (``classify_variable``);
+    * or one takes at most two values and the other at most ``MAX_GROUP_LEVELS`` (a 0/1 column
+      against uncoded integer codes {1, 2, 4}: each cell is a group of patients).
+    """
+
+    def coded(series: pl.Series) -> bool:
+        return classify_variable(series) != "continuous" or series.n_unique() <= 2
+
+    if coded(first) and coded(second):
+        return True
+    return any(a.n_unique() <= 2 and b.n_unique() <= MAX_GROUP_LEVELS for a, b in ((first, second), (second, first)))
+
+
+def compute_relationship_analysis(
+    df: pl.DataFrame, context: AnalysisContext, entity_key: str | None = None
+) -> dict[str, Any]:
     """
     Compute relationship analysis (correlations).
+
+    A correlation of two coded variables (``_count_table_pair``) is a statistic of their table of
+    counts: for two 0/1 columns it is phi, which with the totals other answers show gives the
+    2x2 back. Each pair records ``table_min_cell`` (the fewest patients in a non-empty cell, or
+    ``NO_COUNT_TABLE`` for a pair with a measurement), and a pair that ``table_statistic_refusal``
+    withholds has no correlation recorded (None) and is in neither the strong nor the moderate
+    list. ``entity_key``: the patient key when rows are visits; cells then count patients.
 
     Returns serializable dict (no Polars objects).
     """
@@ -1325,8 +1471,12 @@ def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) ->
             "non_numeric_variables": non_numeric_variables,
         }
 
+    unkeyed = _unread_key_refusal(df, entity_key, "relationship")
+    if unkeyed is not None:
+        return unkeyed
+
     # Calculate correlations using only numeric variables
-    analysis_df = _drop_missing(df.select(numeric_variables))
+    analysis_df = _with_key(df, numeric_variables, entity_key)
 
     if analysis_df.height < MIN_CORRELATION_N:
         return {"type": "relationship", "error": f"Need at least {MIN_CORRELATION_N} observations with complete data"}
@@ -1335,31 +1485,31 @@ def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) ->
     numeric_df = analysis_df.select([pl.col(v).cast(pl.Float64) for v in numeric_variables])
 
     # Compute correlation matrix using Polars
-    corr_data = []
+    keys = _keys_of(analysis_df)
+    corr_data: list[dict[str, Any]] = []
     for i, var1 in enumerate(numeric_variables):
         for j, var2 in enumerate(numeric_variables):
             if i <= j:
+                min_cell: int | str = NO_COUNT_TABLE
+                corr_val: float | None
                 if i == j:
                     corr_val = 1.0
                 else:
+                    if _count_table_pair(numeric_df[var1], numeric_df[var2]):
+                        min_cell = _table_min_cell(numeric_df[var1], numeric_df[var2], keys)
                     # Compute correlation using Polars
                     corr_result = numeric_df.select(pl.corr(var1, var2))
                     corr_val = float(corr_result.item()) if corr_result.height > 0 else 0.0
-                corr_data.append({"var1": var1, "var2": var2, "correlation": corr_val})
+                    if table_statistic_refusal(min_cell, may_rest_on_no_table=True) is not None:
+                        corr_val = None  # never recorded: it would give a small cell back
+                corr_data.append({"var1": var1, "var2": var2, "correlation": corr_val, "table_min_cell": min_cell})
 
+    shown = [item for item in corr_data if item["var1"] != item["var2"] and item["correlation"] is not None]
     # Find strong correlations (|r| >= 0.5)
-    strong_correlations = [
-        item
-        for item in corr_data
-        if item["var1"] != item["var2"] and abs(float(item["correlation"])) >= 0.5  # type: ignore[arg-type]
-    ]
+    strong_correlations = [item for item in shown if abs(float(item["correlation"])) >= 0.5]
 
     # Find moderate correlations (0.3 <= |r| < 0.5)
-    moderate_correlations = [
-        item
-        for item in corr_data
-        if item["var1"] != item["var2"] and 0.3 <= abs(float(item["correlation"])) < 0.5  # type: ignore[arg-type]
-    ]
+    moderate_correlations = [item for item in shown if 0.3 <= abs(float(item["correlation"])) < 0.5]
 
     return {
         "type": "relationship",

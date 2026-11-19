@@ -60,23 +60,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        with:
-          version: ">=0.5.0"
-
-      - name: Install dependencies
-        run: uv sync --extra dev --group dev
-
-      - name: Cache bundled embedding model
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: src/clinical_analytics/resources/models/all-MiniLM-L6-v2
-          # core/embeddings.py holds MODEL_REVISION and the file hashes: bumping it changes the key.
-          key: embedding-model-${{ hashFiles('src/clinical_analytics/core/embeddings.py') }}
-
-      - name: Fetch bundled embedding model (pinned, SHA-256 checked; skips verified files)
-        run: make fetch-embedding-model
+      - name: Set up the app
+        uses: ./.github/actions/setup-app
 
       - name: Fast test suite
         run: make test-fast
@@ -91,23 +76,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        with:
-          version: ">=0.5.0"
-
-      - name: Install Python dependencies
-        run: uv sync --extra dev --group dev
-
-      - name: Cache bundled embedding model
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: src/clinical_analytics/resources/models/all-MiniLM-L6-v2
-          # core/embeddings.py holds MODEL_REVISION and the file hashes: bumping it changes the key.
-          key: embedding-model-${{ hashFiles('src/clinical_analytics/core/embeddings.py') }}
-
-      - name: Fetch bundled embedding model (pinned, SHA-256 checked; skips verified files)
-        run: make fetch-embedding-model
+      - name: Set up the app
+        uses: ./.github/actions/setup-app
 
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -142,23 +112,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        with:
-          version: ">=0.5.0"
-
-      - name: Install dependencies
-        run: uv sync --extra dev --group dev
-
-      - name: Cache bundled embedding model
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: src/clinical_analytics/resources/models/all-MiniLM-L6-v2
-          # core/embeddings.py holds MODEL_REVISION and the file hashes: bumping it changes the key.
-          key: embedding-model-${{ hashFiles('src/clinical_analytics/core/embeddings.py') }}
-
-      - name: Fetch bundled embedding model (pinned, SHA-256 checked; skips verified files)
-        run: make fetch-embedding-model
+      - name: Set up the app
+        uses: ./.github/actions/setup-app
 
       - name: Installed-wheel smoke test
         run: make smoke-installed
@@ -171,23 +126,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        with:
-          version: ">=0.5.0"
-
-      - name: Install dependencies
-        run: uv sync --extra dev --group dev
-
-      - name: Cache bundled embedding model
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: src/clinical_analytics/resources/models/all-MiniLM-L6-v2
-          # core/embeddings.py holds MODEL_REVISION and the file hashes: bumping it changes the key.
-          key: embedding-model-${{ hashFiles('src/clinical_analytics/core/embeddings.py') }}
-
-      - name: Fetch bundled embedding model (pinned, SHA-256 checked; skips verified files)
-        run: make fetch-embedding-model
+      - name: Set up the app
+        uses: ./.github/actions/setup-app
 
       - name: Run Coverage Check
         run: make test-cov-check
@@ -202,3 +142,56 @@ jobs:
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # Real public data through the real upload API, from a fresh app (docs/vision/PURPOSE.md).
+  # Downloads: physionet.org (COVID-MS, CC-BY-4.0), each file pinned by sha256 in corpus.yaml.
+  # The nightly run with a model is in acceptance-nightly.yml.
+  acceptance:
+    name: Acceptance on COVID-MS, no model
+    runs-on: ubuntu-latest
+    needs: quality
+    # Normal run: about 5 minutes of setup, under 1 of questions (each takes 0.5-2 s without a
+    # model), under 1 of upload check. Worst case, so the job ends with its table instead of
+    # being cancelled: every question slow but finishing costs 2 x ACCEPT_TIMEOUT (the harness
+    # waits once more for a timed-out query; a query still running after that makes later
+    # questions ERROR after a short grace), so 15 questions x 120 s = 30 minutes, plus 5 of
+    # setup and two app starts (300 s health limit each). Raise this with the question count.
+    # Not covered: an upload request that stalls (the harness allows each 900 s); that ends in
+    # a cancelled job, not a pass.
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up the app and the corpus cache
+        id: setup
+        uses: ./.github/actions/acceptance-setup
+
+      # Fails on any WRONG, LEAK or ERROR, and when answered right falls below the committed
+      # baseline (one aggregate count). The table goes to the job summary and an artifact.
+      - name: Ask the COVID-MS questions and check the gate
+        run: >-
+          make accept DATASET=covid_ms MODEL=none ACCEPT_TIMEOUT=60
+          ACCEPT_ARGS="--label ci --fail-on WRONG,LEAK,ERROR
+          --baseline tests/eval/corpus/baselines/covid_ms.none.json
+          --results-dir $RUNNER_TEMP/accept-results --summary $GITHUB_STEP_SUMMARY"
+
+      # Uploads each dataset in ACCEPT_LOAD_DATASETS (Makefile) into its own fresh app and checks
+      # status, rows and columns against corpus.yaml. Runs even when the questions failed, so
+      # both results reach the summary; adding a dataset is a change to that one Makefile line.
+      - name: Upload each corpus dataset and check the load
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: make accept-load ACCEPT_ARGS="--summary $GITHUB_STEP_SUMMARY"
+
+      - name: Upload the results table
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: acceptance-covid_ms-none
+          # The markdown table only (grades, tiers, latencies, reasons), not results.json.
+          path: ${{ runner.temp }}/accept-results/*/results.md
+          # warn: a run that stopped before grading (exit 2) has no table, and its own step already
+          # names why; an error here would add a second, misleading failure.
+          if-no-files-found: warn
+          retention-days: 30

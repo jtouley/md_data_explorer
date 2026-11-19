@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from clinical_analytics.analysis.grouping import HIDDEN_GROUPS_LABEL
+from clinical_analytics.analysis.grouping import HIDDEN_GROUPS_LABEL, NO_COUNT_TABLE, SMALL_CELL_TEST_REFUSAL
 from clinical_analytics.core import result_presentation
 from clinical_analytics.core.result_presentation import (
     SECONDARY_SUPPRESSED,
@@ -71,7 +71,8 @@ class TestPresentAnalysisClaims:
                     "outcome_col": "died",
                     "group_col": "arm",
                     "p_value": 0.4,
-                    "contingency": [{"died": "yes", "a": 3, "b": 4}],
+                    "contingency": [{"died": "yes", "a": 30, "b": 40}],
+                    "table_min_cell": 30,
                 },
                 "The distribution of died did not differ significantly by arm (chi-square p=0.400). Unadjusted.",
             ),
@@ -107,9 +108,9 @@ class TestPresentAnalysisClaims:
                 {
                     "type": "relationship",
                     "correlations": [
-                        {"var1": "age", "var2": "age", "correlation": 1.0},
-                        {"var1": "age", "var2": "ldl", "correlation": -0.42},
-                        {"var1": "age", "var2": "hdl", "correlation": 0.1},
+                        {"var1": "age", "var2": "age", "correlation": 1.0, "table_min_cell": NO_COUNT_TABLE},
+                        {"var1": "age", "var2": "ldl", "correlation": -0.42, "table_min_cell": NO_COUNT_TABLE},
+                        {"var1": "age", "var2": "hdl", "correlation": 0.1, "table_min_cell": NO_COUNT_TABLE},
                     ],
                     "n_observations": 250,
                 },
@@ -403,6 +404,7 @@ class TestSmallCellSuppression:
             "event_level": "1",
             "group_proportions": {"A": 5 / 105, "B": 0.0},
             "p_value": 0.03,
+            "table_min_cell": 5,
             "n_used": 200,
             "n_excluded": 0,
         }
@@ -410,9 +412,8 @@ class TestSmallCellSuppression:
         # Act
         presentation = present_analysis(analysis)
 
-        # Assert: no percentage in the claim; the 5 and its complement 100 are both hidden
-        assert "%" not in presentation["claim"].split("withheld")[0]
-        assert "withheld" in presentation["claim"]
+        # Assert: no percentage or test in the claim; the 5 and its complement 100 are both hidden
+        assert presentation["claim"] == SMALL_CELL_TEST_REFUSAL
         cells = {(row["y"], key): value for row in presentation["table"]["rows"] for key, value in row.items()}
         # Every cell is hidden (95 too, as the complement in its row), so every arm folds; the
         # fold follows from the hidden markers and claims no size (B has 95 patients). The
@@ -475,6 +476,7 @@ class TestSmallCellSuppression:
             "group_medians": {"A": 300.0, "B": 20.9},
             "group_sizes": {"A": 57, "B": 3},
             "logrank_p_value": 0.2,
+            "table_min_cell": 1,
             "n_used": 60,
             "n_excluded": 0,
         }
@@ -488,7 +490,9 @@ class TestSmallCellSuppression:
         assert "300.0" not in presentation["claim"]
         # Both labels fold into one row (no count is left visible, so A cannot keep its own row
         # without pinning B); the row claims no size, as A has 57 patients
-        assert f"{HIDDEN_GROUPS_LABEL} not shown (log-rank p=0.200; n=60)" in presentation["claim"]
+        assert f"{HIDDEN_GROUPS_LABEL} not shown (n=60)" in presentation["claim"]
+        assert "log-rank" not in presentation["claim"]  # a group x event cell is 1-10
+        assert SMALL_CELL_TEST_REFUSAL in presentation["claim"]
         assert presentation["table"]["rows"] == [
             {"arm": HIDDEN_GROUPS_LABEL, "n": "suppressed", "median days": "suppressed"}
         ]
@@ -567,6 +571,8 @@ def _chi_square(cells: tuple[int, ...]) -> dict[str, Any]:
         "event_level": "1",
         "group_proportions": {"A": a1 / (a0 + a1) if a0 + a1 else 0.0, "B": b1 / (b0 + b1) if b0 + b1 else 0.0},
         "p_value": 0.03,
+        # as compute records it: the fewest patients in a non-empty cell
+        "table_min_cell": min((c for c in (a0, b0, a1, b1) if c), default=None),
         "n_used": a0 + b0 + a1 + b1,
         "n_excluded": excluded,
     }
@@ -602,6 +608,8 @@ def _survival_grouped(cells: tuple[int, ...]) -> dict[str, Any]:
         "group_medians": {"A": 300.0, "B": 20.9},
         "group_sizes": {"A": a, "B": b},
         "logrank_p_value": 0.2,
+        # a group x event cell is at most its group: the smallest group stands in for it
+        "table_min_cell": min((n for n in (a, b) if n), default=None),
         "n_used": a + b,
         "n_excluded": excluded,
     }
@@ -1026,7 +1034,7 @@ def _relationship(cells: tuple[int, ...]) -> dict[str, Any]:
     n, excluded = cells
     return {
         "type": "relationship",
-        "correlations": [{"var1": "age", "var2": "ldl", "correlation": -0.42}],
+        "correlations": [{"var1": "age", "var2": "ldl", "correlation": -0.42, "table_min_cell": NO_COUNT_TABLE}],
         "n_observations": n,
         "n_excluded": excluded,
     }
