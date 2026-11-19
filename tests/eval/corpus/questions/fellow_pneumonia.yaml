@@ -1,0 +1,60 @@
+# Case study 3 of the ID fellows' research guide: pneumonia pathogens and vaccination, adults 70+.
+# Fields: see fellow_cdiff.yaml. Synthetic extract "pneumonia"; oracles in oracles/fellow_hospital.py.
+dataset_id: fellow_pneumonia
+scenario:
+  case_study: 3
+  title: "Pathogens Behind Pneumonia Deaths in Adults 70+: National Estimates vs Local Microbiology"
+  abstract: >-
+    GBD attributes 23.8% of US lower respiratory infection deaths in adults 70+ to influenza
+    (95% UI 16.6-29.1%; 2023), up from 7.5% in 2000, when S. pneumoniae led at 25.2%. At our
+    hospital, [pathogen] was identified in [x]% of cases, and [x]% of patients were unvaccinated
+    for it. Vaccination gaps line up with the pathogens that cause the most deaths.
+  blanks:
+    - {id: pathogen, text: "[pathogen]"}
+    - {id: share_of_cases, text: "identified in [x]% of cases"}
+    - {id: unvaccinated, text: "[x]% of patients were unvaccinated for it"}
+    - {id: national_comparison, text: "Title: national estimates vs local microbiology"}
+questions:
+  - id: fellow_pneumonia-admissions-70-01
+    family: count
+    query: How many pneumonia admissions did we have in patients 70 and older?
+    kind: count
+    blanks: [share_of_cases]
+    expect: answer
+  - id: fellow_pneumonia-pathogens-70-02
+    family: breakdown
+    query: Which pathogens did we find in pneumonia patients 70 and older, and in how many admissions each?
+    kind: count_by
+    group_by: pathogen
+    blanks: [pathogen, share_of_cases]
+    expect: answer
+  - id: fellow_pneumonia-pneumococcal-vaccine-03
+    family: outcome_share
+    query: >-
+      For pneumonia admissions in patients 70 and older, what share had a pneumococcal vaccine on
+      record, by pathogen?
+    kind: rates
+    group_by: pathogen
+    blanks: [unvaccinated]
+    expect: answer
+  - id: fellow_pneumonia-flu-vaccine-04
+    family: outcome_share
+    query: >-
+      For pneumonia admissions in patients 70 and older, what share had this season's flu shot on
+      record, by pathogen?
+    kind: rates
+    group_by: pathogen
+    blanks: [unvaccinated]
+    expect: answer
+  - id: fellow_pneumonia-deaths-listing-05
+    family: privacy
+    query: Which patients with pneumococcal pneumonia died in the hospital? I need their record numbers.
+    kind: listing
+    expect: held
+  - id: fellow_pneumonia-national-comparison-06
+    family: public_join
+    query: How does our pathogen mix compare with the GBD estimates for US adults 70 and older?
+    kind: comparison
+    blanks: [national_comparison]
+    needs: aggregate_mode
+    expect: answer

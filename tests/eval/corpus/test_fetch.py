@@ -28,6 +28,7 @@ from clinical_analytics.eval.corpus.fetch import (
     sha256_file,
     table_path,
 )
+from clinical_analytics.eval.corpus.synthetic_hospital import generate
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -180,7 +181,7 @@ class TestBuildZip:
 
 
 class TestShippedCorpus:
-    def test_loadCorpus_shippedYaml_pinsHttpsUrlsAndChecksums(self):
+    def test_loadCorpus_shippedYaml_pinsHttpsUrlsOrSyntheticSourcesAndChecksums(self):
         # Arrange / Act
         corpus = load_corpus()
 
@@ -189,7 +190,7 @@ class TestShippedCorpus:
         for dataset in corpus.values():
             assert re.fullmatch(r"[0-9a-f]{64}", dataset.upload_package.sha256 or "")
             for item in dataset.files:
-                assert item.url.startswith("https://")
+                assert item.synthetic is not None or (item.url or "").startswith("https://")
                 assert re.fullmatch(r"[0-9a-f]{64}", item.sha256)
         table = next(item for item in corpus["covid_ms"].files if item.kind == "table")
         assert table.sha256 == "8aafa48e4f5a4db9d1a15924317dce94745ea56b59e9b7cc7be2bfc4ecb97498"
@@ -289,3 +290,55 @@ class TestTablePath:
         # Act / Assert
         with pytest.raises(CorpusConfigError, match="no file of kind table"):
             table_path(dataset)
+
+
+class TestSyntheticFiles:
+    @staticmethod
+    def _dataset(sha256: str, **source: object) -> CorpusDataset:
+        item = {"path": "t.csv", "kind": "table", "sha256": sha256, **source}
+        return CorpusDataset.model_validate(
+            {
+                "name": "s",
+                "files": [item],
+                "upload_package": {"zip": "s.zip", "contents": [{"name": "t.csv", "from": "t.csv"}]},
+            }
+        )
+
+    def test_fetchFile_syntheticSource_generatedCheckedNeverDownloaded(self, tmp_path, make_downloader):
+        # Arrange
+        body = generate("measles", "dictionary", 7)
+        dataset = self._dataset(
+            hashlib.sha256(body).hexdigest(), synthetic={"extract": "measles", "part": "dictionary", "seed": 7}
+        )
+        download, calls = make_downloader({})
+
+        # Act
+        path = fetch_file(dataset.files[0], tmp_path, download=download)
+
+        # Assert
+        assert path.read_bytes() == body
+        assert calls == []
+
+    def test_fetchFile_syntheticPinStale_mismatchNamesSourceAndNextStep(self, tmp_path):
+        # Arrange
+        dataset = self._dataset("0" * 64, synthetic={"extract": "measles", "part": "dictionary", "seed": 7})
+
+        # Act / Assert
+        with pytest.raises(ChecksumMismatchError, match=r"synthetic measles/dictionary \(seed 7\).*update the pin"):
+            fetch_file(dataset.files[0], tmp_path)
+        assert not (tmp_path / "t.csv").exists()
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            pytest.param({}, id="neither"),
+            pytest.param(
+                {"url": "https://example.org/t.csv", "synthetic": {"extract": "cdiff", "part": "table", "seed": 1}},
+                id="both",
+            ),
+        ],
+    )
+    def test_corpusFile_notExactlyOneSource_rejected(self, source):
+        # Arrange / Act / Assert
+        with pytest.raises(ValueError, match="exactly one of url and synthetic"):
+            self._dataset("0" * 64, **source)

@@ -1,4 +1,4 @@
-.PHONY: help accept accept-load smoke-installed fetch-embedding-model check-data check-spdx check-lock-platforms audit-held-back golden mutation mutation-module mutation-results install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-contracts test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
+.PHONY: help accept accept-fellow accept-raw-sql accept-load smoke-installed fetch-embedding-model check-data check-spdx check-lock-platforms audit-held-back golden mutation mutation-module mutation-results install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-contracts test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
 
 # Default target
 .DEFAULT_GOAL := help
@@ -205,6 +205,27 @@ accept: ensure-venv fetch-embedding-model ## Acceptance run: make accept DATASET
 	@echo "$(GREEN)Acceptance run: $(DATASET), MODEL=$(MODEL)...$(NC)"
 	$(PYTHON_RUN) -m clinical_analytics.eval.corpus.run --dataset $(DATASET) --model $(MODEL) \
 		--ollama-base-url $(OLLAMA_BASE_URL) --timeout $(ACCEPT_TIMEOUT) $(ACCEPT_ARGS)
+
+# The ID fellows' case studies 1-4 as acceptance scenarios, on a synthetic hospital (generated from
+# a seed, never downloaded; see eval/corpus/scenario.py and eval/corpus/synthetic_hospital.py).
+# Each dataset is run on its own; every one runs even when an earlier one fails its gate.
+FELLOW_DATASETS ?= fellow_cdiff fellow_hepb fellow_pneumonia fellow_measles
+accept-fellow: ensure-venv fetch-embedding-model ## Fellow case-study scenarios through the app: make accept-fellow MODEL=none|<ollama model> [ACCEPT_ARGS=...]
+	@echo "$(GREEN)Fellow scenarios: $(FELLOW_DATASETS), MODEL=$(MODEL)...$(NC)"
+	@status=0; for dataset in $(FELLOW_DATASETS); do \
+		$(PYTHON_RUN) -m clinical_analytics.eval.corpus.run --dataset $$dataset --model $(MODEL) \
+			--ollama-base-url $(OLLAMA_BASE_URL) --timeout $(ACCEPT_TIMEOUT) $(ACCEPT_ARGS) || status=$$?; \
+	done; exit $$status
+
+# Comparison arm: the same questions answered by a model with only a raw SQL tool, no governance,
+# graded identically (eval/corpus/raw_sql_arm.py). On demand only: never in CI on pull requests.
+# ARM_MODEL is any model the Ollama-compatible server at OLLAMA_BASE_URL (loopback only) serves.
+ARM_MODEL ?= llama3.2:3b
+ARM_DATASETS ?= $(FELLOW_DATASETS)
+accept-raw-sql: ensure-venv ## Comparison arm (model + raw SQL, ungoverned): make accept-raw-sql ARM_MODEL=<model> [ARM_DATASETS=...] [ARM_ARGS=...]
+	@echo "$(GREEN)Raw-SQL comparison arm: $(ARM_DATASETS), ARM_MODEL=$(ARM_MODEL)...$(NC)"
+	$(PYTHON_RUN) -m clinical_analytics.eval.corpus.raw_sql_arm $(foreach dataset,$(ARM_DATASETS),--dataset $(dataset)) \
+		--model $(ARM_MODEL) --ollama-base-url $(OLLAMA_BASE_URL) $(ARM_ARGS)
 
 # CI upload check: upload each dataset into a fresh app and check status, rows and columns against
 # corpus.yaml (no questions asked). List only datasets whose formats load on this branch; adding
