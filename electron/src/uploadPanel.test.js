@@ -8,6 +8,8 @@ import {
   formatFileSize,
   isAllowedExtension,
   renderUploadArea,
+  uploadIsUsable,
+  uploadResultText,
 } from './uploadPanel.js';
 import { dataCheckStatusNote } from './dataCheckPanel.js';
 
@@ -26,16 +28,20 @@ describe('normalizeUploadResponse', () => {
       dataset_name: '',
       status: 'failed',
       message: '',
+      failed_checks: [],
       quality: null,
       sheet_note: '',
+      unit_note: '',
     });
     expect(normalizeUploadResponse(undefined)).toEqual({
       upload_id: '',
       dataset_name: '',
       status: 'failed',
       message: '',
+      failed_checks: [],
       quality: null,
       sheet_note: '',
+      unit_note: '',
     });
   });
 });
@@ -228,5 +234,127 @@ describe('readyHeadline (L1)', () => {
     // Assert
     expect(text).toBe(expected);
     expect(text).toMatch(/^[A-Z]/);
+  });
+});
+
+describe('needs_review uploads', () => {
+  const review = {
+    upload_id: 'u_1',
+    status: 'needs_review',
+    message:
+      'Uploaded, but a data check failed: patient_id: 127 repeated values. Questions that count patients will first ask you to confirm that rows are visits.',
+  };
+
+  test.each([
+    [{ upload_id: 'u_1', status: 'ready' }, true],
+    [{ upload_id: 'u_1', status: 'needs_review' }, true],
+    [{ upload_id: '', status: 'needs_review' }, false],
+    [{ upload_id: 'u_1', status: 'failed' }, false],
+  ])('uploadIsUsable(%o) is %s', (result, expected) => {
+    expect(uploadIsUsable(result)).toBe(expected);
+  });
+
+  test('normalizeUploadResponse keeps failed check ids and drops non-strings', () => {
+    const result = normalizeUploadResponse({
+      ...review,
+      failed_checks: ['patient_id_no_duplicates', 3],
+    });
+    expect(result.failed_checks).toEqual(['patient_id_no_duplicates']);
+  });
+
+  test('the status line names the cohort and the failed check, never "ready"', () => {
+    const text = uploadResultText(
+      review,
+      'deaths',
+      'Data check found 2 things to review in cohort details.'
+    );
+    expect(text).toBe(`The cohort “deaths” needs review. ${review.message}`);
+    expect(text).not.toMatch(/ready/);
+  });
+
+  test('a needs_review upload without a message still says how to see the check', () => {
+    expect(uploadResultText({ status: 'needs_review', message: ' ' }, '', null)).toBe(
+      'The cohort needs review. A data check failed. Open the cohort details to see it.'
+    );
+  });
+
+  test('a ready upload without a name uses the given sentence', () => {
+    expect(
+      uploadResultText({ status: 'ready', message: '' }, '', null, 'The sample cohort is ready.')
+    ).toBe('The sample cohort is ready.');
+  });
+
+  const sheetNote =
+    'Read 1 of 2 sheets: “Deaths”. Not read: “Notes”. To use another sheet, save it as its own file and upload it.';
+
+  test('a ready upload shows the sheet note before the data check', () => {
+    const result = normalizeUploadResponse({
+      upload_id: 'u_1',
+      status: 'ready',
+      sheet_note: sheetNote,
+      quality: { status: 'not_run', reason: 'x' },
+    });
+    expect(uploadResultText(result, 'deaths', dataCheckStatusNote(result.quality))).toBe(
+      `${readyHeadline('deaths')} ${sheetNote} Data check could not run.`
+    );
+  });
+
+  test('a needs_review upload keeps the failed check and the sheet note', () => {
+    const result = normalizeUploadResponse({ ...review, sheet_note: sheetNote });
+    const text = uploadResultText(result, 'deaths', null);
+    expect(text).toBe(`The cohort “deaths” needs review. ${review.message} ${sheetNote}`);
+    expect(text).not.toMatch(/ready/);
+  });
+
+  test('a needs_review upload from a one-sheet file adds nothing after the check', () => {
+    const result = normalizeUploadResponse({ ...review, sheet_note: '' });
+    expect(uploadResultText(result, 'deaths', null)).toBe(
+      `The cohort “deaths” needs review. ${review.message}`
+    );
+  });
+});
+
+describe('upload unit note (rows, not patients)', () => {
+  const unitNote =
+    'No column in this file identifies a patient, so each row was numbered (“row_number”). ' +
+    'Answers count rows, not patients. To count patients, add a column with one ID for each ' +
+    'patient, named patient_id, and upload the file again.';
+  const sheetNote =
+    'Read 1 of 2 sheets: “Deaths”. Not read: “Notes”. To use another sheet, save it as its own file and upload it.';
+
+  test.each([
+    [{ unit_note: unitNote }, unitNote],
+    [{ unit_note: `  ${unitNote} ` }, unitNote],
+    [{ unit_note: '' }, ''],
+    [{ unit_note: null }, ''],
+    [{ unit_note: 7 }, ''],
+    [{}, ''],
+  ])('normalizeUploadResponse keeps only a text unit note (%#)', (raw, expected) => {
+    expect(normalizeUploadResponse(raw).unit_note).toBe(expected);
+  });
+
+  test('a ready keyless upload says rows, not patients, right after the headline', () => {
+    const result = normalizeUploadResponse({
+      upload_id: 'u_2',
+      status: 'ready',
+      unit_note: unitNote,
+      sheet_note: sheetNote,
+      quality: { status: 'not_run', reason: 'x' },
+    });
+    expect(uploadResultText(result, 'sepsis', dataCheckStatusNote(result.quality))).toBe(
+      `${readyHeadline('sepsis')} ${unitNote} ${sheetNote} Data check could not run.`
+    );
+  });
+
+  test('a needs_review keyless upload keeps the unit note after the failed check', () => {
+    const result = normalizeUploadResponse({
+      upload_id: 'u_3',
+      status: 'needs_review',
+      message: 'Uploaded, but a data check failed: x.',
+      unit_note: unitNote,
+    });
+    expect(uploadResultText(result, 'sepsis', null)).toBe(
+      `The cohort “sepsis” needs review. Uploaded, but a data check failed: x. ${unitNote}`
+    );
   });
 });
