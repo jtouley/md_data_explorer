@@ -1,4 +1,5 @@
-"""Second review's 103 adversarial probes: each is answered correctly, held, or refused.
+"""Second review's 103 adversarial probes and the geography probes: each is answered
+correctly, held, or refused.
 
 Never a success with a different value, and never a success for a question with no single
 correct answer. Result extraction and comparison follow the review script, independently of
@@ -14,7 +15,7 @@ import polars as pl
 import pytest
 
 from clinical_analytics.eval.headless import ask, register_frame
-from tests.eval.adversarial_probes import own_frame, probes
+from tests.eval.adversarial_probes import geo_frame, geo_probes, own_frame, probes
 
 _COHORT = "tests/fixtures/synthetic/cohort.csv"
 _STATS = ("mean", "median", "min", "max")
@@ -26,9 +27,14 @@ def _probe_set() -> list[tuple[str, str, Any]]:
 
     coh = pl.read_csv(repo_root() / _COHORT)
     own = own_frame()
+    geo = geo_frame()
     register_frame("probe_coh", coh)
     register_frame("probe_own", own)
-    return probes(coh, own)
+    register_frame("probe_geo", geo)
+    return probes(coh, own, geo)
+
+
+_PROBE_COUNT = 103 + len(geo_probes(geo_frame()))
 
 
 def _answer(result: dict[str, Any]) -> Any:
@@ -76,13 +82,13 @@ def test_adversarialProbes_set_hasEveryReviewQuestionOnce() -> None:
     questions = [(dataset, question) for dataset, question, _truth in _probe_set()]
 
     # Assert
-    assert len(questions) == 103
+    assert len(questions) == _PROBE_COUNT
     assert len(set(questions)) == len(questions)
 
 
 @pytest.mark.slow
 @pytest.mark.integration
-@pytest.mark.parametrize("index", range(103), ids=lambda index: f"probe{index:03d}")
+@pytest.mark.parametrize("index", range(_PROBE_COUNT), ids=lambda index: f"probe{index:03d}")
 def test_adversarialProbe_question_answeredCorrectlyOrHeld(index: int) -> None:
     # Arrange
     dataset, question, truth = _probe_set()[index]

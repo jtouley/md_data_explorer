@@ -31,6 +31,7 @@ from clinical_analytics.core.config_loader import load_patterns_config
 from clinical_analytics.core.data_home import nl_learning_dir
 from clinical_analytics.core.log_redaction import stable_hash, text_fingerprint
 from clinical_analytics.core.query_plan import CohortStep, FilterSpec, QueryPlan, Statistic
+from clinical_analytics.core.question_vocabulary import GROUPING_WORDS
 from clinical_analytics.core.value_index import ColumnValues
 
 logger = structlog.get_logger()
@@ -670,6 +671,7 @@ class NLQueryEngine:
 
         # Refinement handling: If LLM returns a stub with low confidence and we have history,
         # try to inherit intent from previous query
+        inherited_from_history = False
         if (
             intent
             and intent.confidence < 0.5
@@ -685,6 +687,7 @@ class NLQueryEngine:
             if previous_intent in ["COUNT", "COMPARE_GROUPS", "FIND_PREDICTORS", "CORRELATIONS"]:
                 intent.intent_type = previous_intent
                 intent.confidence = max(intent.confidence, 0.6)  # Boost confidence for refinements
+                inherited_from_history = True
 
                 # Inherit other relevant fields from previous query
                 if "group_by" in previous and not intent.grouping_variable:
@@ -761,12 +764,14 @@ class NLQueryEngine:
             )
 
         # Post-process: Extract and assign variables if missing (runs in src, not UI)
-        # Skip variable extraction for refinement queries that already inherited variables
-        is_refinement_with_inherited_vars = (
-            intent
-            and intent.confidence >= 0.6  # Refinement-inherited queries have >= 0.6 confidence
-            and conversation_history
-            and len(conversation_history) > 0
+        # Skip variable extraction for a refinement of the previous question: one that inherited
+        # its variables above, or a refinement phrase ("exclude statin users") the parser read
+        # with confidence, so the word being filtered out never becomes the measure. Any earlier
+        # question in the session is not enough: "count by cause_name" asked second must still
+        # group by the column it names, and so must a refinement that names one ("by ...").
+        names_grouping = bool(GROUPING_WORDS & set(re.findall(r"[a-z]+", query_lower)))
+        is_refinement_with_inherited_vars = inherited_from_history or bool(
+            intent and is_likely_refinement and conversation_history and intent.confidence >= 0.6 and not names_grouping
         )
 
         if intent and intent.intent_type in ["COMPARE_GROUPS", "FIND_PREDICTORS", "CORRELATIONS"]:

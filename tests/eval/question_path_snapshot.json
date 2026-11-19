@@ -2086,6 +2086,546 @@
   "rate": null,
   "success": true
  },
+ "adversarial|snap_geo|average mx by county": {
+  "confidence": 0.9,
+  "failure_reason": "I couldn't use the words 'by' and 'county' in the plan; rephrase them with columns or values from your data.",
+  "group_by": null,
+  "held": true,
+  "intent": "DESCRIBE",
+  "issues": [],
+  "limits": [],
+  "metric": "mx",
+  "plan_line": "DESCRIBE \u00b7 outcome mx \u00b7 grouping none \u00b7 statistic mean \u00b7 filters none \u00b7 test descriptive statistics",
+  "presentation": {
+   "claim": null,
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": false
+ },
+ "adversarial|snap_geo|average mx by location": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "location_name",
+  "held": false,
+  "intent": "DESCRIBE",
+  "issues": [],
+  "limits": [],
+  "metric": "mx",
+  "plan_line": null,
+  "presentation": {
+   "claim": "Mean mx by location_name: Adams County 221.75, Boulder County 227.50, Colorado 235.25, Count Lake 226.50, El Paso County 214.50, Las Animas County 216.00 (n=240 patients). Unadjusted.",
+   "table": {
+    "columns": [
+     "location_name",
+     "mean mx",
+     "n"
+    ],
+    "rows": [
+     {
+      "location_name": "Adams County",
+      "mean mx": 221.75,
+      "n": 40
+     },
+     {
+      "location_name": "Boulder County",
+      "mean mx": 227.5,
+      "n": 40
+     },
+     {
+      "location_name": "Colorado",
+      "mean mx": 235.25,
+      "n": 40
+     },
+     {
+      "location_name": "Count Lake",
+      "mean mx": 226.5,
+      "n": 40
+     },
+     {
+      "location_name": "El Paso County",
+      "mean mx": 214.5,
+      "n": 40
+     },
+     {
+      "location_name": "Las Animas County",
+      "mean mx": 216.0,
+      "n": 40
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "adversarial|snap_geo|average mx in New Mexico": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": null,
+  "held": false,
+  "intent": "DESCRIBE",
+  "issues": [],
+  "limits": [
+   [
+    "eq",
+    "state",
+    "New Mexico"
+   ]
+  ],
+  "metric": "mx",
+  "plan_line": null,
+  "presentation": {
+   "claim": "Mean mx was 225.57 (SD 73.04; median 226.00; n=84 patients).",
+   "table": {
+    "columns": [
+     "variable",
+     "n",
+     "mean",
+     "median",
+     "std",
+     "min",
+     "max"
+    ],
+    "rows": [
+     {
+      "max": 349.0,
+      "mean": 225.5714,
+      "median": 226.0,
+      "min": 100.0,
+      "n": 84,
+      "std": 73.0379,
+      "variable": "mx"
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "adversarial|snap_geo|count": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": null,
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "Total count: 240 patients.",
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "adversarial|snap_geo|count by county": {
+  "confidence": 0.9,
+  "failure_reason": "I couldn't use the words 'by' and 'county' in the plan; rephrase them with columns or values from your data.",
+  "group_by": null,
+  "held": true,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping none \u00b7 filters none \u00b7 test count",
+  "presentation": {
+   "claim": null,
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": false
+ },
+ "adversarial|snap_geo|count by sex": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "sex",
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "240 patients across 2 sex groups.",
+   "table": {
+    "columns": [
+     "sex",
+     "count"
+    ],
+    "rows": [
+     {
+      "count": 114,
+      "sex": "Female"
+     },
+     {
+      "count": 126,
+      "sex": "Male"
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "adversarial|snap_geo|count by state": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "state",
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "240 patients across 3 state groups.",
+   "table": {
+    "columns": [
+     "state",
+     "count"
+    ],
+    "rows": [
+     {
+      "count": 84,
+      "state": "New Mexico"
+     },
+     {
+      "count": 79,
+      "state": "North Dakota"
+     },
+     {
+      "count": 77,
+      "state": "South Dakota"
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "adversarial|snap_geo|count in las animas county": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": null,
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [
+   [
+    "eq",
+    "location_name",
+    "Las Animas County"
+   ]
+  ],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "Total count: 40 patients.",
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "adversarial|snap_geo|how many patients in Boulder County by sex?": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "sex",
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [
+   [
+    "eq",
+    "location_name",
+    "Boulder County"
+   ]
+  ],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "40 patients across 2 sex groups.",
+   "table": {
+    "columns": [
+     "sex",
+     "count"
+    ],
+    "rows": [
+     {
+      "count": 19,
+      "sex": "Female"
+     },
+     {
+      "count": 21,
+      "sex": "Male"
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "adversarial|snap_geo|how many patients in El Paso County?": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": null,
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [
+   [
+    "eq",
+    "location_name",
+    "El Paso County"
+   ]
+  ],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "Total count: 40 patients.",
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "adversarial|snap_geo|how many patients in Las Animas County?": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": null,
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [
+   [
+    "eq",
+    "location_name",
+    "Las Animas County"
+   ]
+  ],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "Total count: 40 patients.",
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "adversarial|snap_geo|how many patients in a county?": {
+  "confidence": 0.9,
+  "failure_reason": "I couldn't use the word 'county' in the plan; rephrase it with a column or value from your data.",
+  "group_by": null,
+  "held": true,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping none \u00b7 filters none \u00b7 test count",
+  "presentation": {
+   "claim": null,
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": false
+ },
+ "adversarial|snap_geo|how many patients in count lake?": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": null,
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [
+   [
+    "eq",
+    "location_name",
+    "Count Lake"
+   ]
+  ],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "Total count: 40 patients.",
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "adversarial|snap_geo|how many patients in dakota?": {
+  "confidence": 0.9,
+  "failure_reason": "I couldn't use the word 'dakota' in the plan; rephrase it with a column or value from your data.",
+  "group_by": null,
+  "held": true,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping none \u00b7 filters none \u00b7 test count",
+  "presentation": {
+   "claim": null,
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": false
+ },
+ "adversarial|snap_geo|how many patients in north dakota?": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": null,
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [
+   [
+    "eq",
+    "state",
+    "North Dakota"
+   ]
+  ],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "Total count: 79 patients.",
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "adversarial|snap_geo|how many patients in the counties?": {
+  "confidence": 0.9,
+  "failure_reason": "I couldn't use the word 'counties' in the plan; rephrase it with a column or value from your data.",
+  "group_by": null,
+  "held": true,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping none \u00b7 filters none \u00b7 test count",
+  "presentation": {
+   "claim": null,
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": false
+ },
+ "adversarial|snap_geo|how many patients per sex?": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "sex",
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "240 patients across 2 sex groups.",
+   "table": {
+    "columns": [
+     "sex",
+     "count"
+    ],
+    "rows": [
+     {
+      "count": 114,
+      "sex": "Female"
+     },
+     {
+      "count": 126,
+      "sex": "Male"
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "adversarial|snap_geo|mean mx by sex": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "sex",
+  "held": false,
+  "intent": "DESCRIBE",
+  "issues": [],
+  "limits": [],
+  "metric": "mx",
+  "plan_line": null,
+  "presentation": {
+   "claim": "Mean mx by sex: Female 225.32, Male 222.01 (n=240 patients). Unadjusted.",
+   "table": {
+    "columns": [
+     "sex",
+     "mean mx",
+     "n"
+    ],
+    "rows": [
+     {
+      "mean mx": 225.3246,
+      "n": 114,
+      "sex": "Female"
+     },
+     {
+      "mean mx": 222.0079,
+      "n": 126,
+      "sex": "Male"
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "adversarial|snap_geo|number of patients by sex": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "sex",
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "240 patients across 2 sex groups.",
+   "table": {
+    "columns": [
+     "sex",
+     "count"
+    ],
+    "rows": [
+     {
+      "count": 114,
+      "sex": "Female"
+     },
+     {
+      "count": 126,
+      "sex": "Male"
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
  "adversarial|snap_own|are men more likely to be readmitted?": {
   "confidence": 0.9,
   "failure_reason": null,
@@ -7249,6 +7789,39 @@
   "rate": null,
   "success": false
  },
+ "golden|snap_golden|count by status": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "status",
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "100 patients across 2 status groups.",
+   "table": {
+    "columns": [
+     "status",
+     "count"
+    ],
+    "rows": [
+     {
+      "count": 66,
+      "status": "active"
+     },
+     {
+      "count": 34,
+      "status": "inactive"
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
  "golden|snap_golden|describe cholesterol levels": {
   "confidence": 0.9,
   "failure_reason": "I couldn't match 'describe' and 'levels' to a column or value in this dataset; rephrase with a column name from your data, or leave them out.",
@@ -7518,6 +8091,39 @@
   "presentation": {
    "claim": "Total count: 100 patients.",
    "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "golden|snap_golden|number of patients per treatment": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "treatment",
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "100 patients across 2 treatment groups.",
+   "table": {
+    "columns": [
+     "treatment",
+     "count"
+    ],
+    "rows": [
+     {
+      "count": 50,
+      "treatment": "A"
+     },
+     {
+      "count": 50,
+      "treatment": "B"
+     }
+    ]
+   }
   },
   "proportion": null,
   "rate": null,
@@ -12340,6 +12946,310 @@
   "rate": null,
   "success": false
  },
+ "over_holding|snap_geo|average mx by county": {
+  "confidence": 0.9,
+  "failure_reason": "I couldn't use the words 'by' and 'county' in the plan; rephrase them with columns or values from your data.",
+  "group_by": null,
+  "held": true,
+  "intent": "DESCRIBE",
+  "issues": [],
+  "limits": [],
+  "metric": "mx",
+  "plan_line": "DESCRIBE \u00b7 outcome mx \u00b7 grouping none \u00b7 statistic mean \u00b7 filters none \u00b7 test descriptive statistics",
+  "presentation": {
+   "claim": null,
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": false
+ },
+ "over_holding|snap_geo|count by county": {
+  "confidence": 0.9,
+  "failure_reason": "I couldn't use the words 'by' and 'county' in the plan; rephrase them with columns or values from your data.",
+  "group_by": null,
+  "held": true,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping none \u00b7 filters none \u00b7 test count",
+  "presentation": {
+   "claim": null,
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": false
+ },
+ "over_holding|snap_geo|count by sex": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "sex",
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "240 patients across 2 sex groups.",
+   "table": {
+    "columns": [
+     "sex",
+     "count"
+    ],
+    "rows": [
+     {
+      "count": 114,
+      "sex": "Female"
+     },
+     {
+      "count": 126,
+      "sex": "Male"
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "over_holding|snap_geo|count by state": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "state",
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "240 patients across 3 state groups.",
+   "table": {
+    "columns": [
+     "state",
+     "count"
+    ],
+    "rows": [
+     {
+      "count": 84,
+      "state": "New Mexico"
+     },
+     {
+      "count": 79,
+      "state": "North Dakota"
+     },
+     {
+      "count": 77,
+      "state": "South Dakota"
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "over_holding|snap_geo|count in las animas county": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": null,
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [
+   [
+    "eq",
+    "location_name",
+    "Las Animas County"
+   ]
+  ],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "Total count: 40 patients.",
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "over_holding|snap_geo|how many patients in Las Animas County?": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": null,
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [
+   [
+    "eq",
+    "location_name",
+    "Las Animas County"
+   ]
+  ],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "Total count: 40 patients.",
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "over_holding|snap_geo|how many patients in a county?": {
+  "confidence": 0.9,
+  "failure_reason": "I couldn't use the word 'county' in the plan; rephrase it with a column or value from your data.",
+  "group_by": null,
+  "held": true,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping none \u00b7 filters none \u00b7 test count",
+  "presentation": {
+   "claim": null,
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": false
+ },
+ "over_holding|snap_geo|how many patients in count lake?": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": null,
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [
+   [
+    "eq",
+    "location_name",
+    "Count Lake"
+   ]
+  ],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "Total count: 40 patients.",
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "over_holding|snap_geo|how many patients in dakota?": {
+  "confidence": 0.9,
+  "failure_reason": "I couldn't use the word 'dakota' in the plan; rephrase it with a column or value from your data.",
+  "group_by": null,
+  "held": true,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping none \u00b7 filters none \u00b7 test count",
+  "presentation": {
+   "claim": null,
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": false
+ },
+ "over_holding|snap_geo|how many patients in north dakota?": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": null,
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [
+   [
+    "eq",
+    "state",
+    "North Dakota"
+   ]
+  ],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "Total count: 79 patients.",
+   "table": null
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "over_holding|snap_geo|how many patients per sex?": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "sex",
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "240 patients across 2 sex groups.",
+   "table": {
+    "columns": [
+     "sex",
+     "count"
+    ],
+    "rows": [
+     {
+      "count": 114,
+      "sex": "Female"
+     },
+     {
+      "count": 126,
+      "sex": "Male"
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
+ "over_holding|snap_geo|number of patients by sex": {
+  "confidence": 0.9,
+  "failure_reason": null,
+  "group_by": "sex",
+  "held": false,
+  "intent": "COUNT",
+  "issues": [],
+  "limits": [],
+  "metric": null,
+  "plan_line": null,
+  "presentation": {
+   "claim": "240 patients across 2 sex groups.",
+   "table": {
+    "columns": [
+     "sex",
+     "count"
+    ],
+    "rows": [
+     {
+      "count": 114,
+      "sex": "Female"
+     },
+     {
+      "count": 126,
+      "sex": "Male"
+     }
+    ]
+   }
+  },
+  "proportion": null,
+  "rate": null,
+  "success": true
+ },
  "over_holding|snap_own|are men more likely to be readmitted?": {
   "confidence": 0.9,
   "failure_reason": null,
@@ -13079,48 +13989,21 @@
  },
  "reviewer|cohort|average ldl in northern patients?": {
   "confidence": 0.9,
-  "failure_reason": null,
+  "failure_reason": "I couldn't use the word 'northern' in the plan; rephrase it with a column or value from your data.",
   "group_by": null,
-  "held": false,
+  "held": true,
   "intent": "DESCRIBE",
   "issues": [],
-  "limits": [
-   [
-    "eq",
-    "site",
-    "North"
-   ]
-  ],
+  "limits": [],
   "metric": "ldl",
-  "plan_line": null,
+  "plan_line": "DESCRIBE \u00b7 outcome ldl \u00b7 grouping none \u00b7 statistic mean \u00b7 filters none \u00b7 test descriptive statistics",
   "presentation": {
-   "claim": "Mean ldl was 126.04 (SD 17.36; median 126.35; n hidden). Data check: ldl has 5.8% of its values missing.",
-   "table": {
-    "columns": [
-     "variable",
-     "n",
-     "mean",
-     "median",
-     "std",
-     "min",
-     "max"
-    ],
-    "rows": [
-     {
-      "max": 169.5,
-      "mean": 126.043,
-      "median": 126.35,
-      "min": 80.9,
-      "n": "suppressed",
-      "std": 17.3592,
-      "variable": "ldl"
-     }
-    ]
-   }
+   "claim": null,
+   "table": null
   },
   "proportion": null,
   "rate": null,
-  "success": true
+  "success": false
  },
  "reviewer|cohort|compare hdl by sex for patients over 65": {
   "confidence": 0.95,
@@ -13907,27 +14790,21 @@
  },
  "reviewer|cohort|how many patients in the northern site?": {
   "confidence": 0.9,
-  "failure_reason": null,
+  "failure_reason": "I couldn't use the words 'northern' and 'site' in the plan; rephrase them with columns or values from your data.",
   "group_by": null,
-  "held": false,
+  "held": true,
   "intent": "COUNT",
   "issues": [],
-  "limits": [
-   [
-    "eq",
-    "site",
-    "North"
-   ]
-  ],
+  "limits": [],
   "metric": null,
-  "plan_line": null,
+  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping none \u00b7 filters none \u00b7 test count",
   "presentation": {
-   "claim": "Total count: 151 patients.",
+   "claim": null,
    "table": null
   },
   "proportion": null,
   "rate": null,
-  "success": true
+  "success": false
  },
  "reviewer|cohort|how many patients in the south?": {
   "confidence": 0.9,
