@@ -78,7 +78,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Statistics for age are not shown because fewer than 11 patients have one of its values, or that was not checked, and with n it would let their number be worked out.",
+   "claim": "Mean age was 60.07 (SD 5.27; median 60.00; n=152 patients).",
    "table": {
     "columns": [
      "variable",
@@ -91,12 +91,12 @@
     ],
     "rows": [
      {
-      "max": "suppressed",
-      "mean": "suppressed",
-      "median": "suppressed",
-      "min": "suppressed",
+      "max": 69.0,
+      "mean": 60.0724,
+      "median": 60.0,
+      "min": 51.0,
       "n": 152,
-      "std": "suppressed",
+      "std": 5.2728,
       "variable": "age"
      }
     ]
@@ -8925,7 +8925,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Statistics for age are not shown because fewer than 11 patients have one of its values, or that was not checked, and with n it would let their number be worked out.",
+   "claim": "Mean age was 81.70 (SD 1.62; median 82.00; n=44 patients).",
    "table": {
     "columns": [
      "variable",
@@ -8938,12 +8938,12 @@
     ],
     "rows": [
      {
-      "max": "suppressed",
-      "mean": "suppressed",
-      "median": "suppressed",
-      "min": "suppressed",
+      "max": 84.0,
+      "mean": 81.7045,
+      "median": 82.0,
+      "min": 79.0,
       "n": 44,
-      "std": "suppressed",
+      "std": 1.6222,
       "variable": "age"
      }
     ]
@@ -11778,7 +11778,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Statistics for age are not shown because fewer than 11 patients have one of its values, or that was not checked, and with n it would let their number be worked out.",
+   "claim": "Mean age was 60.07 (SD 5.27; median 60.00; n=152 patients).",
    "table": {
     "columns": [
      "variable",
@@ -11791,12 +11791,12 @@
     ],
     "rows": [
      {
-      "max": "suppressed",
-      "mean": "suppressed",
-      "median": "suppressed",
-      "min": "suppressed",
+      "max": 69.0,
+      "mean": 60.0724,
+      "median": 60.0,
+      "min": 51.0,
       "n": 152,
-      "std": "suppressed",
+      "std": 5.2728,
       "variable": "age"
      }
     ]

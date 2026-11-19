@@ -25,7 +25,13 @@ import pandas as pd
 import polars as pl
 from ibis import _
 
-from clinical_analytics.analysis.grouping import NO_COUNT_TABLE, behaves_like_categories
+from clinical_analytics.analysis.cell_solvability import statistics_level
+from clinical_analytics.analysis.grouping import (
+    NO_COUNT_TABLE,
+    STATISTICS_LEVEL,
+    behaves_like_categories,
+    is_small_level,
+)
 from clinical_analytics.analysis.numeric_text import is_missing_token, is_numeric_text, missing_token_sql
 from clinical_analytics.core import nl_query_config
 from clinical_analytics.core.execution_gate import evaluate_execution_gate
@@ -3014,11 +3020,30 @@ class SemanticLayer:
             view = self._filtered_view(plan)
             finite = f" AND isfinite({metric})" if view[str(plan.metric)].type().is_floating() else ""
             sql = (
-                f"SELECT {group} AS g, {metric} AS v, GROUPING({group}) AS overall, {patients} AS n "
-                f"FROM _cohort_in WHERE {metric} IS NOT NULL{finite} "
+                f"SELECT {group} AS g, {metric} AS v, GROUPING({group}) AS overall, {patients} AS n, "
+                f"count(*) AS r FROM _cohort_in WHERE {metric} IS NOT NULL{finite} "
                 f"GROUP BY GROUPING SETS (({group}, {metric}), ({metric}))"
             )
             cells = self._duck_aggregate(view, sql)
+            one_row_each = True
+            # Whether a patient has more than one row: asked only when the exact test may run
+            # (a hidden cell, the metric like categories over every group), as it alone needs it.
+            pooled_cells = cells.filter(pl.col("overall") == 1)
+            may_solve = bool(
+                (cells.filter(pl.col("overall") == 0).get_column("n") < nl_query_config.SMALL_CELL_THRESHOLD).any()
+            )
+            may_solve = may_solve and behaves_like_categories(
+                dict(zip(pooled_cells.get_column("v").to_list(), pooled_cells.get_column("n").to_list(), strict=True))
+            )
+            if entity and may_solve:
+                key = _quote_ident(entity)
+                grain = self._duck_aggregate(
+                    view,
+                    f"SELECT count(*) AS r, count(DISTINCT {key}) AS k, count({key}) AS keyed "
+                    f"FROM _cohort_in WHERE {metric} IS NOT NULL{finite}",
+                )
+                rows, keys, keyed = grain.row(0)
+                one_row_each = rows == keys == keyed
         overall = cells.filter(pl.col("overall") == 1)
         pooled = behaves_like_categories(
             dict(zip(overall.get_column("v").to_list(), overall.get_column("n").to_list(), strict=True))
@@ -3036,7 +3061,31 @@ class SemanticLayer:
                 out.append({**g, "table_min_cell": min(sizes.values())})
             else:
                 out.append({**g, "table_min_cell": NO_COUNT_TABLE})
+        hidden = [g for g in out if isinstance(g.get("table_min_cell"), int) and is_small_level(g["table_min_cell"])]
+        if pooled and hidden:
+            level = self._statistics_level(grouped, out, one_row_each)
+            for g in hidden:
+                g[STATISTICS_LEVEL] = level
         return out
+
+    @staticmethod
+    def _statistics_level(cells: pl.DataFrame, groups: list[dict[str, Any]], one_row_each: bool) -> str:
+        """The exact test's level (``cell_solvability.statistics_level``) for a grouped statistic
+        whose metric behaves like categories over every group, from the (group, value) cells of
+        ``_with_value_cells``: "none" (nothing relaxed) when a patient has more than one row (the
+        hidden counts are patients, the statistic is over rows), or when the cells do not add up
+        to each group's n (the statistic was then over other rows than the cells: fail closed)."""
+        if not one_row_each or (cells.get_column("n") != cells.get_column("r")).any():
+            return "none"
+        per_group: dict[Any, int] = {}
+        for g, n in cells.select("g", "n").iter_rows():
+            per_group[g] = per_group.get(g, 0) + int(n)
+        if any(per_group.get(g["group"], 0) != g.get("n") for g in groups) or sum(per_group.values()) != sum(
+            int(g.get("n") or 0) for g in groups
+        ):
+            return "none"
+        counts = {(v, g): int(n) for g, v, n in cells.select("g", "v", "n").iter_rows()}
+        return statistics_level(counts).level
 
     def _share_sql(self, view: Any, column: str, value: Any, group: str | None) -> str:
         """Share of patients whose ``column`` equals ``value``, among those with it recorded.

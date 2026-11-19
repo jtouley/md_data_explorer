@@ -23,10 +23,12 @@ from clinical_analytics.analysis.grouping import (
     NO_COUNT_TABLE,
     OTHER_LABEL,
     SMALL_CELL_TEST_REFUSAL,
+    STATISTICS_LEVEL,
     is_small_level,
     predictor_model_refusal,
     table_statistic_refusal,
     too_many_levels_message,
+    value_statistic_refusal,
 )
 from clinical_analytics.analysis.sample_floors import (
     MIN_COMPARISON_N,
@@ -614,7 +616,9 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
         # the table rule compute applied. Compute records ``table_min_cell`` for every comparison
         # of means (``NO_COUNT_TABLE`` for a measurement); a payload without it skipped that
         # check, or was stored before it, and is withheld (fail closed).
-        mean_refusal = table_statistic_refusal(analysis.get("table_min_cell"), may_rest_on_no_table=True)
+        # The exact test (``STATISTICS_LEVEL``) may find that the means and SDs a test shows pin
+        # no hidden cell; ``value_statistic_refusal`` is the decision compute made.
+        mean_refusal = value_statistic_refusal(analysis.get("table_min_cell"), analysis.get(STATISTICS_LEVEL), "std")
         if mean_refusal is not None:
             return {"claim": mean_refusal, "table": None}
     if test_type in ("welch_t_test", "t_test", "anova"):
@@ -956,12 +960,25 @@ def _present_descriptive(analysis: Mapping[str, Any]) -> Presentation:
                 stats = {k: _mask(v) for k, v in stats.items()}
                 reason = "n is hidden (n hidden)" if _is_count(n) else "n is missing"
                 claim = f"Statistics for {name} are not shown because {reason}."
-            elif _value_statistic_withheld(analysis, n_hidden):
+            elif all(_value_statistic_withheld(analysis, n_hidden, k) for k in stats):
                 # A column that behaves like categories: its mean is a share of the patients at
                 # each value, so its statistics follow the share rule (``_value_statistic_withheld``).
                 stats = {k: _mask(v) for k, v in stats.items()}
                 reason = "n is hidden (n hidden)" if n_hidden else VALUE_CELL_REASON
                 claim = f"Statistics for {name} are not shown because {reason}."
+            elif withheld := [k for k in stats if _value_statistic_withheld(analysis, n_hidden, k)]:
+                # Some statistics pin no hidden count and others would (the exact test's level):
+                # the mean, minimum and maximum are shown, the rest withheld.
+                stats = {k: _mask(v) if k in withheld else v for k, v in stats.items()}
+                details = [
+                    f"{_STATISTIC_NAMES[k]} {_fmt(stats[k])}"
+                    for k in ("std", "median", "min", "max")
+                    if k not in withheld and stats[k] is not None
+                ]
+                claim = _with_details(f"Mean {name} was {_fmt(stats['mean'])}", [*details, _n_clause(sample, set())])
+                withheld_names = " and ".join(_STATISTIC_NAMES[k] for k in withheld)
+                verb = "is" if len(withheld) == 1 else "are"
+                claim += f". The {withheld_names} {verb} not shown because {VALUE_CELL_REASON}."
             elif n_hidden and stats["min"] == 0 and stats["max"] == 1:
                 # Values from 0 to 1 may be a 0/1 flag, whose mean is a share events/n (compute
                 # lists such a flag's frequencies instead, so only a payload that skipped that
@@ -1038,22 +1055,23 @@ VALUE_CELL_REASON: Final = (
 )
 
 
-def _value_statistic_withheld(cells: Mapping[str, Any], n_hidden: bool) -> bool:
-    """Whether a statistic (mean, sum, SD, median, minimum, maximum) of a column is withheld
-    because the column behaves like categories (``grouping.behaves_like_categories``).
+def _value_statistic_withheld(cells: Mapping[str, Any], n_hidden: bool, statistic: str) -> bool:
+    """Whether ``statistic`` (mean, SD, median, minimum, maximum) of a column is withheld because
+    the column behaves like categories (``grouping.behaves_like_categories``).
 
     Such a column's mean is a share: for died coded 0/1, "F 0.06, n=100" is 6 women who died,
     and with a few values a mean is one equation in the patients at each value. So it follows
-    the share rule (``_share_withheld``): withheld when n is hidden, or when the fewest patients
-    holding one value (``cells["table_min_cell"]``, recorded for the whole answer or for one
-    group, counted in patients at visit grain) is 1 to threshold-1 (``table_statistic_refusal``).
+    the share rule (``_share_withheld``): withheld when n is hidden, or when a value holds 1 to
+    threshold-1 patients (``cells["table_min_cell"]``, recorded for the whole answer or for one
+    group, counted in patients at visit grain) unless the exact test recorded that this
+    statistic pins none of them (``value_statistic_refusal`` on ``STATISTICS_LEVEL``).
     ``NO_COUNT_TABLE`` marks a measurement, which rests on no such table and follows the size
     rules alone. Anything else (not recorded, not a count) is withheld (fail closed).
     """
     min_cell = cells.get("table_min_cell")
     if isinstance(min_cell, str) and min_cell == NO_COUNT_TABLE:
         return False
-    return n_hidden or table_statistic_refusal(min_cell) is not None
+    return n_hidden or value_statistic_refusal(min_cell, cells.get(STATISTICS_LEVEL), statistic) is not None
 
 
 def _present_count(analysis: Mapping[str, Any]) -> Presentation:
@@ -1091,6 +1109,8 @@ def _present_count(analysis: Mapping[str, Any]) -> Presentation:
 
 
 _STATISTIC_LABELS = {"mean": "Mean", "median": "Median", "min": "Minimum", "max": "Maximum", "std": "SD of"}
+# A statistic named inside a sentence.
+_STATISTIC_NAMES: Final = {"mean": "mean", "median": "median", "min": "minimum", "max": "maximum", "std": "SD"}
 # Statistics that are sums over n: of a 0/1 flag, a share (``_present_descriptive``).
 _SUM_STATISTICS: Final = frozenset({"mean", "std"})
 
@@ -1292,7 +1312,7 @@ def _present_grouped_statistic(analysis: Mapping[str, Any]) -> Presentation:
         key, value = str(g.get("group")), _num(g.get("value"))
         label = _group_label(group_col, g.get("group"))
         size_hidden = _unchecked(key, g.get("n"), hidden)
-        cell_hidden = value is not None and _value_statistic_withheld(g, N_USED in hidden)
+        cell_hidden = value is not None and _value_statistic_withheld(g, N_USED in hidden, statistic)
         by_cell = by_cell or (cell_hidden and not size_hidden)
         withheld = size_hidden or cell_hidden
         shown = SECONDARY_SUPPRESSED if withheld else value

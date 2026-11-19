@@ -12,16 +12,19 @@ import numpy as np
 import polars as pl
 from scipy import stats
 
+from clinical_analytics.analysis.cell_solvability import statistics_level
 from clinical_analytics.analysis.grouping import (
     MAX_GROUP_LEVELS,
     NO_COUNT_TABLE,
     SMALL_VALUE_MODEL_REFUSAL,
+    STATISTICS_LEVEL,
     TERM_NAME_CLASH_MODEL_REFUSAL,
     behaves_like_categories,
     grouping_problem,
     is_small_level,
     predictor_model_refusal,
     table_statistic_refusal,
+    value_statistic_refusal,
 )
 from clinical_analytics.analysis.numeric_text import statistic_refusal
 from clinical_analytics.analysis.sample_floors import (
@@ -364,6 +367,9 @@ def compute_descriptive_analysis(
                 result["table_min_cell"] = (
                     None if entity_key is not None and keys is None else _value_min_cell(analysis_series, keys)
                 )
+                if _hidden_cell(result["table_min_cell"]):
+                    # Which of the statistics may still be shown: decided exactly (``cell_solvability``).
+                    result[STATISTICS_LEVEL] = _statistics_level(analysis_series, None, keys)
 
                 # Add headline answer for the query
                 result["headline"] = f"The average {col} is **{result['mean']:.2f}**"
@@ -577,7 +583,11 @@ def compute_comparison_analysis(
             if _behaves_like_categories(analysis_df[outcome_col], keys)
             else NO_COUNT_TABLE
         )
-        mean_refusal = table_statistic_refusal(base["table_min_cell"], may_rest_on_no_table=True)
+        if _hidden_cell(base["table_min_cell"]):
+            # A cell of 1-10 patients: whether the means and SDs the test shows pin it is decided
+            # exactly (``cell_solvability``); the test needs the "sd" level.
+            base[STATISTICS_LEVEL] = _statistics_level(analysis_df[outcome_col], analysis_df[group_col], keys)
+        mean_refusal = value_statistic_refusal(base["table_min_cell"], base.get(STATISTICS_LEVEL), "std")
         implausible = _implausible(analysis_df[outcome_col])
         if implausible:
             base["implausible"] = implausible
@@ -1061,6 +1071,11 @@ def _ambiguous_event_message(column: str, series: pl.Series, keys: pl.Series | N
     )
 
 
+def _hidden_cell(min_cell: object) -> bool:
+    """A recorded ``table_min_cell`` of 1 to threshold-1 patients (a hidden cell)."""
+    return isinstance(min_cell, int) and not isinstance(min_cell, bool) and min_cell > 0 and is_small_level(min_cell)
+
+
 def _value_min_cell(values: pl.Series, keys: pl.Series | None = None) -> int | str:
     """The fewest patients holding one present value of ``values`` when the column behaves like
     categories (its statistics are then shares of those patients), else ``NO_COUNT_TABLE``.
@@ -1075,6 +1090,29 @@ def _value_min_cell(values: pl.Series, keys: pl.Series | None = None) -> int | s
     if not sizes or not behaves_like_categories(sizes):
         return NO_COUNT_TABLE
     return min(int(n) for n in sizes.values())
+
+
+def _statistics_level(values: pl.Series, groups: pl.Series | None = None, keys: pl.Series | None = None) -> str:
+    """Which statistics of ``values`` (by ``groups``, or as one group) may be shown although a
+    (value, group) cell holds 1-10 patients: a level of ``cell_solvability.LEVELS``, recorded as
+    ``STATISTICS_LEVEL`` and decided by ``value_statistic_refusal``.
+
+    Rows missing a value or a group (null, NaN, inf) are left out, as every statistic leaves them
+    out. The model counts one row per patient: when rows are visits (``keys`` repeat, or a row
+    has no key) the hidden counts are patients but the statistics are over rows, so nothing is
+    relaxed ("none").
+    """
+    columns = {"value": values, **({"group": groups} if groups is not None else {})}
+    frame = pl.DataFrame({**columns, **({"key": keys} if keys is not None else {})})
+    present = _complete_in(frame, list(columns))
+    if keys is not None:
+        present_keys = present.get_column("key")
+        if present_keys.null_count() or present_keys.n_unique() != present.height:
+            return "none"
+    by = ["value", "group"] if groups is not None else ["value"]
+    cells = present.group_by(by).len()
+    counts = {(row[0], row[1] if groups is not None else None): int(row[-1]) for row in cells.iter_rows()}
+    return statistics_level(counts).level
 
 
 def _behaves_like_categories(series: pl.Series, keys: pl.Series | None = None) -> bool:

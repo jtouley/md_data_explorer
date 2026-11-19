@@ -21,6 +21,7 @@ from typing import Final
 
 import numpy as np
 
+from clinical_analytics.analysis.cell_solvability import LEVEL_STATISTICS
 from clinical_analytics.analysis.variable_types import short_name
 from clinical_analytics.contracts.config import LEVEL_SYNONYMS, LEVEL_VARIANT_MAX_LEVELS
 from clinical_analytics.core.nl_query_config import SMALL_CELL_THRESHOLD
@@ -247,3 +248,34 @@ def table_statistic_refusal(min_cell: object, *, may_rest_on_no_table: bool = Fa
     if is_small_level(min_cell) or min_cell == 0:
         return SMALL_CELL_TEST_REFUSAL
     return None
+
+
+# The payload field that records which statistics of a column that behaves like categories may be
+# shown although one of its cells holds 1 to SMALL_CELL_THRESHOLD - 1 patients: a level of
+# ``cell_solvability.LEVELS``, as compute records it from ``cell_solvability.statistics_level``.
+STATISTICS_LEVEL: Final = "statistics_level"
+
+
+def value_statistic_refusal(min_cell: object, level: object, statistic: str) -> str | None:
+    """Why ``statistic`` ("mean", "std", "median", "min" or "max") of a column, or a test that
+    shows it, may not be shown, or None when it may.
+
+    The one decision behind compute and the presenters for every statistic of a column that may
+    behave like categories (a comparison of means, a described column, a statistic per group),
+    so they cannot disagree. ``min_cell``: the fewest patients holding one value in a group
+    (``table_min_cell``); ``level``: the recorded ``STATISTICS_LEVEL``.
+
+    * ``NO_COUNT_TABLE``: a measurement, which rests on no table of counts: shown;
+    * a count of ``SMALL_CELL_THRESHOLD`` or more: no cell is hidden, shown;
+    * a count of 1 to threshold-1: shown only when ``level`` is a level whose statistics
+      (``cell_solvability.LEVEL_STATISTICS``) include ``statistic``: the exact test found that
+      they, with everything below them, pin no hidden count. Not recorded, or anything else:
+      ``SMALL_CELL_TEST_REFUSAL``;
+    * anything else (None, malformed): as ``table_statistic_refusal`` (fail closed).
+    """
+    refusal = table_statistic_refusal(min_cell, may_rest_on_no_table=True)
+    if refusal != SMALL_CELL_TEST_REFUSAL or not _is_count(min_cell):
+        return refusal
+    if isinstance(level, str) and level in LEVEL_STATISTICS and statistic in LEVEL_STATISTICS[level]:  # type: ignore[index]
+        return None
+    return refusal

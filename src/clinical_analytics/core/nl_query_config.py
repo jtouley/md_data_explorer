@@ -36,6 +36,20 @@ AUTO_EXECUTE_CONFIDENCE_THRESHOLD: float = _config["auto_execute_confidence_thre
 # Small-cell suppression for displayed patient counts
 SMALL_CELL_THRESHOLD: int = int(_config["small_cell_threshold"])
 
+# The exact solvability test of statistics of columns that behave like categories
+# (analysis/cell_solvability.py). Values x groups above SOLVABILITY_MAX_CELLS are withheld
+# without solving: 20 values x 5 groups (100 cells) is decided in 3-5 s at worst (every cell
+# hidden and nothing pinned, so every level runs to the end); 20 x 10 does not finish within the
+# budget. SOLVABILITY_BUDGET_S: wall time for one decision; past it the statistics are withheld.
+# SOLVABILITY_NARROW_SPREAD: a hidden count whose solutions span at most this many (lo..lo+2) is
+# known to +-1 (the middle one is within 1 of each); above it, two checked solutions differ by 3
+# or more, so any guess is at least 2 from one of them. SOLVABILITY_UNION_TABLES: witness tables
+# one union search is given.
+SOLVABILITY_MAX_CELLS: int = 100
+SOLVABILITY_BUDGET_S: float = 6.0
+SOLVABILITY_NARROW_SPREAD: int = 2
+SOLVABILITY_UNION_TABLES: int = 40
+
 # A numeric column with more distinct values than this is a measurement, never a grouping:
 # one group per exact value (289 LDL levels) identifies patients and answers nothing.
 MAX_NUMERIC_GROUP_LEVELS: int = 10
