@@ -31,6 +31,7 @@ from clinical_analytics.core.config_loader import load_patterns_config
 from clinical_analytics.core.data_home import nl_learning_dir
 from clinical_analytics.core.log_redaction import stable_hash, text_fingerprint
 from clinical_analytics.core.query_plan import CohortStep, FilterSpec, QueryPlan, Statistic
+from clinical_analytics.core.question_vocabulary import GROUPING_WORDS
 from clinical_analytics.core.value_index import ColumnValues
 
 logger = structlog.get_logger()
@@ -763,10 +764,15 @@ class NLQueryEngine:
             )
 
         # Post-process: Extract and assign variables if missing (runs in src, not UI)
-        # Skip variable extraction only for a refinement that inherited the previous query's
-        # variables above. Any earlier question in the session is not enough: "count by
-        # cause_name" asked second must still group by the column it names.
-        is_refinement_with_inherited_vars = inherited_from_history
+        # Skip variable extraction for a refinement of the previous question: one that inherited
+        # its variables above, or a refinement phrase ("exclude statin users") the parser read
+        # with confidence, so the word being filtered out never becomes the measure. Any earlier
+        # question in the session is not enough: "count by cause_name" asked second must still
+        # group by the column it names, and so must a refinement that names one ("by ...").
+        names_grouping = bool(GROUPING_WORDS & set(re.findall(r"[a-z]+", query_lower)))
+        is_refinement_with_inherited_vars = inherited_from_history or bool(
+            intent and is_likely_refinement and conversation_history and intent.confidence >= 0.6 and not names_grouping
+        )
 
         if intent and intent.intent_type in ["COMPARE_GROUPS", "FIND_PREDICTORS", "CORRELATIONS"]:
             # Extract variables from query if not already set

@@ -23,13 +23,14 @@ from clinical_analytics.core.question_vocabulary import (
     NEGATION_CUES,
     NO_LIMIT_WORDS,
     QUANTITY_WORDS,
-    QUESTION_FORM_WORDS,
     RANGE_PATTERN,
     STANDALONE_STATISTIC_WORDS,
     NegationScope,
+    is_question_form_word,
     negation_scope,
     range_ends,
     range_in_order,
+    statistic_phrases_as_std,
     without_statistic_phrases,
 )
 
@@ -161,11 +162,12 @@ class PeelResult:
 def asked_statistic(text: str, median_is_cutoff: bool = False) -> Statistic | None:
     """The statistic the question's first statistic word asks for ("median age" -> median).
 
-    A lone "standard" asks for nothing ("the standard arm"); in "standard deviation" the
-    word "deviation" says std. "median" in a cutoff ("older than the median age") limits the patients; it is not the
-    statistic asked for, so it is skipped when ``median_is_cutoff``.
+    A lone "standard" or "deviation" asks for nothing ("the standard arm", "protocol
+    deviation"); together they ask for std. "median" in a cutoff ("older than the median
+    age") limits the patients; it is not the statistic asked for, so it is skipped when
+    ``median_is_cutoff``.
     """
-    for word in re.findall(r"[a-z]+", text.lower()):
+    for word in re.findall(r"[a-z]+", statistic_phrases_as_std(text.lower())):
         if word == "median" and median_is_cutoff:
             continue
         if word in STANDALONE_STATISTIC_WORDS:
@@ -562,12 +564,12 @@ def _value_hits(
 ) -> list[tuple[str, Any, int]]:
     """(column, value, position) of each stored value the question names, one value per column."""
     hits: list[tuple[str, Any, int]] = []
-    # The question's grammar ("count", "number", "by", "per", "average", "standard deviation")
-    # never names a value: "count by sex" is not location_name = "Count Lake". A lone
-    # "standard" is not grammar: "the standard arm" names arm = "Standard". The phrase is
-    # blanked, not removed, so positions stay positions in the question.
+    # The question's grammar ("count", "counts", "number", "by", "per", "average", "standard
+    # deviation") never names a value: "count by sex" is not location_name = "Count Lake". A
+    # lone "standard" is not grammar: "the standard arm" names arm = "Standard". The phrase
+    # is blanked, not removed, so positions stay positions in the question.
     text = without_statistic_phrases(text)
-    tokens = _tokens(text, digits=True) - QUESTION_FORM_WORDS
+    tokens = {token for token in _tokens(text, digits=True) if not is_question_form_word(token)}
     words = frozenset(re.findall(r"[a-z0-9]+", text))
     for column in columns:
         # Rank (exact word, inflection, shared stem), then specificity: how many words of the
@@ -729,13 +731,22 @@ def _names_word(word: str, part: str) -> bool:
     """
     from clinical_analytics.core.word_accounting import stem_match
 
-    if word.rstrip("s") == part.rstrip("s"):
+    if _same_or_plural(word, part):
         return True
     if part.startswith(word):
         return _derived_adjective(part, word)
     if word.startswith(part):
         return _derived_adjective(word, part)
     return stem_match(word, part)
+
+
+def _same_or_plural(word: str, part: str) -> bool:
+    """The same word, or one is the other plus a plural "s". A word ending in "ss" is not a
+    plural: "loss" never names "Los" (Angeles)."""
+    if word == part:
+        return True
+    longer, shorter = (word, part) if len(word) > len(part) else (part, word)
+    return longer == shorter + "s" and not shorter.endswith("s")
 
 
 def _derived_adjective(word: str, part: str) -> bool:
@@ -799,7 +810,7 @@ def _qualified(text: str, at: int, columns: list[str], values_for: Callable[[str
     itself. A word that names a column or a stored value ("female smokers") is a limit of
     its own, not a qualifier.
     """
-    before = re.findall(r"[a-z0-9]+", text[:at])
+    before = re.findall(r"[a-z0-9]+", statistic_phrases_as_std(text[:at]))
     content = [word for word in before if word not in NO_LIMIT_WORDS]
     if content and content[-1] in STANDALONE_STATISTIC_WORDS:
         return True

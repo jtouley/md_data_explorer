@@ -1409,7 +1409,8 @@ async function handleRefreshDatasets() {
   setDatasetMenuOpen(false, { focus: true });
   setDatasetStatus('Refreshing…');
   await loadDatasets();
-  if (elements.datasetStatus?.dataset.tone !== 'error') setDatasetStatus('');
+  // An error, or a note that part of an upload was not read, outlives Refresh.
+  if (!['error', 'note'].includes(elements.datasetStatus?.dataset.tone ?? '')) setDatasetStatus('');
   btn.disabled = false;
 }
 
@@ -1806,7 +1807,8 @@ async function handleFileUpload(file) {
           result.sheet_note,
           dataCheckStatusNote(result.quality)
         ),
-        'ok',
+        // A sheet note says part of the workbook was not read: keep it until the user moves on.
+        result.sheet_note ? 'note' : 'ok',
         { showDetails: dataCheckNeedsReview(result.quality) }
       );
       await selectNewDataset(result.upload_id);

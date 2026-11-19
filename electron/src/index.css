@@ -532,6 +532,11 @@ ul {
   color: var(--text-2);
 }
 
+.cohort-status[data-tone='note'] {
+  /* Ready, with something left out (sheets not read): full-strength text, kept on Refresh. */
+  color: var(--text-1);
+}
+
 .cohort-status-action {
   align-self: flex-start;
   margin: 0 var(--sp-1);

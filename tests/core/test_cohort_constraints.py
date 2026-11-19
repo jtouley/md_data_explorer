@@ -755,3 +755,69 @@ def test_withoutStatisticPhrases_phrase_blankedAtSamePositions() -> None:
     assert masked.split() == ["of", "age", "in", "the", "standard", "arm"]
     assert masked.index("standard") == text.rindex("standard")
     assert "standard" not in QUESTION_FORM_WORDS
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param("patient counts by location_name", id="counts_plural"),
+        pytest.param("show totals by sex", id="totals_plural"),
+        pytest.param("counted by state", id="counted"),
+        pytest.param("counting patients per state", id="counting"),
+        pytest.param("medians of mx by year", id="medians_isNotMedia"),
+    ],
+)
+def test_valueHits_inflectedGrammarWord_bindsNoValue(query: str) -> None:
+    # Arrange: query above
+
+    # Act
+    hits = _geo_hits(query)
+
+    # Assert
+    assert hits == []
+
+
+@pytest.mark.parametrize(
+    ("query", "values", "expected"),
+    [
+        pytest.param("how many patients with weight loss", {"city": ["Los Angeles", "Denver"]}, [], id="loss_isNotLos"),
+        pytest.param(
+            "how many in los angeles", {"city": ["Los Angeles", "Denver"]}, [("city", "Los Angeles")], id="los_named"
+        ),
+        pytest.param(
+            "how many had a protocol deviation",
+            {"event": ["Protocol deviation", "Adverse event"]},
+            [("event", "Protocol deviation")],
+            id="loneDeviation_namesValue",
+        ),
+    ],
+)
+def test_valueHits_pluralAndLoneDeviation_bindOnlyTheNamedValue(
+    query: str, values: dict[str, list[Any]], expected: list[tuple[str, Any]]
+) -> None:
+    # Arrange: values above
+
+    # Act
+    hits = _trial_hits(query, values)
+
+    # Assert
+    assert hits == expected
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        pytest.param("how many had a protocol deviation", None, id="loneDeviation_asksNothing"),
+        pytest.param("standard deviation of ldl", "std", id="phrase_std"),
+        pytest.param("standard-deviation of ldl", "std", id="phraseHyphen_std"),
+    ],
+)
+def test_askedStatistic_deviationAlone_isNotAStatistic(query: str, expected: str | None) -> None:
+    # Arrange
+    from clinical_analytics.core.cohort_constraints import asked_statistic
+
+    # Act
+    asked = asked_statistic(query)
+
+    # Assert
+    assert asked == expected
