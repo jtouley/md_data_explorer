@@ -22,6 +22,10 @@ import polars as pl
 # as patients: n is "rows".
 ROW_NUMBER_COLUMN: Final = "row_number"
 
+# Upload metadata: the published export a file was read as ("cdc_wonder"; staging.CDC_WONDER_FORMAT).
+# Such a file is never asked "Is each row one patient?" (rows_may_be_patients).
+SOURCE_FORMAT_KEY: Final = "source_format"
+
 # Name tokens (lower case, split on anything but letters and digits) of a measured value: an
 # estimate, its bounds, a rate or a share. A column with one of them is never a patient ID,
 # whatever its uniqueness ("mx" in a mortality table is unique to 6 decimals).
@@ -313,6 +317,10 @@ def rows_may_be_patients(metadata: Mapping[str, object]) -> bool:
     asked: the answer would rest on data that may be visits.
     """
     if not patient_id_is_row_key(metadata):
+        return False
+    if metadata.get(SOURCE_FORMAT_KEY):
+        # A published export (CDC WONDER) has rows of counts and rates for places and groups,
+        # never patients: the question would invite a wrong "yes".
         return False
     synthetic = metadata.get("synthetic_id_metadata")
     info = synthetic.get("patient_id") if isinstance(synthetic, Mapping) else None

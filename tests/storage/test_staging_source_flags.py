@@ -27,8 +27,8 @@ class TestSourceFlags:
             "Ohio,2011,130,Not Applicable\n"
         )
 
-        # Act
-        frame = _stage(csv)
+        # Act: declared public (or a WONDER-shaped file): the source's words are read as markers
+        frame = _stage(csv, public=True)
 
         # Assert
         expected = pl.DataFrame(
@@ -44,6 +44,37 @@ class TestSourceFlags:
             schema_overrides={"Deaths": pl.Int64, "Crude Rate": pl.Float64},
         )
         assert_frame_equal(frame, expected)
+
+    def test_readCsvTyped_undeclaredNonWonderSuppressed_columnKeptAsText(self):
+        # Arrange: the same table, undeclared and not WONDER-shaped (no "Notes" first column):
+        # fail closed, a file is never reinterpreted, exactly as on main (ADR014 §7)
+        csv = (
+            "State,Year,Deaths,Crude Rate\n"
+            "Michigan,2010,Suppressed,Suppressed\n"
+            "Michigan,2011,25,0.5 (Unreliable)\n"
+            "Ohio,2010,120,2.1\n"
+            "Ohio,2011,130,Not Applicable\n"
+        )
+
+        # Act
+        frame = _stage(csv)
+
+        # Assert
+        assert frame.columns == ["State", "Year", "Deaths", "Crude Rate"]
+        assert frame.schema["Deaths"] == pl.String
+        assert frame["Deaths"].to_list() == ["Suppressed", "25", "120", "130"]
+        assert frame["Crude Rate"].to_list() == ["Suppressed", "0.5 (Unreliable)", "2.1", "Not Applicable"]
+
+    def test_readCsvTyped_wonderShapedUndeclared_wordsReadAsMarkers(self):
+        # Arrange: CDC WONDER's own layout (first column "Notes"), not declared
+        csv = "Notes,State,Deaths\n,Michigan,Suppressed\n,Ohio,120\n,Indiana,95\n"
+
+        # Act
+        frame = _stage(csv)
+
+        # Assert
+        assert frame["Deaths"].to_list() == [None, 120, 95]
+        assert frame["Deaths suppressed"].to_list() == [True, False, False]
 
     @pytest.mark.parametrize(
         "cells",

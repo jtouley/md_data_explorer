@@ -131,3 +131,18 @@ class TestDeclaredStagingOrder:
 
         # Assert
         assert "Cases suppressed" in table["data"].columns
+
+
+@pytest.mark.parametrize(("declared", "flagged"), [(True, True), (False, False)], ids=["declared", "undeclared"])
+def test_extractZipTables_tsvMember_declarationPassedToMember(declared: bool, flagged: bool) -> None:
+    # Arrange: a public table as tab-separated text inside a ZIP (a reader #123 added)
+    tsv = pl.read_csv(io.BytesIO(_public_table("<10")), infer_schema=False).write_csv(separator="\t").encode()
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("cases.tsv", tsv)
+
+    # Act
+    [table] = extract_zip_tables(buffer.getvalue(), declared=declared)
+
+    # Assert: markers read only when the ZIP was declared (and accepted); else text as on main
+    assert ("Cases suppressed" in table["data"].columns) is flagged

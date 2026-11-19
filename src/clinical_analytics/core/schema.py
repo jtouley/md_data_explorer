@@ -54,6 +54,13 @@ class SchemaValidationError(Exception):
         super().__init__(f"Schema validation failed: {'; '.join(errors)}")
 
 
+class NoCohortAnchorError(ValueError):
+    """No table can anchor a multi-table cohort (one row per key that the other tables share).
+
+    The message is written for the user and names no values. A ValueError, as before, for callers.
+    """
+
+
 class DataQualityError(Exception):
     """
     Raised when data quality issues are detected during transformations.

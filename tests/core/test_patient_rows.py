@@ -308,3 +308,18 @@ def test_declaredPatientRows_storedGrain_onlyAskableVersionAndCount(
 
     # Assert
     assert result is expected
+
+
+@pytest.mark.parametrize(("source_format", "asked"), [("cdc_wonder", False), ("", True)], ids=["wonder", "other"])
+def test_rowsMayBePatients_publishedExport_neverAsked(source_format: str, asked: bool) -> None:
+    # Arrange: a row key copied from one unique column, no ID-like column repeating
+    from clinical_analytics.core.identifier_rules import REPEATED_ID_COLUMNS_KEY, SOURCE_FORMAT_KEY
+
+    info = {"patient_id_source": "single_column", "patient_id_columns": ["State Code"], REPEATED_ID_COLUMNS_KEY: []}
+    metadata = {"synthetic_id_metadata": {"patient_id": info}, SOURCE_FORMAT_KEY: source_format}
+
+    # Act
+    result = rows_may_be_patients(metadata)
+
+    # Assert
+    assert result is asked

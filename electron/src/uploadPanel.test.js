@@ -32,6 +32,7 @@ describe('normalizeUploadResponse', () => {
       quality: null,
       sheet_note: '',
       unit_note: '',
+      cohort_notes: [],
       one_row_per_patient: null,
     });
     expect(normalizeUploadResponse(undefined)).toEqual({
@@ -43,6 +44,7 @@ describe('normalizeUploadResponse', () => {
       quality: null,
       sheet_note: '',
       unit_note: '',
+      cohort_notes: [],
       one_row_per_patient: null,
     });
   });
@@ -70,6 +72,27 @@ describe('upload sheet note', () => {
     });
     expect(uploadStatusText('A is ready.', sheetNote, dataCheckStatusNote(quality))).toBe(
       `A is ready. ${note} Data check could not run.`
+    );
+  });
+
+  test.each([
+    [
+      { cohort_notes: ['codebook.csv was kept as documentation.', '  labs: not in the cohort.  '] },
+      ['codebook.csv was kept as documentation.', 'labs: not in the cohort.'],
+    ],
+    [{ cohort_notes: ['', '  ', null, 3, 'A note.'] }, ['A note.']],
+    [{ cohort_notes: 'not a list' }, []],
+    [{}, []],
+  ])('normalizeUploadResponse keeps only text cohort notes (%#)', (raw, expected) => {
+    expect(normalizeUploadResponse(raw).cohort_notes).toEqual(expected);
+  });
+
+  test('cohort notes are shown in the status line after the sheet note', () => {
+    const { cohort_notes: cohortNotes } = normalizeUploadResponse({
+      cohort_notes: ['codebook.csv was kept as documentation.'],
+    });
+    expect(uploadStatusText('A is ready.', '', ...cohortNotes, null)).toBe(
+      'A is ready. codebook.csv was kept as documentation.'
     );
   });
 
@@ -148,6 +171,14 @@ describe('isAllowedExtension', () => {
 
   test('allows .sav', () => {
     expect(isAllowedExtension('spss.sav')).toBe(true);
+  });
+
+  test('allows .xpt (SAS transport)', () => {
+    expect(isAllowedExtension('DEMO_J.xpt')).toBe(true);
+  });
+
+  test('allows .zip (tables plus documentation)', () => {
+    expect(isAllowedExtension('challenge-2019.ZIP')).toBe(true);
   });
 
   test('rejects .exe', () => {
@@ -376,6 +407,35 @@ describe('upload unit note (rows, not patients)', () => {
     });
     expect(uploadResultText(result, 'sepsis', null)).toBe(
       `The cohort “sepsis” needs review. Uploaded, but a data check failed: x. ${unitNote}`
+    );
+  });
+});
+
+describe('upload status line with every note', () => {
+  test('a ready ZIP upload shows the unit note, sheet note, cohort notes, then the data check', () => {
+    const result = normalizeUploadResponse({
+      upload_id: 'u_9',
+      status: 'ready',
+      unit_note: 'Answers count rows, not patients.',
+      sheet_note: 'Read 1 of 2 sheets.',
+      cohort_notes: ['codebook.csv was kept as documentation.'],
+      quality: { status: 'not_run', reason: 'x' },
+    });
+    expect(uploadResultText(result, 'trial', dataCheckStatusNote(result.quality))).toBe(
+      `${readyHeadline('trial')} Answers count rows, not patients. Read 1 of 2 sheets. ` +
+        'codebook.csv was kept as documentation. Data check could not run.'
+    );
+  });
+
+  test('a needs_review upload keeps its cohort notes after the failed check', () => {
+    const result = normalizeUploadResponse({
+      upload_id: 'u_10',
+      status: 'needs_review',
+      message: 'Uploaded, but a data check failed: x.',
+      cohort_notes: ['labs: not in the cohort.'],
+    });
+    expect(uploadResultText(result, 'trial', null)).toBe(
+      'The cohort “trial” needs review. Uploaded, but a data check failed: x. labs: not in the cohort.'
     );
   });
 });

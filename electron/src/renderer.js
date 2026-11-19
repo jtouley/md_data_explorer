@@ -1905,9 +1905,15 @@ async function handleFileUpload(file) {
           result.dataset_name || file.name,
           dataCheckStatusNote(result.quality)
         ),
-        // A unit note (rows, not patients), a sheet note (part of the workbook not read) or a
-        // failed check (needs review) stays until the user moves on: Refresh keeps 'note'.
-        result.unit_note || result.sheet_note || result.status === 'needs_review' ? 'note' : 'ok',
+        // A unit note (rows, not patients), a sheet note (part of the workbook not read), a
+        // cohort note (ZIP files or tables left out) or a failed check (needs review) stays
+        // until the user moves on: Refresh keeps 'note'.
+        result.unit_note ||
+          result.sheet_note ||
+          result.cohort_notes.length ||
+          result.status === 'needs_review'
+          ? 'note'
+          : 'ok',
         { showDetails: result.status === 'needs_review' || dataCheckNeedsReview(result.quality) }
       );
       await selectNewDataset(result.upload_id);

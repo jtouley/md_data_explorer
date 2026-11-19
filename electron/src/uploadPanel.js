@@ -6,7 +6,17 @@
 import { normalizeQuality } from './dataCheckPanel.js';
 import { normalizePatientRowsQuestion } from './patientRowsPanel.js';
 
-const ALLOWED_EXTENSIONS = new Set(['.csv', '.xlsx', '.xls', '.sav']);
+// Mirrors ALLOWED_UPLOAD_EXTENSIONS in api/routes/datasets.py.
+const ALLOWED_EXTENSIONS = new Set([
+  '.csv',
+  '.tsv',
+  '.txt',
+  '.xlsx',
+  '.xls',
+  '.sav',
+  '.xpt',
+  '.zip',
+]);
 
 /**
  * Upload states the API sends. 'needs_review': the cohort is stored and can be asked, but an
@@ -16,7 +26,7 @@ const ALLOWED_EXTENSIONS = new Set(['.csv', '.xlsx', '.xls', '.sav']);
 
 /**
  * @param {Record<string, unknown>|null|undefined} raw
- * @returns {{ upload_id: string, dataset_name: string, status: string, message: string, failed_checks: string[], quality: import('./dataCheckPanel.js').DataCheck | null, sheet_note: string, unit_note: string, one_row_per_patient: { confirmation: string } | null }}
+ * @returns {{ upload_id: string, dataset_name: string, status: string, message: string, failed_checks: string[], quality: import('./dataCheckPanel.js').DataCheck | null, sheet_note: string, unit_note: string, one_row_per_patient: { confirmation: string } | null, cohort_notes: string[] }}
  */
 export function normalizeUploadResponse(raw) {
   if (!raw || typeof raw !== 'object') {
@@ -29,6 +39,7 @@ export function normalizeUploadResponse(raw) {
       quality: null,
       sheet_note: '',
       unit_note: '',
+      cohort_notes: [],
       one_row_per_patient: null,
     };
   }
@@ -45,6 +56,12 @@ export function normalizeUploadResponse(raw) {
     sheet_note: typeof raw.sheet_note === 'string' ? raw.sheet_note.trim() : '',
     // No column identifies a patient: answers count rows, not patients. Shown at upload.
     unit_note: typeof raw.unit_note === 'string' ? raw.unit_note.trim() : '',
+    // ZIP: files kept as documentation, tables left out of the cohort. Shown at upload, never dropped.
+    cohort_notes: Array.isArray(raw.cohort_notes)
+      ? raw.cohort_notes
+          .filter((note) => typeof note === 'string' && note.trim())
+          .map((note) => note.trim())
+      : [],
     // "Is each row one patient?" still to answer (null: not asked, or already answered yes).
     one_row_per_patient: normalizePatientRowsQuestion(raw.one_row_per_patient),
   };
@@ -66,7 +83,7 @@ export function uploadIsUsable(result) {
  * or, for 'needs_review', the API's sentence naming the failed check and the next step, then the
  * unit and sheet notes. The unit note (answers count rows, not patients) and the sheet note
  * (Excel: sheets not read) are shown in both: they are never dropped.
- * @param {{ status: string, message: string, sheet_note?: string, unit_note?: string }} result
+ * @param {{ status: string, message: string, sheet_note?: string, unit_note?: string, cohort_notes?: string[] }} result
  * @param {string} name cohort or file name
  * @param {string|null} note from dataCheckStatusNote
  * @param {string} [unnamedHeadline] the ready sentence when there is no name
@@ -79,12 +96,18 @@ export function uploadResultText(result, name, note, unnamedHeadline = readyHead
       shown ? readyHeadline(shown) : unnamedHeadline,
       result.unit_note,
       result.sheet_note,
+      ...(result.cohort_notes ?? []),
       note
     );
   }
   const headline = shown ? `The cohort “${shown}” needs review.` : 'The cohort needs review.';
   const detail = result.message.trim() || 'A data check failed. Open the cohort details to see it.';
-  return uploadStatusText(`${headline} ${detail}`, result.unit_note, result.sheet_note);
+  return uploadStatusText(
+    `${headline} ${detail}`,
+    result.unit_note,
+    result.sheet_note,
+    ...(result.cohort_notes ?? [])
+  );
 }
 
 /**
@@ -142,7 +165,7 @@ export function renderUploadArea(container, handlers) {
 
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.csv,.xlsx,.xls,.sav';
+  input.accept = '.csv,.tsv,.txt,.xlsx,.xls,.sav,.xpt,.zip';
   input.className = 'upload-file-input';
   input.dataset.testid = 'upload-file-input';
   input.addEventListener('change', () => {

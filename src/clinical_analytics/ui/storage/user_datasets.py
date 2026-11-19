@@ -41,9 +41,10 @@ from typing import Any, Final
 import polars as pl
 import structlog
 
-from clinical_analytics.core.identifier_rules import ROW_NUMBER_COLUMN
-from clinical_analytics.core.schema import DataQualityError
+from clinical_analytics.core.identifier_rules import ROW_NUMBER_COLUMN, SOURCE_FORMAT_KEY
+from clinical_analytics.core.schema import DataQualityError, NoCohortAnchorError
 from clinical_analytics.storage import atomic
+from clinical_analytics.storage.file_sets import FileSet, TextMember, read_file_set, split_file_sets
 from clinical_analytics.storage.metadata_lock import (
     METADATA_LOCK_TIMEOUT_S,
     FileLockTimeoutError,
@@ -52,13 +53,16 @@ from clinical_analytics.storage.metadata_lock import (
 )
 from clinical_analytics.storage.metadata_lock import update_metadata as _update_metadata
 from clinical_analytics.storage.staging import (
+    DELIMITERS,
     ID_COLUMN_NAMES,
     StagedTable,
     StagingError,
+    describe_sheets,
     detect_header_row,
     read_csv_typed,
     read_excel_rows,
     read_excel_typed,
+    read_xport_typed,
     settle_shared_column_types,
 )
 from clinical_analytics.storage.upload_metadata import normalize_upload_metadata
@@ -119,6 +123,26 @@ class UploadError(Exception):
     pass
 
 
+class UploadFileError(UploadError):
+    """The uploaded file itself cannot be used as sent (a broken, locked or unsupported archive,
+    a table that cannot be read, no column that identifies a patient). The user fixes the file;
+    the API answers 400 with this message, which is written for the user and quotes no cell values.
+    """
+
+
+class NoPatientIdError(UploadFileError):
+    """A single-table upload has no column that identifies a patient, so patients cannot be counted."""
+
+
+def no_patient_id_message(columns: int) -> str:
+    """Why a table with no patient ID is refused, and what to add (names no values)."""
+    return (
+        f"No column in this file identifies a patient (checked {columns} columns), so patients cannot be "
+        "counted and answers could be wrong. Add a column with one ID for each patient (the same ID on "
+        "each of that patient's rows) and upload the file again."
+    )
+
+
 class DatasetChangedError(UploadError):
     """Another save changed the dataset's active version while this one ran (retry the upload)."""
 
@@ -163,6 +187,19 @@ def _notify_progress(progress_cb: ProgressCallback | None, progress: int, messag
 # but kept here for existing imports
 
 
+@dataclass(frozen=True)
+class DocFile:
+    """A documentation file from an upload (ADR004): its name, its path in the ZIP, its bytes."""
+
+    name: str
+    path: str
+    content: bytes
+
+
+# Upload metadata: tables in a ZIP that were read as documentation instead (see ``ZipRead``).
+ZIP_NOTES_KEY: Final = "zip_notes"
+
+
 def normalize_upload_to_table_list(
     file_bytes: bytes,
     filename: str,
@@ -186,15 +223,20 @@ def normalize_upload_to_table_list(
         - table_metadata: dict with table_count, table_names, etc.
     """
     # Detect upload type from file extension
-    if filename.endswith(".zip"):
+    zip_notes: list[str] = []
+    source_format = ""
+    if filename.lower().endswith(".zip"):
         # Multi-table: extract from ZIP
-        tables = extract_zip_tables(file_bytes, declared=_declared(metadata))
+        # One expansion budget for the tables and the documentation (zip-bomb guard).
+        budget = ZipExpansionBudget()
+        read = read_zip_tables(file_bytes, budget=budget, declared=_declared(metadata))
+        tables = read.table_list
 
         # Extract documentation files from ZIP (Phase 1: ADR004)
-        from io import BytesIO
-
-        doc_files = extract_documentation_files(BytesIO(file_bytes))
-        logger.info(f"Extracted {len(doc_files)} documentation files from ZIP")
+        doc_files = [*extract_documentation_files(io.BytesIO(file_bytes), budget=budget), *read.as_docs]
+        zip_notes = list(read.notes)
+        source_format = read.source_format
+        logger.info("zip_documentation_files", files=len(doc_files), tables_read_as_docs=len(read.as_docs))
     else:
         # Single-file: wrap in list (becomes multi-table with 1 table)
         staged = stage_declared(
@@ -210,20 +252,21 @@ def normalize_upload_to_table_list(
                 "sheets": staged.sheets,
             }
         ]
-        doc_files = []  # No docs for single-file uploads by default
+        # A notes block under the data (CDC WONDER) is the file's documentation, never data rows.
+        doc_files = (
+            [
+                DocFile(
+                    name=f"{table_name}_notes.txt", path=f"{table_name}_notes.txt", content=staged.export_notes.encode()
+                )
+            ]
+            if staged.export_notes.strip()
+            else []
+        )
+        zip_notes = list(staged.table_notes)
+        source_format = staged.source_format
 
     # Handle external PDF/documentation files (standalone upload)
     if metadata and "external_pdf_bytes" in metadata:
-        from dataclasses import dataclass
-
-        @dataclass
-        class DocFile:
-            """Documentation file info."""
-
-            name: str
-            path: str
-            content: bytes
-
         # Convert external PDF bytes to DocFile format
         pdf_bytes = metadata["external_pdf_bytes"]
         pdf_filename = metadata.get("external_pdf_filename", "documentation.pdf")
@@ -235,17 +278,27 @@ def normalize_upload_to_table_list(
         "table_count": len(tables),
         "table_names": [t["name"] for t in tables],
         "doc_files": doc_files,  # Phase 1: Store doc files for processing
+        ZIP_NOTES_KEY: zip_notes,
+        SOURCE_FORMAT_KEY: source_format,
     }
 
     return tables, table_metadata
 
 
-def extract_documentation_files(zip_file: Any) -> list[Any]:
+def extract_documentation_files(zip_file: Any, budget: "ZipExpansionBudget | None" = None) -> list[Any]:
     """
     Extract documentation files (PDF, Markdown, text) from ZIP archive.
 
+    macOS metadata (``__MACOSX/``, Finder's "Compress") is skipped: its ``._README.txt`` files
+    are binary resource forks, not documentation.
+
     Args:
         zip_file: ZIP file (bytes, BytesIO, or file path)
+        budget: Bytes the archive may still expand to (``ZipExpansionBudget``); a new one if None
+
+    Raises:
+        UploadFileError: the ZIP cannot be opened, a document cannot be read, or the documents
+            expand past the budget
 
     Returns:
         List of documentation file info objects with .name attribute
@@ -256,45 +309,244 @@ def extract_documentation_files(zip_file: Any) -> list[Any]:
         >>> doc_names = [f.name for f in doc_files]
         ['README.md', 'dictionary.txt', 'study_protocol.pdf']
     """
-    from dataclasses import dataclass
-
-    @dataclass
-    class DocFile:
-        """Documentation file info."""
-
-        name: str
-        path: str
-        content: bytes
-
-    doc_extensions = {".pdf", ".md", ".txt"}
-    doc_files = []
-
+    budget = budget or ZipExpansionBudget()
     try:
         with zipfile.ZipFile(zip_file) as zf:
-            for file_info in zf.filelist:
-                # Skip directories
-                if file_info.is_dir():
-                    continue
+            return _zip_docs(zf, nested=True, budget=budget)
+    except (zipfile.BadZipFile, NotImplementedError, EOFError, ValueError) as e:
+        # Never drop the documentation in silence: the dictionary is what the answers lean on.
+        raise UploadFileError(
+            "The documentation files in this ZIP could not be read. Zip the files again and upload the new ZIP."
+        ) from e
 
-                # Check if file has documentation extension
-                file_path = Path(file_info.filename)
-                if file_path.suffix.lower() in doc_extensions:
-                    content = zf.read(file_info.filename)
-                    doc_files.append(DocFile(name=file_path.name, path=file_info.filename, content=content))
 
-        return doc_files
+_DOC_EXTENSIONS: Final = frozenset({".pdf", ".md", ".txt"})
 
-    except zipfile.BadZipFile as e:
-        logger.warning(f"Failed to extract documentation files from ZIP: {e}")
-        return []
+
+def _zip_docs(zf: zipfile.ZipFile, nested: bool, budget: "ZipExpansionBudget") -> list[DocFile]:
+    """The documentation files of a ZIP, and of a ZIP inside it (one level, as ``_zip_members``
+    reads its tables). A nested ZIP is read again here, so it is charged to ``budget`` twice."""
+    doc_files: list[DocFile] = []
+    for file_info in zf.filelist:
+        # Skip directories and macOS metadata
+        if file_info.is_dir() or file_info.filename.startswith("__MACOSX"):
+            continue
+        file_path = Path(file_info.filename)
+        if nested and file_path.suffix.lower() == ".zip":
+            with zipfile.ZipFile(io.BytesIO(budget.read(zf, file_info.filename))) as inner:
+                doc_files.extend(
+                    DocFile(name=d.name, path=f"{file_info.filename}/{d.path}", content=d.content)
+                    for d in _zip_docs(inner, nested=False, budget=budget)
+                )
+        elif file_path.suffix.lower() in _DOC_EXTENSIONS:
+            content = budget.read(zf, file_info.filename)
+            doc_files.append(DocFile(name=file_path.name, path=file_info.filename, content=content))
+    return doc_files
+
+
+# Table files read from a ZIP (``.gz`` allowed on delimited text). Docs: ``extract_documentation_files``.
+ZIP_TABLE_EXTENSIONS: Final = frozenset({*DELIMITERS, ".xlsx", ".xls", ".xpt", ".sav"})
+
+# A ZIP upload may expand to at most this many bytes: its tables, documents, gzipped members and
+# a nested ZIP together. The upload itself is capped at 100 MB, but a ZIP of repeated bytes can
+# expand a thousandfold and exhaust memory. The largest corpus upload (eICU demo) expands to ~310 MB.
+MAX_ZIP_EXPANDED_BYTES: Final = 1024**3
+# At most this many entries in a ZIP (each nested ZIP counted on its own). Sepsis 2019, the largest
+# file set in the corpus, has 40,336 files. The cap is checked once ``zipfile`` has read the central
+# directory (which the 100 MB upload cap bounds), so it limits the per-entry work after that (reads,
+# file sets, staging), not the directory's own parse.
+MAX_ZIP_ENTRIES: Final = 100_000
+
+
+@dataclass
+class ZipExpansionBudget:
+    """Bytes a ZIP upload may still expand to (zip-bomb guard); every read from it takes from this.
+
+    ``zipfile`` never returns more than an entry's declared size (a lie fails its CRC), so the
+    declared size is charged before the read; a ``.gz`` member is inflated in bounded steps.
+    """
+
+    left: int = MAX_ZIP_EXPANDED_BYTES
+
+    def _take(self, n: int) -> None:
+        if n > self.left:
+            raise UploadFileError(
+                f"The ZIP expands to more than {MAX_ZIP_EXPANDED_BYTES // 1024**3} GB once unpacked. "
+                "Upload fewer or smaller tables in each ZIP."
+            )
+        self.left -= n
+
+    def read(self, z: zipfile.ZipFile, entry: str) -> bytes:
+        """The entry's bytes, charged at its declared size.
+
+        Raises:
+            UploadFileError: past the budget, or the entry cannot be read: password-protected,
+                packed with a method ``zipfile`` does not read (Deflate64, from Windows), or
+                damaged (a bad CRC or compressed stream).
+        """
+        import zlib
+
+        info = z.getinfo(entry)
+        self._take(info.file_size)
+        name = Path(entry).name
+        if info.flag_bits & 0x1:
+            raise UploadFileError(
+                f"{name} in the ZIP is password-protected. Zip the files again without a password "
+                "and upload the new ZIP."
+            )
+        try:
+            return z.read(entry)
+        except NotImplementedError as e:
+            raise UploadFileError(
+                f"{name} in the ZIP is packed with a compression method this app cannot read. "
+                "Zip the files again with standard compression (Deflate) and upload the new ZIP."
+            ) from e
+        except (zipfile.BadZipFile, zlib.error, EOFError, ValueError) as e:
+            raise UploadFileError(
+                f"{name} in the ZIP is damaged and could not be read. Zip the files again and upload the new ZIP."
+            ) from e
+
+    def gunzip(self, data: bytes, name: str) -> bytes:
+        """``gzip.decompress`` that stops once the output passes the budget.
+
+        Raises:
+            UploadFileError: not a readable gzip stream, or it expands past the budget.
+        """
+        import zlib
+
+        out = bytearray()
+        try:
+            while data.strip(b"\x00"):  # one gzip member after another; zero padding ends it
+                inflater = zlib.decompressobj(wbits=31)
+                out += inflater.decompress(data, self.left - len(out) + 1)
+                if len(out) > self.left:
+                    self._take(len(out))
+                if not inflater.eof:
+                    raise zlib.error("truncated")
+                data = inflater.unused_data
+        except zlib.error as e:
+            raise UploadFileError(
+                f"{name} in the ZIP is not a readable .gz file. Compress it again, or add it unzipped, "
+                "and upload the ZIP again."
+            ) from e
+        self._take(len(out))
+        return bytes(out)
+
+
+def _zip_member_kind(entry: str) -> tuple[str, str] | None:
+    """(table name, extension) of a table file in a ZIP, or None for anything else.
+
+    ``hosp/admissions.csv.gz`` -> ("admissions", ".csv"). Directories and ``__MACOSX`` are skipped.
+    """
+    if entry.endswith("/") or entry.startswith("__MACOSX"):
+        return None
+    name = Path(entry).name
+    if name.lower().endswith(".gz"):
+        name = name[:-3]
+        if Path(name).suffix.lower() not in DELIMITERS:
+            return None
+    ext = Path(name).suffix.lower()
+    if ext not in ZIP_TABLE_EXTENSIONS:
+        return None
+    return Path(name).stem, ext
+
+
+def _zip_members(z: zipfile.ZipFile, nested: bool, budget: ZipExpansionBudget) -> list[tuple[str, str, str, bytes]]:
+    """(entry path, table name, extension, bytes) of every table in the ZIP.
+
+    A ZIP inside the ZIP is opened once (UCI ships sepsis_survival that way); a ZIP inside that
+    one is not, so an archive cannot unpack itself without bound.
+
+    Raises:
+        SecurityError: a path climbs out of the archive.
+        UploadFileError: more than ``MAX_ZIP_ENTRIES`` entries, the archive expands past
+            ``budget``, or a member cannot be read.
+    """
+    if len(z.infolist()) > MAX_ZIP_ENTRIES:
+        raise UploadFileError(
+            f"The ZIP holds more than {MAX_ZIP_ENTRIES:,} files. Split it into smaller ZIPs, "
+            "or combine the files into fewer tables, and upload again."
+        )
+    for entry in z.namelist():
+        if ".." in entry or entry.startswith("/"):
+            raise SecurityError(
+                f"The ZIP has a file path that points outside it ({entry}). "
+                "Zip the files again from inside their folder and upload the new ZIP."
+            )
+    members: list[tuple[str, str, str, bytes]] = []
+    for entry in z.namelist():
+        if nested and entry.lower().endswith(".zip") and not entry.startswith("__MACOSX"):
+            try:
+                with zipfile.ZipFile(io.BytesIO(budget.read(z, entry))) as inner:
+                    members.extend((f"{entry}/{path}", n, e, b) for path, n, e, b in _zip_members(inner, False, budget))
+            except (zipfile.BadZipFile, NotImplementedError, EOFError, ValueError) as e:
+                raise UploadFileError(
+                    f"The ZIP inside this ZIP ({Path(entry).name}) cannot be opened. "
+                    "Unzip it, then upload its files in a new ZIP."
+                ) from e
+            continue
+        kind = _zip_member_kind(entry)
+        if kind is None:
+            continue
+        content = budget.read(z, entry)
+        if entry.lower().endswith(".gz"):
+            content = budget.gunzip(content, Path(entry).name)
+        members.append((entry, kind[0], kind[1], content))
+    return members
+
+
+def _looks_like_codebook(content: bytes, separator: str) -> bool:
+    """True when delimited text is several small tables split by blank rows, each opening with a
+    header row of words (UCI diabetes' ``IDS_mapping.csv``), not one data table with a stray
+    blank line: every block after a blank row must start with a row that has no number in it.
+    """
+    blocks: list[list[str]] = []  # the first row of each block of non-blank rows
+    in_block = False
+    for line in content.decode("utf-8", errors="replace").splitlines():
+        cells = [c.strip().strip('"').strip() for c in line.split(separator)]
+        if not any(cells):
+            in_block = False
+            continue
+        if not in_block:
+            blocks.append(cells)
+            in_block = True
+    return len(blocks) >= 2 and all(_is_word_row(first) for first in blocks)
+
+
+def _is_word_row(cells: list[str]) -> bool:
+    """A row of words (a header): no cell is a number."""
+
+    def is_number(cell: str) -> bool:
+        try:
+            float(cell.replace(",", ""))
+        except ValueError:
+            return False
+        return True
+
+    filled = [c for c in cells if c]
+    return bool(filled) and not any(is_number(c) for c in filled)
+
+
+@dataclass(frozen=True)
+class ZipRead:
+    """What a ZIP gave: its tables, the text files read as documentation instead, and why."""
+
+    table_list: list[dict[str, Any]]
+    as_docs: tuple[DocFile, ...] = ()
+    notes: tuple[str, ...] = ()
+    source_format: str = ""  # "cdc_wonder" when any table is a CDC WONDER export
 
 
 def _declared(metadata: dict[str, Any] | None) -> bool:
     return bool(metadata and metadata.get("population_estimates") is True)
 
 
-def _read_csv_staged(content: bytes, public: bool) -> StagedTable:
-    return read_csv_typed(content, public=public)
+def _read_file_set_staged(file_set: FileSet, public: bool) -> StagedTable:
+    return read_file_set(file_set, public=public)
+
+
+def _load_member_staged(content: bytes, filename: str, public: bool) -> StagedTable:
+    return load_single_file_staged(content, filename, public=public)
 
 
 def stage_declared(stage: Callable[[bool], StagedTable], declared: bool) -> StagedTable:
@@ -330,81 +582,123 @@ def stage_declared(stage: Callable[[bool], StagedTable], declared: bool) -> Stag
 
 
 def extract_zip_tables(file_bytes: bytes, declared: bool = False) -> list[dict[str, Any]]:
+    """The tables of a ZIP (``read_zip_tables``), without the files read as documentation."""
+    return read_zip_tables(file_bytes, declared=declared).table_list
+
+
+def read_zip_tables(file_bytes: bytes, budget: ZipExpansionBudget | None = None, declared: bool = False) -> ZipRead:
     """
     Extract tables from ZIP archive.
 
+    Reads delimited text (``.csv``, ``.tsv``, ``.psv``, each optionally ``.gz``), Excel
+    (``.xlsx``, ``.xls``), SAS transport (``.xpt``) and SPSS (``.sav``) files, also from one ZIP
+    nested inside. Numbered files with the same columns (one per patient, as PhysioNet ships
+    them) are read as one table (``storage.file_sets``).
+
+    A delimited text file that cannot be read as a table (a codebook of several stacked tables
+    with blank lines between them, as UCI's diabetes ZIP has) is kept as documentation when the
+    ZIP has other tables, and a note says so; in a ZIP with one table it fails the upload.
+
     Args:
         file_bytes: ZIP file content
+        budget: Bytes the archive may still expand to; a new ``ZipExpansionBudget`` if None
 
     Returns:
-        List of {"name": str, "data": pl.DataFrame, "notes": ..., "units": ...} dicts
+        ``ZipRead``; tables are {"name", "data", "notes", "units", "sheets"} dicts
 
     Raises:
         SecurityError: If path traversal or invalid paths detected
-        UploadError: If no CSV files, corrupted ZIP, or a table that cannot be staged
+        UploadFileError: If no table files, corrupted ZIP, a table that cannot be staged, or the
+            archive expands past the budget
     """
-    import gzip
-    import io
-
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
-            # Security: Check for path traversal
-            for entry in z.namelist():
-                if ".." in entry or entry.startswith("/"):
-                    raise SecurityError(f"Invalid path: {entry}")
+            members = _zip_members(z, nested=True, budget=budget or ZipExpansionBudget())
+    except (zipfile.BadZipFile, NotImplementedError, EOFError, ValueError) as e:
+        raise UploadFileError(
+            "Corrupted ZIP file: it could not be opened. Zip the files again and upload the new ZIP."
+        ) from e
+    if not members:
+        raise UploadFileError(
+            "No table files in ZIP. Add the data as "
+            + ", ".join(sorted(ZIP_TABLE_EXTENSIONS))
+            + " (or .gz of a .csv, .tsv or .psv) and upload the ZIP again."
+        )
 
-            # Get CSV files (including .csv.gz), skip __MACOSX and directories
-            csv_files = [
-                e
-                for e in z.namelist()
-                if (e.endswith(".csv") or e.endswith(".csv.gz"))
-                and not e.startswith("__MACOSX")
-                and not e.endswith("/")  # Skip directory entries
-            ]
+    text = [TextMember(entry, content, DELIMITERS[ext]) for entry, _name, ext, content in members if ext in DELIMITERS]
+    file_sets, _singles = split_file_sets(text)
+    in_set = {m.path for fs in file_sets for m in fs.members}
 
-            if not csv_files:
-                raise UploadError("No CSV files in ZIP")
+    staged_tables: list[tuple[str, StagedTable]] = []
+    as_docs: list[DocFile] = []
+    notes: list[str] = []
+    try:
+        for fs in file_sets:
+            # Declared public: markers read only once the set is accepted as public (stage_declared).
+            staged_tables.append((fs.name, stage_declared(functools.partial(_read_file_set_staged, fs), declared)))
+    except StagingError as e:
+        raise UploadFileError(str(e)) from e
+    singles = [(entry, name, ext, content) for entry, name, ext, content in members if entry not in in_set]
+    sheet_notes: list[str] = []
+    for entry, name, ext, content in singles:
+        try:
+            staged = stage_declared(functools.partial(_load_member_staged, content, f"{name}{ext}"), declared)
+            staged_tables.append((name, staged))
+            # A notes block under the data (CDC WONDER) is documentation, and the upload says so.
+            if staged.export_notes.strip():
+                as_docs.append(DocFile(name=f"{name}_notes.txt", path=entry, content=staged.export_notes.encode()))
+            notes.extend(f"{Path(entry).name}: {note}" for note in staged.table_notes)
+            # Each workbook's own sheet note, naming the file: in a ZIP of several workbooks, a
+            # sheet left unread in any of them must never look fully loaded.
+            if sheet_note := describe_sheets(staged.sheets.as_dict() if staged.sheets is not None else None):
+                sheet_notes.append(f"{Path(entry).name}: {sheet_note}")
+        except StagingError as e:
+            # Only a codebook may become documentation: its text reaches doc_context and the model's
+            # prompts, so a data table that fails (patient rows) must fail the upload instead.
+            if (
+                ext not in DELIMITERS
+                or len(singles) + len(file_sets) < 2
+                or not _looks_like_codebook(content, DELIMITERS[ext])
+            ):
+                raise UploadFileError(f"Table '{name}': {e}") from e
+            as_docs.append(DocFile(name=f"{name}.txt", path=entry, content=content))
+            # Says why, so a table kept as documentation is never mistaken for data in silence.
+            notes.append(
+                f"{Path(entry).name} was kept as documentation, not read as a table, so it is not in the "
+                f"cohort. {str(e).rstrip('.')}. It looks like a codebook (several tables split by blank "
+                "rows); if it is one, you can ignore this."
+            )
+            logger.info("zip_table_read_as_documentation", error_type=type(e).__name__)
+    if len(staged_tables) > 1:  # one table: its workbook note is the upload's sheet_note
+        notes.extend(sheet_notes)
+    if not staged_tables:
+        raise UploadFileError(
+            "No file in the ZIP could be read as a table. Each table needs one header row followed by "
+            "rows of data; fix the files and upload the ZIP again."
+        )
 
-            # Check for duplicate table names
-            seen = set()
-            tables: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    tables: list[dict[str, Any]] = []
+    for name, staged in staged_tables:
+        if name in seen:
+            raise UploadFileError(
+                f"Duplicate table name: two files in the ZIP are named {name}. "
+                "Rename one of them and upload the ZIP again."
+            )
+        seen.add(name)
+        tables.append(
+            {"name": name, "data": staged.data, "notes": staged.notes, "units": staged.units, "sheets": staged.sheets}
+        )
+        logger.debug("zip_table_loaded", rows=staged.data.height, columns=staged.data.width)
 
-            for entry in csv_files:
-                # Extract table name (filename stem)
-                name = Path(entry).stem
-                if name.endswith(".csv"):  # Handle .csv.gz case
-                    name = Path(name).stem
-
-                if name in seen:
-                    raise UploadError(f"Duplicate table name: {name}")
-                seen.add(name)
-
-                # Read file content
-                csv_content = z.read(entry)
-
-                # Handle gzip compression
-                if entry.endswith(".gz"):
-                    csv_content = gzip.decompress(csv_content)
-
-                # Typed over the whole file, column by column (storage.staging); no all-text fallback.
-                try:
-                    staged = stage_declared(functools.partial(_read_csv_staged, csv_content), declared)
-                except StagingError as e:
-                    raise UploadError(f"Table '{name}': {e}") from e
-                df = staged.data
-                tables.append({"name": name, "data": df, "notes": staged.notes, "units": staged.units})
-                logger.debug(f"Loaded table '{name}': {df.height:,} rows, {df.width} cols")
-
-            # Tables are typed one by one; a column shared by several (a join key such as ward)
-            # must have one type in all of them before the cohort is built.
-            settled, shared_notes = settle_shared_column_types({t["name"]: t["data"] for t in tables})
-            for table in tables:
-                table["data"] = settled[table["name"]]
-                table["notes"] = (*table["notes"], *(n for name, n in shared_notes if name == table["name"]))
-            return tables
-
-    except zipfile.BadZipFile:
-        raise UploadError("Corrupted ZIP file")
+    # Tables are typed one by one; a column shared by several (a join key such as ward)
+    # must have one type in all of them before the cohort is built.
+    settled, shared_notes = settle_shared_column_types({t["name"]: t["data"] for t in tables})
+    for table in tables:
+        table["data"] = settled[table["name"]]
+        table["notes"] = (*table["notes"], *(n for name, n in shared_notes if name == table["name"]))
+    source_format = next((t.source_format for _name, t in staged_tables if t.source_format), "")
+    return ZipRead(table_list=tables, as_docs=tuple(as_docs), notes=tuple(notes), source_format=source_format)
 
 
 def _detect_excel_header_row(file_bytes: bytes, max_rows_to_check: int = 5) -> int:
@@ -434,27 +728,59 @@ def _detect_excel_header_row(file_bytes: bytes, max_rows_to_check: int = 5) -> i
     return detect_header_row(rows, max_rows_to_check)
 
 
+# UTF-16 and UTF-32 byte-order marks: Excel's "Unicode Text (*.txt)" export writes UTF-16.
+_WIDE_TEXT_BOMS: Final = (b"\xff\xfe", b"\xfe\xff", b"\x00\x00\xfe\xff")
+_TXT_HOW_TO_FIX: Final = (
+    "Save the data as CSV, or as tab-separated text in UTF-8 (one row per line, columns separated "
+    "by tabs), and upload it again."
+)
+
+
+def _check_tab_separated_text(file_bytes: bytes) -> None:
+    """Refuse a .txt that is not a UTF-8 tab-separated table (CDC WONDER exports are).
+
+    Raises:
+        StagingError: UTF-16/32 text (Excel's "Unicode Text"), or not a table: the header and the
+            first data line must both hold the same number of tab-separated columns (two or more).
+    """
+    if file_bytes.startswith(_WIDE_TEXT_BOMS) or b"\x00" in file_bytes[:4096]:
+        raise StagingError(f"This .txt file is saved as UTF-16 (Unicode) text, which cannot be read. {_TXT_HOW_TO_FIX}")
+    lines = [line for line in file_bytes.splitlines()[:2] if line.strip()]
+    widths = {line.count(b"\t") for line in lines}
+    if len(lines) < 2 or len(widths) != 1 or 0 in widths:
+        raise StagingError(f"This .txt file is not tab-separated, so it cannot be read as a table. {_TXT_HOW_TO_FIX}")
+
+
 def load_single_file_staged(file_bytes: bytes, filename: str, *, public: bool = False) -> StagedTable:
     """
-    Load a single file (CSV, Excel, SPSS) as one typed table with its staging notes.
+    Load a single file (CSV/TSV/PSV, Excel, SAS transport, SPSS) as one typed table with its notes.
 
-    CSV and Excel are read as text and typed column by column over the whole file
-    (``storage.staging``). SPSS files carry their own types and are read straight to Polars.
+    Delimited text and Excel are read as text and typed column by column over the whole file
+    (``storage.staging``). SAS transport files keep their own types (whole numbers as Int64);
+    SPSS files carry their own types and are read straight to Polars.
 
     Raises:
         ValueError: Unsupported file type.
         StagingError: The file cannot be read or has a row with no ID and no values.
     """
     file_ext = Path(filename).suffix.lower()
-    if file_ext == ".csv":
-        return read_csv_typed(file_bytes, public=public)
+    if file_ext in DELIMITERS:
+        return read_csv_typed(file_bytes, separator=DELIMITERS[file_ext], public=public)
+    if file_ext == ".txt":
+        _check_tab_separated_text(file_bytes)
+        return read_csv_typed(file_bytes, separator="\t", public=public)
     if file_ext in {".xlsx", ".xls"}:
-        # Openpyxl reads .xlsx only; an .xls file fails here with a clear StagingError.
+        # The workbook's bytes decide the reader: openpyxl for .xlsx, xlrd for BIFF .xls.
         return read_excel_typed(file_bytes, public=public)
+    if file_ext == ".xpt":
+        return read_xport_typed(file_bytes)
     if file_ext == ".sav":
         import pyreadstat
 
-        df, _meta = pyreadstat.read_sav(io.BytesIO(file_bytes), output_format="polars")
+        try:
+            df, _meta = pyreadstat.read_sav(io.BytesIO(file_bytes), output_format="polars")
+        except (pyreadstat.ReadstatError, pyreadstat.PyreadstatError) as e:
+            raise StagingError(f"The SPSS (.sav) file could not be read: {type(e).__name__}") from e
         return StagedTable(data=df)
     raise ValueError(f"Unsupported file type: {file_ext}")
 
@@ -499,7 +825,7 @@ def _safe_store_upload(
     upload_id = str(uuid.uuid4())
     # Sanitize extension: only allow known safe extensions
     original_ext = Path(original_filename).suffix.lower()
-    safe_extensions = {".csv", ".xlsx", ".xls", ".sav", ".zip", ".parquet"}
+    safe_extensions = {".csv", ".xlsx", ".xls", ".sav", ".xpt", ".zip", ".parquet"}
     if original_ext not in safe_extensions:
         original_ext = ".csv"  # Default to CSV if unknown
 
@@ -588,7 +914,7 @@ class UploadSecurityValidator:
     """
 
     # Allowlisted file extensions
-    ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".sav", ".zip"}
+    ALLOWED_EXTENSIONS = {".csv", ".tsv", ".txt", ".xlsx", ".xls", ".sav", ".xpt", ".zip"}
 
     # Maximum file size (100MB as per Phase 0 spec)
     MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024  # 100MB
@@ -1004,7 +1330,7 @@ def _check_unique_table_names(tables: list[dict[str, Any]]) -> None:
     """Fail fast when two tables would be stored under one file name (``Lab Results``, ``lab-results``).
 
     Raises:
-        UploadError: names that sanitize alike, listed so the user can rename one.
+        UploadFileError: names that sanitize alike, listed so the user can rename one.
     """
     from clinical_analytics.storage.datastore import _sanitize_table_name
 
@@ -1014,7 +1340,7 @@ def _check_unique_table_names(tables: list[dict[str, Any]]) -> None:
     clashes = [names for names in by_file.values() if len(names) > 1]
     if clashes:
         listed = "; ".join(" and ".join(f"'{n}'" for n in names) for names in clashes)
-        raise UploadError(f"Tables {listed} would be stored under the same name. Rename one and upload again.")
+        raise UploadFileError(f"Tables {listed} would be stored under the same name. Rename one and upload again.")
 
 
 def _discard_uncommitted(storage: "UserDatasetStorage", upload_id: str, created: list[Path]) -> None:
@@ -1064,7 +1390,11 @@ def _cast_id_columns(df: pl.DataFrame) -> pl.DataFrame:
 
 
 # Exceptions whose messages this project writes for the user (never with cell values).
-_USER_MESSAGE_ERRORS: Final = (StagingError, UploadError, SecurityError, DataQualityError)
+_USER_MESSAGE_ERRORS: Final = (StagingError, UploadError, SecurityError, DataQualityError, NoCohortAnchorError)
+
+# Errors that mean the uploaded file cannot be used as sent: the user fixes the file (API 400).
+# Every other failure is the app's (API 500). Each keeps a message written for the user.
+USER_FILE_ERRORS: Final = (UploadFileError, StagingError, SecurityError, DataQualityError, NoCohortAnchorError)
 
 
 def duplicate_name_message(dataset_name: str) -> str:
@@ -1110,6 +1440,7 @@ def save_table_list(
     metadata: dict[str, Any],
     progress_cb: Callable[[int, str], None] | None = None,
     raw_bytes: bytes | None = None,
+    raise_user_errors: bool = False,
 ) -> tuple[bool, str]:
     """
     Save normalized tables as one new dataset version (unified persistence for every upload type).
@@ -1133,9 +1464,16 @@ def save_table_list(
         metadata: Upload metadata
         progress_cb: Optional progress callback
         raw_bytes: The uploaded file as received (raw landing); None when there is none
+        raise_user_errors: If True, tables that cannot be used as sent (``USER_FILE_ERRORS``)
+            raise instead of returning a failure; a ``DataQualityError`` becomes an
+            ``UploadFileError`` that says the tables could not be combined.
 
     Returns:
         (success, message)
+
+    Raises:
+        UploadFileError, StagingError, SecurityError, NoCohortAnchorError: only with
+            ``raise_user_errors``.
     """
     log = logger.bind(upload_id=upload_id, table_count=len(tables))
     created: list[Path] = []  # data files this call wrote; removed if the save does not commit
@@ -1154,8 +1492,11 @@ def save_table_list(
                 with tempfile.TemporaryDirectory() as temp_dir:
                     temp_path = Path(temp_dir)
                     doc_paths = []
-                    for doc_file in metadata["doc_files"]:
-                        doc_temp_path = temp_path / doc_file.name
+                    for i, doc_file in enumerate(metadata["doc_files"]):
+                        # One folder per document: README.txt in two folders, or codebook.txt beside
+                        # codebook.csv kept as documentation, must not overwrite each other.
+                        doc_temp_path = temp_path / str(i) / Path(doc_file.name).name
+                        doc_temp_path.parent.mkdir()
                         doc_temp_path.write_bytes(doc_file.content)
                         doc_paths.append(doc_temp_path)
                     doc_context = extract_context_from_docs(doc_paths)
@@ -1267,7 +1608,8 @@ def save_table_list(
         column_units: dict[str, str] = {}
         for t in tables:
             column_units.update(t.get("units") or {})
-        excel_sheets = next((t["sheets"].as_dict() for t in tables if t.get("sheets") is not None), None)
+        # One file: its workbook note. Several (a ZIP): each workbook's note is a ZIP note instead.
+        excel_sheets = tables[0]["sheets"].as_dict() if len(tables) == 1 and tables[0].get("sheets") else None
 
         canonical_tables = {
             t["name"]: {
@@ -1420,9 +1762,16 @@ def save_table_list(
         KeyError,
         pl.exceptions.PolarsError,
     ) as e:
+        combine_failed = f"The tables could not be combined into one row per patient: {e}"
+        if raise_user_errors and isinstance(e, USER_FILE_ERRORS):
+            # The files, not the app: the caller answers 400 with this message (see save_upload).
+            log.warning("save_tables_file_refused", error_type=type(e).__name__)
+            if isinstance(e, DataQualityError):
+                raise UploadFileError(combine_failed) from e
+            raise
         log.error("save_tables_failed", error_type=type(e).__name__)
         if isinstance(e, DataQualityError):
-            return False, f"The tables could not be combined into one row per patient: {e}"
+            return False, combine_failed
         return False, f"Error saving tables: {_upload_failure_reason(e)}"
     finally:
         # Runs on every exit, whatever the exception type: nothing uncommitted stays on disk.
@@ -1709,7 +2058,7 @@ class UserDatasetStorage:
         metadata: dict[str, Any],
         progress_cb: Callable[[int, str], None] | None = None,
         overwrite: bool = False,
-        raise_staging_errors: bool = False,
+        raise_user_errors: bool = False,
     ) -> tuple[bool, str, str | None]:
         """
         Save uploaded file with security validation.
@@ -1723,15 +2072,16 @@ class UserDatasetStorage:
                 Progress callbacks are best-effort: a failing callback is logged (``_notify_progress``)
                 and never breaks the save.
             overwrite: If True, allow overwriting existing dataset with same name (Phase 4.2)
-            raise_staging_errors: If True, a file that cannot be read raises ``StagingError``
-                (its message is written for the user) instead of returning a failure, so the
-                API can answer 400 rather than 500.
+            raise_user_errors: If True, a file that cannot be used as sent raises one of
+                ``USER_FILE_ERRORS`` (its message is written for the user) instead of returning a
+                failure, so the API can answer 400 and keep 500 for the app's own faults.
 
         Returns:
             Tuple of (success, message, upload_id)
 
         Raises:
-            StagingError: only with ``raise_staging_errors``, when the file cannot be read.
+            UploadFileError, StagingError, SecurityError, DataQualityError, NoCohortAnchorError:
+                only with ``raise_user_errors``, when the file cannot be used as sent.
         """
         # Security validation
         # Progress callback is best-effort: don't let UI errors break storage
@@ -1740,6 +2090,8 @@ class UserDatasetStorage:
         valid, error = UploadSecurityValidator.validate(original_filename, file_bytes)
         if not valid:
             _notify_progress(progress_cb, 100, f"❌ Validation failed: {error}")
+            if raise_user_errors:
+                raise UploadFileError(error)
             return False, error, None
 
         try:
@@ -1856,6 +2208,14 @@ class UserDatasetStorage:
             # added, so a row number on zero rows never makes it look "ready".
             if all(t["data"].height == 0 for t in tables):
                 raise StagingError(no_data_rows_message(original_filename, tables[0]["data"].width if tables else 0))
+            # A ZIP's documentation (ADR004) becomes the dataset's doc context in save_table_list.
+            if table_metadata["doc_files"]:
+                metadata["doc_files"] = table_metadata["doc_files"]
+            zip_notes: list[str] = table_metadata[ZIP_NOTES_KEY]
+            if zip_notes:
+                metadata[ZIP_NOTES_KEY] = zip_notes
+            if table_metadata[SOURCE_FORMAT_KEY]:
+                metadata[SOURCE_FORMAT_KEY] = table_metadata[SOURCE_FORMAT_KEY]
 
             # Mark all existing versions as inactive (the drift check below reads stored metadata)
             if existing_version_history is not None:
@@ -1898,14 +2258,14 @@ class UserDatasetStorage:
                 # Update table with patient_id
                 tables[0]["data"] = df_with_id
 
-                # Verify an ID exists before saving: patient_id, or the row number added when no
-                # column identifies a patient (answers then count rows, never patients)
+                # Every upload has an ID: patient_id, or the row number added when no column
+                # identifies a patient (answers then count rows, never patients, and the upload
+                # says so: identifier_rules.row_key_note). Neither is a file the app cannot key:
+                # refused with what to add, never stored with rows counted as patients.
                 has_row_number = id_metadata.get("patient_id_source") == "row_index"
                 if "patient_id" not in df_with_id.columns and not has_row_number:
-                    logger.error(
-                        f"patient_id column missing after ensure_patient_id! Columns: {list(df_with_id.columns)}"
-                    )
-                    raise ValueError("Failed to create patient_id column")
+                    logger.warning("upload_no_patient_id", columns=df_with_id.width)
+                    raise NoPatientIdError(no_patient_id_message(df_with_id.width))
                 logger.info(
                     f"Ensured an ID column ({'row number' if has_row_number else 'patient_id'}). "
                     f"DataFrame shape: {df_with_id.shape}"
@@ -2041,7 +2401,15 @@ class UserDatasetStorage:
             # Save using unified save_table_list() function
             _notify_progress(progress_cb, 85, "Saving dataset files and metadata...")
 
-            success, message = save_table_list(self, tables, upload_id, metadata, progress_cb, raw_bytes=file_bytes)
+            success, message = save_table_list(
+                self,
+                tables,
+                upload_id,
+                metadata,
+                progress_cb,
+                raw_bytes=file_bytes,
+                raise_user_errors=raise_user_errors,
+            )
 
             if not success:
                 return False, message, None
@@ -2068,15 +2436,24 @@ class UserDatasetStorage:
             _notify_progress(progress_cb, 100, f"✅ Upload complete! Dataset '{dataset_name}' ready to use.")
 
             # Phase 1: Include duplicate warning in success message (if any)
-            success_message = f"Upload successful: {upload_id}"
+            success_message = " ".join([f"Upload successful: {upload_id}", *zip_notes])
             if duplicate_warning:
                 success_message = f"{duplicate_warning} {success_message}"
 
             return True, success_message, upload_id
 
-        except (UploadError, SecurityError, OSError, RuntimeError, ValueError, pl.exceptions.PolarsError) as e:
-            if raise_staging_errors and isinstance(e, StagingError):
-                logger.warning("save_upload_unreadable_file", error_type=type(e).__name__)
+        except (
+            UploadError,
+            SecurityError,
+            DataQualityError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            pl.exceptions.PolarsError,
+        ) as e:
+            if raise_user_errors and isinstance(e, USER_FILE_ERRORS):
+                logger.warning("save_upload_file_refused", error_type=type(e).__name__)
+                _notify_progress(progress_cb, 100, f"Error: {_upload_failure_reason(e)}")
                 raise
             logger.error("save_upload_failed", error_type=type(e).__name__)
             _notify_progress(progress_cb, 100, f"Error: {_upload_failure_reason(e)}")
@@ -2650,7 +3027,7 @@ class UserDatasetStorage:
             logger.info(f"Multi-table upload successful: {len(tables_list)} tables")
             notes = describe_cohort_build((self.get_upload_metadata(upload_id) or {}).get(COHORT_BUILD_KEY))
             message = f"Multi-table upload successful: {len(tables_list)} tables"
-            return True, " ".join([message, *notes]), upload_id
+            return True, " ".join([message, *table_metadata[ZIP_NOTES_KEY], *notes]), upload_id
 
         except (
             UploadError,

@@ -5,8 +5,11 @@
 The desktop app's **Upload a file…** button accepts one file at a time (`ALLOWED_UPLOAD_EXTENSIONS` in `src/clinical_analytics/api/routes/datasets.py`):
 
 - **CSV files** (.csv)
-- **Excel files** (.xlsx, .xls)
+- **Tab-separated text** (.tsv, or .txt), such as a CDC WONDER export as downloaded. The notes block under the data (dataset, query, citation) is kept as the dataset's documentation, not as rows; "Total" subtotal rows are left out so nothing is counted twice; values WONDER withholds ("Suppressed", "Unreliable") are stored as missing, never 0, and the upload says how many in which column.
+- **Excel files** (.xlsx, and legacy .xls). Only the first sheet is read; the upload names any other sheet that holds data.
 - **SPSS files** (.sav)
+- **SAS transport files** (.xpt), as NHANES publishes them. Whole-number columns (codes such as 1/2) are stored as integers.
+- **ZIP files** (.zip) of tables and their documentation. See [Multi-table datasets](#multi-table-datasets).
 
 To try the app without your own data, click **Use the sample cohort** instead. It loads a synthetic sample cohort that ships with the app (`src/clinical_analytics/resources/demo/sample_cohort.csv`, no real patients).
 
@@ -62,7 +65,15 @@ Columns with:
 
 ## Multi-table datasets
 
-ZIP uploads of several related tables (for example MIMIC-IV extracts) exist in the storage layer but are **not available in the desktop app**: the upload endpoint rejects `.zip`. Join the tables into one file before uploading.
+Upload a `.zip` that holds the data tables and their documentation, as PhysioNet and UCI package them:
+
+- **Tables:** `.csv`, `.tsv` and `.psv` (each also as `.gz`), `.xlsx`, `.xls`, `.xpt` and `.sav`, in any folder of the ZIP. A ZIP inside the ZIP is opened too (one level).
+- **Documentation:** `.pdf`, `.md` and `.txt` files (a README, a data dictionary). Their text is kept with the dataset as its documentation context.
+- **One file per patient:** numbered files with the same columns (`p000001.psv`, `p000002.psv`, ...) are read as one table. The file name becomes `patient_id` (or `source_file` when the files already hold a patient ID column), and `source_folder` says which folder each row came from when there is more than one.
+- **A codebook saved as CSV** that cannot be read as one table (several small tables separated by blank rows) is kept as documentation, and the upload message says so.
+- **Several tables** become one cohort, anchored on a table with one row per patient or per stay (`subject_id`, `hadm_id`, `patientunitstayid`, NHANES `SEQN`, ...); the upload lists the tables left out of the cohort and why. If no table has an ID the others share, the upload fails with that reason: upload the table you want as its own file.
+
+The upload limit is 100 MB for the ZIP file itself, and 1 GB for everything in it once unpacked. Documentation context is cut at 50,000 characters, in the order the files sit in the ZIP, so put the data dictionary before long files such as a licence or a paper.
 
 ## Manual Schema Override
 
@@ -94,13 +105,16 @@ The app runs locally after setup. It is **not a compliance certification**; chec
 
 ## Troubleshooting
 
-### "Could not detect patient ID"
+### "Answers count rows, not patients"
 
-**Problem:** The platform can't find a unique identifier for each patient.
+**What it means:** no column in the file identifies a patient, so the upload added a row number (or tells the rows apart by a combination of columns) and every answer counts rows. The upload says so, and answers say "rows", never "patients". If each row is one patient the numbers are right; if a patient can have several rows (visits, episodes), a row count is not a patient count.
 
-**Solution:**
-- Make sure you have a column with a unique value for each patient (like patient ID, subject ID, or MRN)
-- If your data doesn't have one, add a simple row number column in Excel before uploading
+**To count patients:**
+- Add a column with one ID for each patient (patient ID, subject ID or MRN), with the same ID on each of that patient's rows, and upload the file again. A column named as a patient ID is used even when it repeats; repeated IDs are read as visits, and questions that count patients first ask you to confirm that.
+
+### Other upload errors
+
+A file the app cannot use as sent is refused with a message that says what to fix (the API answers 400): a damaged or password-protected ZIP, a ZIP packed with a compression method other than Deflate (Windows' Deflate64), more than 100,000 files in one ZIP, or two columns whose names differ only in upper and lower case (`Age` and `age`), which the query engine reads as one name.
 
 ### "No outcome variables detected"
 

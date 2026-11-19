@@ -218,13 +218,14 @@ def test_uploadDataset_intervalBroken_warningNamesColumns(
     assert checks["mx_missing"]["message"] == "mx: 20.0% missing"
 
 
-def test_uploadDataset_zipExtension_refused400(test_client: TestClient) -> None:
-    # Act
-    response = test_client.post(UPLOAD, files={"file": ("small.zip", b"PK\x03\x04", "application/zip")})
+def test_uploadDataset_unsupportedExtension_refused400NamesAllowed(test_client: TestClient) -> None:
+    # Act: ZIP is accepted since #123; an extension that is not a table is refused
+    response = test_client.post(UPLOAD, files={"file": ("small.json", b'{"a": 1}' * 200, "application/json")})
 
-    # Assert: the docs no longer list ZIP
+    # Assert: refused, and the message lists what is accepted (ZIP included)
     assert response.status_code == 400
     assert ".zip" in response.json()["detail"]
+    assert "not allowed" in response.json()["detail"]
 
 
 @pytest.mark.parametrize(

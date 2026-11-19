@@ -23,7 +23,7 @@ The platform supports user-uploaded datasets only. Built-in datasets (COVID-MS, 
 
 Datasets are registered automatically when uploaded via the UI:
 
-1. **Upload** - CSV, Excel (`.xlsx`, `.xls`) or SPSS (`.sav`) file sent to `POST /api/datasets/upload` (the Electron app's upload area). Other extensions, ZIP included, are refused with 400.
+1. **Upload** - CSV, tab-separated text (`.tsv`, or a tab-separated `.txt` such as a CDC WONDER export), Excel (`.xlsx`, `.xls`), SPSS (`.sav`), SAS transport (`.xpt`) or ZIP file sent to `POST /api/datasets/upload`. In delimited text, a notes block under the data (from a `---` line, as CDC WONDER writes) is kept as the dataset's documentation, never as rows; subtotal rows (a first column `Notes` holding `Total`) are left out and counted in `cohort_notes`; and values the source withheld (`Suppressed`, `Unreliable`) in a number column are stored as missing, never 0, and reported in `type_notes`. A ZIP holds tables (`.csv`, `.tsv`, `.psv`, gzipped or not, `.xlsx`, `.xls`, `.xpt`, `.sav`, also inside one nested ZIP) and documentation (`.pdf`, `.md`, `.txt`), which becomes the dataset's doc context. Numbered files with the same columns (one per patient, as PhysioNet ships them) are read as one table with `patient_id` from the file name. Several tables are joined into one cohort when one of them has one row per patient or stay with an ID the others share; otherwise the upload fails and says so. A file that cannot be used as sent (unreadable, damaged or password-protected, tables with no shared ID) is answered with 400 and a message that says what to fix; 500 is kept for the app's own faults.
 2. **Schema Inference** - Automatic detection of patient ID, outcomes, time columns. A patient ID is an existing `patient_id` column, else a copy of the most unique integer or text column that is not a measurement (never a float, fractional or estimate/bound column such as `mx`, `upper`, `lower` or a rate); the source column is kept. Else `patient_id` is a hash of a combination of columns unique on every row (location x cause x sex x year), else a `row_number` column is added. A synthesized ID (a hash, a row number, or a copy of a column not named as a patient ID) keys rows: answers count rows, never patients.
 3. **Registry** - Dataset registered in `DatasetRegistry` with inferred config
 4. **Semantic Layer** - `SemanticLayer` initialized for NL query support
@@ -36,7 +36,7 @@ See [Dataset Registry](../architecture/dataset-registry.md) for details.
 
 - **200, `status: "ready"`** - stored, and every error-level data check passed.
 - **200, `status: "needs_review"`** - stored and queryable, but an error-level data check failed (for example `patient_id_no_duplicates`). `failed_checks` lists the check ids and `message` names each failed check and what to do next.
-- **400** - the file cannot be read as a table (for example an Excel file with no header row), or it has a header and no data rows, with a plain message. An upload with no data rows is never stored.
+- **400** - the file cannot be used as sent (unreadable, damaged or password-protected, a ZIP whose tables share no ID, no tables), or it has a header and no data rows, with a plain message that says what to fix. An upload with no data rows is never stored.
 - **409** - a dataset with this name already exists. Upload under another name (`dataset_name`), or delete the existing dataset first. The route has no overwrite option.
 - **400** - the extension or size is not accepted.
 
