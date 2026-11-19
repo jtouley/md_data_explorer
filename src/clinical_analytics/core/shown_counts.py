@@ -196,7 +196,8 @@ def from_bitmap(words: np.ndarray, rows: int) -> np.ndarray:
 
 def _popcount(words: np.ndarray) -> np.ndarray:
     """Set bits per row of a 2-D array of words (per array for 1-D)."""
-    return np.bitwise_count(words).sum(axis=-1, dtype=np.int64)
+    counts: np.ndarray = np.bitwise_count(words).sum(axis=-1, dtype=np.int64)
+    return counts
 
 
 def _small(values: np.ndarray) -> np.ndarray:
@@ -466,7 +467,8 @@ def _row_space(sets: np.ndarray) -> np.ndarray:
     below it would need a singular value under about 1e-13 of the largest."""
     _, singular, basis = np.linalg.svd(sets, full_matrices=False)
     tolerance = singular.max(initial=0.0) * max(sets.shape) * np.finfo(np.float64).eps
-    return basis[singular > tolerance]
+    kept: np.ndarray = basis[singular > tolerance]
+    return kept
 
 
 def _in_basis(regions: np.ndarray, basis: np.ndarray) -> bool:

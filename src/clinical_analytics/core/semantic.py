@@ -943,7 +943,8 @@ class SemanticLayer:
         """
         with self._con_lock, self._cohort_views_dropped():
             view = self._filtered_view(plan, base=self._positioned_view())
-            return view.select([ROW_POSITION, *dict.fromkeys(columns)]).to_polars()
+            rows: pl.DataFrame = view.select([ROW_POSITION, *dict.fromkeys(columns)]).to_polars()
+            return rows
 
     def row_fingerprint(self) -> str:
         """Row count and the sum of every row's hash, once per layer: the key of the log of shown
