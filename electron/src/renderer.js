@@ -1795,7 +1795,7 @@ async function handleLoadSample() {
           dataCheckStatusNote(result.quality),
           'The sample cohort is ready.'
         ),
-        'ok',
+        result.unit_note || result.sheet_note || result.status === 'needs_review' ? 'note' : 'ok',
         { showDetails: result.status === 'needs_review' || dataCheckNeedsReview(result.quality) }
       );
       await selectNewDataset(result.upload_id);

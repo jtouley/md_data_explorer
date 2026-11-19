@@ -92,11 +92,26 @@ def has_fractional_values(series: pl.Series) -> bool:
 
 def can_identify_patients(series: pl.Series) -> bool:
     """Whether the column's values may name patients: integers or text, no fractional values,
-    and not named as a measurement. Uniqueness is the caller's test."""
+    and not named as a measurement. Uniqueness is the caller's test.
+
+    A float column qualifies only when it is named as a patient ID and every value is a whole
+    number: SPSS stores every number as a float, so its "ID" of 1.0, 2.0, ... is still an ID. An
+    unnamed float is a measurement even when rounded (a rate rounded to integers).
+    """
+    from clinical_analytics.core.schema_inference import patient_key_by_name
+
     dtype = series.dtype
-    if not (dtype.is_integer() or dtype in (pl.String, pl.Categorical)):
-        return False
     if is_measurement_name(series.name):
+        return False
+    if dtype.is_float():
+        present = series.drop_nulls()
+        return (
+            patient_key_by_name([series.name]) is not None
+            and present.len() > 0
+            and bool(present.is_finite().all())
+            and bool((present == present.floor()).all())
+        )
+    if not (dtype.is_integer() or dtype in (pl.String, pl.Categorical)):
         return False
     return not has_fractional_values(series)
 
@@ -216,3 +231,18 @@ def row_key_note(metadata: Mapping[str, object]) -> str:
         f"{found} Answers count rows, not patients. To count patients, add a column with one ID for each "
         "patient, named patient_id, and upload the file again."
     )
+
+
+def added_id_columns(metadata: Mapping[str, object]) -> list[str]:
+    """The ID column the upload added to the file's own columns: ``patient_id`` when it was
+    copied from a column or hashed from several, the row number when rows were numbered, none
+    when the file had ``patient_id``. Reported with the dataset, so a check of the file's shape
+    (the acceptance upload check) compares the file's own columns."""
+    synthetic = metadata.get("synthetic_id_metadata")
+    info = synthetic.get("patient_id") if isinstance(synthetic, Mapping) else None
+    source = info.get("patient_id_source") if isinstance(info, Mapping) else None
+    if source in ("single_column", "composite"):
+        return ["patient_id"]
+    if source == "row_index" and isinstance(info, Mapping):
+        return [str(info.get("row_number_column") or ROW_NUMBER_COLUMN)]
+    return []

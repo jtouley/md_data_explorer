@@ -321,3 +321,25 @@ def test_llmParse_tierRaises_visibleFailureLoggedNotStub(sample_semantic_layer_m
     assert failed and failed[0]["log_level"] == "error"
     assert failed[0]["error_type"] == type(error).__name__
     assert failed[0].get("exc_info") is True
+
+
+def test_llmParse_modelCallReturnsNothing_refusedVisiblyNotStub(sample_semantic_layer_metadata) -> None:
+    """A model that is there but whose call fails (timeout: the client returns None) is a failed
+    model step: refused with the visible reason, never the 0.3 stub (review of #103, finding 3)."""
+    # Arrange
+    from clinical_analytics.core.nl_query_config import MODEL_STEP_FAILED_REASON
+    from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+    engine = NLQueryEngine(sample_semantic_layer_metadata)
+    client = MagicMock()
+    client.is_available.return_value = True
+    client.generate.return_value = None
+
+    # Act
+    with patch.object(engine, "_get_ollama_client", return_value=client):
+        intent = engine._llm_parse("What is the average age?")
+
+    # Assert
+    assert intent.model_step_failed is True
+    assert intent.failure_reason == MODEL_STEP_FAILED_REASON
+    assert intent.confidence == 0.0

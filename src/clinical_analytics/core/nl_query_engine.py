@@ -2362,10 +2362,20 @@ Fix the errors and return a corrected query intent as JSON.
             )
 
             if not llm_http_success:
-                logger.info(
-                    "ollama_generate_failed_fallback_to_stub", query_hash=_stable_hash(query), query_len=len(query)
+                # The model is there but its call failed (a timeout or a request error, which the
+                # client returns as no response): a failed model step, refused like an exception
+                # and never answered from a stub. A model that is not set up at all is the
+                # no-model mode above, which keeps the stub and the later checks.
+                from clinical_analytics.core.nl_query_config import MODEL_STEP_FAILED_REASON
+
+                logger.warning("ollama_generate_failed_refused", query_hash=_stable_hash(query), query_len=len(query))
+                return QueryIntent(
+                    intent_type="DESCRIBE",
+                    confidence=0.0,
+                    parsing_tier="llm_fallback",
+                    failure_reason=MODEL_STEP_FAILED_REASON,
+                    model_step_failed=True,
                 )
-                return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
 
             # Log raw LLM response for debugging
             logger.debug(

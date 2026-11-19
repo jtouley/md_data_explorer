@@ -223,9 +223,17 @@ def get_dataset(dataset_id: str) -> DatasetDetail:
 def _stored_column_types(dataset: Any, columns: list[str]) -> dict[str, str]:
     """Each column's stored type ("integer", "number", "string", "date", ...), read from the
     stored data's schema (no rows are read). A listed column missing from the store is
-    "missing", so a stale column list never passes for a typed one."""
-    dataset.load()
-    stored = dataset.data.collect_schema()
+    "missing", so a stale column list never passes for a typed one. When the stored data is
+    gone or unreadable every column is "missing": the details still open (the metadata is
+    intact), and the failure is logged, never a 500."""
+    from clinical_analytics.datasets.uploaded.definition import SemanticLayerBuildError
+
+    try:
+        dataset.load()
+        stored = dataset.data.collect_schema()
+    except (FileNotFoundError, SemanticLayerBuildError) as e:
+        logger.warning("dataset_stored_types_unreadable", error_type=type(e).__name__)
+        return dict.fromkeys(columns, "missing")
     names = columns or list(stored)
     return {col: logical_type(stored[col]) if col in stored else "missing" for col in names}
 

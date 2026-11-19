@@ -32,9 +32,33 @@ Patch = MetadataPatch | ExclusionPatternPatch | RelationshipPatch
 
 
 def id_column_from_metadata(metadata: dict[str, Any]) -> str | None:
-    """The column schema inference (or the upload wizard) mapped to ``patient_id``."""
+    """The column schema inference (or the upload wizard) mapped to ``patient_id``.
+
+    None when the upload synthesized patient_id as a row key (``patient_id_is_row_key``): it
+    names rows, not patients, so the contract states no patient ID and governed SQL asks the
+    user to confirm one row per patient instead of calling its counts patients.
+    """
+    from clinical_analytics.core.identifier_rules import patient_id_is_row_key
+
+    if patient_id_is_row_key(metadata):
+        return None
     mapping = (metadata.get("inferred_schema") or {}).get("column_mapping") or {}
     return next((col for col, role in mapping.items() if role == "patient_id"), None)
+
+
+def id_source_columns_from_metadata(metadata: dict[str, Any]) -> tuple[str, ...]:
+    """The column a patient ID was copied from (``patient_id_source`` 'single_column' and a
+    patient key, not a row key): it holds the same IDs, so the contract restricts it like the ID."""
+    from clinical_analytics.core.identifier_rules import patient_id_is_row_key
+
+    synthetic = metadata.get("synthetic_id_metadata")
+    info = synthetic.get("patient_id") if isinstance(synthetic, dict) else None
+    if not isinstance(info, dict) or info.get("patient_id_source") != "single_column":
+        return ()
+    if patient_id_is_row_key(metadata):
+        return ()
+    columns = info.get("patient_id_columns")
+    return tuple(str(c) for c in columns) if isinstance(columns, list) else ()
 
 
 def accepted_patch_ids(patches: list[Patch]) -> tuple[str, ...]:
@@ -133,6 +157,7 @@ def check_upload(
             dataset_version=dataset_version,
             dataset_name=str(metadata.get("dataset_name") or upload_id),
             id_column=id_column_from_metadata(metadata),
+            id_source_columns=id_source_columns_from_metadata(metadata),
             source_file_sha256=metadata.get("source_file_sha256"),
             resolved=_resolve(df, patches) if accepted else None,
             accepted_patch_ids=accepted,

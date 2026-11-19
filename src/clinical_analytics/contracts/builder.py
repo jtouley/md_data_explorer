@@ -50,6 +50,9 @@ class ContractInputs:
     dataset_version: str
     dataset_name: str
     id_column: str | None
+    # Columns the patient ID was copied from: same values, so restricted like the ID (never
+    # echoed by a data check, only coarsened by governed SQL).
+    id_source_columns: tuple[str, ...] = ()
     source_file_sha256: str | None = None
     resolved: ResolvedDatasetMetadata | None = None
     accepted_patch_ids: tuple[str, ...] = ()
@@ -370,7 +373,7 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
         quality.append(_missing_rule(name))
         if dtype == pl.String and is_numeric_text(series):
             quality.append(_censored_rule(name))
-    if is_id or (meta and meta.is_phi):
+    if is_id or column in inputs.id_source_columns or (meta and meta.is_phi):
         prop["classification"] = "restricted"
         prop["tags"] = ["phi"]
 

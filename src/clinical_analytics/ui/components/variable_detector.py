@@ -393,7 +393,21 @@ class VariableTypeDetector:
             metadata["patient_id_source"] = "existing"
             return df, metadata  # Early return - no synthetic ID needed
 
-        # CONDITION 2: Try to find single column identifier
+        # CONDITION 2a: a column named as a patient ID (subject_id, MRN, ...) is the patient key,
+        # even when it repeats: repeats are visits, which the grain check asks the user to
+        # confirm. Never a row key, so answers count its distinct values as patients.
+        from clinical_analytics.core.schema_inference import patient_key_by_name
+
+        eligible = [col for col in df.columns if not _is_measurement(df, col)]
+        named = patient_key_by_name(eligible, distinct=lambda col: df.get_column(col).drop_nulls().n_unique())
+        if named is not None:
+            logger.info("Found a column named as a patient ID; copied to patient_id")
+            metadata["patient_id_source"] = "single_column"
+            metadata["patient_id_columns"] = [named]
+            return df.with_columns(pl.col(named).alias("patient_id")), metadata
+
+        # CONDITION 2b: an identifier column not named as a patient ID keys rows, so it must be
+        # unique on every row (no repeats, no empty values), like a composite key.
         logger.debug("No existing patient_id, searching for single-column identifier...")
         variable_info = cls.detect_all_variables(df)
         best_id_col = None
@@ -401,6 +415,9 @@ class VariableTypeDetector:
 
         for col, info in variable_info.items():
             if info["type"] == "identifier" and not _is_measurement(df, col):
+                series = df.get_column(col)
+                if series.null_count() or series.n_unique() != n_rows:
+                    continue
                 uniqueness = info["metadata"].get("uniqueness", 0)
                 if uniqueness > best_uniqueness:
                     best_uniqueness = uniqueness

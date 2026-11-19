@@ -294,3 +294,90 @@ def test_rowKeyNote_patientKey_saysNothing(patient_id_meta: Any) -> None:
 
     # Assert
     assert note == ""
+
+
+def test_ensurePatientId_namedKeyRepeats_isPatientKeyNotRowKey() -> None:
+    # Arrange: visit-level rows, subject_id repeated 3 times each (review of #103, finding 1)
+    df = pl.DataFrame(
+        {
+            "subject_id": [f"S{i // 3:03d}" for i in range(60)],
+            "visit": [i % 3 + 1 for i in range(60)],
+            "sbp": [110.5 + i for i in range(60)],
+        }
+    )
+
+    # Act
+    result, metadata = VariableTypeDetector.ensure_patient_id(df)
+    stored = {"synthetic_id_metadata": {"patient_id": metadata}}
+
+    # Assert: the named key becomes patient_id (repeats are visits), never a row key
+    assert metadata["patient_id_source"] == "single_column"
+    assert metadata["patient_id_columns"] == ["subject_id"]
+    assert result["patient_id"].to_list() == df["subject_id"].to_list()
+    assert patient_id_is_row_key(stored) is False
+    assert row_key_note(stored) == ""
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        pytest.param([f"R{i:03d}" for i in range(97)] + ["R000", "R001", "R002"], id="repeats_97pct_unique"),
+        pytest.param([f"R{i:03d}" for i in range(99)] + [None], id="one_empty"),
+    ],
+)
+def test_ensurePatientId_unnamedColumnNotUniqueOnEveryRow_neverCopied(record: list[str | None]) -> None:
+    # Arrange: an unnamed ID-like column keys rows only when it is unique on every row (finding 5)
+    df = pl.DataFrame({"record": record, "sbp": [110.5 + i for i in range(100)]})
+
+    # Act
+    _result, metadata = VariableTypeDetector.ensure_patient_id(df)
+
+    # Assert
+    assert metadata["patient_id_columns"] != ["record"]
+    assert metadata["patient_id_source"] in ("composite", "row_index")
+
+
+@pytest.mark.parametrize(
+    ("series", "expected"),
+    [
+        pytest.param(pl.Series("ID", [1.0, 2.0, 3.0]), True, id="spss_wholeFloat_namedId"),
+        pytest.param(pl.Series("subject_id", [1.0, None, 3.0]), True, id="wholeFloat_withNull_namedId"),
+        pytest.param(pl.Series("ID", [1.0, 2.5, 3.0]), False, id="fractionalFloat_namedId"),
+        pytest.param(pl.Series("deaths", [10.0, 20.0, 30.0]), False, id="wholeFloat_unnamed_isMeasurement"),
+        pytest.param(pl.Series("ID", [None, None], dtype=pl.Float64), False, id="allNull_float"),
+        pytest.param(pl.Series("ID", [1.0, float("inf")]), False, id="infinite_float"),
+    ],
+)
+def test_canIdentifyPatients_floatColumn_onlyWholeNumbersNamedAsId(series: pl.Series, expected: bool) -> None:
+    # Arrange: series above (SPSS stores every number as a float; finding 2)
+
+    # Act
+    allowed = can_identify_patients(series)
+
+    # Assert
+    assert allowed is expected
+
+
+@pytest.mark.parametrize(
+    ("patient_id_meta", "expected"),
+    [
+        pytest.param({"patient_id_source": "single_column", "patient_id_columns": ["FIPS"]}, ["patient_id"], id="copy"),
+        pytest.param({"patient_id_source": "composite", "patient_id_columns": ["a", "b"]}, ["patient_id"], id="hash"),
+        pytest.param(
+            {"patient_id_source": "row_index", "row_number_column": "_row_number"}, ["_row_number"], id="rows"
+        ),
+        pytest.param({"patient_id_source": "existing"}, [], id="existing"),
+        pytest.param(None, [], id="no_metadata"),
+    ],
+)
+def test_addedIdColumns_bySource_namesOnlyTheAddedColumn(patient_id_meta: Any, expected: list[str]) -> None:
+    # Arrange
+    from clinical_analytics.core.identifier_rules import added_id_columns
+
+    metadata = {} if patient_id_meta is None else {"synthetic_id_metadata": {"patient_id": patient_id_meta}}
+
+    # Act
+    added = added_id_columns(metadata)
+
+    # Assert
+    assert added == expected

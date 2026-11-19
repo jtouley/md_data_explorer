@@ -497,3 +497,29 @@ def test_uploadDataset_patientIdColumn_noUnitNote(upload: Callable[..., Any]) ->
 
     # Assert
     assert body["unit_note"] == ""
+
+
+@pytest.mark.parametrize("error", [FileNotFoundError("gone"), "build"], ids=["data_missing", "data_unreadable"])
+def test_getDataset_storedDataUnreadable_detailsOpenWithTypesMissing(
+    test_client: TestClient, upload: Callable[..., Any], monkeypatch: pytest.MonkeyPatch, error: Any
+) -> None:
+    # Arrange: metadata intact, stored data gone or damaged (review of #103, finding 8)
+    from clinical_analytics.datasets.uploaded.definition import SemanticLayerBuildError, UploadedDataset
+
+    df = pl.DataFrame({"patient_id": [f"P{i:03d}" for i in range(200)], "sbp": [110.0 + i % 40 for i in range(200)]})
+    uploaded = upload(df, "gone")
+    assert uploaded.status_code == 200, uploaded.text
+    upload_id = uploaded.json()["upload_id"]
+    raised = SemanticLayerBuildError("damaged") if error == "build" else error
+
+    def _fail(self: Any) -> None:
+        raise raised
+
+    monkeypatch.setattr(UploadedDataset, "load", _fail)
+
+    # Act
+    response = test_client.get(f"/api/datasets/{upload_id}")
+
+    # Assert: never a 500; every column reads "missing"
+    assert response.status_code == 200, response.text
+    assert set(response.json()["schema"].values()) == {"missing"}

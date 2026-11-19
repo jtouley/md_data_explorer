@@ -268,8 +268,9 @@ def classify(question: dict[str, Any], expected: Any, result: dict[str, Any]) ->
 
 HIDDEN = "hidden"
 _PRESENTED_TOLERANCE = 1e-4  # table cells are rounded to 4 decimals
-# "Total count: N[ patients| visits]." -- group 1 the shown number, group 2 the grain (or None).
-TOTAL_COUNT = re.compile(r"^Total count: (\S+?)(?: (patients|visits))?\.(?: |$)")
+# "Total count: N[ patients| visits| rows]." -- group 1 the shown number, group 2 the unit (or
+# None). "rows": a dataset with no patient ID counts rows and says so (identifier_rules).
+TOTAL_COUNT = re.compile(r"^Total count: (\S+?)(?: (patients|visits|rows))?\.(?: |$)")
 _STAT_NAMES = ("mean", "median", "std", "min", "max")
 
 
