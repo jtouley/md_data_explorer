@@ -213,16 +213,16 @@ def _compile_property_rule(rule: DataQuality, prop: SchemaProperty, schema: pl.S
 
 def _compile_range(prop: SchemaProperty, schema: pl.Schema) -> CompiledCheck | None:
     options = prop.logicalTypeOptions or {}
-    custom = next(
-        (c.value for c in prop.customProperties or [] if c.property == config.PLAUSIBILITY_RANGE_PROPERTY), None
-    )
+    custom = custom_value(prop, config.PLAUSIBILITY_RANGE_PROPERTY)
     if "minimum" not in options and "maximum" not in options and isinstance(custom, dict):
         options = custom
     lo, hi = options.get("minimum"), options.get("maximum")
     if lo is None and hi is None:
         return None
     column = prop.physicalName or prop.name
-    unit = next((c.value for c in prop.customProperties or [] if c.property in ("unit", "assumedUnit")), "")
+    # The bound's own unit when it has one: a documented unit can differ from the bound's.
+    units = {c.property: c.value for c in prop.customProperties or [] if c.property in ("unit", "assumedUnit")}
+    unit = units.get("assumedUnit", units.get("unit", ""))
     base: dict[str, Any] = {
         "id": f"{prop.name}_range",
         "column": column,
@@ -542,8 +542,9 @@ def _summary(results: list[QualityCheckResult]) -> list[str]:
     return lines
 
 
-def _custom_value(contract: OpenDataContractStandard, prop: str) -> Any:
-    return next((c.value for c in contract.customProperties or [] if c.property == prop), None)
+def custom_value(obj: OpenDataContractStandard | SchemaProperty, prop: str) -> Any:
+    """The value of the custom property ``prop`` on a contract or one of its properties, or None."""
+    return next((c.value for c in obj.customProperties or [] if c.property == prop), None)
 
 
 def type_results(
@@ -562,7 +563,7 @@ def type_results(
 
     if not contract.schema_:
         return []
-    built_on = str(_custom_value(contract, "datasetVersion") or "")
+    built_on = str(custom_value(contract, "datasetVersion") or "")
     if data_version is None or data_version == built_on:
         # One line, not one per column: nothing was compared, so nothing passed.
         return [
@@ -727,8 +728,8 @@ def report_from_counts(
     results = [_result(c, raw, shown_counts, tiny) for c in checks] + list(extra or [])
     ts = (run_at or datetime.now(UTC)).astimezone(UTC)
     report = QualityReport(
-        upload_id=str(_custom_value(contract, "uploadId") or contract.id),
-        dataset_version=str(_custom_value(contract, "datasetVersion") or ""),
+        upload_id=str(custom_value(contract, "uploadId") or contract.id),
+        dataset_version=str(custom_value(contract, "datasetVersion") or ""),
         contract_version=contract.version or "",
         run_ts=ts.isoformat().replace("+00:00", "Z"),
         row_count=rows,

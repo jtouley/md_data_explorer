@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -32,6 +32,7 @@ from open_data_contract_standard.model import OpenDataContractStandard
 from clinical_analytics.analysis.numeric_text import is_numeric_text
 from clinical_analytics.analysis.variable_types import classify_variable, code_labels, short_name
 from clinical_analytics.contracts import config
+from clinical_analytics.contracts.dictionary import ColumnDoc
 from clinical_analytics.contracts.errors import ContractValidationError
 from clinical_analytics.core.metadata_patch import ResolvedColumnMetadata, ResolvedDatasetMetadata
 
@@ -55,6 +56,10 @@ class ContractInputs:
     # Columns the upload names as analysis variables: only their missingness is flagged (L1).
     analysis_columns: tuple[str, ...] = ()
     created_at: datetime | None = None
+    # What the uploaded data dictionary documents, by physical column (``contracts.dictionary``).
+    dictionary: Mapping[str, ColumnDoc] = field(default_factory=dict)
+    # Terms the dictionary defines ("EDSS: Expanded Disability Status Scale"), statistics stripped.
+    glossary: Mapping[str, str] = field(default_factory=dict)
     extra_custom_properties: dict[str, Any] = field(default_factory=dict)
 
 
@@ -208,7 +213,7 @@ def unique_names(columns: Iterable[str]) -> dict[str, str]:
     return names
 
 
-def _typed_code(code: str, dtype: pl.DataType) -> int | float | str | None:
+def typed_code(code: str, dtype: pl.DataType) -> int | float | str | None:
     """A codebook key typed like the column, or None when it cannot be (e.g. 'n/a' on Int64)."""
     if not dtype.is_numeric():
         return code
@@ -334,8 +339,11 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
         "physicalType": str(dtype),
         "businessName": (meta.label if meta and meta.label else short_name(column)),
     }
+    doc = inputs.dictionary.get(column)
     if meta and meta.description:
         prop["description"] = meta.description
+    elif doc and doc.description:
+        prop["description"] = doc.description
     if meta and meta.aliases:
         prop["synonyms"] = [{"synonym": alias} for alias in meta.aliases]
 
@@ -344,6 +352,8 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
         custom.append(_custom("variableKind", classify_variable(series)))
     if meta and meta.unit:
         custom.append(_custom("unit", meta.unit))
+    elif doc and doc.unit:
+        custom.extend([_custom("unit", doc.unit), _custom("unitSource", config.DICTIONARY_SOURCE)])
     if meta and meta.semantic_type:
         custom.append(_custom("clinicalSemanticType", meta.semantic_type.value))
 
@@ -372,18 +382,24 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
         prop["tags"] = ["phi"]
 
     codebook = column_codebook(column, meta)
-    typed = [(_typed_code(code, dtype), label) for code, label in codebook.items()]
+    typed = [(typed_code(code, dtype), label) for code, label in codebook.items()]
     enum = [{"value": value, "label": label} for value, label in typed if value is not None]
-    if enum and not is_id and dtype != pl.Boolean:
-        prop["enum"] = enum
+    # Dictionary codes join the codebook before anything reads it ("a coded column gets no range
+    # check" below), and only when the data holds no value outside them (``documented_enum``).
+    added = documented_enum(doc.codebook, series, enum) if doc and not is_id and dtype != pl.Boolean else []
+    if added:
+        custom.append(_custom(config.DICTIONARY_CODES_PROPERTY, [e["value"] for e in added]))
+    if (enum or added) and not is_id and dtype != pl.Boolean:
+        prop["enum"] = enum + added
         if not any(cp["property"] == "variableKind" for cp in custom):
             custom.append(_custom("variableKind", "categorical"))
+    if enum and not is_id and dtype != pl.Boolean:
         quality.append(
             {
                 "id": f"{name}_invalid",
                 "type": "library",
                 "metric": "invalidValues",
-                "arguments": {"validValues": [e["value"] for e in enum]},
+                "arguments": {"validValues": [e["value"] for e in enum + added]},
                 "mustBe": 0,
                 "dimension": "conformity",
                 "severity": config.SEVERITY_CODEBOOK,
@@ -416,6 +432,31 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
         prop["customProperties"] = custom
     prop["quality"] = quality
     return prop
+
+
+def documented_enum(codebook: Mapping[str, str], series: pl.Series, enum: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The data dictionary's codes ``enum`` lacks, typed like ``series``, to append to it; none
+    unless every value ``series`` holds is a code of ``enum`` or of the dictionary.
+
+    A parsed dictionary is a heuristic (ADR011): its codes can belong to another column, or
+    describe a coding the data does not use ("0=no, 1=yes" over a column holding "Yes"/"No").
+    The model filters on a code, so a code the data does not use returns no rows without an error.
+    Checking the whole set, never a code alone, keeps the contract from saying which codes occur
+    (a code of 1–10 patients among them). Codes are compared typed, so "1.0" is the header's 1.
+    """
+    known = {e["value"] for e in enum}
+    added: dict[Any, str] = {}
+    for code, label in codebook.items():
+        value = typed_code(code, series.dtype)
+        if value is not None and value not in known and value not in added:
+            added[value] = label
+    if not added:
+        return []
+    observed = series.drop_nulls().unique()
+    allowed = known | set(added)
+    if observed.len() == 0 or observed.len() > len(allowed) or not all(v in allowed for v in observed.to_list()):
+        return []
+    return [{"value": value, "label": label} for value, label in added.items()]
 
 
 def _granularity(df: pl.DataFrame, id_column: str | None) -> str:
@@ -451,7 +492,12 @@ def build_contract(df: pl.DataFrame, inputs: ContractInputs) -> OpenDataContract
         _custom("metadataPatchIds", list(inputs.accepted_patch_ids)),
         _custom("minCellSize", config.MIN_CELL_SIZE),
         _custom("generator", config.GENERATOR),
+        # This builder read the dictionary and checked its codes against the data: a contract
+        # without the mark predates that, and its reader reads the upload's dictionary instead.
+        _custom(config.DICTIONARY_READ_PROPERTY, True),
     ]
+    if inputs.glossary:
+        custom.append(_custom(config.GLOSSARY_PROPERTY, dict(inputs.glossary)))
     if inputs.source_file_sha256:
         custom.append(_custom("sourceFileSha256", inputs.source_file_sha256))
     custom.extend(_custom(k, v) for k, v in inputs.extra_custom_properties.items())

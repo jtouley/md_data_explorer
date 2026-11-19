@@ -619,6 +619,16 @@ class UploadedDataset(ClinicalDataset):
         # labelled with it even if the dataset is uploaded again while the question runs.
         version = self.metadata.get("dataset_version")
         layer.loaded_version = version if isinstance(version, str) and version else None
+        if layer.loaded_version is not None:
+            from clinical_analytics.contracts.errors import ContractStoreError
+            from clinical_analytics.contracts.store import contract_path
+
+            try:
+                layer.contract_path = contract_path(
+                    self.storage.upload_dir.parent, self.upload_id, layer.loaded_version
+                )
+            except (ContractStoreError, ValueError) as e:  # a version or id the store cannot name
+                log.warning("contract_path_unavailable", error_type=type(e).__name__)
         self.semantic = layer
         log.info("semantic_layer_built", tables=len(self.metadata.get("tables") or []))
 

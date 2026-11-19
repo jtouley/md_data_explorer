@@ -1761,6 +1761,10 @@ class UserDatasetStorage:
             _notify_progress(progress_cb, 20, "Normalizing upload to table list...")
 
             tables, table_metadata = normalize_upload_to_table_list(file_bytes, original_filename, metadata)
+            # Documentation sent with the file (``external_pdf_bytes``) becomes doc_context in
+            # save_table_list, and from there the data contract's descriptions and codebooks.
+            if table_metadata.get("doc_files"):
+                metadata["doc_files"] = table_metadata["doc_files"]
 
             # Mark all existing versions as inactive (the drift check below reads stored metadata)
             if existing_version_history is not None:

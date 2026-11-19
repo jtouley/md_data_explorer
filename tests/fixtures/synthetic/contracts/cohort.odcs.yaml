@@ -370,6 +370,8 @@ customProperties:
   value: 11
 - property: generator
   value: clinical_analytics.contracts.builder
+- property: dictionaryRead
+  value: true
 - property: sourceFileSha256
   value: 3faf26d0cb1d2b328a50d1d0cce55f4486b31781c0cd0068783510e80c5d6946
 contractCreatedTs: '2026-11-03T00:00:00Z'

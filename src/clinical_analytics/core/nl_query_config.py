@@ -268,3 +268,17 @@ if "enable_proactive_questions" in _config and "adr004_enable_question_generatio
 
 # ADR004 Phase 4: Proactive Question Generation Timeout
 LLM_TIMEOUT_QUESTION_GENERATION_S: float = _config["llm_timeout_question_generation_s"]
+
+# Tier 3 schema context (core.nl_query_engine): at most this many tokens of column lines. Ollama's
+# default window is 4096 tokens; the rest of the system prompt takes about 1,300 and the reply
+# needs room. Descriptions are cut to 160 characters and at most 12 codes are listed per column
+# (the drop order of the contract-context design).
+SCHEMA_CONTEXT_MAX_TOKENS: int = 1600
+SCHEMA_CONTEXT_DESCRIPTION_CHARS: int = 160
+SCHEMA_CONTEXT_MAX_CODES: int = 12
+SCHEMA_CONTEXT_CODE_LABEL_CHARS: int = 60
+# The Aliases section of an upload with a contract: at most this many tokens of the layer's alias
+# index (the contract's synonyms always fit first), aliases that share a word with the question
+# first. An alias that only respells its column's name ("icu stay" for icu_stay) is left out: the
+# column list already names it. The whole index of a 48-column upload is about 1,500 tokens.
+SCHEMA_CONTEXT_ALIAS_MAX_TOKENS: int = 400

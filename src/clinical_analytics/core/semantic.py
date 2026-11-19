@@ -582,6 +582,9 @@ class SemanticLayer:
     # the metadata it read the rows with); None for built-in datasets. A question labels its
     # answer and matches declarations with this, never with metadata read later.
     loaded_version: str | None = None
+    # The data contract of that version (set by the same loader); None for built-in datasets. The
+    # model is told about the dataset only what this contract says (contracts.context).
+    contract_path: Path | None = None
 
     def __init__(
         self,
