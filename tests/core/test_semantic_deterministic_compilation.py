@@ -15,7 +15,9 @@ TODO: Migrate _execute_plan() to return pl.DataFrame in future refactor.
 # TODO: Remove when _execute_plan() migrated to return pl.DataFrame
 import pandas as pd
 import pandas.testing as pdt
+import polars as pl
 import pytest
+from polars.testing import assert_frame_equal
 
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 
@@ -51,14 +53,11 @@ class TestDeterministicCompilation:
         result2 = semantic_layer._execute_plan(plan)
         result3 = semantic_layer._execute_plan(plan)
 
-        # Assert: Results should be identical (deterministic execution)
-        # Note: Sort by all columns to ensure consistent ordering for comparison
-        result1_sorted = result1.sort_values(by=list(result1.columns)).reset_index(drop=True)
-        result2_sorted = result2.sort_values(by=list(result2.columns)).reset_index(drop=True)
-        result3_sorted = result3.sort_values(by=list(result3.columns)).reset_index(drop=True)
-
-        pdt.assert_frame_equal(result1_sorted, result2_sorted)
-        pdt.assert_frame_equal(result2_sorted, result3_sorted)
+        # Assert: Results should be identical (deterministic execution). A count of distinct
+        # patients per group is a DuckDB aggregate returned as a Polars frame.
+        assert isinstance(result1, pl.DataFrame)
+        assert_frame_equal(result1, result2)
+        assert_frame_equal(result2, result3)
 
     def test_different_queryplans_produce_different_sql(self, semantic_layer):
         """Different QueryPlans should produce different SQL."""
@@ -83,7 +82,8 @@ class TestDeterministicCompilation:
         result2 = semantic_layer._execute_plan(plan2)
 
         # Assert: Results should be different (different plans produce different results)
-        assert not result1.equals(result2), "Different plans should produce different results"
+        other = pl.from_pandas(result2) if isinstance(result2, pd.DataFrame) else result2
+        assert not result1.equals(other), "Different plans should produce different results"
 
     def test_queryplan_with_filters_compiles_deterministically(self, semantic_layer):
         """QueryPlan with filters should compile to same SQL every time."""
@@ -184,8 +184,7 @@ class TestDeterministicCompilation:
         # Act: Execute plan
         result = semantic_layer._execute_plan(plan)
 
-        # Assert: Result is testable (pandas/polars DataFrame, not freeform code)
-        # Note: _execute_plan returns pandas DataFrame
-        assert isinstance(result, pd.DataFrame), "Result should be a DataFrame (testable)"
-        assert len(result) > 0, "Result should have rows"
+        # Assert: Result is testable (a Polars DataFrame from DuckDB, not freeform code)
+        assert isinstance(result, pl.DataFrame), "Result should be a DataFrame (testable)"
+        assert result.height > 0, "Result should have rows"
         assert "status" in result.columns, "Result should have expected columns"

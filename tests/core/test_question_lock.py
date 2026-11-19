@@ -88,7 +88,7 @@ def test_ask_levelsMergedWhileParsing_parsedAgainWithoutTheLock() -> None:
     service.nl_engine.parse_query = parse_query  # type: ignore[method-assign]
 
     # Act
-    result = service.ask("how many patients", dataset_id="ds")
+    result = service.ask("how many are there", dataset_id="ds")
 
     # Assert
     assert parses_locked == [False, False]
@@ -109,7 +109,7 @@ def test_ask_stateChangesDuringEveryParse_givesUpWithPlainRetryMessage() -> None
     service.nl_engine.parse_query = parse_query  # type: ignore[method-assign]
 
     # Act
-    result = service.ask("how many patients", dataset_id="ds")
+    result = service.ask("how many are there", dataset_id="ds")
 
     # Assert
     assert parses_locked == [False] * MAX_PARSE_ATTEMPTS
@@ -146,7 +146,7 @@ def test_ask_declarationStoredElsewhereWhileParsing_parsedAgainOnlyForItsVersion
     service.nl_engine.parse_query = parse_query  # type: ignore[method-assign]
 
     # Act
-    service.ask("how many patients", dataset_id="ds", dataset_version="v1")
+    service.ask("how many are there", dataset_id="ds", dataset_version="v1")
 
     # Assert
     assert parses == expected_parses
@@ -287,7 +287,7 @@ def test_ask_grainConfirmedWhileParsing_answeredWithTheConfirmationNotHeldAgain(
     # Arrange: A is prepared before B confirms that rows are visits, and checked after.
     layer = make_semantic_layer(dataset_name="clinic", data=_visit_rows())
     service = QueryService(layer, declarations=MemoryDeclarationStore())
-    held = service.ask("how many patients", dataset_id="clinic", dataset_version="v1")
+    held = service.ask("how many are there", dataset_id="clinic", dataset_version="v1")
     parse = service.nl_engine.parse_query
     a_parsing, b_confirmed = threading.Event(), threading.Event()
     answers: dict[str, Any] = {}
@@ -301,7 +301,7 @@ def test_ask_grainConfirmedWhileParsing_answeredWithTheConfirmationNotHeldAgain(
     service.nl_engine.parse_query = parse_query  # type: ignore[method-assign]
 
     def ask_a() -> None:
-        answers["A"] = service.ask("how many patients over 50", dataset_id="clinic", dataset_version="v1")
+        answers["A"] = service.ask("how many over 50", dataset_id="clinic", dataset_version="v1")
 
     asker = threading.Thread(target=ask_a, name="A")
 
@@ -309,11 +309,15 @@ def test_ask_grainConfirmedWhileParsing_answeredWithTheConfirmationNotHeldAgain(
     asker.start()
     assert a_parsing.wait(_WAIT_S)
     confirmed = service.ask(
-        "how many patients", dataset_id="clinic", dataset_version="v1", confirmed=True, confirm_plan_hash=held.plan_hash
+        "how many are there",
+        dataset_id="clinic",
+        dataset_version="v1",
+        confirmed=True,
+        confirm_plan_hash=held.plan_hash,
     )
     b_confirmed.set()
     asker.join(_WAIT_S)
-    later = service.ask("how many patients", dataset_id="clinic", dataset_version="v1")
+    later = service.ask("how many are there", dataset_id="clinic", dataset_version="v1")
 
     # Assert: A counted patients, as it would have alone after the confirmation; the shared
     # layer still counts patients for the next question.

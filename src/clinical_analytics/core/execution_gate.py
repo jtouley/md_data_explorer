@@ -229,6 +229,10 @@ def format_plan_line(plan: QueryPlan, context: Any = None, merged: MergedWords |
         )
     if plan.entity_key:
         parts.append(f"counting distinct {plan.entity_key}")
+    if plan.rollup == "any":
+        parts.append("value on at least one row")
+    elif plan.rollup == "all":
+        parts.append("value on every recorded row")
     if plan.scope and plan.scope != "all":
         parts.append(f"scope {plan.scope}")
     if plan.requires_filters:

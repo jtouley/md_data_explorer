@@ -272,15 +272,41 @@ def _apply_duckdb_limits(raw: Any) -> None:
 
 def _sample_counts(frame: pl.DataFrame, base_rows: int) -> dict[str, int]:
     """n_used, n_excluded (no recorded value) and n_filtered_out (removed by the question's
-    limits) from a frame with n and n_rows; the three add up to the dataset row count."""
-    used, rows = frame.select(pl.col("n").sum(), pl.col("n_rows").sum()).row(0)
-    used, rows = int(used or 0), int(rows or 0)
+    limits) from a frame with n and n_rows; the three add up to the dataset row count.
+
+    A frame that counts units (``SemanticLayer._unit_share_sql``) carries each unit once over all
+    groups (n_total, rows_total): a unit can be in two groups, so the groups' sum is not it."""
+    if "n_total" in frame.columns and frame.height:
+        used, rows = (int(frame.get_column(name)[0] or 0) for name in ("n_total", "rows_total"))
+    else:
+        used, rows = frame.select(pl.col("n").sum(), pl.col("n_rows").sum()).row(0)
+        used, rows = int(used or 0), int(rows or 0)
     return {"n_used": used, "n_excluded": rows - used, "n_filtered_out": base_rows - rows}
 
 
-def _format_share_result(frame: pl.DataFrame, plan: "QueryPlan", group: str | None, base_rows: int) -> dict[str, Any]:
-    """A proportion (group None) or a rate per group, with the counts suppression needs."""
+_PATIENT_CELLS = ("patients", "event_patients", "nonevent_patients")
+
+
+def _overlapping(frame: pl.DataFrame) -> bool:
+    """Whether some unit is in more than one group (the groups add up to more than the units)."""
+    if "n_total" not in frame.columns or not frame.height:
+        return False
+    total_n, total_rows = (int(frame.get_column(name)[0] or 0) for name in ("n_total", "rows_total"))
+    sum_n, sum_rows = frame.select(pl.col("n").sum(), pl.col("n_rows").sum()).row(0)
+    return int(sum_n or 0) > total_n or int(sum_rows or 0) > total_rows
+
+
+def _format_share_result(
+    frame: pl.DataFrame, plan: "QueryPlan", group: str | None, base_rows: int, entity: str | None = None
+) -> dict[str, Any]:
+    """A proportion (group None) or a rate per group, with the counts suppression needs.
+
+    ``entity``: the unit counted, when not rows; ``rollup`` says how a unit's rows became one
+    value, and ``overlapping`` that a unit is in more than one group (so the groups do not add up
+    to n). Patient counts behind encounter cells ride along (never shown) for the small-cell rule.
+    """
     base: dict[str, Any] = _sample_counts(frame, base_rows)
+    unit = {"counted_by": entity, "rollup": plan.rollup} if entity else {}
     if group is None:
         row = frame.row(0, named=True)
         return {
@@ -290,10 +316,18 @@ def _format_share_result(frame: pl.DataFrame, plan: "QueryPlan", group: str | No
             "proportion": row["proportion"],
             "events": int(row["events"]),
             "limited": bool(plan.cohort_steps or plan.filters),
+            **{name: int(row[name]) for name in _PATIENT_CELLS if name in frame.columns},
+            **unit,
             **base,
         }
     groups = [
-        {"group": row[group], "rate": row["rate"], "events": int(row["events"]), "n": int(row["n"])}
+        {
+            "group": row[group],
+            "rate": row["rate"],
+            "events": int(row["events"]),
+            "n": int(row["n"]),
+            **{name: int(row[name]) for name in _PATIENT_CELLS if name in frame.columns},
+        }
         for row in frame.iter_rows(named=True)
     ]
     return {
@@ -302,6 +336,8 @@ def _format_share_result(frame: pl.DataFrame, plan: "QueryPlan", group: str | No
         "value": plan.rate_value,
         "group_col": group,
         "groups": groups,
+        "overlapping": _overlapping(frame),
+        **unit,
         **base,
     }
 
@@ -578,6 +614,10 @@ class SemanticLayer:
     # The patient key once the doctor has declared rows to be visits (set by QueryService):
     # COUNTs, shares and frequency tables then count distinct patients, not rows.
     count_entity_key: str | None = None
+    # The patient key whatever the grain (set by QueryService): an answer that counts encounters
+    # (admissions, tests) also counts the patients behind each cell, so a cell of 1-10 patients
+    # is hidden even when it holds 11 or more encounters.
+    patient_key: str | None = None
     # The upload version whose rows this layer holds (set by the uploaded-dataset loader from
     # the metadata it read the rows with); None for built-in datasets. A question labels its
     # answer and matches declarations with this, never with metadata read later.
@@ -652,6 +692,7 @@ class SemanticLayer:
         # (values, rows per value) of a column, counted once until a level remap changes it.
         self._value_counts: dict[str, tuple[pl.Series, pl.Series]] = {}
         self.count_entity_key = None
+        self.patient_key = None
 
         # Alias index (lazy initialization)
         self._alias_index: dict[str, str] | None = None  # normalized_alias -> canonical_name
@@ -2392,19 +2433,25 @@ class SemanticLayer:
         # Shares and grouped statistics are already the answer: format the SQL frame as it is.
         # Shares count patients once rows are declared visits (_share_sql), so the filtered-out
         # count is in patients too.
+        share_entity = self._count_entity_key(query_plan)
         if query_plan.proportion_column:
-            formatted = _format_share_result(result_df_pl, query_plan, None, self._base_count(self.count_entity_key))
+            share_base = self._base_count(share_entity)
+            formatted = _format_share_result(result_df_pl, query_plan, None, share_base, share_entity)
         elif query_plan.rate_column and query_plan.group_by:
-            share_base = self._base_count(self.count_entity_key)
-            formatted = _format_share_result(result_df_pl, query_plan, query_plan.group_by, share_base)
+            share_base = self._base_count(share_entity)
+            formatted = _format_share_result(result_df_pl, query_plan, query_plan.group_by, share_base, share_entity)
         elif grouped_statistic(query_plan) is not None:
             formatted = _format_grouped_statistic(result_df_pl, query_plan, self.get_base_row_count())
         elif query_plan.intent == "COUNT":
             formatted = self._format_count_result(result_df_pl, query_plan, context)
             # What the filters removed, in the unit the total is counted in: distinct entities
             # for an entity count (60 visit rows of 55 patients: 55, not 60), rows otherwise.
-            entity_key = self._count_entity_key(query_plan) if not query_plan.group_by else None
+            entity_key = self._count_entity_key(query_plan)
+            if query_plan.group_by and "unit_total" not in result_df_pl.columns:
+                entity_key = None  # a grouped row count
             formatted["n_filtered_out"] = self._base_count(entity_key) - formatted["total_count"]
+            if entity_key:
+                formatted["counted_by"] = entity_key
         else:
             # The aggregated SQL frame is not renderer-shaped. Recompute from the
             # filtered base view the plan validated, not from get_cohort().
@@ -2473,6 +2520,21 @@ class SemanticLayer:
         """Format COUNT result DataFrame to result dict format."""
         # Note: result_df is always a DataFrame (normalized in format_execution_result)
 
+        # Distinct units with the patients behind them (encounters): count, patients.
+        if not query_plan.group_by and result_df.height == 1 and set(result_df.columns) == {"count", "patients"}:
+            total_count, patients = (int(v or 0) for v in result_df.select("count", "patients").row(0))
+            return {
+                "type": "count",
+                "total_count": total_count,
+                "total_patients": patients,
+                "headline": f"Total count: **{total_count}**",
+            }
+
+        # Grouped distinct units: the total is counted once per unit, never summed (a unit with
+        # rows in two groups counts in both).
+        if query_plan.group_by and "unit_total" in result_df.columns:
+            return self._format_unit_groups(result_df, query_plan.group_by)
+
         # DataFrame result - check if grouped or simple count
         if result_df.height == 1 and result_df.width == 1:
             # Single value (total count as DataFrame)
@@ -2524,6 +2586,32 @@ class SemanticLayer:
                 "headline": f"Total count: **{total_count}**",
             }
 
+    @staticmethod
+    def _format_unit_groups(result_df: pl.DataFrame, group_col: str) -> dict[str, Any]:
+        """Distinct units per group with the total counted on its own (``_grouped_count_sql``).
+
+        ``overlapping``: some unit is in more than one group, so the groups add up to more than
+        the total; the presentation says so and suppresses for it (``_present_count``).
+        """
+        if result_df.height == 0:
+            return {"type": "count", "total_count": 0, "headline": "Total count: **0**"}
+        total = int(result_df.get_column("unit_total")[0] or 0)
+        group_counts = result_df.select(group_col, "count").to_dicts()
+        summed = sum(int(item["count"]) for item in group_counts)
+        formatted: dict[str, Any] = {
+            "type": "count",
+            "total_count": total,
+            "grouped_by": group_col,
+            "group_counts": group_counts,
+            "overlapping": summed > total,
+            "headline": f"Total count: **{total}**",
+            "is_most_query": False,
+        }
+        if "patients" in result_df.columns:
+            formatted["group_patients"] = [int(v or 0) for v in result_df.get_column("patients").to_list()]
+            formatted["total_patients"] = int(result_df.get_column("patient_total")[0] or 0)
+        return formatted
+
     def _count_entity_key(self, plan: "QueryPlan") -> str | None:
         """What a COUNT counts: the plan's entity key, else the patient key once the doctor has
         declared rows to be visits (``count_entity_key``, set by QueryService), else rows."""
@@ -2554,6 +2642,10 @@ class SemanticLayer:
         # Check metric exists
         if plan.metric and plan.metric not in available_columns:
             return {"valid": False, "error": f"Column '{plan.metric}' not found in dataset"}
+
+        # The counted unit is a column: a distinct count of a missing one would fail inside DuckDB.
+        if plan.entity_key and plan.entity_key not in available_columns:
+            return {"valid": False, "error": f"Column '{plan.entity_key}' not found in dataset"}
 
         # Check group_by exists
         if plan.group_by and plan.group_by not in available_columns:
@@ -2682,6 +2774,7 @@ class SemanticLayer:
                 key=lambda x: (x["column"], x["operator"]),
             ),
             "entity_key": plan.entity_key,
+            "rollup": plan.rollup,
             "scope": plan.scope,
         }
         canonical_json = json.dumps(canonical_plan, sort_keys=True)
@@ -2973,18 +3066,29 @@ class SemanticLayer:
             raise TypeError("DuckDB aggregate did not return a table")
         return frame_out
 
-    def _share_sql(self, view: Any, column: str, value: Any, group: str | None) -> str:
-        """Share of patients whose ``column`` equals ``value``, among those with it recorded.
+    def _share_sql(
+        self,
+        view: Any,
+        column: str,
+        value: Any,
+        group: str | None,
+        entity: str | None = None,
+        rollup: str | None = None,
+    ) -> str:
+        """Share of patients (or rows) whose ``column`` equals ``value``, among those with it recorded.
 
         Patients missing the column are left out of the denominator (n) and counted in
         n_rows, so the presentation can report them as excluded. Missing is the rule every
         analysis uses (``analysis.numeric_text``): null, and in numbers stored as text a missing
         token ("N/A", "."). A text category keeps every level ("None" is an answer there).
         Grouped: one row per group.
+
+        ``entity``: the unit counted (the patient key once rows are visits, or an encounter key
+        the question asked for); each unit is first rolled up over its rows (``_unit_share_sql``).
+        Without one, rows are counted.
         """
         quoted = _quote_ident(column)
         literal = _sql_literal(self._equality_value(view, column, value))
-        share = "rate" if group else "proportion"
         recorded = f"{quoted} IS NOT NULL"
         if view[column].type().is_string() and is_numeric_text(*self.base_value_counts(column)):
             if is_missing_token(value):
@@ -2992,23 +3096,17 @@ class SemanticLayer:
                 # are not in the denominator (above 1 when tokens outnumber values).
                 raise CohortStepError(_missing_token_share_message(column, value))
             recorded += f" AND NOT ({missing_token_sql(quoted)})"
-        # Events are recorded rows only, so events never exceed n.
-        asked = f"{quoted} = {literal} AND {recorded}"
-        entity = self.count_entity_key
+        equal = f"{quoted} = {literal}"
         if entity:
-            # Rows are visits: count patients (distinct key), as the COUNT answer does. The query
-            # service refuses first when the value differs between a patient's visits.
-            key = _quote_ident(entity)
-            events = f"count(DISTINCT {key}) FILTER (WHERE {asked})"
-            n = f"count(DISTINCT {key}) FILTER (WHERE {recorded})"
-            # A row with no ID is no patient, as SemanticLayer._base_count counts them.
-            n_rows = f"count(DISTINCT {key})"
-        else:
-            events, n, n_rows = (
-                f"count(*) FILTER (WHERE {asked})",
-                f"count(*) FILTER (WHERE {recorded})",
-                "count(*)",
-            )
+            return self._unit_share_sql(recorded, equal, group, entity, rollup)
+        # Events are recorded rows only, so events never exceed n.
+        asked = f"{equal} AND {recorded}"
+        share = "rate" if group else "proportion"
+        events, n, n_rows = (
+            f"count(*) FILTER (WHERE {asked})",
+            f"count(*) FILTER (WHERE {recorded})",
+            "count(*)",
+        )
         select = (
             f"{events} AS events, {n} AS n, {n_rows} AS n_rows, "
             f"CASE WHEN {n} = 0 THEN NULL ELSE {events} / {n} END AS {share}"
@@ -3017,6 +3115,86 @@ class SemanticLayer:
             return f"SELECT {select} FROM _cohort_in"
         by = _quote_ident(group)
         return f"SELECT {by}, {select} FROM _cohort_in GROUP BY 1 ORDER BY 1 NULLS LAST"
+
+    def _unit_share_sql(self, recorded: str, equal: str, group: str | None, entity: str, rollup: str | None) -> str:
+        """The share over units (distinct ``entity``): each unit is rolled up over its rows first.
+
+        A unit is recorded when one of its rows records the column, and has the value when one
+        recorded row has it (``rollup`` "any" or None: the query service refuses None when the
+        value differs between a unit's rows) or when every recorded row has it ("all"). A row with
+        no ``entity`` is no unit, as ``SemanticLayer._base_count`` counts them.
+
+        Grouped, a unit is rolled up within each group it has rows in, so a unit with rows in two
+        groups is in both: the totals (``n_total``, ``rows_total``: each unit once) are returned
+        on every row, and the groups then add up to more than them (``_format_share_result``).
+        When the unit is not the patient (an admission), each group also carries the patients
+        behind its units, its events and its non-events, so the presentation hides a cell of 1-10
+        patients however many admissions it holds.
+        """
+        key = _quote_ident(entity)
+        patient = self.patient_key if self.patient_key and self.patient_key != entity else None
+        has = "bool_and" if rollup == "all" else "bool_or"
+        # bool_and over the recorded rows only; a unit with none recorded is not an event.
+        has_value = f"coalesce({has}({equal}) FILTER (WHERE {recorded}), false)"
+        by = _quote_ident(group) if group else None
+        keys = f"{by}, {key}" if by else key
+        person = f", max({_quote_ident(patient)}) AS _patient" if patient else ""
+        units = (
+            f"SELECT {keys}{person}, bool_or({recorded}) AS _recorded, {has_value} AS _event "
+            f"FROM _cohort_in WHERE {key} IS NOT NULL GROUP BY ALL"
+        )
+        event = "_recorded AND _event"
+        share = "rate" if group else "proportion"
+        n = "count(*) FILTER (WHERE _recorded)"
+        events = f"count(*) FILTER (WHERE {event})"
+        select = (
+            f"{events} AS events, {n} AS n, count(*) AS n_rows, "
+            f"CASE WHEN {n} = 0 THEN NULL ELSE {events} / {n} END AS {share}"
+        )
+        if patient:
+            select += (
+                f", count(DISTINCT _patient) AS patients"
+                f", count(DISTINCT _patient) FILTER (WHERE {event}) AS event_patients"
+                f", count(DISTINCT _patient) FILTER (WHERE _recorded AND NOT _event) AS nonevent_patients"
+            )
+        if by is None:
+            return f"WITH _units AS ({units}) SELECT {select} FROM _units"
+        totals = (
+            f"SELECT count(*) FILTER (WHERE _r) AS n_total, count(*) AS rows_total FROM "
+            f"(SELECT {key}, bool_or({recorded}) AS _r FROM _cohort_in WHERE {key} IS NOT NULL GROUP BY 1)"
+        )
+        return (
+            f"WITH _units AS ({units}), _groups AS (SELECT {by}, {select} FROM _units GROUP BY 1), "
+            f"_totals AS ({totals}) "
+            f"SELECT _groups.*, _totals.* FROM _groups CROSS JOIN _totals ORDER BY 1 NULLS LAST"
+        )
+
+    def _grouped_count_sql(self, group: str, entity: str) -> str:
+        """Distinct ``entity`` per group, and each unit once over all groups (``unit_total``).
+
+        A unit with rows in two groups counts in both, so the groups can add up to more than the
+        total; the total is therefore counted, never summed. When the unit is not the patient,
+        the patients behind each group and the total are counted too (small-cell rule).
+        """
+        key = _quote_ident(entity)
+        by = _quote_ident(group)
+        patient = self.patient_key if self.patient_key and self.patient_key != entity else None
+        per_group = f"count(DISTINCT {key}) AS count"
+        overall = f"count(DISTINCT {key}) AS unit_total"
+        if patient:
+            per_group += f", count(DISTINCT {_quote_ident(patient)}) AS patients"
+            overall += f", count(DISTINCT {_quote_ident(patient)}) AS patient_total"
+        return (
+            f"WITH _groups AS (SELECT {by}, {per_group} FROM _cohort_in WHERE {key} IS NOT NULL GROUP BY 1), "
+            f"_totals AS (SELECT {overall} FROM _cohort_in WHERE {key} IS NOT NULL) "
+            f"SELECT _groups.*, _totals.* FROM _groups CROSS JOIN _totals ORDER BY 1 NULLS LAST"
+        )
+
+    def _count_sql(self, entity: str) -> str:
+        """Distinct ``entity`` and the distinct patients behind them (the small-cell rule)."""
+        key = _quote_ident(entity)
+        patients = f", count(DISTINCT {_quote_ident(self.patient_key)}) AS patients" if self.patient_key else ""
+        return f"SELECT count(DISTINCT {key}) AS count{patients} FROM _cohort_in WHERE {key} IS NOT NULL"
 
     def _execute_plan(self, plan: "QueryPlan") -> pd.DataFrame | pl.DataFrame:
         """Execute QueryPlan and return results DataFrame, with its cohort views dropped."""
@@ -3027,15 +3205,19 @@ class SemanticLayer:
         """The plan's result, materialised (the caller drops the cohort views it created)."""
         view = self._filtered_view(plan)
 
+        entity = self._count_entity_key(plan)
         if plan.proportion_column:
             return self._duck_aggregate(
-                view, self._share_sql(view, plan.proportion_column, plan.proportion_value, None)
+                view,
+                self._share_sql(view, plan.proportion_column, plan.proportion_value, None, entity, plan.rollup),
             )
         if plan.rate_column:
             if not plan.group_by:
                 # A rate needs groups to compare; the plain count would answer a different question.
                 raise CohortStepError(_ungrouped_rate_message(plan.rate_column))
-            return self._duck_aggregate(view, self._share_sql(view, plan.rate_column, plan.rate_value, plan.group_by))
+            return self._duck_aggregate(
+                view, self._share_sql(view, plan.rate_column, plan.rate_value, plan.group_by, entity, plan.rollup)
+            )
         if plan.intent == "CORRELATIONS" and plan.metric and plan.group_by:
             if self._column_is_string(view, plan.metric) or self._column_is_string(view, plan.group_by):
                 raise TypeError(f"Correlation requires numeric columns, got {plan.metric} and {plan.group_by}")
@@ -3051,11 +3233,15 @@ class SemanticLayer:
         if plan.intent == "COUNT":
             # COUNT: Use entity_key or group_by
             entity_key = self._count_entity_key(plan)
+            if plan.group_by and entity_key:
+                # Distinct units per group: a unit with rows in two groups counts in both, so the
+                # total is counted on its own (never the sum of the groups).
+                return self._duck_aggregate(view, self._grouped_count_sql(plan.group_by, entity_key))
             if plan.group_by:
-                # Count by group: patients per group once rows are visits (QueryService checks
-                # each patient has one group value, so the groups add up to the patients).
-                counted = view[entity_key].nunique() if entity_key else _.count()
-                result = view.group_by(plan.group_by).aggregate(counted.name("count")).order_by(plan.group_by)
+                result = view.group_by(plan.group_by).aggregate(_.count().name("count")).order_by(plan.group_by)
+            elif entity_key and self.patient_key and self.patient_key != entity_key:
+                # Encounters, with the patients behind them (small-cell rule).
+                return self._duck_aggregate(view, self._count_sql(entity_key))
             elif entity_key:
                 # Count distinct entities; a row with no ID is not one more (see _base_count).
                 result = view[entity_key].nunique()

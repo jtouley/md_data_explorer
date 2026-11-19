@@ -51,6 +51,15 @@ from clinical_analytics.sql.validate import AGG_MARKER, GovernedQuery
 logger = structlog.get_logger()
 
 
+# Visit rows stay refused here (decided with the visit-grain tabulation work; the question box
+# answers them, ``core.counting_unit``). The 2^k suppression is sound because each counted unit
+# falls in exactly one cell per group: a cell's patients add up to its group and to the
+# ungrouped query. Counting distinct patients over visit rows breaks that: a patient can meet a
+# condition on one visit and not on another, so the same patient is in two cells of one group,
+# the cells no longer add up, and ``_suppress_lines`` would reason over totals that are not
+# totals. A safe version first rolls each patient up to one row per group (ANY/ALL of each
+# condition), which needs the roll-up the user means for every condition ("on the same visit"
+# or "on any visit" are different answers), and a subquery the validator rightly forbids.
 VISIT_ROWS = (
     "Some patient IDs are on more than one row, so rows are visits, not patients. "
     "SQL over visit rows is not supported yet: ask with the question box instead."

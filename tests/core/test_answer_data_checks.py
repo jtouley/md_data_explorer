@@ -284,8 +284,10 @@ class TestGrain:
             key="patient_id", rows=200, patients=170, dataset_version="probe"
         )
 
-    def test_ask_visitGrainGroupVariesWithinPatient_groupedCountRefused(self, make_semantic_layer: Any) -> None:
-        # Arrange: patient P000 has visits at two sites
+    def test_ask_visitGrainGroupVariesWithinPatient_countsEachPatientInEachGroup(
+        self, make_semantic_layer: Any
+    ) -> None:
+        # Arrange: 30 patients have visits at two sites (the 30 repeated IDs)
         frame = dupids().with_columns(pl.Series("site", [("North", "South", "West")[i % 3] for i in range(N)]))
         store = MemoryDeclarationStore()
         store.save(
@@ -293,12 +295,19 @@ class TestGrain:
             Declarations(grains=(GrainDeclaration(key="patient_id", rows=200, patients=170, dataset_version="probe"),)),
         )
         service = _service(make_semantic_layer, frame, declarations=store)
+        expected = frame.group_by("site").agg(pl.col("patient_id").n_unique().alias("count")).sort("site")
 
         # Act
         result = _ask(service, QueryPlan(intent="COUNT", group_by="site", confidence=0.99))
 
-        # Assert
-        assert _shown(result).startswith("REFUSED site differs between rows of the same patient")
+        # Assert: distinct patients per site; the total is the 170 patients, not the 200 summed
+        shown = present_analysis(result.analysis)
+        assert shown["table"] is not None
+        counts = {row["site"]: row["count"] for row in shown["table"]["rows"]}
+        assert counts == dict(zip(expected["site"].to_list(), expected["count"].to_list(), strict=True))
+        assert sum(counts.values()) == 200
+        assert _shown(result).startswith("ANSWER 170 patients across 3 site groups.")
+        assert "is counted in each, so the site counts add up to more than 170" in _shown(result)
 
     def test_ask_uniqueIds_answersWithPatientsUnit(self, make_semantic_layer: Any) -> None:
         # Arrange
@@ -521,8 +530,9 @@ def _visits_sex_varies(differing: int = 3) -> pl.DataFrame:
 
 
 class TestGroupedShareAtVisitGrain:
-    """A share asked "by <group>" is a rate plan, so the visit-grain group check applies: a
-    patient whose sex differs between visits would be counted in both groups (n=43 of 40)."""
+    """A share asked "by <group>" is a rate plan over patients. A patient whose sex differs
+    between visits is counted in both groups, so the groups no longer add up to n; with only 3
+    such patients, every group is hidden (the 3 could be worked out by subtraction)."""
 
     @pytest.mark.parametrize(
         "filters",
@@ -531,7 +541,7 @@ class TestGroupedShareAtVisitGrain:
             pytest.param([FilterSpec(column="age", operator="<", value=70)], id="with_filter"),
         ],
     )
-    def test_ask_groupedShare_groupVariesWithinPatient_refused(
+    def test_ask_groupedShare_fewPatientsInTwoGroups_everyGroupHidden(
         self, make_semantic_layer: Any, filters: list[FilterSpec]
     ) -> None:
         # Arrange: the plan as the parser builds it, a share with a grouping
@@ -549,8 +559,11 @@ class TestGroupedShareAtVisitGrain:
         # Act
         result = _ask(service, plan)
 
-        # Assert
-        assert _shown(result).startswith("REFUSED sex differs between rows of the same patient")
+        # Assert: answered, but no group's rate or n is shown, and the reader is told why
+        table = present_analysis(result.analysis)["table"]
+        assert table is not None
+        assert all(row["rate"] == "suppressed" and row["n"] == "suppressed" for row in table["rows"])
+        assert "is counted in each, so the sex counts add up to more than n" in _shown(result)
 
     def test_ask_groupedShare_groupOnePerPatient_answersPerGroupInPatients(self, make_semantic_layer: Any) -> None:
         # Arrange: no patient's sex differs, so the per-group share is a patient share

@@ -291,6 +291,79 @@ def line_count_text(count: int, line: Sequence[int], threshold: int | None = Non
     return "some"
 
 
+def _small_or_unknown(value: Any) -> bool:
+    """A patient count from 1 to threshold-1, or anything that is not a count (fail closed)."""
+    return not _is_count(value) or 0 < int(value) < _limit(None)
+
+
+def _small_patients(value: Any) -> bool:
+    """A patient count carried beside an encounter cell is small (absent: nothing to check)."""
+    return value is not None and _small_or_unknown(value)
+
+
+def overlap_hidden(counts: Sequence[Any], total: Any, patients: Sequence[Any] | None = None) -> set[int]:
+    """Group counts to hide when a unit can be in more than one group (a patient with positive
+    tests in two years), so the groups add up to more than ``total``, which a reader knows (the
+    same question without the grouping shows it).
+
+    The groups are no partition, so "total minus the other groups" gives nothing; what a reader
+    can work out from the total and the shown groups is each shown group's complement (the units
+    with no row in it: ``total - count``) and, with every group shown, the excess (``sum -
+    total``), which pins how many units are in two groups when it is small (with two groups it
+    is exactly that number). So a group is hidden when its count, its complement or the patients
+    behind it are from 1 to threshold-1; with nothing hidden, a small excess hides every group;
+    and when the shown groups do not cover the total, the hidden groups must hold the rest, a
+    lower bound that can pin a small one, so every group is hidden. A hidden group can then be
+    small or nearly the total (its complement small), and the shown counts never pin which.
+    """
+    every = set(range(len(counts)))
+    if not _is_count(total) or any(not _is_count(c) for c in counts):
+        return every
+    hidden = {i for i, c in enumerate(counts) if _small_or_unknown(c)}
+    hidden |= {i for i, p in enumerate(patients or ()) if _small_patients(p)}
+    hidden |= {i for i, c in enumerate(counts) if 0 < int(total) - int(c) < _limit(None)}
+    if not hidden and 0 < sum(int(c) for c in counts) - int(total) < _limit(None):
+        return every
+    shown = sum(int(c) for i, c in enumerate(counts) if i not in hidden)
+    if hidden and int(total) - shown > 0:
+        # Every unit is in some group, so the hidden groups hold at least total - shown units:
+        # beside a small hidden group that bound can pin it (10 when the bound is 10). Withhold.
+        return every
+    return hidden
+
+
+def _one(analysis: Mapping[str, Any]) -> str:
+    """One counted unit, in words: the encounter noun the question used ("admission"), else
+    patient or visit by the grain."""
+    noun = analysis.get("unit_noun")
+    if isinstance(noun, str) and noun:
+        return noun
+    return {"patients": "patient", "visits": "visit"}.get(_unit(analysis) or "", "unit")
+
+
+def _article(word: str) -> str:
+    return "An" if word[:1].lower() in "aeiou" else "A"
+
+
+def _overlap_sentence(analysis: Mapping[str, Any], group_col: str, total: Any) -> str:
+    one = _one(analysis)
+    return (
+        f"{_article(one)} {one} with rows in more than one {group_col} is counted in each, so the {group_col} "
+        f"counts add up to more than {total}."
+    )
+
+
+_ROLLUP_SENTENCES = {
+    "any": "{a} {one} counts as having {event} when at least one of its rows has it.",
+    "all": "{a} {one} counts as having {event} only when all of its rows that record it have it.",
+}
+
+
+def _rollup_sentence(analysis: Mapping[str, Any], event: str) -> str | None:
+    template = _ROLLUP_SENTENCES.get(str(analysis.get("rollup")))
+    return template.format(a=_article(_one(analysis)), one=_one(analysis), event=event) if template else None
+
+
 def _unit(analysis: Mapping[str, Any]) -> str | None:
     """What n counts, when the query service knows the dataset's grain: patients, visits, or rows
     (some rows have no patient ID, so rows are not patients)."""
@@ -310,6 +383,9 @@ def _event_phrase(column: str, level: Any) -> str:
     label = display_level(column, level)
     return label if label.startswith(f"{name}=") else f"{name} = {label}"
 
+
+# Patient counts carried beside encounter cells (never shown): a cell of 1-10 patients is hidden.
+_PATIENT_CELLS = ("patients", "event_patients", "nonevent_patients")
 
 # Cell keys for the n clause; tuples so they never collide with a group name or a table cell.
 N_USED = ("n", "used")
@@ -350,9 +426,11 @@ def suppress_with_exclusions(
     lines: Sequence[Sequence[Any]] = (),
     *,
     floor: int = 0,
+    primary: set[Any] | None = None,
 ) -> set[Any]:
     """Hidden cells of one answer: its count cells (``parts``) plus n_used, n_excluded and the
-    rows the filters removed.
+    rows the filters removed. ``primary``: parts hidden whatever their count (a group of 11
+    admissions from 1-10 patients).
 
     n_used + n_excluded + filtered-out is the dataset row count, which the app shows, so the
     three are a line with a visible total; the filtered-out cell is never displayed but is
@@ -366,7 +444,7 @@ def suppress_with_exclusions(
     two possible values (floor and floor + 1) n is always hidden, even with nothing excluded.
     """
     n_used, excluded = analysis.get("n_used"), analysis.get("n_excluded")
-    hidden = _suppress_lines(parts, [*lines, list(parts)])
+    hidden = _suppress_lines(parts, [*lines, list(parts)], hidden=primary)
     cells = {**parts, N_USED: n_used, N_EXCLUDED: excluded, N_FILTERED: _filtered_out(analysis)}
     n_lines = [[N_USED, N_EXCLUDED, N_FILTERED], [N_USED, N_EXCLUDED]]
     hidden = _suppress_lines(cells, [*lines, *n_lines], hidden=hidden, floors={N_USED: floor})
@@ -1034,6 +1112,8 @@ def _present_count(analysis: Mapping[str, Any]) -> Presentation:
         noun = "group" if len(rows) == 1 else "groups"
         counted = f"{total} {_unit(analysis)}" if _unit(analysis) else f"{total} total"
         claim = f"{counted} across {len(rows)} {group_col} {noun}." if total is not None else None
+        if analysis.get("overlapping") or analysis.get("group_patients") is not None:
+            return _present_unit_groups(analysis, rows, str(group_col), total, claim)
         # Folded by true size, before suppression: only groups of 1-10 patients, unless that pins one.
         counts = [row.get("count") for row in rows]
         masked = suppress_counts(counts)
@@ -1045,6 +1125,31 @@ def _present_count(analysis: Mapping[str, Any]) -> Presentation:
     unit = f" {_unit(analysis)}" if _unit(analysis) else ""
     claim = f"Total count: {total}{unit}." if total is not None else None
     return {"claim": claim, "table": None}
+
+
+def _present_unit_groups(
+    analysis: Mapping[str, Any], rows: list[dict[str, Any]], group_col: str, total: Any, claim: str | None
+) -> Presentation:
+    """Distinct units per group when the groups are no plain partition of patients: a unit can be
+    in two groups (``overlapping``: ``overlap_hidden``), or the unit is an encounter and each
+    group's patients are counted too (a group of 1-10 patients is hidden however many
+    admissions it has). Every hidden group is folded into one row whose label claims no size."""
+    counts = [row.get("count") for row in rows]
+    patients = analysis.get("group_patients")
+    if analysis.get("overlapping"):
+        hidden = overlap_hidden(counts, total, patients)
+        claim = f"{claim} {_overlap_sentence(analysis, group_col, total)}" if claim else claim
+    else:
+        primary = {i for i, p in enumerate(patients or ()) if _small_patients(p)}
+        hidden = _suppress_lines(dict(enumerate(counts)), [list(range(len(counts)))], hidden=primary)
+    shown_rows = [
+        {group_col: row[group_col], "count": SECONDARY_SUPPRESSED if i in hidden else row.get("count")}
+        for i, row in enumerate(rows)
+    ]
+    if hidden and claim:
+        claim += f" Groups are hidden where a count of fewer than {_limit(None)} patients could be worked out."
+    fold = {str(rows[i][group_col]) for i in hidden}
+    return {"claim": claim, "table": _fold_rows(_table(shown_rows), fold, HIDDEN_GROUPS_LABEL)}
 
 
 _STATISTIC_LABELS = {"mean": "Mean", "median": "Median", "min": "Minimum", "max": "Maximum", "std": "SD of"}
@@ -1083,8 +1188,10 @@ def _present_proportion(analysis: Mapping[str, Any]) -> Presentation:
         }
     n_used = analysis.get("n_used")
     # Hidden too when n is hidden and that narrows it (as for any whole-sample statistic).
-    withheld = _counts_small(analysis.get("events"), n_used) or not _overall_statistics_shown(
-        n_used, N_USED in hidden_n, _cohort(analysis), 0
+    withheld = (
+        _counts_small(analysis.get("events"), n_used)
+        or not _overall_statistics_shown(n_used, N_USED in hidden_n, _cohort(analysis), 0)
+        or any(_small_patients(analysis.get(name)) for name in _PATIENT_CELLS)
     )
     if withheld:
         claim = _with_details(
@@ -1095,6 +1202,9 @@ def _present_proportion(analysis: Mapping[str, Any]) -> Presentation:
         noun = _unit(analysis) or "patients"
         population = f"{noun} who matched the limits" if analysis.get("limited") else noun
         claim = _with_details(f"{_percent(share)} of {population} had {event}", [n_clause])
+        rollup = _rollup_sentence(analysis, event)
+        if rollup:
+            claim += f". {rollup.removesuffix('.')}"
     row = {
         "proportion": SECONDARY_SUPPRESSED if withheld else share,
         "n": SECONDARY_SUPPRESSED if N_USED in hidden_n else n_used,
@@ -1112,15 +1222,36 @@ def _present_rate(analysis: Mapping[str, Any]) -> Presentation:
     if len(groups) > MAX_GROUP_LEVELS:
         return _too_many_levels(group_col, len(groups))
     sizes = {str(g.get("group")): g.get("n") for g in groups}
-    hidden = suppress_with_exclusions(analysis, sizes)
+    patients = {str(g.get("group")): g.get("patients") for g in groups}
+    by_units = bool(analysis.get("overlapping")) or any(v is not None for v in patients.values())
+    if analysis.get("overlapping"):
+        # A unit in two groups: the groups do not add up to n (``overlap_hidden``).
+        hidden = suppress_with_exclusions(analysis, {})
+        keys = list(sizes)
+        if N_USED in hidden:
+            hidden |= set(keys)
+        else:
+            found = overlap_hidden([sizes[k] for k in keys], analysis.get("n_used"), [patients[k] for k in keys])
+            hidden |= {keys[i] for i in found}
+    else:
+        primary = {k for k, p in patients.items() if _small_patients(p)}
+        hidden = suppress_with_exclusions(analysis, sizes, primary=primary)
     n_clause = _n_clause(analysis, hidden)
-    small_groups = _small_parts(sizes, hidden)
+    # Groups counted by encounter, or overlapping, fold every hidden group under a label that
+    # claims no size: which of them are small is never told apart.
+    small_groups = (
+        _Fold({k for k in sizes if k in hidden}, HIDDEN_GROUPS_LABEL) if by_units else _small_parts(sizes, hidden)
+    )
     rows, parts, withheld = [], [], False
     for g in groups:
         key, n, events = str(g.get("group")), g.get("n"), g.get("events")
         rate = _num(g.get("rate"))
         label = _group_label(group_col, g.get("group"))
-        rate_hidden = _unchecked(key, n, hidden) or _counts_small(events, n)
+        rate_hidden = (
+            _unchecked(key, n, hidden)
+            or _counts_small(events, n)
+            or any(_small_patients(g.get(name)) for name in _PATIENT_CELLS)
+        )
         withheld = withheld or rate_hidden
         rows.append(
             {
@@ -1137,6 +1268,11 @@ def _present_rate(analysis: Mapping[str, Any]) -> Presentation:
     claim = _with_details(f"{event} by {group_col}: {', '.join(parts)}", [n_clause]) + ". Unadjusted."
     if withheld:
         claim += f" A rate is not shown when one of its counts is fewer than {_limit(None)} patients."
+    rollup = _rollup_sentence(analysis, event)
+    if rollup:
+        claim += f" {rollup}"
+    if analysis.get("overlapping"):
+        claim += f" {_overlap_sentence(analysis, group_col, 'n')}"
     fold = {_group_label(group_col, g.get("group")) for g in groups if str(g.get("group")) in small_groups}
     return {"claim": claim, "table": _fold_rows(_table(rows), fold, small_groups.label)}
 
@@ -1178,6 +1314,8 @@ def _total_hidden(analysis: Mapping[str, Any], total: Any) -> bool:
     """A count total is hidden when it, or the rows the filters removed, is from 1 to 10."""
     if not _is_count(total):
         return False
+    if _small_patients(analysis.get("total_patients")):
+        return True  # 11 or more encounters of 1-10 patients
     cells = {"total": total, N_FILTERED: _filtered_out(analysis)}
     return "total" in _suppress_lines(cells, [list(cells)])
 
@@ -1185,7 +1323,7 @@ def _total_hidden(analysis: Mapping[str, Any], total: Any) -> bool:
 def _hidden_total_claim(analysis: Mapping[str, Any], total: Any) -> str:
     # Without filters the total is the row count the app already shows. With filters one wording
     # covers "total small" and "filtered-out rows small", so the claim does not say which.
-    if _filtered_out(analysis) != 0:
+    if _filtered_out(analysis) != 0 or _small_patients(analysis.get("total_patients")):
         return "Total count hidden."
     unit = f" {_unit(analysis)}" if _unit(analysis) else ""
     return f"Total count: {suppress_count(total)}{unit}."

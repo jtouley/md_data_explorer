@@ -28,7 +28,7 @@ from clinical_analytics.contracts.declarations import (
 from clinical_analytics.contracts.errors import ContractError, ContractStoreError, InvalidDeclarationKeyError
 from clinical_analytics.contracts.quality import QualityReport
 from clinical_analytics.contracts.store import latest_report
-from clinical_analytics.core import answer_checks
+from clinical_analytics.core import answer_checks, counting_unit
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.core.conversation_manager import ConversationManager
 from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line, plan_fingerprint
@@ -77,12 +77,17 @@ def _unit_of(analysis: dict[str, Any], plan: QueryPlan, findings: answer_checks.
     visit_key = findings.key if findings.visits else None
     if kind == "count":
         entity = plan.entity_key or visit_key
-    elif kind in _ENTITY_COUNTED or frequency:
-        entity = visit_key  # shares and frequency tables count distinct patients once rows are visits
+    elif kind in _ENTITY_COUNTED:
+        entity = plan.entity_key or visit_key  # shares count distinct units once rows are visits
+    elif frequency:
+        entity = visit_key  # frequency tables count distinct patients once rows are visits
     else:
         entity = None  # a statistic over rows
     if entity is not None:
-        return "patients" if entity == findings.key else None
+        if entity == findings.key:
+            return "patients"
+        # Distinct encounters (admissions, tests): visits, the unit an encounter is.
+        return "visits" if entity == findings.encounter_key else None
     if findings.visits:
         return "visits"
     return "patients" if findings.rows_are_patients else "rows"
@@ -222,6 +227,30 @@ class _Prepared:
     declarations: Declarations
     mappings: tuple[LevelMapping, ...]
     generation: int  # the layer's state_generation when the declarations were applied
+
+
+@dataclass(frozen=True)
+class _CountingUnit:
+    """What the question counts, read from its words (``core.counting_unit``).
+
+    ``plan``: the plan with ``entity_key`` (the patient or encounter key the question names) and
+    ``rollup`` set; ``named``: the question named its unit, so the grain is not asked about;
+    ``refusal``: the words ask for something that cannot be counted right on this data;
+    ``candidate``: the encounter ID a held question can offer to count instead.
+    """
+
+    plan: Any = None
+    words: counting_unit.UnitWords = counting_unit.UnitWords()
+    named: bool = False
+    encounter_key: str | None = None
+    candidate: str | None = None
+    refusal: str | None = None
+
+    def accounted(self, question: str) -> str:
+        """The question as word accounting reads it: the words read here are used by the plan."""
+        if self.plan is None or not (self.plan.rollup or self.encounter_key):
+            return question
+        return counting_unit.accounted_question(question, self.words, self.encounter_key is not None)
 
 
 class QueryService:
@@ -440,6 +469,10 @@ class QueryService:
 
         # Convert QueryIntent to QueryPlan
         query_plan: QueryPlan = self.nl_engine._intent_to_plan(query_intent, dataset_version)
+        # What the question counts on visit rows (patients, admissions) and how a value that
+        # differs between a patient's rows is rolled up ("ever"), from its own words.
+        unit = self._counting_unit(normalized_query, query_plan)
+        query_plan = unit.plan
 
         # Generate run_key using semantic layer (canonical implementation)
         run_key = self._generate_run_key(query_plan, normalized_query)
@@ -560,7 +593,7 @@ class QueryService:
         # Layer-wide state comes from the stored declarations only: _still_current checked, under
         # this lock hold, that the question's copy is the stored one.
         self._sync_layer_state(declarations, dataset_version)
-        findings = self._data_findings(query_plan, declaration_key, dataset_version, declarations)
+        findings = self._data_findings(query_plan, declaration_key, dataset_version, declarations, unit)
         if confirmed and not findings.refusal:
             findings.refusal, declarations = self._declare(declaration_key, findings, declarations)
         if findings.refusal:
@@ -579,7 +612,7 @@ class QueryService:
         # Reverse accounting: every element of the plan must also be asked for by the question.
         # The data-check holds join the same hold, so one confirmation covers what was shown.
         if not confirmed:
-            accounting = self._accounting_hold_reason(normalized_query, query_plan, context, mappings)
+            accounting = self._accounting_hold_reason(unit.accounted(normalized_query), query_plan, context, mappings)
             accounting_reason = " ".join([r for r in [accounting, *findings.holds] if r]) or None
             if accounting_reason:
                 return QueryResult(
@@ -682,7 +715,12 @@ class QueryService:
             return Declarations()
 
     def _data_findings(
-        self, plan: QueryPlan, dataset_key: str | None, dataset_version: str | None, declarations: Declarations
+        self,
+        plan: QueryPlan,
+        dataset_key: str | None,
+        dataset_version: str | None,
+        declarations: Declarations,
+        unit: _CountingUnit | None = None,
     ) -> answer_checks.Findings:
         """Run the data checks for ``plan``. ``findings.visits``: rows are declared visits on this
         dataset version.
@@ -698,21 +736,38 @@ class QueryService:
         findings.keyed, findings.visits = grain.key is not None, visits
         findings.key, findings.rows_are_patients = grain.key, grain.rows_are_patients
 
-        findings.refusal = answer_checks.metric_refusal(plan, layer)
+        unit = unit or _CountingUnit()
+        findings.encounter_key = unit.encounter_key
+        if unit.encounter_key and unit.words.noun:
+            findings.unit_noun = counting_unit.singular(unit.words.noun)
+        findings.refusal = unit.refusal or answer_checks.metric_refusal(plan, layer)
         if findings.refusal:
             return findings
-        if grain.repeated and grain.key is not None and not visits:
-            findings.holds.append(answer_checks.grain_hold_reason(grain.key))
+        if grain.repeated and grain.key is not None and not visits and not unit.named:
+            # The question did not say what it counts: ask once (patients, or encounters).
+            findings.holds.append(answer_checks.grain_hold_reason(grain.key, unit.candidate))
             findings.grain_to_declare = grain.declaration(dataset_version)
         if grain.repeated and grain.key is not None:
-            # Checked before and after the confirmation: patients are counted once per group, and
-            # a share counts patients, only when each patient has one value.
-            if plan.intent == "COUNT" and plan.group_by and not (plan.proportion_column or plan.rate_column):
-                findings.refusal = answer_checks.grouped_count_refusal(layer, grain.key, plan.group_by)
-            elif plan.proportion_column or plan.rate_column:
-                findings.refusal = answer_checks.share_refusal(layer, grain.key, plan)
+            # Checked before and after the confirmation: a share counts units rolled up over their
+            # rows, and a value that differs between a unit's rows needs the question's roll-up.
+            # A grouping that differs is answered (each unit counted in each of its groups).
+            if plan.proportion_column or plan.rate_column:
+                key = plan.entity_key or grain.key
+                noun = "patient" if key == grain.key else counting_unit.singular(unit.words.noun)
+                findings.refusal = answer_checks.share_refusal(layer, key, plan, noun)
+                if findings.refusal and unit.words.ordered:
+                    findings.refusal = counting_unit.ordered_rollup_reason(unit.words.ordered)
             if findings.refusal:
                 return findings
+            if unit.named and plan.entity_key == grain.key:
+                findings.notes.append(
+                    f"Data check: some IDs in {grain.key} appear on more than one row; "
+                    f"each {grain.key} is counted once."
+                )
+        if unit.encounter_key:
+            encounter_note = answer_checks.missing_encounter_note(layer, unit.encounter_key)
+            if encounter_note:
+                findings.notes.append(encounter_note)
         for _column, mapping, sentence in answer_checks.variant_findings(plan, layer, declarations, dataset_version):
             findings.holds.append(sentence)
             findings.levels_to_declare.append(mapping)
@@ -728,12 +783,59 @@ class QueryService:
         findings.notes.extend(answer_checks.missingness_notes(layer, columns, answer_checks.flagged_columns(report)))
         return findings
 
+    def _counting_unit(self, question: str, plan: QueryPlan) -> _CountingUnit:
+        """The counted unit and roll-up the question names, on data whose patient IDs repeat.
+
+        Only counts and shares are read: other analyses keep the grain hold. Data with one row per
+        patient is left as it was. "patients" counts distinct patient IDs; an encounter noun
+        ("admissions", "tests") the one encounter ID column, checked to belong to one patient
+        each. Nothing is guessed: two candidate columns, an encounter ID shared by patients,
+        "ever" and "always" together, or a count of patients on every row are refused plainly.
+        """
+        layer = self.semantic_layer
+        counting = plan.intent == "COUNT" and not plan.metric
+        share = bool(plan.proportion_column or plan.rate_column)
+        if not (counting or share):
+            return _CountingUnit(plan=plan)
+        grain = answer_checks.grain_of(layer)
+        if not grain.repeated or grain.key is None:
+            return _CountingUnit(plan=plan)
+        words = counting_unit.read_units(question)
+        columns = list(layer.get_base_view().columns)
+        candidates = counting_unit.encounter_key_candidates(columns, grain.key)
+        offered = candidates[0] if len(candidates) == 1 else None
+        if words.both_rollups:
+            return _CountingUnit(plan=plan, words=words, refusal=counting_unit.both_rollups_reason())
+        if words.rollup == "all" and not share:
+            return _CountingUnit(plan=plan, words=words, refusal=counting_unit.ALL_ROLLUP_COUNT_REASON)
+        rollup = words.rollup if share or words.rollup == "any" else None
+        if words.unit == "patients":
+            named = dataclasses.replace(plan, entity_key=grain.key, rollup=rollup)
+            return _CountingUnit(plan=named, words=words, named=True, candidate=offered)
+        if words.unit == "encounters" and words.noun is not None:
+            chosen = counting_unit.pick_encounter_key(candidates, words.noun)
+            if not candidates:
+                # No encounter ID: rows stand for the encounters, as before; the grain is asked.
+                return _CountingUnit(plan=dataclasses.replace(plan, rollup=rollup), words=words)
+            if chosen is None:
+                reason = counting_unit.ambiguous_encounter_reason(words.noun, candidates)
+                return _CountingUnit(plan=plan, words=words, refusal=reason)
+            if counting_unit.encounter_spans_patients(layer, chosen, grain.key):
+                reason = counting_unit.encounter_spans_reason(chosen, grain.key, words.noun)
+                return _CountingUnit(plan=plan, words=words, refusal=reason)
+            if rollup == "all":
+                return _CountingUnit(plan=plan, words=words, refusal=counting_unit.ENCOUNTER_ALL_REASON)
+            counted = dataclasses.replace(plan, entity_key=chosen, rollup=rollup)
+            return _CountingUnit(plan=counted, words=words, named=True, encounter_key=chosen, candidate=chosen)
+        return _CountingUnit(plan=dataclasses.replace(plan, rollup=rollup), words=words, candidate=offered)
+
     def _sync_layer_state(self, stored: Declarations, dataset_version: str | None) -> None:
         """Set what the layer counts by (patients once rows are declared visits) from the
         dataset's STORED declarations. Locked; never called with a question's stale copy."""
         grain = answer_checks.grain_of(self.semantic_layer)
         visits = grain.repeated and answer_checks.declared_visits(grain, stored, dataset_version)
         self.semantic_layer.count_entity_key = grain.key if visits else None
+        self.semantic_layer.patient_key = grain.key
 
     def _latest_report(self, dataset_key: str | None, dataset_version: str | None) -> QualityReport | None:
         if self.data_dir is None or not dataset_version or dataset_key is None:
@@ -849,6 +951,8 @@ class QueryService:
         notes = [n for n in findings.notes if not (disclosed and n.startswith(f"{short_name(disclosed)} has "))]
         unit = _unit_of(analysis, plan, findings) if findings.keyed else None
         extra: dict[str, Any] = {"unit": unit} if unit else {}
+        if findings.unit_noun:
+            extra["unit_noun"] = findings.unit_noun
         if notes:
             extra["data_notes"] = notes
         return {**analysis, **extra}
