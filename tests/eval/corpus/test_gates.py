@@ -7,11 +7,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from clinical_analytics.eval.corpus.fetch import load_corpus
+from clinical_analytics.eval.corpus import run as run_module
+from clinical_analytics.eval.corpus.fetch import CorpusConfigError, CorpusDataset, load_corpus
 from clinical_analytics.eval.corpus.run import (
     AcceptanceError,
     Baseline,
@@ -25,6 +29,8 @@ from clinical_analytics.eval.corpus.run import (
     load_baseline,
     main,
     parse_fail_on,
+    positive_seconds,
+    table_shape,
 )
 
 BASELINES = Path(__file__).parent / "baselines"
@@ -190,7 +196,6 @@ class TestParseFailOn:
         [
             ("WRONG,LEAK,ERROR", {"WRONG", "LEAK", "ERROR"}),
             ("wrong, leak", {"WRONG", "LEAK"}),
-            ("", set()),
         ],
     )
     def test_parse_fail_on_validNames_returnsGrades(self, text: str, expected: set[str]) -> None:
@@ -200,10 +205,34 @@ class TestParseFailOn:
         # Assert
         assert grades == expected
 
-    def test_parse_fail_on_typo_raises(self) -> None:
+    @pytest.mark.parametrize(
+        ("text", "match"),
+        [("WRNG,LEAK", "WRNG"), ("", "no grade given"), (" , ", "no grade given")],
+    )
+    def test_parse_fail_on_typoOrEmpty_raises(self, text: str, match: str) -> None:
         # Act / Assert
-        with pytest.raises(argparse.ArgumentTypeError, match="WRNG"):
-            parse_fail_on("WRNG,LEAK")
+        with pytest.raises(argparse.ArgumentTypeError, match=match):
+            parse_fail_on(text)
+
+    def test_main_emptyFailOn_refusesToStart(self) -> None:
+        # Act
+        with pytest.raises(SystemExit) as raised:
+            main(["--fail-on", ""])
+
+        # Assert
+        assert raised.value.code == 2
+
+
+class TestPositiveSeconds:
+    def test_positive_seconds_positiveNumber_returnsFloat(self) -> None:
+        # Act / Assert
+        assert positive_seconds("120") == 120.0
+
+    @pytest.mark.parametrize("text", ["0", "-1", "nan", "inf", "", "two"])
+    def test_positive_seconds_zeroNegativeOrNotFinite_raises(self, text: str) -> None:
+        # Act / Assert
+        with pytest.raises(argparse.ArgumentTypeError):
+            positive_seconds(text)
 
 
 class TestLoadBaseline:
@@ -228,7 +257,9 @@ class TestLoadBaseline:
             ({"dataset": "covid_ms", "model": "none", "answered_right": 1, "rows": [1]}, "could not be read"),
         ],
     )
-    def test_load_baseline_wrongOrExtraContent_raises(self, tmp_path: Path, payload: dict, match: str) -> None:
+    def test_load_baseline_wrongOrExtraContent_raises(
+        self, tmp_path: Path, payload: dict[str, Any], match: str
+    ) -> None:
         # Arrange
         path = tmp_path / "baseline.json"
         path.write_text(json.dumps(payload))
@@ -272,7 +303,7 @@ class TestLoadResult:
             ({"error": "POST /api/datasets/upload -> 400"}, "-> 400"),
         ],
     )
-    def test_failures_mismatch_namesDatasetAndProblem(self, changes: dict, fragment: str) -> None:
+    def test_failures_mismatch_namesDatasetAndProblem(self, changes: dict[str, Any], fragment: str) -> None:
         # Arrange
         result = LoadResult("covid_ms", "table", 1141, 47, status="ready", rows=1141, columns=47)
         for name, value in changes.items():
@@ -295,7 +326,9 @@ class TestCheckLoad:
         assert result.error is not None and "not in corpus.yaml" in result.error
         assert result.failures() == [f"nope: {result.error}"]
 
-    def test_check_load_noExpectations_isErrorWithoutServer(self, make_corpus_dataset) -> None:
+    def test_check_load_noExpectations_isErrorWithoutServer(
+        self, make_corpus_dataset: Callable[..., tuple[CorpusDataset, dict[str, bytes]]]
+    ) -> None:
         # Arrange
         dataset, _ = make_corpus_dataset()
 
@@ -311,3 +344,124 @@ class TestCheckLoad:
 
         # Assert
         assert all(d.rows is not None and d.columns is not None for d in corpus.values())
+
+
+class TestTableShape:
+    def test_table_shape_oneTable_returnsRowsAndColumnCount(self) -> None:
+        # Arrange
+        detail = {"tables": [{"row_count": 1141, "columns": [{"name": "a"}, {"name": "b"}]}]}
+
+        # Act
+        shape = table_shape(detail)
+
+        # Assert
+        assert shape == (1141, 2)
+
+    @pytest.mark.parametrize(
+        "detail",
+        [
+            {},
+            {"tables": None},
+            {"tables": []},
+            {"tables": [{"row_count": 1, "columns": []}] * 2},
+            {"tables": ["not a table"]},
+            {"tables": [{"row_count": None, "columns": []}]},
+            {"tables": [{"row_count": True, "columns": []}]},
+            {"tables": [{"row_count": 1, "columns": None}]},
+        ],
+    )
+    def test_table_shape_malformed_raisesAcceptanceError(self, detail: dict[str, Any]) -> None:
+        # Act / Assert
+        with pytest.raises(AcceptanceError, match="GET /api/datasets"):
+            table_shape(detail)
+
+
+class TestMainLoadOnly:
+    def test_main_loadOnlyMalformedCorpus_writesNamedErrorToSummary(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Arrange
+        def broken() -> dict[str, CorpusDataset]:
+            raise CorpusConfigError("corpus.yaml could not be loaded: bad")
+
+        monkeypatch.setattr(run_module, "load_corpus", broken)
+        summary = tmp_path / "summary.md"
+
+        # Act
+        code = main(["--load-only", "--summary", str(summary)])
+
+        # Assert
+        assert code == run_module.EXIT_NOT_RUN
+        assert "upload check not run: corpus.yaml could not be loaded" in summary.read_text()
+
+
+class _PendingApi:
+    """Stands in for Api: the pending query never finishes, and each status check is counted."""
+
+    def __init__(self) -> None:
+        self.pending: str | None = "q-hung"
+        self.checks = 0
+
+    def request(self, method: str, path: str) -> dict[str, Any]:
+        self.checks += 1
+        return {"status": "running"}
+
+
+class TestPendingQuery:
+    def test_asked_pendingQueryStillRunning_isErrorWithoutWaiting(self) -> None:
+        # Arrange
+        api = _PendingApi()
+        started = time.monotonic()
+
+        # Act
+        asked = run_module._asked(api, "ds", {"id": "q2", "query": "x"}, {}, 600.0)  # type: ignore[arg-type]
+
+        # Assert
+        assert time.monotonic() - started < 5
+        assert api.checks == 1
+        assert asked.outcome.status == "error"
+        assert asked.outcome.error is not None and "q-hung" in asked.outcome.error
+        assert api.pending == "q-hung"
+
+
+class _Response:
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+
+    def __enter__(self) -> _Response:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self.body
+
+
+class _Opener:
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+
+    def open(self, _request: object, timeout: float) -> _Response:
+        return _Response(self.body)
+
+
+class TestApiRequest:
+    @pytest.mark.parametrize(
+        ("body", "match"),
+        [
+            (b"<html>proxy error</html>", "not JSON"),
+            (b'{"tables": [', "not JSON"),
+            (b"\xff\xfe", "not JSON"),
+            (b"[1, 2]", "JSON list, expected an object"),
+        ],
+    )
+    def test_request_okStatusBadBody_raisesAcceptanceError(self, body: bytes, match: str) -> None:
+        # Arrange
+        api = run_module.Api.__new__(run_module.Api)
+        api.base, api.token = "http://127.0.0.1:9", "t"
+        api._opener = _Opener(body)  # type: ignore[assignment]
+
+        # Act / Assert
+        with pytest.raises(AcceptanceError, match=match):
+            api.request("GET", "/api/datasets/x")

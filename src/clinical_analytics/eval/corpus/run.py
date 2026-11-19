@@ -25,6 +25,7 @@ the load (status, rows, columns) against ``corpus.yaml``.
 from __future__ import annotations
 
 import argparse
+import http.client
 import importlib.util
 import json
 import os
@@ -58,6 +59,7 @@ from clinical_analytics.eval.corpus.fetch import (
     default_cache_dir,
     fetch_dataset,
     load_corpus,
+    table_path,
 )
 from clinical_analytics.eval.corpus.score import ApiOutcome, OracleAnswer, Scored, score
 
@@ -263,8 +265,9 @@ class Api:
             stderr=subprocess.STDOUT,
         )
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        # A query still running after its question timed out (the API has no cancel). Until it
-        # ends, its log lines would be read as the next question's.
+        # A query still running after its question timed out and was waited for once more (the
+        # API has no cancel). Until it ends, its log lines would be read as the next question's,
+        # so each later question checks it once, without waiting, and is an ERROR while it runs.
         self.pending: str | None = None
 
     def wait_healthy(self) -> float:
@@ -291,14 +294,23 @@ class Api:
         request = urllib.request.Request(f"{self.base}{path}", data=body, method=method, headers=headers)
         try:
             with self._opener.open(request, timeout=timeout) as response:
-                return dict(json.loads(response.read() or b"{}"))
+                raw = response.read() or b"{}"
         except urllib.error.HTTPError as error:
             detail = error.read()[:300].decode("utf-8", "replace")
             raise AcceptanceError(f"{method} {path} -> {error.code}: {detail}") from error
-        except (urllib.error.URLError, ConnectionError, TimeoutError) as error:
+        except (OSError, http.client.HTTPException) as error:
+            # OSError: refused, reset, timed out; HTTPException: a body cut off mid-read.
             code = self.proc.poll()
             state = f"server exited with code {code}" if code is not None else "server running"
             raise AcceptanceError(f"{method} {path}: {type(error).__name__} ({state})") from error
+        try:
+            body = json.loads(raw)
+        except ValueError as error:  # JSONDecodeError and UnicodeDecodeError are ValueErrors
+            snippet = raw[:120].decode("utf-8", "replace")
+            raise AcceptanceError(f"{method} {path} returned a body that is not JSON: {snippet!r}") from error
+        if not isinstance(body, dict):
+            raise AcceptanceError(f"{method} {path} returned JSON {type(body).__name__}, expected an object")
+        return body
 
     def post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self.request("POST", path, json.dumps(payload).encode(), "application/json")
@@ -362,12 +374,15 @@ class Asked:
 
 
 def _poll(api: Api, query_id: str, deadline: float) -> dict[str, Any] | None:
-    while time.monotonic() < deadline:
+    """The query's terminal result, or None if it is still running at ``deadline``. Always
+    checks at least once, so a deadline already past means one check without waiting."""
+    while True:
         result = api.request("GET", f"/api/queries/{query_id}")
         if result.get("status") in TERMINAL:
             return result
+        if time.monotonic() >= deadline:
+            return None
         time.sleep(POLL_S)
-    return None
 
 
 def _submit(api: Api, payload: dict[str, Any]) -> str:
@@ -379,7 +394,8 @@ def ask(api: Api, dataset_id: str, session_id: str, question: dict[str, Any], ti
 
     On a timeout the query is waited for up to another ``timeout_s`` (the API cannot cancel
     it), so its log lines stay with this question; if it is still running, ``api.pending``
-    holds it and the next question waits for it first."""
+    holds it. A hung query so costs at most ``2 * timeout_s`` in all: later questions check it
+    once without waiting (``_asked``), which keeps the CI job timeouts above the worst case."""
     offset = api.log_offset()
     started = time.monotonic()
     deadline = started + timeout_s
@@ -468,7 +484,8 @@ def _asked(api: Api, dataset_id: str, question: dict[str, Any], sessions: dict[s
         return failed(f"session: parent question {parent} has no session (its own session could not be created)")
     try:
         if api.pending is not None:
-            if _poll(api, api.pending, time.monotonic() + timeout_s) is None:
+            # One check, no wait: ask() already gave it 2 * timeout_s.
+            if _poll(api, api.pending, time.monotonic()) is None:
                 return failed(
                     f"server still running timed-out query {api.pending}; its log would be read as this one's"
                 )
@@ -551,8 +568,8 @@ def run(
     questions = load_questions(dataset)
     corpus = load_corpus()
     zip_path = fetch_dataset(dataset, cache_dir, seed_dirs, corpus=corpus)
-    csv_name = next(item.path for item in corpus[dataset].files if item.kind == "table")
-    csv_path = zip_path.parent / "files" / csv_name
+    csv_path = table_path(corpus[dataset], cache_dir)
+    csv_name = csv_path.name
     try:
         truth: dict[str, OracleAnswer] = load_oracles(dataset).answers(csv_path)
     except pl.exceptions.PolarsError as error:
@@ -711,12 +728,31 @@ def gate_failures(
 
 
 def parse_fail_on(text: str) -> frozenset[Grade]:
-    """``"WRONG,LEAK"`` -> {"WRONG", "LEAK"}; argparse type, so a typo stops the run."""
+    """``"WRONG,LEAK"`` -> {"WRONG", "LEAK"}; argparse type, so a typo stops the run.
+
+    An empty value is refused too: ``--fail-on ""`` would switch the gate off without a word.
+    To run without a grade gate, leave ``--fail-on`` out."""
     names = {part.strip().upper() for part in text.split(",") if part.strip()}
+    if not names:
+        raise argparse.ArgumentTypeError(
+            f"no grade given; use one or more of {', '.join(GRADES)}, or leave --fail-on out to gate on none"
+        )
     unknown = sorted(names - set(GRADES))
     if unknown:
         raise argparse.ArgumentTypeError(f"unknown grade(s) {', '.join(unknown)}; use {', '.join(GRADES)}")
     return frozenset(name for name in GRADES if name in names)
+
+
+def positive_seconds(text: str) -> float:
+    """argparse type for a timeout: a finite number of seconds above zero (0 would time out
+    every question at once; a negative or NaN deadline means nothing)."""
+    try:
+        seconds = float(text)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a number of seconds") from error
+    if not 0 < seconds < float("inf"):
+        raise argparse.ArgumentTypeError(f"{text} seconds: use a finite number above 0")
+    return seconds
 
 
 def gate_markdown(failures: list[str], rates: Rates, baseline: Baseline | None) -> str:
@@ -761,13 +797,27 @@ class LoadResult:
         return problems
 
 
-def _upload_path(dataset: CorpusDataset, zip_path: Path) -> Path:
-    if dataset.load_upload == "zip":
-        return zip_path
-    table = next((item.path for item in dataset.files if item.kind == "table"), None)
-    if table is None:
-        raise AcceptanceError(f"{dataset.name} has load_upload: table but no file of kind table")
-    return zip_path.parent / "files" / table
+def _upload_path(dataset: CorpusDataset, zip_path: Path, cache_dir: Path | None) -> Path:
+    return zip_path if dataset.load_upload == "zip" else table_path(dataset, cache_dir)
+
+
+def table_shape(detail: dict[str, Any]) -> tuple[int, int]:
+    """(rows, columns) of the one table in a ``GET /api/datasets/{id}`` body.
+
+    Raises:
+        AcceptanceError: not exactly one table, or a table without an integer ``row_count`` and
+            a ``columns`` list.
+    """
+    tables = detail.get("tables")
+    if not isinstance(tables, list) or len(tables) != 1:
+        found = len(tables) if isinstance(tables, list) else type(tables).__name__
+        raise AcceptanceError(f"GET /api/datasets/{{id}} returned tables={found}, expected a list of 1")
+    table = tables[0]
+    rows = table.get("row_count") if isinstance(table, dict) else None
+    columns = table.get("columns") if isinstance(table, dict) else None
+    if isinstance(rows, bool) or not isinstance(rows, int) or not isinstance(columns, list):
+        raise AcceptanceError("GET /api/datasets/{id} returned a table without an integer row_count and a columns list")
+    return rows, len(columns)
 
 
 def check_load(
@@ -786,8 +836,8 @@ def check_load(
         result.error = "corpus.yaml has no rows or columns for it. Add both to check its load."
         return result
     try:
-        path = _upload_path(dataset, fetch_dataset(name, cache_dir, seed_dirs, corpus=corpus))
-    except (AcceptanceError, CorpusFetchError) as error:
+        path = _upload_path(dataset, fetch_dataset(name, cache_dir, seed_dirs, corpus=corpus), cache_dir)
+    except CorpusFetchError as error:
         result.error = f"fetch: {error}"
         return result
     work = Path(tempfile.mkdtemp(prefix="mdde-load-"))
@@ -800,13 +850,7 @@ def check_load(
         result.upload_s = round(time.monotonic() - started, 1)
         result.status = str(response.get("status"))
         upload_id = required_field(response, "upload_id", "POST /api/datasets/upload")
-        detail = api.request("GET", f"/api/datasets/{upload_id}")
-        tables = detail.get("tables") or []
-        if len(tables) != 1:
-            result.error = f"GET /api/datasets/{{id}} returned {len(tables)} tables, expected 1"
-        else:
-            result.rows = tables[0].get("row_count")
-            result.columns = len(tables[0].get("columns") or [])
+        result.rows, result.columns = table_shape(api.request("GET", f"/api/datasets/{upload_id}"))
     except (AcceptanceError, OSError) as error:
         result.error = str(error)
     finally:
@@ -854,8 +898,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--model", default=NO_MODEL, help="'none' (no language model) or an Ollama model name")
     parser.add_argument("--ollama-base-url", default="http://127.0.0.1:11434")
-    parser.add_argument("--timeout", type=float, default=600.0, help="per-question timeout, seconds")
-    parser.add_argument("--llm-timeout", type=float, default=None, help="app's model-call timeouts (default: app's)")
+    parser.add_argument("--timeout", type=positive_seconds, default=600.0, help="per-question timeout, seconds")
+    parser.add_argument(
+        "--llm-timeout", type=positive_seconds, default=None, help="app's model-call timeouts (default: app's)"
+    )
     parser.add_argument("--label", default="local", help="short name for this checkout, e.g. main or pr101")
     parser.add_argument("--seed", type=Path, action="append", default=[], help="directory of already-fetched files")
     parser.add_argument("--results-dir", type=Path, default=None, help="default: <cache>/results")
@@ -874,7 +920,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.load_only and (args.fail_on or args.baseline is not None):
         parser.error("--load-only asks no questions, so --fail-on and --baseline would check nothing")
     if args.load_only:
-        loads = [check_load(name, load_corpus(), None, args.seed) for name in datasets]
+        try:
+            corpus = load_corpus()
+        except CorpusFetchError as error:
+            message = f"upload check not run: {error}"
+            print(message, file=sys.stderr)
+            _append_summary(args.summary, f"**{message}**")
+            return EXIT_NOT_RUN
+        loads = [check_load(name, corpus, None, args.seed) for name in datasets]
         text = load_markdown(loads)
         print(text)
         _append_summary(args.summary, text)

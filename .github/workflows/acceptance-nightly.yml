@@ -1,0 +1,87 @@
+name: Acceptance nightly
+
+# Its own workflow, so the nightly and manual runs start this job alone, not the whole CI matrix
+# (Playwright, coverage and its Codecov upload) against an unchanged main.
+on:
+  schedule:
+    - cron: "23 9 * * *"
+  # Manual run (Actions tab, write access). Takes no inputs.
+  workflow_dispatch:
+
+# Read-only token; the job writes nothing to the repository.
+permissions:
+  contents: read
+
+# One run at a time: a manual run started during the nightly waits instead of competing for CPU.
+concurrency:
+  group: acceptance-nightly
+  cancel-in-progress: false
+
+env:
+  UV_PYTHON: "3.13"
+
+jobs:
+  acceptance-model:
+    # Ollama runs from an image pinned by digest (no install script), listening on loopback
+    # only. The model's manifest digest is checked before any question is asked.
+    name: Acceptance on COVID-MS, llama3.2:3b (nightly)
+    runs-on: ubuntu-latest
+    # Worst case, so the job ends with its table rather than being cancelled: 15 questions x
+    # 2 x ACCEPT_TIMEOUT (360 s, then one more wait for the running query) = 180 minutes, plus
+    # up to 30 for the model pull, about 5 for setup, and up to 20 for app start and upload.
+    timeout-minutes: 270
+    env:
+      # ollama/ollama:0.40.13, multi-arch index digest. Change the digest and this version together.
+      OLLAMA_IMAGE: ollama/ollama@sha256:b2f0122c476bc9fe7ce679d8bb4bd555351e25e2554eefb156f61cb0a89cf429
+      OLLAMA_MODEL: llama3.2:3b
+      # sha256 of the model's manifest on registry.ollama.ai (`ollama list` shows a80c4f17acd5).
+      OLLAMA_MODEL_DIGEST: a80c4f17acd55265feec403c7aef86be0c25983ab279d83f3bcd3abbcb5b8b72
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up the app and the corpus cache
+        id: setup
+        uses: ./.github/actions/acceptance-setup
+
+      - name: Start Ollama
+        run: |
+          docker run --detach --name ollama --publish 127.0.0.1:11434:11434 "$OLLAMA_IMAGE"
+          for _ in $(seq 1 60); do
+            curl --silent --fail http://127.0.0.1:11434/api/version && exit 0
+            sleep 2
+          done
+          echo "::error::Ollama did not answer on 127.0.0.1:11434 within 120 seconds. Its log follows; check that the image digest still exists."
+          docker logs ollama
+          exit 1
+
+      - name: Pull the model and check its digest
+        run: |
+          curl --silent --show-error --fail --max-time 1800 http://127.0.0.1:11434/api/pull \
+            --data "{\"model\": \"$OLLAMA_MODEL\", \"stream\": false}"
+          actual=$(curl --silent --show-error --fail http://127.0.0.1:11434/api/tags \
+            | jq --raw-output --arg m "$OLLAMA_MODEL" '.models[] | select(.name == $m) | .digest')
+          if [ "$actual" != "$OLLAMA_MODEL_DIGEST" ]; then
+            echo "::error::$OLLAMA_MODEL has digest '$actual', expected $OLLAMA_MODEL_DIGEST. The tag now points at a different model: run it locally first, then update OLLAMA_MODEL_DIGEST."
+            exit 1
+          fi
+
+      # Fails on any WRONG or LEAK, or when the model ran on no question. An ERROR (a timeout, or
+      # a silent fall back from the model) is in the table but does not fail the nightly. The
+      # table shows the tier that answered each question, whether the model ran, and the latency.
+      - name: Ask the COVID-MS questions with the model and check the gate
+        id: ask
+        run: >-
+          make accept DATASET=covid_ms MODEL="$OLLAMA_MODEL" ACCEPT_TIMEOUT=360
+          ACCEPT_ARGS="--label nightly --fail-on WRONG,LEAK --llm-timeout 180
+          --results-dir $RUNNER_TEMP/accept-results --summary $GITHUB_STEP_SUMMARY"
+
+      - name: Upload the results table
+        if: ${{ !cancelled() && steps.ask.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: acceptance-covid_ms-llama3.2-3b
+          path: ${{ runner.temp }}/accept-results/*/results.md
+          if-no-files-found: error
+          retention-days: 30
