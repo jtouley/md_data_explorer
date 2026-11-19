@@ -17,6 +17,7 @@ names, counts and category labels only.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -36,6 +37,19 @@ from clinical_analytics.storage.dataset_deletion import InvalidDatasetIdError, v
 logger = structlog.get_logger()
 
 DECLARATIONS_FILENAME = "declarations.json"
+CONFIRMATION_TOKEN_CHARS = 32
+
+
+def confirmation_token(version: str, key: str | None, rows: int) -> str:
+    """Names what a one-row-per-patient confirmation is about: this dataset version, its ID
+    column (or none) and its row count. Opaque: the row count is not shown.
+
+    One token for every place that asks (governed SQL's refusal, the upload's "Is each row one
+    patient?"): both store the same ``GrainDeclaration`` (grain ``patient``), so an answer given
+    in one is read by the other. It binds an answer to the data asked about; it is not a secret.
+    """
+    digest = hashlib.sha256(f"{version}\x00{key or ''}\x00{rows}".encode()).hexdigest()
+    return digest[:CONFIRMATION_TOKEN_CHARS]
 
 
 class GrainDeclaration(BaseModel):
@@ -132,6 +146,12 @@ class Declarations(BaseModel):
         """These declarations with ``grain`` as its version's grain (other versions' are kept)."""
         kept = tuple(g for g in self.grains if g.dataset_version != grain.dataset_version)
         return self.model_copy(update={"grains": (*kept, grain)})
+
+    def without_patient_grain(self, dataset_version: str | None) -> Declarations:
+        """These declarations without a one-row-per-patient grain on ``dataset_version`` (a
+        visit grain, and other versions' grains, are kept)."""
+        kept = tuple(g for g in self.grains if not (g.grain == "patient" and g.dataset_version == dataset_version))
+        return self.model_copy(update={"grains": kept})
 
     def grain_for(self, dataset_version: str | None) -> GrainDeclaration | None:
         """The grain confirmed on ``dataset_version``, or None (others belong to other data)."""

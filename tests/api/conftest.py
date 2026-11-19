@@ -21,6 +21,29 @@ from sqlalchemy.pool import StaticPool
 
 
 @pytest.fixture
+def upload(test_client: TestClient) -> Iterator[Callable[..., Any]]:
+    """Factory: POST a frame as CSV to /api/datasets/upload and return the response; drops every
+    cached semantic layer it created afterwards."""
+    from clinical_analytics.api import dependencies
+
+    created: list[str] = []
+
+    def _upload(df: pl.DataFrame, name: str) -> Any:
+        response = test_client.post(
+            "/api/datasets/upload",
+            files={"file": (f"{name}.csv", df.write_csv().encode(), "text/csv")},
+            data={"dataset_name": name},
+        )
+        if response.status_code == 200:
+            created.append(response.json()["upload_id"])
+        return response
+
+    yield _upload
+    for upload_id in created:
+        dependencies.invalidate_semantic_layer_cache(upload_id)
+
+
+@pytest.fixture
 def isolated_data_home(tmp_path, monkeypatch):
     """Own data home per test, with the session tables created. Returns the data home path.
 

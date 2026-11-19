@@ -900,7 +900,10 @@ class QueryService:
         grain = self._grain(declarations, dataset_version)
         visits = grain.repeated and answer_checks.declared_visits(grain, declarations, dataset_version)
         findings.keyed, findings.visits = grain.key is not None, visits
-        findings.key, findings.rows_are_patients = grain.key, grain.rows_are_patients
+        findings.key = grain.key
+        findings.rows_are_patients = grain.rows_are_patients or answer_checks.declared_patient_rows(
+            layer, grain, declarations, dataset_version
+        )
 
         findings.refusal = answer_checks.metric_refusal(plan, layer)
         if findings.refusal:

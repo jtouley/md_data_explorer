@@ -7,7 +7,7 @@ Synthetic long-format population estimates only (``make_population_estimates``):
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from typing import Any
 
 import polars as pl
@@ -17,30 +17,6 @@ from fastapi.testclient import TestClient
 pytestmark = [pytest.mark.slow, pytest.mark.integration, pytest.mark.usefixtures("isolated_data_home")]
 
 UPLOAD = "/api/datasets/upload"
-
-
-def _csv(df: pl.DataFrame) -> bytes:
-    return df.write_csv().encode()
-
-
-@pytest.fixture
-def upload(test_client: TestClient) -> Iterator[Callable[..., Any]]:
-    """POST a frame as CSV; drops every cached semantic layer it created afterwards."""
-    from clinical_analytics.api import dependencies
-
-    created: list[str] = []
-
-    def _upload(df: pl.DataFrame, name: str) -> Any:
-        response = test_client.post(
-            UPLOAD, files={"file": (f"{name}.csv", _csv(df), "text/csv")}, data={"dataset_name": name}
-        )
-        if response.status_code == 200:
-            created.append(response.json()["upload_id"])
-        return response
-
-    yield _upload
-    for upload_id in created:
-        dependencies.invalidate_semantic_layer_cache(upload_id)
 
 
 @pytest.mark.parametrize(

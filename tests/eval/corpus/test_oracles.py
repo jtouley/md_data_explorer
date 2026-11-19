@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from types import ModuleType
 
 import polars as pl
 import pytest
@@ -134,3 +135,25 @@ class TestStatBy:
         # Assert
         assert answers["mean"].oracle_error is not None and "1 value(s)" in answers["mean"].oracle_error
         assert answers["total"].value == 2
+
+
+class TestRowsArePatients:
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            pytest.param("secret_name,sex\na,female\nb,male\nc,male\n", True, id="unique_codes"),
+            pytest.param("secret_name,sex\na,female\na,male\nc,male\n", False, id="code_repeats"),
+            pytest.param("secret_name,sex\na,female\n,male\nc,male\n", False, id="code_missing"),
+        ],
+    )
+    def test_rowsArePatients_personCodes_yesOnlyWhenUniqueOnEveryRow(
+        self, tmp_path: Path, covid_ms_oracles: ModuleType, text: str, expected: bool
+    ) -> None:
+        # Arrange
+        csv = _csv(tmp_path, text)
+
+        # Act
+        result = covid_ms_oracles.rows_are_patients(csv)
+
+        # Assert
+        assert result is expected

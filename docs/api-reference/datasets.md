@@ -42,6 +42,18 @@ See [Dataset Registry](../architecture/dataset-registry.md) for details.
 
 A file with no column that identifies a patient still uploads (a `row_number` column is added, or a combination of columns tells the rows apart). Its 200 response carries `unit_note`, which says so in plain words: answers count rows, not patients, and adding a `patient_id` column with one ID per patient gives patient counts. `unit_note` is empty when `patient_id` names patients.
 
+### "Is each row one patient?"
+
+When the rows are told apart by one column that is unique on every row but not named as a patient ID (or by nothing, so a `row_number` was added), and no ID-like column repeats, the 200 response also carries `one_row_per_patient: {"status": "pending", "confirmation": "<token>"}`. It is `null` when the question is not asked: `patient_id` names patients, an ID-like column repeats (visit or test rows), rows are told apart only by a combination of columns, or the user already said yes for this version.
+
+`POST /api/datasets/{dataset_id}/one-row-per-patient` with `{"confirmation": "<token>", "one_row_per_patient": true|false}` records the answer for the dataset's current version and returns `{"dataset_id": ..., "counts": "patients"|"rows"}`.
+
+- `true` stores the version's one-row-per-patient grain, the same declaration governed SQL stores when its refusal is confirmed (same token, `contracts.declarations.confirmation_token`). Questions then count patients, and governed SQL counts and suppresses patients.
+- `false` keeps rows (and removes an earlier `true` on this version).
+- Until either is sent, nothing is stored and answers count rows.
+
+The token is bound to the dataset version and row count. A token for another version (a re-upload in between), a made-up one, or an answer on a dataset that is not asked gets **409** and nothing is stored. A body that is not a 32-character hex token and a JSON boolean gets **422**. A new version asks again.
+
 Data checks at upload are warnings except the identifier checks (`*_not_null`, `*_no_duplicates`). A column with any empty value is a warning (never "passed"), and when a value has interval bound columns (`lower`/`upper`, or `<value>_lower`/`<value>_upper`) every row with all three present must have lower <= value <= upper (`<value>_interval`, a warning).
 
 `GET /api/datasets/{dataset_id}` reports each column's stored type in `schema` (`integer`, `number`, `string`, `boolean`, `date`, `timestamp`, ...).

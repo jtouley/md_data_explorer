@@ -523,6 +523,27 @@ const clinicalAPI = {
   },
 
   /**
+   * Answer the upload's "Is each row one patient?" for the dataset's current version.
+   * @param {string} datasetId
+   * @param {string} confirmation the token from the upload response's `one_row_per_patient`
+   * @param {boolean} oneRowPerPatient
+   * @returns {Promise<{ dataset_id: string, counts: 'patients' | 'rows' }>}
+   */
+  async answerOneRowPerPatient(datasetId, confirmation, oneRowPerPatient) {
+    const enc = encodeURIComponent(datasetId);
+    const response = await apiFetch(`${API_BASE_URL}/api/datasets/${enc}/one-row-per-patient`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirmation, one_row_per_patient: oneRowPerPatient === true }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw httpFailureError(response, data);
+    }
+    return data;
+  },
+
+  /**
    * Load the bundled sample cohort into upload storage.
    * @returns {Promise<{ upload_id: string, dataset_name: string, status: string, message: string }>}
    */
