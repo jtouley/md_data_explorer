@@ -17,6 +17,7 @@ from clinical_analytics.analysis.compute import compute_comparison_analysis
 from clinical_analytics.analysis.grouping import (
     FOLD_LABELS,
     MAX_GROUP_LEVELS,
+    NO_COUNT_TABLE,
     OTHER_LABEL,
     grouping_problem,
     is_small_level,
@@ -172,6 +173,7 @@ SMALL_LEVEL_CASES = [
         {
             "type": "comparison",
             "test_type": "anova",
+            "table_min_cell": NO_COUNT_TABLE,  # a measured outcome: compute records it
             "outcome_col": "ldl",
             "group_col": "site",
             "groups": ["North", "South", "Rare"],
@@ -275,6 +277,7 @@ class TestSmallLevelLabelsMerged:
         analysis = {
             "type": "comparison",
             "test_type": "welch_t_test",
+            "table_min_cell": NO_COUNT_TABLE,  # a measured outcome: compute records it
             "outcome_col": "ldl",
             "group_col": "treatment",
             "groups": ["drug", "rare"],
