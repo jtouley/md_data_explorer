@@ -350,8 +350,12 @@ def _grade_value(question: dict[str, Any], oracle: OracleAnswer, presentation: d
     shown = presented_answer(presentation)
     if kind == "count":
         match = TOTAL_COUNT.match(claim)
-        if match and match.group(2) and match.group(2) != oracle.unit:
-            return "WRONG", f"grain: counted {match.group(2)}, expected {oracle.unit}"
+        said = match.group(2) if match else None
+        # "rows" claims no grain: a dataset with no patient ID says it counts rows, never
+        # patients. The number decides: equal to the patient count means rows are patients here.
+        # A claimed grain that differs ("patients" for visits, "visits" for patients) is wrong.
+        if said and said != oracle.unit and not (said == "rows" and oracle.unit == "patients"):
+            return "WRONG", f"grain: counted {said}, expected {oracle.unit}"
         if shown == HIDDEN:
             return ("RIGHT", "small total hidden") if is_small(oracle.value) else ("HELD", "total withheld")
         if isinstance(shown, int) and shown == oracle.value:

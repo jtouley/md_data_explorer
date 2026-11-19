@@ -376,6 +376,27 @@ class TestTableShape:
         with pytest.raises(AcceptanceError, match="GET /api/datasets"):
             table_shape(detail)
 
+    @pytest.mark.parametrize(
+        ("added", "expected_columns"),
+        [
+            pytest.param(["patient_id"], 2, id="idCopyAdded_notCounted"),
+            pytest.param(["row_number"], 3, id="addedColumnAbsent_allCounted"),
+            pytest.param([], 3, id="nothingAdded"),
+        ],
+    )
+    def test_table_shape_addedIdColumn_countsTheFilesOwnColumns(self, added: list[str], expected_columns: int) -> None:
+        # Arrange: the upload copied an ID to patient_id; corpus.yaml pins the source file's columns
+        detail = {
+            "tables": [{"row_count": 1141, "columns": ["secret_name", "age", "patient_id"]}],
+            "metadata": {"added_columns": added},
+        }
+
+        # Act
+        shape = table_shape(detail)
+
+        # Assert
+        assert shape == (1141, expected_columns)
+
 
 class TestMainLoadOnly:
     def test_main_loadOnlyMalformedCorpus_writesNamedErrorToSummary(

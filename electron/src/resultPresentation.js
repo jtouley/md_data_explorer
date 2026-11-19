@@ -1149,6 +1149,21 @@ const CONTEXT_FALLBACK = {
   panel: 'Try again; if it keeps happening, restart the app.',
 };
 
+/** 409 from an upload whose name (the file name) is already a cohort's. */
+const NAME_TAKEN = /^A dataset named '(.+)' already exists\b/;
+
+/**
+ * The app uploads under the file's name, so "another name" means renaming the file.
+ * @param {string} name
+ * @returns {string}
+ */
+function nameTakenMessage(name) {
+  return (
+    `A cohort named “${name}” already exists. To keep both, rename the file and upload it again. ` +
+    'To replace it, choose “Delete this cohort…” in the cohort menu, then upload the file.'
+  );
+}
+
 /** Shown when a request to the engine failed without a message written for people. */
 export const ENGINE_UNREACHABLE_MESSAGE = engineUnreachable('Ask again');
 
@@ -1184,6 +1199,10 @@ export function plainFailureMessage(text, opts = {}) {
   if (status === 422) {
     const words = validationInWords(raw, retry);
     if (words) return words;
+  }
+  if (status === 409 && context === 'upload') {
+    const taken = NAME_TAKEN.exec(raw);
+    if (taken) return nameTakenMessage(taken[1]);
   }
   if (status >= 500 && (!raw || SERVER_FAILURE_TEXT.test(raw))) return serverFailure(context);
   if (!status && SERVER_FAILURE_TEXT.test(raw)) return serverFailure(context);

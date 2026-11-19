@@ -33,42 +33,33 @@ Patch = MetadataPatch | ExclusionPatternPatch | RelationshipPatch
 
 
 def id_column_from_metadata(metadata: dict[str, Any]) -> str | None:
-    """The column schema inference (or the upload wizard) mapped to ``patient_id``."""
+    """The column schema inference (or the upload wizard) mapped to ``patient_id``.
+
+    None when the upload synthesized patient_id as a row key (``patient_id_is_row_key``): it
+    names rows, not patients, so the contract states no patient ID and governed SQL asks the
+    user to confirm one row per patient instead of calling its counts patients.
+    """
+    from clinical_analytics.core.identifier_rules import patient_id_is_row_key
+
+    if patient_id_is_row_key(metadata):
+        return None
     mapping = (metadata.get("inferred_schema") or {}).get("column_mapping") or {}
     return next((col for col, role in mapping.items() if role == "patient_id"), None)
 
 
-def _flatten_columns(value: Any) -> list[str]:
-    """Column names in a mapping value: a name, a list of names, or a dict of them
-    (``time_variables: {"time_zero": "admit_date"}``), nested to any depth."""
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, dict):
-        return [column for item in value.values() for column in _flatten_columns(item)]
-    if isinstance(value, list | tuple):
-        return [column for item in value for column in _flatten_columns(item)]
-    return []
+def id_source_columns_from_metadata(metadata: dict[str, Any]) -> tuple[str, ...]:
+    """The column a patient ID was copied from (``patient_id_source`` 'single_column' and a
+    patient key, not a row key): it holds the same IDs, so the contract restricts it like the ID."""
+    from clinical_analytics.core.identifier_rules import patient_id_is_row_key
 
-
-def analysis_columns_from_metadata(metadata: dict[str, Any]) -> tuple[str, ...]:
-    """Columns the upload names as analysis variables (outcomes, predictors, time and event).
-
-    Only these get the 5% missingness warning at upload; other columns' missingness is listed, and
-    an answer notes it for any column the question uses (``core.answer_checks.report_notes``).
-    """
-    found: list[str] = []
-    mapping = metadata.get("variable_mapping") or {}
-    for role, value in mapping.items():
-        if role == "patient_id":
-            continue
-        for column in _flatten_columns(value):
-            if column not in found:
-                found.append(column)
-    outcomes = (metadata.get("inferred_schema") or {}).get("outcomes") or {}
-    for column in outcomes if isinstance(outcomes, dict) else []:
-        if isinstance(column, str) and column not in found:
-            found.append(column)
-    return tuple(found)
+    synthetic = metadata.get("synthetic_id_metadata")
+    info = synthetic.get("patient_id") if isinstance(synthetic, dict) else None
+    if not isinstance(info, dict) or info.get("patient_id_source") != "single_column":
+        return ()
+    if patient_id_is_row_key(metadata):
+        return ()
+    columns = info.get("patient_id_columns")
+    return tuple(str(c) for c in columns) if isinstance(columns, list) else ()
 
 
 def accepted_patch_ids(patches: list[Patch]) -> tuple[str, ...]:
@@ -178,7 +169,7 @@ def check_upload(
             dataset_version=dataset_version,
             dataset_name=str(metadata.get("dataset_name") or upload_id),
             id_column=id_column_from_metadata(metadata),
-            analysis_columns=analysis_columns_from_metadata(metadata),
+            id_source_columns=id_source_columns_from_metadata(metadata),
             source_file_sha256=metadata.get("source_file_sha256"),
             resolved=_resolve(df, patches) if accepted else None,
             accepted_patch_ids=accepted,

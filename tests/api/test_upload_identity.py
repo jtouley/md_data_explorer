@@ -1,0 +1,532 @@
+# SPDX-License-Identifier: MIT
+"""Upload identity and status through the API (aggregate-data triage #3, #7, #8).
+
+Synthetic long-format population estimates only (``make_population_estimates``): no real data.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Callable, Iterator
+from typing import Any
+
+import polars as pl
+import pytest
+from fastapi.testclient import TestClient
+
+pytestmark = [pytest.mark.slow, pytest.mark.integration, pytest.mark.usefixtures("isolated_data_home")]
+
+UPLOAD = "/api/datasets/upload"
+
+
+def _csv(df: pl.DataFrame) -> bytes:
+    return df.write_csv().encode()
+
+
+@pytest.fixture
+def upload(test_client: TestClient) -> Iterator[Callable[..., Any]]:
+    """POST a frame as CSV; drops every cached semantic layer it created afterwards."""
+    from clinical_analytics.api import dependencies
+
+    created: list[str] = []
+
+    def _upload(df: pl.DataFrame, name: str) -> Any:
+        response = test_client.post(
+            UPLOAD, files={"file": (f"{name}.csv", _csv(df), "text/csv")}, data={"dataset_name": name}
+        )
+        if response.status_code == 200:
+            created.append(response.json()["upload_id"])
+        return response
+
+    yield _upload
+    for upload_id in created:
+        dependencies.invalidate_semantic_layer_cache(upload_id)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        pytest.param({}, id="unique_float_mx"),
+        pytest.param({"rounded": True}, id="rounded_mx_composite_with_repeats"),
+        pytest.param({"unique_upper": True}, id="unique_float_upper"),
+    ],
+)
+def test_uploadDataset_populationEstimates_measurementsKeptRowNumberAdded(
+    test_client: TestClient,
+    upload: Callable[..., Any],
+    make_population_estimates: Callable[..., pl.DataFrame],
+    options: dict[str, Any],
+) -> None:
+    # Arrange
+    df = make_population_estimates(**options)
+
+    # Act
+    response = upload(df, "estimates")
+    body = response.json()
+    detail = test_client.get(f"/api/datasets/{body['upload_id']}").json()
+
+    # Assert: on main mx (or upper) was renamed to patient_id and the error check failed
+    assert response.status_code == 200, body
+    assert body["status"] == "ready"
+    assert body["failed_checks"] == []
+    columns = detail["tables"][0]["columns"]
+    assert {"mx", "upper", "lower"} <= set(columns)
+    assert "patient_id" not in columns
+    assert "row_number" in columns
+    assert detail["tables"][0]["row_count"] == df.height
+
+
+def test_uploadDataset_uniqueTextId_copiedAndSourceKept(test_client: TestClient, upload: Callable[..., Any]) -> None:
+    # Arrange
+    df = pl.DataFrame({"record_code": [f"R{i:03d}" for i in range(200)], "sbp": [110.5 + i for i in range(200)]})
+
+    # Act
+    body = upload(df, "records").json()
+    assert "upload_id" in body, body
+    columns = test_client.get(f"/api/datasets/{body['upload_id']}").json()["tables"][0]["columns"]
+
+    # Assert
+    assert {"record_code", "patient_id", "sbp"} <= set(columns)
+
+
+def test_getDataset_populationEstimates_reportsStoredColumnTypes(
+    test_client: TestClient, upload: Callable[..., Any], make_population_estimates: Callable[..., pl.DataFrame]
+) -> None:
+    # Arrange
+    body = upload(make_population_estimates(), "typed").json()
+
+    # Act
+    schema = test_client.get(f"/api/datasets/{body['upload_id']}").json()["schema"]
+
+    # Assert: on main every column was "unknown"
+    assert schema == {
+        "row_number": "integer",
+        "measure": "string",
+        "location_name": "string",
+        "FIPS": "integer",
+        "cause_name": "string",
+        "sex": "string",
+        "age": "string",
+        "year": "integer",
+        "metric": "string",
+        "mx": "number",
+        "upper": "number",
+        "lower": "number",
+    }
+
+
+@pytest.mark.parametrize(
+    ("question", "answered"),
+    [
+        pytest.param("count by sex", True, id="count"),
+        # A mean of an estimate column on an undeclared estimates file is refused by aggregate
+        # mode (#139): each row would be treated as one person. The refusal must not say patients.
+        pytest.param("average mx by cause_name", False, id="mean-undeclared-estimates-refused"),
+    ],
+)
+def test_question_keylessUpload_countsRowsNeverPatients(
+    upload: Callable[..., Any], make_population_estimates: Callable[..., pl.DataFrame], question: str, answered: bool
+) -> None:
+    # Arrange
+    from clinical_analytics.api import dependencies
+    from clinical_analytics.core.query_service import QueryService
+
+    upload_id = upload(make_population_estimates(unique_upper=True), "rates").json()["upload_id"]
+
+    # Act
+    with dependencies.lease_semantic_layer(upload_id) as lease:
+        service = QueryService(lease.layer)
+        result = service.ask(question, dataset_id=upload_id, dataset_version="v1")
+        if result.requires_confirmation and result.plan_hash:
+            result = service.ask(
+                question, dataset_id=upload_id, dataset_version="v1", confirmed=True, confirm_plan_hash=result.plan_hash
+            )
+
+    # Assert: on main the answer said "n=... patients"
+    if not answered:
+        assert result.analysis is None
+        assert "population estimates" in (result.failure_reason or "")
+        assert not re.search(r"\bpatients?\b", result.claim or "")
+        return
+    assert result.analysis is not None, result.failure_reason
+    assert result.analysis.get("unit") == "rows"
+    assert "rows" in (result.claim or "")
+    assert not re.search(r"\bpatients?\b", result.claim or "")
+
+
+@pytest.mark.parametrize(
+    ("ids", "failed", "step"),
+    [
+        pytest.param(
+            [f"P{i % 150:03d}" for i in range(200)],
+            ["patient_id_no_duplicates"],
+            "confirm that rows are visits",
+            id="repeated_ids",
+        ),
+        pytest.param(
+            [None if i % 10 == 0 else f"P{i:03d}" for i in range(200)],
+            ["patient_id_not_null"],
+            "Fill in the missing IDs",
+            id="missing_ids",
+        ),
+    ],
+)
+def test_uploadDataset_errorCheckFails_needsReviewNamesCheckAndNextStep(
+    upload: Callable[..., Any], ids: list[str | None], failed: list[str], step: str
+) -> None:
+    # Arrange
+    df = pl.DataFrame({"patient_id": ids, "sbp": [110.0 + i % 40 for i in range(200)]})
+
+    # Act
+    response = upload(df, "visits")
+    body = response.json()
+
+    # Assert: on main this was "ready" with quality.failed=1
+    assert response.status_code == 200, body
+    assert body["status"] == "needs_review"
+    assert body["failed_checks"] == failed
+    assert body["message"].startswith("Uploaded, but a data check failed: patient_id: ")
+    assert step in body["message"]
+
+
+def test_uploadDataset_cleanPatients_ready(upload: Callable[..., Any]) -> None:
+    # Arrange
+    df = pl.DataFrame({"patient_id": [f"P{i:03d}" for i in range(200)], "sbp": [110.0 + i % 40 for i in range(200)]})
+
+    # Act
+    body = upload(df, "clean").json()
+
+    # Assert
+    assert (body["status"], body["failed_checks"]) == ("ready", [])
+
+
+def test_uploadDataset_nameTaken_409WithoutOverwriteHint(
+    upload: Callable[..., Any], make_population_estimates: Callable[..., pl.DataFrame]
+) -> None:
+    # Arrange
+    df = make_population_estimates(locations=2, years=5)
+    first = upload(df, "small")
+
+    # Act
+    second = upload(df, "small")
+
+    # Assert: on main 500 "... or enable overwrite to update" (the route has no overwrite)
+    assert first.status_code == 200
+    assert second.status_code == 409
+    detail = second.json()["detail"]
+    assert detail.startswith("A dataset named 'small' already exists.")
+    assert "delete the existing dataset" in detail
+    assert "overwrite" not in detail.lower()
+
+
+def test_uploadDataset_intervalBroken_warningNamesColumns(
+    upload: Callable[..., Any], make_population_estimates: Callable[..., pl.DataFrame]
+) -> None:
+    # Arrange: upper below mx on a third of rows, mx empty on a fifth
+    df = make_population_estimates(inverted_every=3, null_every=5)
+    expected = df.filter(pl.all_horizontal(pl.col("lower", "mx", "upper").is_not_null())).filter(
+        (pl.col("lower") > pl.col("mx")) | (pl.col("mx") > pl.col("upper"))
+    )
+
+    # Act
+    body = upload(df, "intervals").json()
+    checks = {c["id"]: c for c in body["quality"]["checks"]}
+
+    # Assert: on main 0 checks failed; a warning never blocks ("ready")
+    assert body["status"] == "ready"
+    assert checks["mx_interval"]["severity"] == "warning"
+    assert checks["mx_interval"]["status"] == "warning"
+    assert checks["mx_interval"]["count"] == expected.height
+    assert checks["mx_interval"]["message"] == f"mx: {expected.height} rows where lower ≤ mx ≤ upper does not hold"
+    assert checks["mx_missing"]["status"] == "warning"
+    assert checks["mx_missing"]["message"] == "mx: 20.0% missing"
+
+
+def test_uploadDataset_zipExtension_refused400(test_client: TestClient) -> None:
+    # Act
+    response = test_client.post(UPLOAD, files={"file": ("small.zip", b"PK\x03\x04", "application/zip")})
+
+    # Assert: the docs no longer list ZIP
+    assert response.status_code == 400
+    assert ".zip" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        pytest.param("broken.xlsx", b"PK\x03\x04" + b"\x00" * 2048, id="not_a_workbook"),
+        pytest.param("noheader.xlsx", None, id="empty_sheet"),
+    ],
+)
+def test_uploadDataset_unreadableFile_400WithPlainMessage(
+    test_client: TestClient, filename: str, content: bytes | None
+) -> None:
+    # Arrange: an empty sheet is a real workbook with nothing in it
+    if content is None:
+        import io
+
+        from openpyxl import Workbook
+
+        buffer = io.BytesIO()
+        workbook = Workbook()
+        workbook.active.title = "blank"
+        workbook.save(buffer)
+        content = buffer.getvalue()
+
+    # Act
+    response = test_client.post(UPLOAD, files={"file": (filename, content, "application/octet-stream")})
+
+    # Assert: on main a StagingError was a 500 "Error saving upload: ..."
+    assert response.status_code == 400, response.text
+    detail = response.json()["detail"]
+    assert detail.startswith("The Excel ")
+    assert "Error saving upload" not in detail
+
+
+def _workbook_bytes(rows: list[tuple[object, ...]], *more: tuple[str, list[tuple[object, ...]]]) -> bytes:
+    """A synthetic workbook: ``rows`` on the first sheet, then each (title, rows) in ``more``."""
+    import io
+
+    from openpyxl import Workbook
+
+    buffer = io.BytesIO()
+    workbook = Workbook()
+    for row in rows:
+        workbook.active.append(row)
+    for title, sheet_rows in more:
+        sheet = workbook.create_sheet(title)
+        for row in sheet_rows:
+            sheet.append(row)
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+def _declared_size(xlsx: bytes, ref: str) -> bytes:
+    """The workbook with its first sheet's <dimension> rewritten, as some exporters write it."""
+    import io
+    import zipfile
+
+    source, out = zipfile.ZipFile(io.BytesIO(xlsx)), io.BytesIO()
+    with zipfile.ZipFile(out, "w") as target:
+        for item in source.infolist():
+            data = source.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                data = re.sub(rb'<dimension ref="[^"]*"', b'<dimension ref="' + ref.encode() + b'"', data)
+            target.writestr(item, data)
+    return out.getvalue()
+
+
+_TITLE = ("Synthetic mortality rates by county, 1980-2014",)
+_RATE_HEADER = ("location_name", "sex", "year", "mx")
+
+
+def _rate_rows(n: int) -> list[tuple[object, ...]]:
+    return [(f"Area {i % 4}", ("Male", "Female")[i % 2], 2000 + i % 6, 100.5 + i) for i in range(n)]
+
+
+def test_uploadDataset_xlsxDeclaresA1Size_readsEveryRowNeverEmpty(test_client: TestClient) -> None:
+    # Arrange: a title in A1 and a sheet that declares itself A1:A1. Read as declared, this is
+    # the title cell alone (refused as no data rows); the sheet's real size is read instead.
+    content = _declared_size(_workbook_bytes([_TITLE, _RATE_HEADER, *_rate_rows(120)]), "A1:A1")
+
+    # Act
+    response = test_client.post(UPLOAD, files={"file": ("declared.xlsx", content, "application/octet-stream")})
+    body = response.json()
+
+    # Assert
+    assert response.status_code == 200, body
+    assert body["status"] == "ready"
+    detail = test_client.get(f"/api/datasets/{body['upload_id']}").json()
+    assert set(_RATE_HEADER) <= set(detail["tables"][0]["columns"])
+    assert detail["tables"][0]["row_count"] == 120
+
+
+def test_uploadDataset_xlsxRepeatedIdsAndSkippedSheet_needsReviewKeepsSheetNote(test_client: TestClient) -> None:
+    # Arrange: the first sheet repeats patient IDs (an error-level check) and a second sheet is not read
+    first = [("patient_id", *_RATE_HEADER), *((f"P{i % 90:03d}", *row) for i, row in enumerate(_rate_rows(120)))]
+    content = _workbook_bytes(first, ("Population", [_RATE_HEADER, *_rate_rows(30)]))
+
+    # Act
+    response = test_client.post(UPLOAD, files={"file": ("visits.xlsx", content, "application/octet-stream")})
+    body = response.json()
+
+    # Assert: both the failed check and the sheet that was not read reach the user
+    assert response.status_code == 200, body
+    assert body["status"] == "needs_review"
+    assert body["failed_checks"] == ["patient_id_no_duplicates"]
+    assert body["sheet_note"] == (
+        "Read 1 of 2 sheets: “Sheet”. Not read: “Population”. "
+        "To use another sheet, save it as its own file and upload it."
+    )
+
+
+@pytest.mark.parametrize(
+    ("filename", "rows", "columns"),
+    [
+        # What a workbook that declares its size as A1:A1 reads as: the title cell, nothing else.
+        pytest.param("titled.xlsx", [("Synthetic mortality rates by county, 1980-2014",)], 1, id="title_cell_only"),
+        pytest.param("header.xlsx", [("Synthetic rates", None), ("location_name", "mx")], 2, id="title_and_header"),
+        pytest.param("header.csv", None, 100, id="csv_header_only"),  # 100 names: over the 1 KB minimum
+    ],
+)
+def test_uploadDataset_noDataRows_refused400NeverReady(
+    test_client: TestClient, filename: str, rows: list[tuple[object, ...]] | None, columns: int
+) -> None:
+    # Arrange
+    header = ",".join(f"measurement_{i:03d}" for i in range(columns)) + "\n"
+    content = header.encode() if rows is None else _workbook_bytes(rows)
+
+    # Act
+    response = test_client.post(UPLOAD, files={"file": (filename, content, "application/octet-stream")})
+    listed = test_client.get("/api/datasets").json()["datasets"]
+
+    # Assert: before, a row number on zero rows passed for an ID and the upload was "ready"
+    assert response.status_code == 400, response.text
+    detail = response.json()["detail"]
+    assert detail.startswith("No data rows were found in this file")
+    assert f"{columns} column" in detail
+    assert "Error saving upload" not in detail
+    assert ("save that sheet as CSV" in detail) is filename.endswith(".xlsx")
+    assert listed == []
+
+
+def test_question_modelStepRaises_refusedWithVisibleReason(
+    upload: Callable[..., Any],
+    make_population_estimates: Callable[..., pl.DataFrame],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Arrange: the language-model tier raises (stubbed directly: no model is needed)
+    from clinical_analytics.api import dependencies
+    from clinical_analytics.core.nl_query_config import MODEL_STEP_FAILED_REASON
+    from clinical_analytics.core.nl_query_engine import NLQueryEngine
+    from clinical_analytics.core.query_service import QueryService
+
+    def broken_client(self: NLQueryEngine) -> Any:
+        raise RuntimeError("model step broke")
+
+    def llm_only(self: NLQueryEngine, query: str, **_: Any) -> Any:
+        return self._llm_parse(query)
+
+    monkeypatch.setattr(NLQueryEngine, "_get_ollama_client", broken_client)
+    monkeypatch.setattr(NLQueryEngine, "parse_query", llm_only)
+    upload_id = upload(make_population_estimates(), "model").json()["upload_id"]
+
+    # Act
+    with dependencies.lease_semantic_layer(upload_id) as lease:
+        result = QueryService(lease.layer).ask("which places look unusual", dataset_id=upload_id, dataset_version="v1")
+
+    # Assert: on main a 0.3 DESCRIBE stub went on as a normal parse
+    assert result.failure_reason == MODEL_STEP_FAILED_REASON
+    assert result.result is None and result.analysis is None
+    assert result.requires_confirmation is False
+    assert [i["severity"] for i in result.issues] == ["error"]
+
+
+def test_question_compositeRowKey_countsRowsNeverPatients(
+    test_client: TestClient, upload: Callable[..., Any], make_population_estimates: Callable[..., pl.DataFrame]
+) -> None:
+    # Arrange: location x cause x sex x year is unique, so patient_id is hashed from it
+    from clinical_analytics.api import dependencies
+    from clinical_analytics.core.query_service import QueryService
+
+    upload_id = upload(make_population_estimates(causes=3), "cells").json()["upload_id"]
+    metadata = test_client.get(f"/api/datasets/{upload_id}").json()["metadata"]
+
+    # Act
+    with dependencies.lease_semantic_layer(upload_id) as lease:
+        result = QueryService(lease.layer).ask("count by sex", dataset_id=upload_id, dataset_version="v1")
+
+    # Assert: a synthesized ID keys rows, not patients
+    assert "patient_id" in metadata["columns"] and "mx" in metadata["columns"]
+    assert result.analysis is not None, result.failure_reason
+    assert result.analysis.get("unit") == "rows"
+    assert not re.search(r"\bpatients?\b", result.claim or "")
+
+
+def _sepsis_survival_shaped(n: int = 240) -> pl.DataFrame:
+    """Synthetic frame shaped like UCI sepsis_survival's primary cohort: no ID column, four
+    low-cardinality columns, so many rows are identical and no combination is unique."""
+    return pl.DataFrame(
+        {
+            "age_years": [20 + (i * 7) % 70 for i in range(n)],
+            "sex_0male_1female": [i % 2 for i in range(n)],
+            "episode_number": [1 + i % 3 for i in range(n)],
+            "hospital_outcome_1alive_0dead": [0 if i % 9 == 0 else 1 for i in range(n)],
+        }
+    )
+
+
+def test_uploadDataset_sepsisSurvivalShaped_uploadsAndSaysRowsNotPatients(
+    test_client: TestClient, upload: Callable[..., Any]
+) -> None:
+    # Arrange
+    df = _sepsis_survival_shaped()
+    assert df.unique().height < df.height  # no column or combination identifies a row
+
+    # Act
+    response = upload(df, "sepsis_survival")
+    body = response.json()
+    detail = test_client.get(f"/api/datasets/{body['upload_id']}").json()
+
+    # Assert: uploaded with a row number, and the response says plainly that it counts rows
+    assert response.status_code == 200, body
+    assert body["status"] == "ready"
+    assert body["unit_note"].startswith("No column in this file identifies a patient, so each row was numbered")
+    assert "Answers count rows, not patients." in body["unit_note"]
+    assert "row_number" in detail["tables"][0]["columns"]
+    assert detail["tables"][0]["row_count"] == df.height
+
+
+def test_question_sepsisSurvivalShaped_countAnswersInRows(upload: Callable[..., Any]) -> None:
+    # Arrange
+    from clinical_analytics.api import dependencies
+    from clinical_analytics.core.query_service import QueryService
+
+    df = _sepsis_survival_shaped()
+    upload_id = upload(df, "sepsis_rows").json()["upload_id"]
+
+    # Act
+    with dependencies.lease_semantic_layer(upload_id) as lease:
+        result = QueryService(lease.layer).ask("how many patients?", dataset_id=upload_id, dataset_version="v1")
+
+    # Assert: the count is of rows, and the answer never calls them patients
+    assert result.analysis is not None, result.failure_reason
+    assert result.analysis.get("unit") == "rows"
+    assert not re.search(r"\bpatients?\b", result.claim or "")
+
+
+def test_uploadDataset_patientIdColumn_noUnitNote(upload: Callable[..., Any]) -> None:
+    # Arrange
+    df = pl.DataFrame({"patient_id": [f"P{i:03d}" for i in range(200)], "sbp": [110.0 + i % 40 for i in range(200)]})
+
+    # Act
+    body = upload(df, "with_ids").json()
+
+    # Assert
+    assert body["unit_note"] == ""
+
+
+@pytest.mark.parametrize("error", [FileNotFoundError("gone"), "build"], ids=["data_missing", "data_unreadable"])
+def test_getDataset_storedDataUnreadable_detailsOpenWithTypesMissing(
+    test_client: TestClient, upload: Callable[..., Any], monkeypatch: pytest.MonkeyPatch, error: Any
+) -> None:
+    # Arrange: metadata intact, stored data gone or damaged (review of #103, finding 8)
+    from clinical_analytics.datasets.uploaded.definition import SemanticLayerBuildError, UploadedDataset
+
+    df = pl.DataFrame({"patient_id": [f"P{i:03d}" for i in range(200)], "sbp": [110.0 + i % 40 for i in range(200)]})
+    uploaded = upload(df, "gone")
+    assert uploaded.status_code == 200, uploaded.text
+    upload_id = uploaded.json()["upload_id"]
+    raised = SemanticLayerBuildError("damaged") if error == "build" else error
+
+    def _fail(self: Any) -> None:
+        raise raised
+
+    monkeypatch.setattr(UploadedDataset, "load", _fail)
+
+    # Act
+    response = test_client.get(f"/api/datasets/{upload_id}")
+
+    # Assert: never a 500; every column reads "missing"
+    assert response.status_code == 200, response.text
+    assert set(response.json()["schema"].values()) == {"missing"}

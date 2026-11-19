@@ -35,6 +35,7 @@ from clinical_analytics.contracts.builder import range_text as plausibility_text
 from clinical_analytics.contracts.config import MIN_CELL_SIZE, MISSINGNESS_WARN_PERCENT
 from clinical_analytics.contracts.declarations import Declarations, GrainDeclaration, LevelMapping
 from clinical_analytics.contracts.quality import RANGE_METRIC, QualityReport
+from clinical_analytics.core.identifier_rules import ROW_KEY_CONFIG_FLAG
 from clinical_analytics.core.plan_values import plan_values
 from clinical_analytics.core.query_plan import QueryPlan
 from clinical_analytics.core.result_presentation import line_count_text
@@ -89,8 +90,11 @@ class Findings:
 def patient_key(layer: Any) -> str | None:
     """The base view's patient key: the column mapped to ``patient_id``, else the best-ranked
     column named for it that holds more than one value."""
+    config = getattr(layer, "config", None) or {}
+    if config.get(ROW_KEY_CONFIG_FLAG):
+        return None  # the upload synthesized patient_id: it keys rows, so n counts rows
     columns = list(layer.get_base_view().columns)
-    mapping = (getattr(layer, "config", None) or {}).get("column_mapping") or {}
+    mapping = config.get("column_mapping") or {}
     if "patient_id" in mapping.values() and "patient_id" in columns:
         return "patient_id"
     rows = layer._base_count(None)
