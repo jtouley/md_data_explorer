@@ -37,7 +37,14 @@ from typing import Final, Literal
 import polars as pl
 import structlog
 
-from clinical_analytics.contracts.config import MISSING_VALUE_TOKENS
+from clinical_analytics.contracts.config import (
+    MISSING_VALUE_TOKENS,
+    SOURCE_NOT_APPLICABLE_TOKENS,
+    SOURCE_SUPPRESSED_TOKENS,
+    SOURCE_UNRELIABLE_PATTERN,
+    SUPPRESSED_FLAG_SUFFIX,
+    UNRELIABLE_FLAG_SUFFIX,
+)
 
 logger = structlog.get_logger()
 
@@ -468,11 +475,44 @@ def _years_to_rows(df: pl.DataFrame) -> pl.DataFrame:
     return long.select(keep)
 
 
+# "45.1 to 48.3" under a header that names an interval (FluVaxView's "95% CI (%)"): the bounds
+# packed in one cell without the estimate.
+RANGE_CELL = rf"^\s*{_NUM}\s*(?:to|–|—)\s*{_NUM}\s*$"
+_INTERVAL_HEADER = re.compile(r"(\bci\b|confidence|interval)", re.IGNORECASE)
+
+
+def _range_column(df: pl.DataFrame, col: str) -> bool:
+    if df.schema[col] != pl.String or not _INTERVAL_HEADER.search(col):
+        return False
+    cleaned = df.select(_clean_tokens(col).alias(col)).get_column(col).drop_nulls()
+    return cleaned.len() > 0 and bool(cleaned.str.contains(RANGE_CELL).all())
+
+
+def split_interval_ranges(df: pl.DataFrame) -> pl.DataFrame:
+    """Columns named for an interval whose every non-empty cell is "lo to hi" become ``<col> lower``
+    and ``<col> upper``. Others are left as they are."""
+    ranges = [c for c in df.columns if _range_column(df, c)]
+    if not ranges:
+        return df
+    parts: list[pl.Expr] = []
+    order: list[str] = []
+    for col in df.columns:
+        if col not in ranges:
+            order.append(col)
+            continue
+        groups = _clean_tokens(col).str.extract_groups(RANGE_CELL)
+        for index, name in enumerate((f"{col} lower", f"{col} upper"), start=1):
+            parts.append(groups.struct.field(str(index)).str.replace_all(",", "").alias(name))
+            order.append(name)
+    logger.info("staging_interval_ranges_split", columns=len(ranges))
+    return df.with_columns(parts).select(order)
+
+
 def unpack_intervals(df: pl.DataFrame) -> pl.DataFrame:
     """Text frame with packed "value (lower, upper)" cells split into three columns (``x``,
     ``x lower``, ``x upper``), after any years laid out as columns are turned into rows. Only a
     column whose every non-empty cell is packed is split; others are left as they are."""
-    df = _years_to_rows(df)
+    df = split_interval_ranges(_years_to_rows(df))
     packed = [c for c in df.columns if df.schema[c] == pl.String and _packed(df, c)]
     if not packed:
         return df
@@ -486,6 +526,61 @@ def unpack_intervals(df: pl.DataFrame) -> pl.DataFrame:
         order += [col, f"{col} lower", f"{col} upper"] if col in packed else [col]
     logger.info("staging_intervals_unpacked", columns=len(packed))
     return df.with_columns(parts).select(order)
+
+
+def _flag_masks(cleaned: pl.Series) -> tuple[pl.Series, pl.Series, pl.Series] | None:
+    """(suppressed, unreliable, not-applicable) masks for a column that holds numbers plus source
+    markers only, or None when any other text is present (the column is left to the typing rules)."""
+    folded = cleaned.str.strip_chars().str.to_lowercase()
+    suppressed = folded.is_in(list(SOURCE_SUPPRESSED_TOKENS)).fill_null(False)
+    unreliable = folded.str.contains(SOURCE_UNRELIABLE_PATTERN).fill_null(False)
+    not_applicable = folded.is_in(list(SOURCE_NOT_APPLICABLE_TOKENS)).fill_null(False)
+    if not bool(suppressed.any() or unreliable.any()):
+        return None
+    numbers = folded.str.replace(SOURCE_UNRELIABLE_PATTERN, "").str.strip_chars()
+    rest = numbers.filter(~(suppressed | not_applicable) & numbers.is_not_null())
+    rest = rest.filter(~rest.is_in(list(MISSING_VALUE_TOKENS)))
+    if rest.len() == 0 or not bool(rest.str.contains(_FLOAT_RE).all()):
+        return None
+    return suppressed, unreliable, not_applicable
+
+
+def split_source_flags(df: pl.DataFrame) -> pl.DataFrame:
+    """Text frame with each source's own suppression markers moved out of its numbers (ADR014 §10).
+
+    CDC WONDER writes "Suppressed" for deaths of 1-9 (and for rates built on them), "12.3
+    (Unreliable)" for a rate on fewer than 20 deaths and "Not Applicable" where there is no rate.
+    A column whose other cells are all numbers keeps its numbers; a "Suppressed" cell becomes empty
+    and ``<column> suppressed`` is true there, and an unreliable value keeps its number and
+    ``<column> unreliable`` is true. A suppressed cell is never a zero and never a missing value
+    the answer could fill in: answers name it as suppressed at the source.
+    """
+    added: list[pl.Expr] = []
+    order: list[str] = []
+    for col in df.columns:
+        order.append(col)
+        if df.schema[col] != pl.String or is_id_column_name(col):
+            continue
+        cleaned = df.select(_clean(col)).to_series()
+        masks = _flag_masks(cleaned)
+        if masks is None:
+            continue
+        suppressed, unreliable, not_applicable = masks
+        value = cleaned.str.replace(SOURCE_UNRELIABLE_PATTERN, "").str.strip_chars()
+        value = value.set(suppressed | not_applicable, None)
+        added.append(pl.lit(value).alias(col))
+        for suffix, mask in ((SUPPRESSED_FLAG_SUFFIX, suppressed), (UNRELIABLE_FLAG_SUFFIX, unreliable)):
+            name = f"{col}{suffix}"
+            if bool(mask.any()) and name not in df.columns:
+                added.append(pl.lit(pl.Series(name, mask.cast(pl.String).str.to_lowercase())).alias(name))
+                order.append(name)
+        logger.info(
+            "staging_source_flags_split",
+            column_index=df.columns.index(col),
+            suppressed=int(suppressed.sum()),
+            unreliable=int(unreliable.sum()),
+        )
+    return df.with_columns(added).select(order) if added else df
 
 
 def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1) -> StagedTable:
@@ -503,7 +598,7 @@ def stage_text_frame(df: pl.DataFrame, *, header_row_number: int = 1) -> StagedT
     body = df.slice(1) if units else df
     first_data_row = header_row_number + (2 if units else 1)
     _reject_empty_rows(body, first_data_row)
-    typed, notes = _type_columns(unpack_intervals(body))
+    typed, notes = _type_columns(split_source_flags(unpack_intervals(body)))
     log = logger.bind(rows=typed.height, columns=typed.width)
     for note in notes:
         log.info("staging_column_note", column_index=df.columns.index(note.column), reason=note.reason)

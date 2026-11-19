@@ -82,11 +82,17 @@ class LevelMapping(BaseModel):
 
 class PopulationEstimatesDeclaration(BaseModel):
     """The person declared at upload that the dataset holds public population estimates and no
-    patient-level data (ADR014). Per dataset, not per version: it describes what the file is."""
+    patient-level data (ADR014 §7).
+
+    Bound to the dataset version it was made on: a later upload under the same dataset (an
+    overwrite, which may hold patient rows) is not covered until it is declared again. A
+    declaration with no version covers nothing (fail closed).
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    statement: str
+    statement: str = Field(min_length=1)
+    dataset_version: str | None = None
 
 
 class DimensionChoice(BaseModel):
@@ -150,6 +156,13 @@ class Declarations(BaseModel):
     def with_population_estimates(self, declaration: PopulationEstimatesDeclaration) -> Declarations:
         return self.model_copy(update={"population_estimates": declaration})
 
+    def population_estimates_for(self, dataset_version: str | None) -> PopulationEstimatesDeclaration | None:
+        """The declaration when it was made on ``dataset_version``, else None."""
+        declared = self.population_estimates
+        if declared is None or dataset_version is None or declared.dataset_version != dataset_version:
+            return None
+        return declared
+
     def with_choice(self, choice: DimensionChoice) -> Declarations:
         """These declarations with ``choice`` as its column's choice on its version."""
         kept = tuple(
@@ -162,13 +175,12 @@ class Declarations(BaseModel):
         return {c.column: c.value for c in self.choices if c.dataset_version == dataset_version}
 
     def for_version(self, dataset_version: str | None) -> Declarations:
-        """Only what was confirmed on ``dataset_version``: all a question on that version reads
-        (plus the dataset-wide population-estimates declaration)."""
+        """Only what was confirmed on ``dataset_version``: all a question on that version reads."""
         grain = self.grain_for(dataset_version)
         return Declarations(
             grains=() if grain is None else (grain,),
             levels=self.levels_for(dataset_version),
-            population_estimates=self.population_estimates,
+            population_estimates=self.population_estimates_for(dataset_version),
             choices=tuple(c for c in self.choices if c.dataset_version == dataset_version),
         )
 

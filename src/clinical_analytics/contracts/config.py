@@ -88,6 +88,15 @@ MISSING_VALUE_TOKENS: Final[tuple[str, ...]] = (
     "#n/a",
 )
 
+# Markers a public source writes in place of a number it withholds (ADR014 §10). CDC WONDER:
+# "Suppressed" (1-9 deaths, and rates built on them), "12.3 (Unreliable)" (a rate on fewer than 20
+# deaths), "Not Applicable" (no rate). Staging moves them out of the numbers into flag columns.
+SOURCE_SUPPRESSED_TOKENS: Final[tuple[str, ...]] = ("suppressed", "(s)", "*suppressed*")
+SOURCE_NOT_APPLICABLE_TOKENS: Final[tuple[str, ...]] = ("not applicable", "not available")
+SOURCE_UNRELIABLE_PATTERN: Final = r"(?i)\s*\(?\s*unreliable\s*\)?\s*$"
+SUPPRESSED_FLAG_SUFFIX: Final = " suppressed"
+UNRELIABLE_FLAG_SUFFIX: Final = " unreliable"
+
 # Upload notice length: a short list; the full result is in the report's checks.
 SUMMARY_MAX_LINES: Final = 8
 
@@ -305,6 +314,14 @@ POPULATION_ESTIMATES_STATEMENT: Final = (
     "with its interval), and no row describes a single patient."
 )
 POPULATION_ESTIMATES_PRIVACY_CLASS: Final = "public_aggregate"
+# The one form value that declares it (POST /datasets/upload, field population_estimates). Not a
+# boolean: "true", "on" or "1" from a checkbox default or a script flag is rejected, not read as yes.
+POPULATION_ESTIMATES_FORM_VALUE: Final = "public_population_estimates_no_patient_rows"
+POPULATION_ESTIMATES_NOT_DETECTED: Final = (
+    "You marked this file public population estimates, but its rows don't look like estimates for groups "
+    "(a column comes close to one value per row, like a record ID, or nothing marks a rate, interval or total). "
+    "The patient rules still apply to it."
+)
 
 # Bound columns paired with a value column by name: <value><low suffix> and <value><high suffix>
 # (normalised: lowercase, runs of other characters as "_"). WHO TB: e_inc_100k_lo / _hi.
@@ -380,6 +397,17 @@ ESTIMATE_TOTAL_LEVELS: Final = frozenset(
     }
 )
 # A level naming a county-like part of a state: the other levels in that column are its totals.
+# Age levels that summarise every age by standardisation (normalised: lowercase, "_" for others).
+# Never interchangeable with a crude "All ages" value.
+ESTIMATE_STANDARDIZED_LEVELS: Final = frozenset(
+    {"age_standardized", "age_standardised", "age_adjusted", "age_standardized_rate", "age_adjusted_rate"}
+)
+# Metric-like dimensions whose levels say what the value is (GBD metric_name: Number, Rate, Percent;
+# CDC DataValueType: Number, Crude Prevalence). A count level there keeps the small-cell rule.
+ESTIMATE_METRIC_DIMENSION: Final = re.compile(
+    r"(^|_)(metric|unit|units|datavaluetype|data_value_type|metric_name)($|_)"
+)
+ESTIMATE_COUNT_LEVELS: Final = frozenset({"number", "count", "counts", "cases", "number_of_cases", "deaths"})
 ESTIMATE_SUBAREA_NAME: Final = re.compile(r"\b(county|parish|borough|census area|municipality)\s*$", re.IGNORECASE)
 ESTIMATE_MAX_LISTED_LEVELS: Final = 5000  # levels read to find totals; a key with more lists none
 ESTIMATE_LEVELS_IN_HOLD: Final = 6
@@ -421,6 +449,10 @@ ESTIMATE_UNDECLARED_REFUSAL: Final = (
 ESTIMATE_TOTAL_LEFT_OUT: Final = "{levels} is the total of the other {column} values, so it is left out."
 ESTIMATE_SAVED_CHOICE_NOTE: Final = "Uses {column} = {level}, the choice saved for this dataset."
 ESTIMATE_SMALL_COUNT_NOTE: Final = "Counts from 1 to 10 are hidden."
+ESTIMATE_SOURCE_SUPPRESSED_NOTE: Final = (
+    'Cells the source suppressed (marked "Suppressed") stay hidden; they are never read as zero or filled in.'
+)
+ESTIMATE_UNRELIABLE_NOTE: Final = "The source marks the value for {groups} as unreliable (based on few events)."
 ESTIMATE_NO_BOUNDS_NOTE: Final = "This file gives no intervals for these values."
 ESTIMATE_DUPLICATE_ROWS: Final = (
     "More than one row matches a group of this answer, so it isn't shown. Name a value for every column "
@@ -503,4 +535,265 @@ ESTIMATE_QUESTION_WORDS: Final = frozenset(
         "a",
         "an",
     }
+)
+
+
+# ---------------------------------------------------------------------------- joining public tables
+# ADR014 §10 (core/estimate_join.py): questions across several declared estimate tables, joined on
+# state FIPS x year x sex (x age). Wording is plain on purpose: the reader is a clinician.
+
+# Question words expanded before matching published level names (lowercase; the expansion is added,
+# the word itself kept). ID abbreviations a fellow types for GBD cause names.
+ESTIMATE_QUESTION_SYNONYMS: Final[dict[str, str]] = {
+    "hcv": "hepatitis c",
+    "hbv": "hepatitis b",
+    "hiv": "hiv/aids",
+    "lri": "lower respiratory infections",
+    "pneumonia": "lower respiratory infections",
+    "mortality": "deaths",
+    "died": "deaths",
+    "new cases": "incidence",
+    "legionnaires": "legionella",
+    "c diff": "clostridioides difficile",
+    "tb": "tuberculosis",
+}
+ESTIMATE_JOIN_PRECISION_WORDS: Final = (
+    r"\b(how (precise|sure|certain)|precision|too uncertain|widest (uncertainty|interval)|width of the interval|"
+    r"interval width|most uncertain|least certain)\b"
+)
+ESTIMATE_JOIN_DISAGREE_WORDS: Final = (
+    r"\b(disagree|disagrees|disagreement|agree with|out of line|outside (the|its|their) interval|"
+    r"model(led)? (vs\.?|versus) (surveillance|reported)|(surveillance|reported) (vs\.?|versus) model(led)?|"
+    r"differ most|gap between)\b"
+)
+ESTIMATE_JOIN_RANK_WORDS: Final = (
+    r"\b(rank|ranks|ranking|ranked|where does|highest|lowest|top \d+|bottom \d+|which states?)\b"
+)
+ESTIMATE_JOIN_CHANGE_WORDS: Final = (
+    r"\b(change|changed|changes|trend|trends|over time|rise|rising|rose|fall|fell|since)\b"
+)
+ESTIMATE_JOIN_TREND_WORDS: Final = (
+    r"\b(trend|trends|over time|each year|by year|every year|year by year|yearly|annual)\b"
+)
+ESTIMATE_JOIN_ALL_STATES_WORDS: Final = (
+    r"\b(all states|every state|each state|by state|all 50 states|other states|states)\b"
+)
+# Canonical sex -> question pattern ("women" names Female; "men" never matches inside "women").
+ESTIMATE_JOIN_SEX_WORDS: Final[dict[str, str]] = {
+    "Female": r"\b(women|woman|females?|girls?)\b",
+    "Male": r"\b(men|man|males?|boys?)\b",
+    "Both": r"\b(both sexes|all sexes|men and women combined|overall)\b",
+}
+# Published sex levels -> canonical (lowercase keys).
+ESTIMATE_JOIN_SEX_LEVELS: Final[dict[str, str]] = {
+    "female": "Female",
+    "females": "Female",
+    "f": "Female",
+    "women": "Female",
+    "male": "Male",
+    "males": "Male",
+    "m": "Male",
+    "men": "Male",
+    "both": "Both",
+    "both sexes": "Both",
+    "all sexes": "Both",
+    "total": "Both",
+    "overall": "Both",
+    "a": "Both",
+}
+# Metric levels (normalised) -> the question words that name them.
+ESTIMATE_JOIN_METRIC_WORDS: Final[dict[str, str]] = {
+    "rate": r"\brates?\b",
+    "number": r"\b(how many|number of|counts?)\b",
+    "percent": r"\b(percent|percentage|share|proportion|attributable)\b|%",
+}
+# Non-role dimension stem -> other words a question uses for it ("by disease" groups cause_name).
+ESTIMATE_JOIN_DIMENSION_WORDS: Final[dict[str, tuple[str, ...]]] = {
+    "cause": ("disease", "infection", "cause"),
+    "rei": ("risk", "risk factor"),
+    "location": ("state", "place"),
+}
+# Rate columns whose source publishes them per 100,000 (CDC WONDER's names; lowercase).
+ESTIMATE_JOIN_PER_100K_COLUMNS: Final = frozenset({"crude rate", "age adjusted rate", "age-adjusted rate"})
+
+ESTIMATE_JOIN_NO_SOURCES: Final = "Choose at least one uploaded table to ask about."
+ESTIMATE_JOIN_UNDECLARED: Final = (
+    "{source} wasn't marked '" + POPULATION_ESTIMATES_LABEL + "' for its current version, so it can't be "
+    "joined with other tables. If it holds only published estimates, upload it again with that box ticked."
+)
+ESTIMATE_JOIN_NOT_ESTIMATES: Final = (
+    "{source} doesn't look like a table of estimates: no set of its columns identifies each row as a place, "
+    "period or group (one column comes close to one value per row, like a record ID). It can't be joined here."
+)
+ESTIMATE_JOIN_OUT_WAYNE: Final = (
+    "{source}'s Wayne County rows are out-Wayne: Wayne County excluding Detroit, which has its own health "
+    "department. They are not Wayne County. {detroit}. A whole-county count is Detroit plus out-Wayne, and only "
+    "for counts (rates can't be added). Ask about out-Wayne or Detroit by those names."
+)
+ESTIMATE_JOIN_COUNTY_GRAIN: Final = (
+    "Tables are joined by state. Wayne County (and Detroit, which reports separately from out-Wayne) is part of "
+    "a state, so it isn't joined here. Ask about Michigan, or ask the county table on its own."
+)
+ESTIMATE_JOIN_DISAGREE_TWO: Final = "To compare a model with surveillance, ask about exactly two tables."
+ESTIMATE_JOIN_PRECISION_ONE: Final = "Ask about the precision of one table at a time."
+ESTIMATE_JOIN_SEVERAL_LEVELS: Final = (
+    "The question names several {column} values in {source} ({levels}). Name one, so values from different "
+    "rows aren't put side by side as one."
+)
+ESTIMATE_JOIN_OPEN_HOLD: Final = "{source}: the question doesn't fix {column} ({levels}); {top} is the total."
+ESTIMATE_JOIN_OPEN_REFUSAL: Final = (
+    "{source}: the question doesn't fix {column} ({levels}), and there is no total among them. Name one value."
+)
+ESTIMATE_JOIN_AGE_OPEN: Final = (
+    "{source} has both age-standardized and all-ages (crude) values, and they can't be swapped: age-standardized "
+    "rates compare places with different age mixes; crude rates describe the actual population. Say "
+    "'age-standardized' or 'crude'."
+)
+ESTIMATE_JOIN_CONFIRM: Final = "Confirm to use these choices (they are saved for each dataset), or name others."
+ESTIMATE_JOIN_WHICH_VALUE: Final = "{source} has several value columns ({values}). Which one?"
+ESTIMATE_JOIN_STANDARDIZATION_UNKNOWN: Final = (
+    "{source}'s {value} doesn't say whether it is age-standardized or crude, and joined rates must match on that. "
+    "Confirm which it is (most CDC surveillance rates, such as AtlasPlus, are crude)."
+)
+ESTIMATE_JOIN_SEASON_HOLD: Final = (
+    "{source} reports by flu season ({column}), which spans two calendar years. Confirm season {default} for {year}, "
+    "or choose another season."
+)
+ESTIMATE_JOIN_SEASON_TREND: Final = (
+    "{source} reports by flu season ({column}), which spans two calendar years, so it can't be lined up with "
+    "calendar years over a range. Ask about one year, and confirm which season goes with it."
+)
+ESTIMATE_JOIN_YEAR_MISSING: Final = (
+    "{source} has no {year} values (it has {first}–{last}). Confirm to show its {default} values beside {year}, or "
+    "name another year."
+)
+ESTIMATE_JOIN_YEAR_ALIGNED: Final = " Its {year} row uses the year confirmed for it."
+ESTIMATE_JOIN_NAME_YEAR: Final = "{source} has several years ({first}–{last}). Name a year."
+ESTIMATE_JOIN_NAME_STATE: Final = (
+    "{source} has many states. Name a state (or a group, such as the Great Lakes), or say 'all states'."
+)
+ESTIMATE_JOIN_NO_SEX: Final = (
+    "{source} has no breakdown by sex, so it can't be split into women and men or put beside one sex's values. "
+    "Ask without the split, or for both sexes together."
+)
+ESTIMATE_JOIN_COUNTY_TABLE: Final = (
+    "{source} is by county or city ({column}), not by state. Tables are joined by state, and county values "
+    "can't be turned into a state value here: rates and percentages can't be added up, and a state needs every "
+    "county with its population. Use the source's state-level table instead."
+)
+ESTIMATE_JOIN_NO_STATE: Final = "{source} has no state column, so it can't be joined or ranked by state."
+ESTIMATE_JOIN_NOT_STATES: Final = (
+    "{source}: {count} location values aren't states and were left out ({levels}). Counties, cities and local "
+    "health jurisdictions (Detroit, out-Wayne) are parts of a state, never joined as one."
+)
+ESTIMATE_JOIN_COUNT_TOTAL_DROPPED: Final = (
+    "{source}: the both-sexes count isn't shown beside its parts, so a hidden count can't be worked out by subtraction."
+)
+ESTIMATE_JOIN_AGE_SUMMARIES_DROPPED: Final = (
+    "{source}: summary ages (all ages, age-standardized, bands that contain other bands) are left out of a "
+    "breakdown by age."
+)
+ESTIMATE_JOIN_NATION_LEFT_OUT: Final = (
+    "{source}: the national row is a total of the states, so it is left out of the comparison."
+)
+ESTIMATE_JOIN_EMPTY_KEYS: Final = "{source}: {count} rows with an empty state, year or sex (total rows) were left out."
+ESTIMATE_JOIN_GRAIN: Final = (
+    "{source} has more than one row for a {keys} combination after the question's choices, so its values can't "
+    "be lined up one to one. Name a value for every column that identifies its rows."
+)
+ESTIMATE_JOIN_NO_SHARED_KEY: Final = "{a} and {b} share no state, year or sex column, so they can't be joined."
+ESTIMATE_JOIN_FAN_OUT: Final = (
+    "{source} has no {keys}, so its one value would be repeated beside each {keys}. Ask about one {keys}, or "
+    "leave {source} out."
+)
+ESTIMATE_JOIN_UNMATCHED: Final = "Joined rows: {a_only} only in {a} and {b_only} only in {b} were left out."
+ESTIMATE_JOIN_NOTHING_MATCHED: Final = (
+    "No rows matched across the tables for the states, years and groups asked. Check that the tables cover the "
+    "same years and states."
+)
+ESTIMATE_JOIN_METHOD_SOURCE: Final = (
+    "{source}: {value}{bounds}{pinned} ({measure}); {rows} rows after the question's choices.{aligned}"
+)
+ESTIMATE_JOIN_METHOD_JOIN: Final = (
+    "Joined on {keys} (states matched by name, postal code or FIPS to the two-digit FIPS code): {rows} rows."
+)
+ESTIMATE_JOIN_POOL_WORDS: Final = r"\b(average|averaged|mean|pooled|combined rate|overall rate|sum of|total across)\b"
+ESTIMATE_JOIN_NO_POOL: Final = (
+    "No average or total across rows is computed: each row is its own estimate for its own population, and "
+    "intervals from different years or places can't be merged into one. The rows are shown instead."
+)
+ESTIMATE_JOIN_TABLE_CLAIM: Final = (
+    "{rows} rows from {sources}, side by side. Nothing is computed across the tables; each value keeps its own "
+    "interval."
+)
+ESTIMATE_JOIN_KIND_MISMATCH: Final = (
+    "{a}'s value is a {ak} and {b}'s is a {bk}, so they can't be compared directly. Ask for the same kind of "
+    "number from both (for example a rate per 100,000)."
+)
+ESTIMATE_JOIN_SCALE_MISMATCH: Final = "{a}'s rate is per {ap:,} and {b}'s per {bp:,}; ask for rates on the same scale."
+ESTIMATE_JOIN_STANDARDIZATION_MISMATCH: Final = (
+    "{a}'s rate is {ast} and {b}'s is {bst}. An age-standardized rate and a crude rate measure different things "
+    "and are never compared. Ask for the same kind from both (for example GBD 'All ages' beside a crude rate)."
+)
+ESTIMATE_JOIN_STANDARD_MISMATCH: Final = (
+    "Both rates are age-standardized, but {a} and {b} may use different standard populations (GBD uses its own "
+    "world population; CDC tables mostly the 2000 US standard), so their gap could be the standard, not the "
+    "disease. Compare crude rates instead."
+)
+ESTIMATE_JOIN_CHANGE_NO_YEAR: Final = "The tables have no year column, so a change over time can't be shown."
+ESTIMATE_JOIN_CHANGE_ONE_YEAR: Final = (
+    "A change needs two years with values; the rows asked for have {years}. Name a first and a last year."
+)
+ESTIMATE_JOIN_CHANGE_HIDDEN: Final = "{group} ({source}): not shown, because a value is hidden or suppressed."
+ESTIMATE_JOIN_CHANGE_OVERLAP: Final = (
+    "The two years' intervals overlap, so they don't show a change on their own (a published percent change "
+    "with its own interval is the test)."
+)
+ESTIMATE_JOIN_CHANGE_APART: Final = "The two years' intervals don't overlap."
+ESTIMATE_JOIN_CHANGE_NO_BOUNDS: Final = (
+    "The file gives no intervals, so whether this is more than noise can't be judged."
+)
+ESTIMATE_JOIN_CHANGE_METHOD: Final = (
+    "Change = last year's value minus the first year's; percent change divides that by the first year's value. "
+    "Each year keeps its own interval. No interval is computed for the change: two years' intervals can't be "
+    "combined into one (the years' estimates are not independent)."
+)
+ESTIMATE_JOIN_RANK_WHICH: Final = "Rank by which table? Name one of {sources} in the question."
+ESTIMATE_JOIN_RANK_OPEN: Final = (
+    "The rows asked for vary in {columns}; a ranking needs one value each. Name one {columns}."
+)
+ESTIMATE_JOIN_RANK_FOCUS: Final = (
+    "{state} ranks {rank} of {total} states ({order}) on {source} {value}{scope}: {shown}."
+)
+ESTIMATE_JOIN_RANK_RANGE: Final = (
+    "Its interval overlaps other states', so its rank could be anywhere from {best} to {worst}."
+)
+ESTIMATE_JOIN_RANK_CERTAIN: Final = "Its interval overlaps no other state's, so this rank is firm."
+ESTIMATE_JOIN_RANK_NO_BOUNDS: Final = "The file gives no intervals, so how firm the rank is can't be judged."
+ESTIMATE_JOIN_RANK_TOP: Final = "{total} states ranked ({order}) on {source} {value}{scope}: {listed}."
+ESTIMATE_JOIN_RANK_METHOD: Final = (
+    "Rank range: states whose interval lies entirely beyond this state's are certainly ahead of it; states whose "
+    "interval overlaps it may be. The national row is not a state and is not ranked."
+)
+ESTIMATE_JOIN_RANK_HIDDEN: Final = "{count} states with a hidden or suppressed value are not ranked."
+ESTIMATE_JOIN_DISAGREE_NO_BOUNDS: Final = (
+    "Neither {a} nor {b} gives an interval, so whether they disagree can't be judged."
+)
+ESTIMATE_JOIN_DISAGREE_CLAIM: Final = (
+    "Of {total} rows, {observed}'s value is above {model}'s interval in {above} and below it in {below}; it "
+    "{test} the interval in {inside}. Largest gaps ({observed} ÷ {model}): {listed}."
+)
+ESTIMATE_JOIN_DISAGREE_METHOD: Final = (
+    "A row disagrees when {observed}'s value lies outside {model}'s uncertainty interval (or, when both have "
+    "intervals, when the intervals don't overlap). This is a screen for where to look, not a significance test."
+)
+ESTIMATE_JOIN_PRECISION_NO_BOUNDS: Final = "{source} gives no intervals, so its precision can't be judged."
+ESTIMATE_JOIN_PRECISION_CLAIM: Final = (
+    "{total} estimates from {source}, widest interval first (relative width): {listed}."
+)
+ESTIMATE_JOIN_PRECISION_METHOD: Final = (
+    "Relative width = (upper − lower) ÷ estimate. A width above 1 means the interval is wider than the estimate itself."
+)
+ESTIMATE_JOIN_PRECISION_SKIPPED: Final = (
+    "{count} rows without an interval or with an estimate of 0 or below are not ranked."
 )

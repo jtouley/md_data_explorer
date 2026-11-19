@@ -1,9 +1,14 @@
-"""Upload with the population-estimates mark (ADR014): stored per dataset, never inferred."""
+# SPDX-License-Identifier: MIT
+"""Upload with the population-estimates mark (ADR014 §7): only the exact acknowledgement value
+declares it, it is bound to the version stored, and a declared file that doesn't look like
+estimates says so."""
 
 from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+
+from clinical_analytics.contracts.config import POPULATION_ESTIMATES_FORM_VALUE, POPULATION_ESTIMATES_NOT_DETECTED
 
 
 def _estimates_csv() -> bytes:
@@ -19,26 +24,85 @@ def _estimates_csv() -> bytes:
     return ("\n".join(["location_name,sex,year_id,mx,lower,upper", *rows]) + "\n").encode()
 
 
-@pytest.mark.parametrize(("ticked", "declared"), [("true", True), (None, False)], ids=["ticked", "not_ticked"])
-def test_uploadDataset_populationEstimatesMark_storedOnlyWhenTicked(
-    test_client: TestClient, isolated_data_home, ticked, declared
+def _patients_csv() -> bytes:
+    rows = [f"P{i:03d},{30 + i % 40},{'F' if i % 2 else 'M'}" for i in range(200)]
+    return ("\n".join(["patient_id,age,sex", *rows]) + "\n").encode()
+
+
+def _upload(client: TestClient, body: bytes, mark: str | None):
+    form = {"dataset_name": "estimates"} | ({"population_estimates": mark} if mark is not None else {})
+    return client.post("/api/datasets/upload", files={"file": ("est.csv", body, "text/csv")}, data=form)
+
+
+@pytest.mark.parametrize(
+    ("mark", "declared"),
+    [(POPULATION_ESTIMATES_FORM_VALUE, True), (None, False), ("", False)],
+    ids=["exact_value", "absent", "empty"],
+)
+def test_uploadDataset_populationEstimatesMark_storedForThisVersionOnly(
+    test_client: TestClient, isolated_data_home, mark, declared
 ):
     # Arrange
     from clinical_analytics.api import dependencies
     from clinical_analytics.contracts.declarations import FileDeclarationStore
     from clinical_analytics.core.data_home import uploads_dir
-
-    form = {"dataset_name": "estimates"} | ({"population_estimates": ticked} if ticked else {})
+    from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage, active_version_id
 
     # Act
-    response = test_client.post(
-        "/api/datasets/upload", files={"file": ("est.csv", _estimates_csv(), "text/csv")}, data=form
-    )
+    response = _upload(test_client, _estimates_csv(), mark)
     body = response.json()
     assert response.status_code == 200, body
     stored = FileDeclarationStore(uploads_dir().parent).load(body["upload_id"])
+    version = active_version_id(UserDatasetStorage().get_upload_metadata(body["upload_id"]))
 
     # Assert
     assert body["population_estimates"] is declared
-    assert (stored.population_estimates is not None) is declared
+    assert (stored.population_estimates_for(version) is not None) is declared
+    assert stored.population_estimates_for("another-version") is None
+    assert body["population_estimates_note"] is None
     dependencies.invalidate_semantic_layer_cache(body["upload_id"])
+
+
+@pytest.mark.parametrize("mark", ["true", "on", "1", "yes", "True", POPULATION_ESTIMATES_FORM_VALUE + " "])
+def test_uploadDataset_genericTruthyMark_rejectedNotDeclared(test_client: TestClient, isolated_data_home, mark):
+    # Act
+    response = _upload(test_client, _estimates_csv(), mark)
+
+    # Assert
+    assert response.status_code == 400
+    assert POPULATION_ESTIMATES_FORM_VALUE in response.json()["detail"]
+
+
+def test_uploadDataset_declaredPatientFile_noteSaysRulesStillApply(test_client: TestClient, isolated_data_home):
+    # Act
+    response = _upload(test_client, _patients_csv(), POPULATION_ESTIMATES_FORM_VALUE)
+    body = response.json()
+
+    # Assert
+    assert response.status_code == 200, body
+    assert body["population_estimates_note"] == POPULATION_ESTIMATES_NOT_DETECTED
+
+
+def test_uploadDataset_declaredGbdTable_valueColumnKeptRowKeyFromEstimateKey(
+    test_client: TestClient, isolated_data_home, make_public_table
+):
+    # Arrange: GBD's 'val' is nearly unique per row; it must never become the row ID
+    import io
+
+    from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
+
+    buffer = io.BytesIO()
+    make_public_table("gbd", locations=("Michigan", "Ohio", "Indiana"), years=(2010, 2023)).write_csv(buffer)
+
+    # Act
+    response = _upload(test_client, buffer.getvalue(), POPULATION_ESTIMATES_FORM_VALUE)
+    body = response.json()
+    storage = UserDatasetStorage()
+    metadata = storage.get_upload_metadata(body["upload_id"])
+    stored = storage.get_upload_data(body["upload_id"]).collect()
+
+    # Assert
+    assert response.status_code == 200, body
+    assert {"val", "lower", "upper", "patient_id"} <= set(stored.columns)
+    assert metadata["synthetic_id_metadata"]["patient_id"]["patient_id_source"] == "estimate_key"
+    assert stored.get_column("patient_id").n_unique() == stored.height

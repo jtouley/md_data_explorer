@@ -30,6 +30,7 @@ from clinical_analytics.api.dependencies import (
 )
 from clinical_analytics.api.models import database as db_models
 from clinical_analytics.api.routes.queries import forget_query_service
+from clinical_analytics.contracts.config import POPULATION_ESTIMATES_FORM_VALUE
 from clinical_analytics.contracts.errors import ContractDamagedError, ContractError
 from clinical_analytics.contracts.quality import QualityNotRun, QualityReport
 from clinical_analytics.contracts.service import check_upload
@@ -405,18 +406,58 @@ class DatasetUploadResponse(BaseModel):
         default=False,
         description="The uploader declared the file public population estimates with no patient-level data",
     )
+    population_estimates_note: str | None = Field(
+        default=None,
+        description="Declared, but the rows don't look like estimates: the full patient rules still apply",
+    )
 
 
-def _declare_population_estimates(upload_id: str) -> None:
-    """Store the uploader's declaration that ``upload_id`` holds public population estimates
-    (ADR014), where questions read declarations. Raises HTTPException 500 when it can't be saved:
-    an upload whose declaration was lost would be answered under the wrong rules."""
-    from clinical_analytics.contracts.config import POPULATION_ESTIMATES_STATEMENT
+def population_estimates_mark(value: str | None) -> bool:
+    """Whether the upload form declares public population estimates (ADR014 §7).
+
+    Only the exact acknowledgement value counts. A generic truthy value ("true", "on", "1") is
+    rejected rather than read as yes: a checkbox default or a script flag must never relax the
+    small-cell rule by accident. Absent or empty means not declared.
+
+    Raises:
+        HTTPException: 400 for any other value.
+    """
+    if value is None or value == "":
+        return False
+    if value == POPULATION_ESTIMATES_FORM_VALUE:
+        return True
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "population_estimates must be absent, or exactly "
+            f"'{POPULATION_ESTIMATES_FORM_VALUE}' to declare public population estimates."
+        ),
+    )
+
+
+def _declare_population_estimates(storage: UserDatasetStorage, upload_id: str) -> str | None:
+    """Store the uploader's declaration that ``upload_id`` holds public population estimates, for
+    the version just stored (ADR014 §7). Returns a note when the stored rows don't look like
+    estimates (the declaration is kept, but nothing is relaxed for such a table).
+
+    Raises:
+        HTTPException 500 when it can't be saved: an upload whose declaration was lost would be
+        answered under the wrong rules.
+    """
+    from clinical_analytics.contracts.config import POPULATION_ESTIMATES_NOT_DETECTED, POPULATION_ESTIMATES_STATEMENT
     from clinical_analytics.contracts.declarations import FileDeclarationStore, PopulationEstimatesDeclaration
     from clinical_analytics.contracts.errors import ContractStoreError
     from clinical_analytics.core.data_home import uploads_dir
+    from clinical_analytics.core.estimates import detect_frame
+    from clinical_analytics.ui.storage.user_datasets import active_version_id
 
-    declaration = PopulationEstimatesDeclaration(statement=POPULATION_ESTIMATES_STATEMENT)
+    metadata = storage.get_upload_metadata(upload_id)
+    version = active_version_id(metadata)
+    if metadata is None or version is None:
+        raise HTTPException(
+            status_code=500, detail="The dataset was saved, but its version can't be read. Upload it again."
+        )
+    declaration = PopulationEstimatesDeclaration(statement=POPULATION_ESTIMATES_STATEMENT, dataset_version=version)
     try:
         FileDeclarationStore(uploads_dir().parent).update(
             upload_id, lambda current: current.with_population_estimates(declaration)
@@ -426,7 +467,12 @@ def _declare_population_estimates(upload_id: str) -> None:
         raise HTTPException(
             status_code=500, detail="The dataset was saved, but its population-estimates mark wasn't. Upload it again."
         ) from e
-    logger.info("population_estimates_declared", upload_id=upload_id)
+    logger.info("population_estimates_declared", upload_id=upload_id, dataset_version=version)
+    frame = storage.stored_dataset(upload_id, metadata).scan_cohort().collect()
+    if detect_frame(frame) is None:
+        logger.warning("population_estimates_not_detected", upload_id=upload_id)
+        return POPULATION_ESTIMATES_NOT_DETECTED
+    return None
 
 
 def _upload_type_notes(storage: UserDatasetStorage, upload_id: str) -> list[str]:
@@ -504,11 +550,13 @@ def load_sample_dataset() -> DatasetUploadResponse:
 async def upload_dataset(
     file: UploadFile = File(..., description="CSV or Excel file to upload"),
     dataset_name: str | None = Form(None, description="Optional display name"),
-    population_estimates: bool = Form(
-        False,
-        description="Public population estimates – no patient-level data: every row is a published estimate "
+    population_estimates: str | None = Form(
+        None,
+        description="Public population estimates – no patient-level data: send exactly "
+        f"'{POPULATION_ESTIMATES_FORM_VALUE}' to declare that every row is a published estimate "
         "for a group, never a patient (ADR014). Lifts the 20-group limit and the small-cell rule for "
-        "estimated rates; raw counts keep the small-cell rule.",
+        "estimated rates of this version only; counts and source-suppressed cells keep it. Any other "
+        "value is rejected.",
     ),
 ) -> DatasetUploadResponse:
     """Upload a dataset file (CSV, Excel, or SPSS).
@@ -540,13 +588,14 @@ async def upload_dataset(
     if not valid:
         raise HTTPException(status_code=400, detail=msg)
 
+    declared = population_estimates_mark(population_estimates)
     display_name = dataset_name or Path(filename).stem
 
     metadata: dict[str, Any] = {
         "dataset_name": display_name,
         "original_filename": filename,
     }
-    if population_estimates:
+    if declared:
         metadata["population_estimates"] = True
 
     storage = UserDatasetStorage()
@@ -566,15 +615,15 @@ async def upload_dataset(
     # A save can reuse an existing upload_id (e.g. overwrite); drop any cached layer so the
     # next query reads the new data instead of the previous upload's DuckDB view.
     invalidate_semantic_layer_cache(upload_id)
-    if population_estimates:
-        await asyncio.to_thread(_declare_population_estimates, upload_id)
-    log.info("dataset_upload_completed", upload_id=upload_id, population_estimates=population_estimates)
+    estimates_note = await asyncio.to_thread(_declare_population_estimates, storage, upload_id) if declared else None
+    log.info("dataset_upload_completed", upload_id=upload_id, population_estimates=declared)
     return DatasetUploadResponse(
         upload_id=upload_id,
         dataset_name=display_name,
         status="ready",
         message=message,
-        population_estimates=population_estimates,
+        population_estimates=declared,
+        population_estimates_note=estimates_note,
         quality=await asyncio.to_thread(_upload_quality, storage, upload_id),
         type_notes=_upload_type_notes(storage, upload_id),
         cohort_notes=_upload_cohort_notes(storage, upload_id),

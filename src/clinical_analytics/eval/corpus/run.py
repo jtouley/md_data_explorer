@@ -56,6 +56,7 @@ import structlog
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 
+from clinical_analytics.contracts.config import POPULATION_ESTIMATES_FORM_VALUE
 from clinical_analytics.eval.corpus.fetch import (
     CorpusDataset,
     CorpusFetchError,
@@ -348,7 +349,8 @@ class Api:
         ctype = "application/zip" if path.suffix == ".zip" else "text/csv"
         boundary = uuid.uuid4().hex
         declared = (
-            f'--{boundary}\r\nContent-Disposition: form-data; name="population_estimates"\r\n\r\ntrue\r\n'.encode()
+            f'--{boundary}\r\nContent-Disposition: form-data; name="population_estimates"\r\n\r\n'
+            f"{POPULATION_ESTIMATES_FORM_VALUE}\r\n".encode()
             if population_estimates
             else b""
         )

@@ -13,11 +13,41 @@ from clinical_analytics.contracts.declarations import (
 )
 from clinical_analytics.contracts.service import population_estimates_properties
 
-DECLARED = PopulationEstimatesDeclaration(statement=config.POPULATION_ESTIMATES_STATEMENT)
+DECLARED = PopulationEstimatesDeclaration(statement=config.POPULATION_ESTIMATES_STATEMENT, dataset_version="v1")
 
 
 class TestDeclarations:
-    def test_forVersion_keepsDatasetWideDeclarationAndOwnChoices(self):
+    @pytest.mark.parametrize(
+        ("asked_version", "covered"),
+        [
+            pytest.param("v1", True, id="declared_version"),
+            pytest.param("v2", False, id="later_overwrite"),
+            pytest.param(None, False, id="no_version"),
+        ],
+    )
+    def test_populationEstimatesFor_otherVersion_notCovered(self, asked_version, covered):
+        # Arrange: a re-upload under the same dataset may hold patient rows
+        declarations = Declarations().with_population_estimates(DECLARED)
+
+        # Act
+        found = declarations.population_estimates_for(asked_version)
+        scoped = declarations.for_version(asked_version)
+
+        # Assert
+        assert (found is not None) is covered
+        assert (scoped.population_estimates is not None) is covered
+
+    def test_populationEstimatesFor_declarationWithoutVersion_coversNothing(self):
+        # Arrange
+        declarations = Declarations().with_population_estimates(PopulationEstimatesDeclaration(statement="x"))
+
+        # Act
+        found = declarations.population_estimates_for("v1")
+
+        # Assert
+        assert found is None
+
+    def test_forVersion_keepsVersionDeclarationAndOwnChoices(self):
         # Arrange
         declarations = (
             Declarations()

@@ -31,7 +31,12 @@ def estimate_service(make_semantic_layer, make_estimate_frame):
         layer = make_semantic_layer(dataset_name=DATASET, data=frame, config_overrides={"column_mapping": {}})
         store = MemoryDeclarationStore()
         if declared:
-            store.save(DATASET, Declarations(population_estimates=PopulationEstimatesDeclaration(statement="test")))
+            store.save(
+                DATASET,
+                Declarations(
+                    population_estimates=PopulationEstimatesDeclaration(statement="test", dataset_version=VERSION)
+                ),
+            )
         return QueryService(layer, declarations=store)
 
     return _make
@@ -129,3 +134,29 @@ class TestEstimateQuestions:
         # Assert
         assert result.analysis is not None
         assert (present_analysis(result.analysis)["claim"] or "").split(" across")[0].endswith("rows")
+
+    def test_ask_wayneCountyOnOutWayneTable_refusedNamingDetroit(self, make_semantic_layer, make_public_table):
+        # Arrange: a local table whose Wayne rows exclude Detroit
+        import io
+
+        from clinical_analytics.storage.staging import read_csv_typed
+
+        buffer = io.BytesIO()
+        make_public_table("mdhhs_local").write_csv(buffer)
+        frame = read_csv_typed(buffer.getvalue()).data
+        layer = make_semantic_layer(dataset_name=DATASET, data=frame, config_overrides={"column_mapping": {}})
+        store = MemoryDeclarationStore()
+        store.save(
+            DATASET,
+            Declarations(
+                population_estimates=PopulationEstimatesDeclaration(statement="test", dataset_version=VERSION)
+            ),
+        )
+        service = QueryService(layer, declarations=store)
+
+        # Act
+        result = _ask(service, "How many hepatitis C cases were there in Wayne County in 2024?")
+
+        # Assert
+        assert result.analysis is None
+        assert "Wayne County excluding Detroit" in (result.failure_reason or "")

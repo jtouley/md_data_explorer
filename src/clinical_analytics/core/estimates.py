@@ -52,6 +52,9 @@ _AGE_BAND = re.compile(
     re.IGNORECASE,
 )
 _OPEN_AGE_TOP: Final = 200
+# Columns the semantic layer adds for patient cohorts; skipped when detecting an estimate table.
+APP_ADDED_COLUMNS: Final = ("time_zero", "outcome_label", "features_json")
+_CI_STEM: Final = re.compile(r"(^|_)(ci|confidence|interval)($|_)")
 
 
 class EstimateGrainError(ValueError):
@@ -66,6 +69,9 @@ class ValueColumn:
     lower: str | None
     upper: str | None
     kind: ValueKind
+    # Flag columns staging split out of the source's markers ("Suppressed", "(Unreliable)").
+    suppressed: str | None = None
+    unreliable: str | None = None
 
 
 @dataclass(frozen=True)
@@ -90,6 +96,9 @@ class EstimateTable:
     dimensions: tuple[Dimension, ...]
     values: tuple[ValueColumn, ...]
     attributes: tuple[str, ...] = ()
+    # Levels of a metric-like dimension that make its rows counts ("Number" beside "Rate" in GBD):
+    # a value read on such a row keeps the small-cell rule whatever its column is called.
+    count_levels: Mapping[str, tuple[Any, ...]] = field(default_factory=dict)
 
     def dimension(self, column: str | None) -> Dimension | None:
         for dimension in self.dimensions:
@@ -160,7 +169,30 @@ def _bound_pairs(columns: Sequence[str], numeric: set[str]) -> dict[str, tuple[s
             ]
             if len(values) == 1:
                 pairs[values[0]] = (by_norm[low], by_norm[high])
+    # "95% CI (%) lower" / "... upper" split from one interval column (FluVaxView), beside one value.
+    for norm, column in by_norm.items():
+        ci_stem = norm[: -len("_lower")] if norm.endswith("_lower") else None
+        if ci_stem is None or not _CI_STEM.search(ci_stem) or ci_stem + "_upper" not in by_norm:
+            continue
+        used = {c for pair in pairs.values() for c in pair}
+        values = [
+            by_norm[name] for name in config.ESTIMATE_VALUE_NAMES if name in by_norm and by_norm[name] not in pairs
+        ]
+        if len(values) == 1 and column not in used:
+            pairs[values[0]] = (column, by_norm[ci_stem + "_upper"])
     return pairs
+
+
+def _flag(column: str, suffix: str, flags: set[str]) -> str | None:
+    name = f"{column}{suffix}"
+    return name if name in flags else None
+
+
+def _kind(column: str, whole_numbers: bool) -> ValueKind:
+    """A value column's kind. Secure by default: a column of whole numbers whose name says
+    neither rate nor count is a count, so the small-cell rule stays on unless the name says rate."""
+    kind = value_kind(column)
+    return "count" if kind == "value" and whole_numbers else kind
 
 
 def value_kind(column: str) -> ValueKind:
@@ -197,6 +229,10 @@ def parent_levels(levels: Sequence[Any], column: str = "") -> tuple[tuple[Any, .
     if len(levels) < 2:
         return (), None
     named = [level for level in texts if level.strip().casefold() in config.ESTIMATE_TOTAL_LEVELS]
+    # "Age-standardized" summarises every age as "All ages" does, by another method: both are
+    # summary levels, and with both present neither is the one total (so no default is offered).
+    standardized = [level for level in texts if _is_standardized_level(level)]
+    named += standardized
     folded = {level.strip().casefold() for level in texts}
     if {"m", "f", "a"} <= folded:
         named += [level for level in texts if level.strip().casefold() == "a"]
@@ -208,7 +244,13 @@ def parent_levels(levels: Sequence[Any], column: str = "") -> tuple[tuple[Any, .
         if any(other != level and lo <= olo and ohi <= hi for other, (olo, ohi) in bands.items())
     ]
     counties = [level for level in texts if config.ESTIMATE_SUBAREA_NAME.search(level)]
-    areas = [level for level in texts if counties and level not in counties and level not in named]
+    # A non-county level beside counties is their total (the state row), unless it is itself part
+    # of a state: Detroit and out-Wayne are local jurisdictions, never a total of the counties.
+    areas = [
+        level
+        for level in texts
+        if counties and level not in counties and level not in named and _place_kind(level) != "substate"
+    ]
     parents = tuple(dict.fromkeys([*named, *containing, *areas]))
     top: Any = None
     if len(named) == 1:
@@ -223,6 +265,35 @@ def parent_levels(levels: Sequence[Any], column: str = "") -> tuple[tuple[Any, .
         ]
         top = widest[0] if len(widest) == 1 else None
     return parents, top
+
+
+def _is_standardized_level(level: Any) -> bool:
+    return isinstance(level, str) and _norm(level) in config.ESTIMATE_STANDARDIZED_LEVELS
+
+
+def _count_levels(column: str, levels: Sequence[Any]) -> tuple[Any, ...]:
+    """Levels of a metric-like column (``metric_name``, ``DataValueType``) naming a count."""
+    if not config.ESTIMATE_METRIC_DIMENSION.search(_norm(column)):
+        return ()
+    return tuple(level for level in levels if isinstance(level, str) and _norm(level) in config.ESTIMATE_COUNT_LEVELS)
+
+
+def _place_kind(level: Any) -> str:
+    from clinical_analytics.contracts.geography import classify
+
+    return classify(level).kind
+
+
+def _mostly_places(levels: Sequence[Any]) -> bool:
+    present = [level for level in levels if level is not None]
+    return len(present) >= 2 and sum(_place_kind(level) != "unknown" for level in present) * 2 >= len(present)
+
+
+def _mostly_states(levels: Sequence[Any]) -> bool:
+    from clinical_analytics.contracts.geography import classify
+
+    present = [level for level in levels if level is not None]
+    return len(present) >= 2 and sum(classify(level).kind == "state" for level in present) * 2 >= len(present)
 
 
 def _is_dimension_name(column: str) -> bool:
@@ -272,9 +343,15 @@ def detect_estimate_table(view: Any, rows: int, skip: Sequence[str] = ()) -> Est
             candidates.append(column)
         elif column in numeric:
             value_names.append(column)
+    flags = {c for c in columns if schema[c].is_boolean()}
     values = tuple(
         ValueColumn(
-            name, pairs[name][0] if name in pairs else None, pairs[name][1] if name in pairs else None, value_kind(name)
+            name,
+            pairs[name][0] if name in pairs else None,
+            pairs[name][1] if name in pairs else None,
+            _kind(name, schema[name].is_integer()),
+            suppressed=_flag(name, config.SUPPRESSED_FLAG_SUFFIX, flags),
+            unreliable=_flag(name, config.UNRELIABLE_FLAG_SUFFIX, flags),
         )
         for name in value_names
     )
@@ -304,13 +381,19 @@ def detect_estimate_table(view: Any, rows: int, skip: Sequence[str] = ()) -> Est
         rest = [c for c in key if c != column]
         if rest and _distinct_rows(view, rest) == rows:
             key.remove(column)
-    if any(levels[c] * 2 > rows for c in key):
-        return None  # one value per row (or nearly): a record ID, so rows are records
+    listed_by: dict[str, list[Any]] = {
+        column: view.select(column).distinct().to_polars().get_column(column).to_list()
+        if levels[column] <= config.ESTIMATE_MAX_LISTED_LEVELS
+        else []
+        for column in key
+    }
+    # One value per row (or nearly) is a record ID, so rows are records. A state column is the
+    # exception: it has at most 51 levels, and one row per state is an aggregate table.
+    if any(levels[c] * 2 > rows and not _mostly_states(listed_by[c]) for c in key):
+        return None
     dimensions = []
     for column in key:
-        listed: list[Any] = []
-        if levels[column] <= config.ESTIMATE_MAX_LISTED_LEVELS:
-            listed = view.select(column).distinct().to_polars().get_column(column).to_list()
+        listed = listed_by[column]
         parents, top = parent_levels(listed, column)
         dimensions.append(
             Dimension(
@@ -324,10 +407,16 @@ def detect_estimate_table(view: Any, rows: int, skip: Sequence[str] = ()) -> Est
             )
         )
     has_totals = any(d.top is not None or d.parents for d in dimensions)
-    if not (has_totals or any(v.lower or v.kind == "rate" for v in values)):
-        return None  # no interval, rate or total level: nothing says these rows are estimates
+    # One row per state, county or local jurisdiction (and year...): rows keyed by place are
+    # aggregates by construction; a patient file is never unique by place.
+    by_place = any(_mostly_places(d.values) for d in dimensions)
+    if not (has_totals or by_place or any(v.lower or v.kind == "rate" for v in values)):
+        return None  # no interval, rate, total or state key: nothing says these rows are estimates
     attributes = tuple(c for c in kept if c not in key)
-    table = EstimateTable(rows=rows, dimensions=tuple(dimensions), values=values, attributes=attributes)
+    count_levels = {d.name: found for d in dimensions if (found := _count_levels(d.name, d.values))}
+    table = EstimateTable(
+        rows=rows, dimensions=tuple(dimensions), values=values, attributes=attributes, count_levels=count_levels
+    )
     logger.info(
         "estimate_table_detected",
         dimensions=[d.name for d in table.dimensions],
@@ -370,7 +459,8 @@ def _open_text(dimension: Dimension, present: Sequence[Any]) -> str:
         listed = ", ".join(_level_text(level) for level in sorted(present, key=str))
     else:
         listed = f"{len(present)} values"
-    total = f"; {dimension.top} is the total" if dimension.top is not None and dimension.top in present else ""
+    role = "the summary" if _is_standardized_level(dimension.top) else "the total"
+    total = f"; {dimension.top} is {role}" if dimension.top is not None and dimension.top in present else ""
     return f"{dimension.name} ({listed}{total})"
 
 
@@ -484,9 +574,17 @@ def _overlap(a: Mapping[str, Any], b: Mapping[str, Any]) -> bool | None:
     return bool(a["lower"] <= b["upper"] and b["lower"] <= a["upper"])
 
 
-def _small_count(kind: ValueKind, value: float | None) -> bool:
-    """A count of 1-10 stays hidden even on a declared dataset (the small-cell rule for counts)."""
-    return kind == "count" and value is not None and 0 < value < config.MIN_CELL_SIZE
+def is_count_row(value: ValueColumn, table: EstimateTable, record: Mapping[str, Any]) -> bool:
+    """The row's value is a count: its column is one, or its metric level says so ("Number")."""
+    if value.kind == "count":
+        return True
+    return any(record.get(dim) in levels for dim, levels in table.count_levels.items())
+
+
+def small_count(value: float | None) -> bool:
+    """A count of 1-10 stays hidden even on a declared dataset (the small-cell rule for counts).
+    A count below 1 that is not 0 (a modelled 0.4 deaths) is hidden too: it rounds into 1-10."""
+    return value is not None and value != 0 and abs(value) < config.MIN_CELL_SIZE
 
 
 def estimate_rows(view: Any, check: EstimateCheck, table: EstimateTable, *, lowest_first: bool) -> list[dict[str, Any]]:
@@ -501,7 +599,13 @@ def estimate_rows(view: Any, check: EstimateCheck, table: EstimateTable, *, lowe
         view = view.filter(view[column] == level)
     for column, levels in check.left_out.items():
         view = view.filter(~view[column].isin(list(levels)))
-    selected = [*check.group_dims, value.name, *(c for c in (value.lower, value.upper) if c)]
+    metric_dims = [d for d in table.count_levels if d not in check.group_dims]
+    flags = [c for c in (value.suppressed, value.unreliable) if c]
+    selected = list(
+        dict.fromkeys(
+            [*check.group_dims, *metric_dims, value.name, *(c for c in (value.lower, value.upper) if c), *flags]
+        )
+    )
     frame = view.select(*selected).to_polars()
     rows: list[dict[str, Any]] = []
     for record in frame.iter_rows(named=True):
@@ -513,6 +617,9 @@ def estimate_rows(view: Any, check: EstimateCheck, table: EstimateTable, *, lowe
                 "value": _num(record[value.name]),
                 "lower": _num(record[value.lower]) if value.lower else None,
                 "upper": _num(record[value.upper]) if value.upper else None,
+                "count": is_count_row(value, table, record),
+                "suppressed": bool(value.suppressed and record[value.suppressed]),
+                "unreliable": bool(value.unreliable and record[value.unreliable]),
             }
         )
     for row in rows:
@@ -551,10 +658,15 @@ def estimate_answer(
     hidden = 0
     table_rows: list[dict[str, Any]] = []
     group_header = " · ".join(check.group_dims) or "estimate"
+    source_suppressed = 0
     for row in rows:
         shown: dict[str, Any] = {group_header: row["label"] or name}
-        if _small_count(value.kind, row["value"]):
-            hidden += 1
+        is_count = bool(row.get("count")) or value.kind == "count"
+        if row.get("suppressed") or (is_count and small_count(row["value"])):
+            if row.get("suppressed"):
+                source_suppressed += 1
+            else:
+                hidden += 1
             shown |= {name: SECONDARY_SUPPRESSED}
             if has_bounds:
                 shown |= {"lower": SECONDARY_SUPPRESSED, "upper": SECONDARY_SUPPRESSED}
@@ -572,6 +684,13 @@ def estimate_answer(
         notes.append(config.ESTIMATE_SAVED_CHOICE_NOTE.format(column=column, level=level))
     if hidden:
         notes.append(config.ESTIMATE_SMALL_COUNT_NOTE)
+    if source_suppressed:
+        notes.append(config.ESTIMATE_SOURCE_SUPPRESSED_NOTE)
+    unreliable = [str(r["label"] or name) for r in rows if r.get("unreliable") and r["value"] is not None]
+    if unreliable:
+        notes.append(
+            config.ESTIMATE_UNRELIABLE_NOTE.format(groups=", ".join(unreliable[: config.ESTIMATE_LEVELS_IN_HOLD]))
+        )
     inconsistent = [str(r["label"] or name) for r in rows if r.get("bad_interval")]
     if inconsistent:
         notes.append(
@@ -841,3 +960,32 @@ def lowest_first(question: str) -> bool:
 def unlimited_group_plan(plan: QueryPlan) -> QueryPlan:
     """``plan`` with no grouping: the filtered view then keeps limits on the group column too."""
     return dataclasses.replace(plan, group_by=None)
+
+
+def out_wayne_refusal(table: EstimateTable, question: str, name: str) -> str | None:
+    """The refusal for a question about Wayne County on a table whose Wayne rows are out-Wayne
+    (Wayne County excluding Detroit, which reports separately), or None."""
+    from clinical_analytics.contracts import geography
+
+    if not geography.mentions_wayne(question) or re.search(r"out[- ]?wayne", question, re.IGNORECASE):
+        return None
+    levels = [v for d in table.dimensions for v in d.values]
+    if not any(geography.is_out_wayne(v) for v in levels):
+        return None
+    has_detroit = any(geography.is_detroit(v) for v in levels)
+    return config.ESTIMATE_JOIN_OUT_WAYNE.format(
+        source=name, detroit="It also has Detroit rows" if has_detroit else "It has no Detroit rows"
+    )
+
+
+def detect_frame(frame: pl.DataFrame, skip: Sequence[str] = ()) -> EstimateTable | None:
+    """``detect_estimate_table`` on an in-memory frame (one stored table of an upload), through a
+    private in-memory DuckDB so detection is the same code the question path runs."""
+    import ibis
+
+    con = ibis.duckdb.connect()
+    try:
+        con.con.register("estimate_frame", frame.to_arrow())
+        return detect_estimate_table(con.table("estimate_frame"), frame.height, skip)
+    finally:
+        con.disconnect()

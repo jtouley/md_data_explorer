@@ -442,7 +442,22 @@ class QueryService:
 
         # Convert QueryIntent to QueryPlan
         query_plan: QueryPlan = self.nl_engine._intent_to_plan(query_intent, dataset_version)
-        estimate_table = self._estimate_table() if query_plan.intent != "COUNT" else None
+        detected = self._estimate_table()
+        # Wayne County on a table whose Wayne rows exclude Detroit is refused on every path,
+        # counting rows included: those rows are not Wayne County (ADR014 §10).
+        declared = declarations.population_estimates_for(dataset_version) is not None
+        wayne = estimates.out_wayne_refusal(detected, normalized_query, "This file") if detected and declared else None
+        if wayne is not None:
+            return QueryResult(
+                plan=query_plan,
+                issues=[{"message": wayne, "severity": "error"}],
+                result=None,
+                confidence=query_intent.confidence,
+                run_key=None,
+                context=None,
+                failure_reason=wayne,
+            )
+        estimate_table = detected if query_plan.intent != "COUNT" else None
         if estimate_table is not None:
             # Key dimensions the question names but the parse left open (years, levels): ADR014.
             query_plan = estimates.ground_plan(query_plan, estimate_table, normalized_query)
@@ -694,7 +709,11 @@ class QueryService:
         if not callable(getattr(self.semantic_layer, "get_base_view", None)):
             return None  # a stand-in layer with no data to detect on
         rows = self._row_count()
-        table = estimates.detect_estimate_table(self.semantic_layer.get_base_view(), rows) if rows else None
+        view = self.semantic_layer.get_base_view()
+        # Columns the app adds to the view for patient cohorts (survival time zero, outcome label)
+        # are never part of an estimate table.
+        skip = [c for c in estimates.APP_ADDED_COLUMNS if c in view.columns]
+        table = estimates.detect_estimate_table(view, rows, skip) if rows else None
         try:
             self.semantic_layer.estimate_table_cache = (generation, table)
         except (AttributeError, TypeError):
@@ -738,7 +757,7 @@ class QueryService:
             return refused(str(validation.get("error") or "The question names a column that is not in this dataset."))
         version = prepared.dataset_version
         declarations = prepared.declarations
-        if declarations.population_estimates is None:
+        if declarations.population_estimates_for(version) is None:
             return refused(contract_config.ESTIMATE_UNDECLARED_REFUSAL)
         try:
             view = self.semantic_layer._filtered_view(estimates.unlimited_group_plan(plan))

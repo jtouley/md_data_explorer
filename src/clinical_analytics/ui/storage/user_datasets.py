@@ -120,6 +120,20 @@ class DatasetChangedError(UploadError):
     """Another save changed the dataset's active version while this one ran (retry the upload)."""
 
 
+def _declared_estimate_key(df: pl.DataFrame, metadata: dict[str, Any]) -> list[str] | None:
+    """The estimate key of a table declared public population estimates at upload (ADR014), or
+    None: not declared, already has a patient_id, or its rows don't look like estimates (then the
+    usual patient-ID rules apply)."""
+    if metadata.get("population_estimates") is not True or "patient_id" in df.columns:
+        return None
+    from clinical_analytics.core.estimates import detect_frame
+
+    table = detect_frame(df)
+    if table is None:
+        return None
+    return [d.name for d in table.dimensions]
+
+
 def active_version_id(metadata: dict[str, Any] | None) -> str | None:
     """The version readers see: the active ``version_history`` entry, else a legacy ``dataset_version``."""
     if not metadata:
@@ -1772,7 +1786,14 @@ class UserDatasetStorage:
                 from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
 
                 logger.info(f"Ensuring patient_id exists for upload {upload_id}")
-                df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(tables[0]["data"])
+                estimate_key = _declared_estimate_key(tables[0]["data"], metadata)
+                if estimate_key is not None:
+                    # A declared table of estimates (ADR014): its rows are groups, so no data column
+                    # is renamed to patient_id; the row key is synthesized from the estimate key.
+                    df_with_id = VariableTypeDetector.create_synthetic_patient_id(tables[0]["data"], estimate_key)
+                    id_metadata = {"patient_id_source": "estimate_key", "patient_id_columns": estimate_key}
+                else:
+                    df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(tables[0]["data"])
 
                 logger.info(
                     f"Patient ID creation result: source={id_metadata['patient_id_source']}, "
