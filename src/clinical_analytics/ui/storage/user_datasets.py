@@ -24,6 +24,7 @@ Uploads made before this layout (``{id}.csv``) are converted to it on first load
 (``UserDatasetStorage.stored_dataset``).
 """
 
+import functools
 import hashlib
 import io
 import json
@@ -40,6 +41,7 @@ from typing import Any, Final
 import polars as pl
 import structlog
 
+from clinical_analytics.core.identifier_rules import ROW_NUMBER_COLUMN
 from clinical_analytics.core.schema import DataQualityError
 from clinical_analytics.storage import atomic
 from clinical_analytics.storage.metadata_lock import (
@@ -121,6 +123,17 @@ class DatasetChangedError(UploadError):
     """Another save changed the dataset's active version while this one ran (retry the upload)."""
 
 
+def _declared_estimates(df: pl.DataFrame, metadata: dict[str, Any]) -> bool:
+    """A table declared public population estimates at upload whose rows look like estimates
+    (ADR014). Not when it has a patient_id or any column named as a patient ID: detection refuses
+    those, so the usual patient-ID rules apply and the real ID is kept."""
+    if metadata.get("population_estimates") is not True or ROW_NUMBER_COLUMN in df.columns:
+        return False
+    from clinical_analytics.core.estimates import detect_frame
+
+    return detect_frame(df) is not None
+
+
 def active_version_id(metadata: dict[str, Any] | None) -> str | None:
     """The version readers see: the active ``version_history`` entry, else a legacy ``dataset_version``."""
     if not metadata:
@@ -175,7 +188,7 @@ def normalize_upload_to_table_list(
     # Detect upload type from file extension
     if filename.endswith(".zip"):
         # Multi-table: extract from ZIP
-        tables = extract_zip_tables(file_bytes)
+        tables = extract_zip_tables(file_bytes, declared=_declared(metadata))
 
         # Extract documentation files from ZIP (Phase 1: ADR004)
         from io import BytesIO
@@ -184,7 +197,9 @@ def normalize_upload_to_table_list(
         logger.info(f"Extracted {len(doc_files)} documentation files from ZIP")
     else:
         # Single-file: wrap in list (becomes multi-table with 1 table)
-        staged = load_single_file_staged(file_bytes, filename)
+        staged = stage_declared(
+            lambda public: load_single_file_staged(file_bytes, filename, public=public), _declared(metadata)
+        )
         table_name = Path(filename).stem  # Use original filename stem
         tables = [
             {
@@ -274,7 +289,47 @@ def extract_documentation_files(zip_file: Any) -> list[Any]:
         return []
 
 
-def extract_zip_tables(file_bytes: bytes) -> list[dict[str, Any]]:
+def _declared(metadata: dict[str, Any] | None) -> bool:
+    return bool(metadata and metadata.get("population_estimates") is True)
+
+
+def _read_csv_staged(content: bytes, public: bool) -> StagedTable:
+    return read_csv_typed(content, public=public)
+
+
+def stage_declared(stage: Callable[[bool], StagedTable], declared: bool) -> StagedTable:
+    """Stage a table; for an upload declared public estimates, read the source's own markers ("<10",
+    "(D)", "*") as suppression only once the table is accepted as public (ADR014 §7).
+
+    Order: stage without the public markers; run detection and the public-shape guard on that
+    (columns that only the markers would turn into numbers read as those numbers, unflagged); then
+    check the table staged with the markers too. A declared file that is refused stays exactly as an undeclared
+    one would be staged: a patient file's "<5" stays text.
+    """
+    from clinical_analytics.contracts.config import SUPPRESSED_FLAG_SUFFIX
+    from clinical_analytics.core.estimates import detect_frame
+
+    plain = stage(False)
+    if not declared:
+        return plain
+    public = stage(True)
+    marked = [
+        c
+        for c in plain.data.columns
+        if plain.data.schema[c] == pl.String
+        and f"{c}{SUPPRESSED_FLAG_SUFFIX}" in public.data.columns
+        and f"{c}{SUPPRESSED_FLAG_SUFFIX}" not in plain.data.columns
+    ]
+    # The marked columns read as the numbers they hold (a marker is a missing value here, with no
+    # suppression flag yet): they are values, never keys, and nothing else differs from ``plain``.
+    unflagged = plain.data.with_columns(public.data.get_column(c) for c in marked)
+    if detect_frame(unflagged) is None or detect_frame(public.data) is None:
+        logger.info("declared_table_staged_as_undeclared", marked_columns=len(marked))
+        return plain
+    return public
+
+
+def extract_zip_tables(file_bytes: bytes, declared: bool = False) -> list[dict[str, Any]]:
     """
     Extract tables from ZIP archive.
 
@@ -333,7 +388,7 @@ def extract_zip_tables(file_bytes: bytes) -> list[dict[str, Any]]:
 
                 # Typed over the whole file, column by column (storage.staging); no all-text fallback.
                 try:
-                    staged = read_csv_typed(csv_content)
+                    staged = stage_declared(functools.partial(_read_csv_staged, csv_content), declared)
                 except StagingError as e:
                     raise UploadError(f"Table '{name}': {e}") from e
                 df = staged.data
@@ -379,7 +434,7 @@ def _detect_excel_header_row(file_bytes: bytes, max_rows_to_check: int = 5) -> i
     return detect_header_row(rows, max_rows_to_check)
 
 
-def load_single_file_staged(file_bytes: bytes, filename: str) -> StagedTable:
+def load_single_file_staged(file_bytes: bytes, filename: str, *, public: bool = False) -> StagedTable:
     """
     Load a single file (CSV, Excel, SPSS) as one typed table with its staging notes.
 
@@ -392,10 +447,10 @@ def load_single_file_staged(file_bytes: bytes, filename: str) -> StagedTable:
     """
     file_ext = Path(filename).suffix.lower()
     if file_ext == ".csv":
-        return read_csv_typed(file_bytes)
+        return read_csv_typed(file_bytes, public=public)
     if file_ext in {".xlsx", ".xls"}:
         # Openpyxl reads .xlsx only; an .xls file fails here with a clear StagingError.
-        return read_excel_typed(file_bytes)
+        return read_excel_typed(file_bytes, public=public)
     if file_ext == ".sav":
         import pyreadstat
 
@@ -1812,7 +1867,22 @@ class UserDatasetStorage:
                 from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
 
                 logger.info(f"Ensuring patient_id exists for upload {upload_id}")
-                df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(tables[0]["data"])
+                if _declared_estimates(tables[0]["data"], metadata):
+                    # A declared table of estimates (ADR014): its rows are groups, not patients, so
+                    # no data column becomes patient_id; rows are numbered and counted as rows.
+                    df_with_id = (
+                        tables[0]["data"]
+                        .with_row_index(ROW_NUMBER_COLUMN, offset=1)
+                        .with_columns(pl.col(ROW_NUMBER_COLUMN).cast(pl.Int64))
+                    )
+                    id_metadata = {
+                        "patient_id_source": "row_index",
+                        "patient_id_columns": None,
+                        "row_number_column": ROW_NUMBER_COLUMN,
+                        "population_estimates": True,  # never asked "Is each row one patient?"
+                    }
+                else:
+                    df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(tables[0]["data"])
 
                 logger.info(
                     f"Patient ID creation result: source={id_metadata['patient_id_source']}, "

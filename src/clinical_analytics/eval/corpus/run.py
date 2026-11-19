@@ -10,6 +10,9 @@ YAML says ``confirm: true``. When the upload asks "Is each row one patient?", th
 oracle module answers it (``rows_are_patients``, written from the data description); a module
 without one leaves it unanswered, so answers count rows. The presented answer is graded by ``eval.corpus.score``.
 
+A question marked ``held_out: true`` is reported apart from the rest: nobody tunes the app on it,
+so its grades say whether a change generalises beyond the questions it was made for.
+
 Results (JSON and a markdown table) go to a directory outside the repo; the table is printed.
 Only aggregates are written: the claim and table the app presents, never rows.
 
@@ -55,6 +58,7 @@ import structlog
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 
+from clinical_analytics.contracts.config import POPULATION_ESTIMATES_FORM_VALUE
 from clinical_analytics.eval.corpus.fetch import (
     CorpusDataset,
     CorpusFetchError,
@@ -73,7 +77,15 @@ from clinical_analytics.eval.corpus.scenario import (
     parse_scenario,
     split,
 )
-from clinical_analytics.eval.corpus.score import SMALL_MAX, SMALL_MIN, ApiOutcome, OracleAnswer, Scored, score
+from clinical_analytics.eval.corpus.score import (
+    AGGREGATE,
+    SMALL_MAX,
+    SMALL_MIN,
+    ApiOutcome,
+    OracleAnswer,
+    Scored,
+    score,
+)
 
 logger = structlog.get_logger()
 
@@ -150,6 +162,7 @@ class QuestionResult:
     latency_s: float
     confirmed: bool
     expect: Expect = "answer"
+    held_out: bool = False
     claim: str | None = None
     table: dict[str, Any] | None = None
 
@@ -169,11 +182,13 @@ class RunReport:
     scenario: dict[str, Any] | None = None
     blanks: list[BlankResult] = field(default_factory=list)
 
-    def counts(self) -> dict[str, int]:
+    def counts(self, held_out: bool | None = None) -> dict[str, int]:
+        """Grades over every question, or only the held-out (True) or tuned-on (False) ones."""
+        results = [r for r in self.results if held_out is None or r.held_out is held_out]
         tally = {grade: 0 for grade in ("RIGHT", "WRONG", "HELD", "ERROR")}
-        for result in self.results:
+        for result in results:
             tally[result.grade] += 1
-        tally["LEAK"] = sum(result.leak for result in self.results)
+        tally["LEAK"] = sum(result.leak for result in results)
         return tally
 
     def rates(self) -> Rates:
@@ -225,7 +240,8 @@ def _question_file(dataset: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     path = QUESTIONS_DIR / f"{dataset}.yaml"
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        questions = [{"dataset_id": raw["dataset_id"], **item} for item in raw["questions"]]
+        shared = {"dataset_id": raw["dataset_id"], **({"grain": raw["grain"]} if "grain" in raw else {})}
+        questions = [{**shared, **item} for item in raw["questions"]]
     except (OSError, yaml.YAMLError, KeyError, TypeError) as error:
         raise AcceptanceError(f"questions for {dataset} could not be read from {path}: {error!r}") from error
     return raw, questions
@@ -401,16 +417,25 @@ class Api:
     def post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self.request("POST", path, json.dumps(payload).encode(), "application/json")
 
-    def upload(self, path: Path, name: str) -> str:
-        response = self.upload_response(path, name)
+    def upload(self, path: Path, name: str, population_estimates: bool = False) -> str:
+        """Upload through the real route; ``population_estimates`` ticks the uploader's mark that
+        the file holds public population estimates and no patient-level data (ADR014)."""
+        response = self.upload_response(path, name, population_estimates)
         return required_field(response, "upload_id", "POST /api/datasets/upload")
 
-    def upload_response(self, path: Path, name: str) -> dict[str, Any]:
+    def upload_response(self, path: Path, name: str, population_estimates: bool = False) -> dict[str, Any]:
         ctype = "application/zip" if path.suffix == ".zip" else "text/csv"
         boundary = uuid.uuid4().hex
+        declared = (
+            f'--{boundary}\r\nContent-Disposition: form-data; name="population_estimates"\r\n\r\n'
+            f"{POPULATION_ESTIMATES_FORM_VALUE}\r\n".encode()
+            if population_estimates
+            else b""
+        )
         body = b"".join(
             [
                 f'--{boundary}\r\nContent-Disposition: form-data; name="dataset_name"\r\n\r\n{name}\r\n'.encode(),
+                declared,
                 f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{path.name}"\r\n'
                 f"Content-Type: {ctype}\r\n\r\n".encode(),
                 path.read_bytes(),
@@ -631,6 +656,7 @@ def ask_all(
             latency_s=round(asked.latency_s, 2),
             confirmed=asked.confirmed,
             expect=_expect(question),
+            held_out=bool(question.get("held_out", False)),
             claim=presentation.get("claim"),
             table=presentation.get("table"),
         )
@@ -656,13 +682,16 @@ def run(
     asked, skipped = split(questions)
     corpus = load_corpus()
     zip_path = fetch_dataset(dataset, cache_dir, seed_dirs, corpus=corpus)
-    csv_path = table_path(corpus[dataset], cache_dir)
-    csv_name = csv_path.name
+    files_dir = zip_path.parent / "files"
+    tables = [item.path for item in corpus[dataset].files if item.kind in ("table", "archive")]
+    # One table: the oracles read that file. Several, or an archive of tables: the files' directory.
+    single = len(tables) == 1 and tables[0].endswith(".csv")
+    oracle_input = files_dir / tables[0] if single else files_dir
     oracles = load_oracles(dataset)
     try:
-        truth: dict[str, OracleAnswer] = oracles.answers(csv_path)
+        truth: dict[str, OracleAnswer] = oracles.answers(oracle_input)
     except pl.exceptions.PolarsError as error:
-        raise AcceptanceError(f"oracles for {dataset} do not run on {csv_name}: {error}") from error
+        raise AcceptanceError(f"oracles for {dataset} do not run on {oracle_input.name}: {error}") from error
     missing = [q["id"] for q in asked if q["id"] not in truth]
     if missing:
         raise AcceptanceError(f"no oracle answer for {missing}")
@@ -682,19 +711,21 @@ def run(
     try:
         report.settings["startup_s"] = round(api.wait_healthy(), 1)
         upload_started = time.monotonic()
+        declared = declared_estimates(questions)
+        report.settings["population_estimates"] = declared
         try:
-            uploaded = api.upload_response(zip_path, dataset)
+            uploaded = api.upload_response(zip_path, dataset, declared)
             report.settings["upload"] = "zip (table + dictionary)"
         except AcceptanceError as error:
-            if "-> 400" not in str(error):
+            if "-> 400" not in str(error) or oracle_input.is_dir():
                 raise
             # Recorded, never silent: the API refused the ZIP, so the table goes up alone and
-            # the app answers without the dictionary.
+            # the app answers without the dictionary. (A multi-table set has no such fallback.)
             report.settings["upload"] = f"csv only; ZIP rejected: {str(error)[:200]}"
-            uploaded = api.upload_response(csv_path, dataset)
+            uploaded = api.upload_response(oracle_input, dataset, declared)
         dataset_id = required_field(uploaded, "upload_id", "POST /api/datasets/upload")
         report.settings["upload_s"] = round(time.monotonic() - upload_started, 1)
-        report.settings["one_row_per_patient"] = answer_patient_rows(api, dataset_id, uploaded, oracles, csv_path)
+        report.settings["one_row_per_patient"] = answer_patient_rows(api, dataset_id, uploaded, oracles, oracle_input)
         report.results = ask_all(api, dataset_id, asked, truth, model, timeout_s)
         if scenario is not None:
             report.blanks = blank_results(scenario, questions, report.results)
@@ -730,6 +761,8 @@ def public_reason(reason: str) -> str:
 
 def markdown(report: RunReport) -> str:
     counts = report.counts()
+    held_out = report.counts(held_out=True)
+    tuned = report.counts(held_out=False)
     latencies = [result.latency_s for result in report.results]
     median = statistics.median(latencies) if latencies else 0.0
     llm_ran = sum(result.llm == "ran" for result in report.results)
@@ -746,13 +779,17 @@ def markdown(report: RunReport) -> str:
         " · ".join(f"{name} {n}" for name, n in counts.items())
         + f" · median latency {median:.1f}s · LLM tier ran on {llm_ran}/{len(report.results)}",
         "",
-        "| id | grade | leak | tier | LLM | latency s | reason |",
-        "|---|---|---|---|---|---|---|",
+        "Tuned-on: " + " · ".join(f"{name} {n}" for name, n in tuned.items()),
+        "Held out: " + " · ".join(f"{name} {n}" for name, n in held_out.items()),
+        "",
+        "| id | split | grade | leak | tier | LLM | latency s | reason |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for result in report.results:
         reason = public_reason(result.reason).replace("|", "\\|").replace("\n", " ")[:180]
+        split = "held out" if result.held_out else "tuned"
         lines.append(
-            f"| {result.id} | {result.grade} | {'LEAK' if result.leak else ''} | {result.tier or '-'} | "
+            f"| {result.id} | {split} | {result.grade} | {'LEAK' if result.leak else ''} | {result.tier or '-'} | "
             f"{result.llm} | {result.latency_s:.1f} | {reason} |"
         )
     text = "\n".join(lines) + "\n"
@@ -766,7 +803,12 @@ def write_results(report: RunReport, results_dir: Path) -> Path:
     model = re.sub(r"[^\w.-]", "_", report.model)
     out = results_dir / f"{stamp}-{report.dataset}-{model}-{report.label}"
     out.mkdir(parents=True, exist_ok=True)
-    payload = {**asdict(report), "counts": report.counts()}
+    payload = {
+        **asdict(report),
+        "counts": report.counts(),
+        "counts_tuned": report.counts(held_out=False),
+        "counts_held_out": report.counts(held_out=True),
+    }
     (out / "results.json").write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
     (out / "results.md").write_text(markdown(report), encoding="utf-8")
     return out
@@ -956,6 +998,12 @@ def table_shape(detail: dict[str, Any]) -> tuple[int, int]:
     return table.row_count, sum(1 for column in table.columns if str(column) not in added)
 
 
+def declared_estimates(questions: list[dict[str, Any]]) -> bool:
+    """A question file of ``grain: aggregate`` is a public population-estimate set: it is uploaded
+    with the mark a person ticks for it (ADR014 §7)."""
+    return any(q.get("grain") == AGGREGATE for q in questions)
+
+
 def check_load(
     name: str, corpus: dict[str, CorpusDataset], cache_dir: Path | None, seed_dirs: list[Path]
 ) -> LoadResult:
@@ -982,7 +1030,8 @@ def check_load(
         api = Api(work, server_env(work, secrets.token_urlsafe(32), NO_MODEL, UNREACHABLE_OLLAMA, None))
         api.wait_healthy()
         started = time.monotonic()
-        response = api.upload_response(path, name)
+        # Uploaded as the acceptance run uploads it: an aggregate set carries the declaration.
+        response = api.upload_response(path, name, declared_estimates(load_questions(name)))
         result.upload_s = round(time.monotonic() - started, 1)
         result.status = str(response.get("status"))
         upload_id = required_field(response, "upload_id", "POST /api/datasets/upload")

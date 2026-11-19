@@ -19,19 +19,22 @@ import structlog
 
 from clinical_analytics.analysis.grouping import grouping_problem
 from clinical_analytics.analysis.variable_types import short_name
+from clinical_analytics.contracts import config as contract_config
 from clinical_analytics.contracts.declarations import (
     Declarations,
     DeclarationStore,
+    DimensionChoice,
     LevelMapping,
     MemoryDeclarationStore,
 )
 from clinical_analytics.contracts.errors import ContractError, ContractStoreError, InvalidDeclarationKeyError
 from clinical_analytics.contracts.quality import QualityReport
 from clinical_analytics.contracts.store import latest_report
-from clinical_analytics.core import answer_checks
+from clinical_analytics.core import answer_checks, estimates
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.core.conversation_manager import ConversationManager
 from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line, plan_fingerprint
+from clinical_analytics.core.identifier_rules import ROW_KEY_CONFIG_FLAG
 from clinical_analytics.core.log_redaction import error_fields
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD, MODEL_STEP_FAILED_REASON
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
@@ -452,6 +455,30 @@ class QueryService:
 
         # Convert QueryIntent to QueryPlan
         query_plan: QueryPlan = self.nl_engine._intent_to_plan(query_intent, dataset_version)
+        detected = self._estimate_table()
+        # Wayne County on a table whose Wayne rows exclude Detroit is refused on every path,
+        # counting rows included: those rows are not Wayne County (ADR014 §10).
+        declared = declarations.population_estimates_for(dataset_version) is not None
+        wayne = (
+            estimates.out_wayne_refusal(detected, normalized_query, "This file")
+            or estimates.subarea_ranking_refusal(detected, normalized_query, "This file")
+            if detected and declared
+            else None
+        )
+        if wayne is not None:
+            return QueryResult(
+                plan=query_plan,
+                issues=[{"message": wayne, "severity": "error"}],
+                result=None,
+                confidence=query_intent.confidence,
+                run_key=None,
+                context=None,
+                failure_reason=wayne,
+            )
+        estimate_table = detected if query_plan.intent != "COUNT" else None
+        if estimate_table is not None:
+            # Key dimensions the question names but the parse left open (years, levels): ADR014.
+            query_plan = estimates.ground_plan(query_plan, estimate_table, normalized_query)
 
         # Generate run_key using semantic layer (canonical implementation)
         run_key = self._generate_run_key(query_plan, normalized_query)
@@ -491,6 +518,13 @@ class QueryService:
         if confirmed and confirm_plan_hash != plan_hash:
             confirmed = False
             plan_changed = True
+
+        # A file of estimates (rows are groups, not patients) is answered by reading its rows,
+        # never by pooling them (ADR014). Counting its rows stays on the path below.
+        if estimate_table is not None and not plan_changed:
+            return self._finish_estimates(
+                prepared, query_plan, context, query_intent.confidence, plan_hash, shown_plan_line, confirmed
+            )
 
         if not validation_result.get("valid", False):
             # Fail closed: an invalid plan never reaches execution, and it is refused, never held:
@@ -649,6 +683,9 @@ class QueryService:
                             issues.append({"message": str(analysis["error"]), "severity": "error"})
                         else:
                             analysis = self._with_findings(analysis, findings, query_plan)
+                            if self._declared_estimates(declarations, dataset_version):
+                                # Rows of a declared estimate file are estimates: a count is rows.
+                                analysis = {**analysis, "unit": "rows"}
                             claim = present_analysis(analysis).get("claim")
         except CohortStepError as e:
             # Already plain language: say why the limit could not be applied.
@@ -671,6 +708,161 @@ class QueryService:
             plan_line=plan_line,
             plan_hash=plan_hash,
         )
+
+    def _grain(self, declarations: Declarations, dataset_version: str | None) -> answer_checks.Grain:
+        """The layer's grain. Rows of a declared estimate table are estimates, so no column is a
+        patient key there (an ID the upload synthesized would make every count a patient count).
+        Detection alone never changes the grain: an undeclared table keeps its patient key."""
+        if self._declared_estimates(declarations, dataset_version):
+            return answer_checks.Grain(key=None, rows=int(self.semantic_layer._base_count(None)), patients=None)
+        return answer_checks.grain_of(self.semantic_layer)
+
+    def _declared_estimates(self, declarations: Declarations, dataset_version: str | None) -> bool:
+        """The layer is an estimate table and was declared public estimates for this version."""
+        return declarations.population_estimates_for(dataset_version) is not None and self._estimate_table() is not None
+
+    def _estimate_table(self) -> estimates.EstimateTable | None:
+        """The layer's estimate structure (ADR014), detected once per layer state (a level merge
+        changes the levels), or None when its rows are not estimates."""
+        generation = self._state_generation()
+        cached = getattr(self.semantic_layer, "estimate_table_cache", None)
+        if isinstance(cached, tuple) and len(cached) == 2 and cached[0] == generation:
+            table: estimates.EstimateTable | None = cached[1]
+            return table
+        if not callable(getattr(self.semantic_layer, "get_base_view", None)):
+            return None  # a stand-in layer with no data to detect on
+        rows = self._row_count()
+        view = self.semantic_layer.get_base_view()
+        # A dataset with a real patient key (named or detected as one, not synthesized at upload)
+        # is patient data, whatever else its columns say: never an estimate table.
+        if answer_checks.patient_key(self.semantic_layer) is not None:
+            table = None
+        else:
+            # Columns the app adds (survival time zero, outcome label, a synthesized row key) are
+            # never part of an estimate table.
+            layer_config = getattr(self.semantic_layer, "config", None) or {}
+            added = list(estimates.APP_ADDED_COLUMNS)
+            if layer_config.get(ROW_KEY_CONFIG_FLAG):
+                added.append("patient_id")
+            skip = [c for c in added if c in view.columns]
+            table = estimates.detect_estimate_table(view, rows, skip) if rows else None
+        if hasattr(self.semantic_layer, "estimate_table_cache"):
+            self.semantic_layer.estimate_table_cache = (generation, table)
+        else:
+            logger.debug("estimate_table_not_cached", reason="layer has no cache slot")
+        return table
+
+    def _finish_estimates(
+        self,
+        prepared: _Prepared,
+        plan: QueryPlan,
+        context: AnalysisContext,
+        confidence: float,
+        plan_hash: str,
+        plan_line: str,
+        confirmed: bool,
+    ) -> QueryResult:
+        """Check, hold or answer a statistic question on an estimate table (locked; ADR014).
+
+        Order: patient-level tests and shares are refused; an undeclared dataset is refused (its
+        rows are treated as people, each a small cell); a key dimension the question leaves open
+        is held when confirming can fix it with a total level (the choice is saved), else refused;
+        the question's words are accounted for as on the patient path; then the estimate rows are
+        read and shown with their intervals.
+        """
+        table = self._estimate_table()
+        assert table is not None  # noqa: S101 - the caller checked
+
+        def refused(reason: str) -> QueryResult:
+            return QueryResult(
+                plan=plan,
+                issues=[{"message": reason, "severity": "error"}],
+                result=None,
+                confidence=confidence,
+                run_key=None,
+                context=context,
+                failure_reason=reason,
+            )
+
+        if not self._plan_columns_exist(plan):
+            validation = self.semantic_layer._validate_query_plan(plan)
+            return refused(str(validation.get("error") or "The question names a column that is not in this dataset."))
+        version = prepared.dataset_version
+        declarations = prepared.declarations
+        if declarations.population_estimates_for(version) is None:
+            return refused(contract_config.ESTIMATE_UNDECLARED_REFUSAL)
+        try:
+            view = self.semantic_layer._filtered_view(estimates.unlimited_group_plan(plan))
+            check = estimates.check_plan(plan, view, table, declarations.choices_for(version))
+        except CohortStepError as e:
+            return refused(str(e))
+        if check.refusal:
+            return refused(check.refusal)
+        if not confirmed:
+            # Forward accounting only: every word left after the estimate vocabulary must be read
+            # by the plan. The answer names every key level it is for, so a limit the question
+            # did not word (a total, the one value column) is shown rather than held.
+            asked = estimates.grounded_words(table, prepared.normalized_query)
+            accounting = self._unused_words_reason(asked, plan, context, prepared.mappings) if asked else None
+            reason = " ".join(r for r in (accounting, check.hold) if r)
+            if reason:
+                return QueryResult(
+                    plan=plan,
+                    issues=[],
+                    result=None,
+                    confidence=confidence,
+                    run_key=None,
+                    context=context,
+                    requires_confirmation=True,
+                    failure_reason=reason,
+                    plan_line=plan_line,
+                    plan_hash=plan_hash,
+                )
+        elif check.defaults:
+            saved = self._save_choices(prepared.declaration_key, version, check.defaults)
+            if saved is None:
+                return refused(CONFIRMATION_NOT_SAVED_REASON)
+            check = estimates.check_plan(plan, view, table, saved.choices_for(version))
+            if check.refusal or check.hold:
+                return refused(check.refusal or check.hold or "")
+        lowest = estimates.lowest_first(prepared.normalized_query)
+        try:
+            rows = estimates.estimate_rows(view, check, table, lowest_first=lowest)
+        except estimates.EstimateGrainError as e:
+            logger.error("estimate_rows_not_unique", group_dims=list(check.group_dims))
+            return refused(str(e))
+        analysis = estimates.estimate_answer(rows, check, compare=plan.intent == "COMPARE_GROUPS", lowest_first=lowest)
+        return QueryResult(
+            plan=plan,
+            issues=[],
+            result={"success": True, "estimates": True},
+            confidence=confidence,
+            run_key=None,
+            context=context,
+            analysis=analysis,
+            claim=present_analysis(analysis).get("claim"),
+            plan_hash=plan_hash,
+        )
+
+    def _save_choices(self, dataset_key: str | None, version: str, defaults: dict[str, Any]) -> Declarations | None:
+        """Store the totals the person confirmed for open dimensions; None when not stored."""
+
+        def change(declarations: Declarations) -> Declarations:
+            for column, value in defaults.items():
+                declarations = declarations.with_choice(
+                    DimensionChoice(column=column, value=value, dataset_version=version)
+                )
+            return declarations
+
+        store, key = self._store(dataset_key)
+        try:
+            saved = store.update(key, change)
+        except ContractStoreError as e:
+            logger.error("estimate_choice_not_saved", dataset_key=dataset_key, **error_fields(e))
+            return None
+        self._bump_state_generation()
+        logger.info("estimate_choice_saved", dataset_key=dataset_key, columns=sorted(defaults))
+        return saved
 
     def _store(self, dataset_key: str | None) -> tuple[DeclarationStore, str]:
         """The store and key for a dataset's declarations: in memory for this service when the
@@ -705,7 +897,7 @@ class QueryService:
         """
         findings = answer_checks.Findings()
         layer = self.semantic_layer
-        grain = answer_checks.grain_of(layer)
+        grain = self._grain(declarations, dataset_version)
         visits = grain.repeated and answer_checks.declared_visits(grain, declarations, dataset_version)
         findings.keyed, findings.visits = grain.key is not None, visits
         findings.key = grain.key
@@ -746,7 +938,7 @@ class QueryService:
     def _sync_layer_state(self, stored: Declarations, dataset_version: str | None) -> None:
         """Set what the layer counts by (patients once rows are declared visits) from the
         dataset's STORED declarations. Locked; never called with a question's stale copy."""
-        grain = answer_checks.grain_of(self.semantic_layer)
+        grain = self._grain(stored, dataset_version)
         visits = grain.repeated and answer_checks.declared_visits(grain, stored, dataset_version)
         self.semantic_layer.count_entity_key = grain.key if visits else None
 
