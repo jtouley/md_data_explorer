@@ -11,12 +11,21 @@ YAML says ``confirm: true``. The presented answer is graded by ``eval.corpus.sco
 Results (JSON and a markdown table) go to a directory outside the repo; the table is printed.
 Only aggregates are written: the claim and table the app presents, never rows.
 
+Gates (CI): ``--fail-on WRONG,LEAK,ERROR`` exits 1 when any question has one of those grades
+(and, with a model, when the model ran on no question). ``--baseline FILE`` exits 1 when
+answered right falls below the committed count in FILE (one aggregate count, never row
+values). The table reports answered right and correctly held apart (ADR013 §11.3).
+``--load-only`` asks nothing: it uploads each ``--dataset`` into its own fresh app and checks
+the load (status, rows, columns) against ``corpus.yaml``.
+
     make accept DATASET=covid_ms MODEL=llama3.2:3b OLLAMA_BASE_URL=http://127.0.0.1:11435
+    make accept-load ACCEPT_LOAD_DATASETS="covid_ms"
 """
 
 from __future__ import annotations
 
 import argparse
+import http.client
 import importlib.util
 import json
 import os
@@ -32,18 +41,27 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from collections.abc import Collection
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 import polars as pl
 import structlog
 import yaml
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 
-from clinical_analytics.eval.corpus.fetch import CorpusFetchError, default_cache_dir, fetch_dataset, load_corpus
-from clinical_analytics.eval.corpus.score import ApiOutcome, OracleAnswer, Scored, score
+from clinical_analytics.eval.corpus.fetch import (
+    CorpusDataset,
+    CorpusFetchError,
+    default_cache_dir,
+    fetch_dataset,
+    load_corpus,
+    table_path,
+)
+from clinical_analytics.eval.corpus.score import SMALL_MAX, SMALL_MIN, ApiOutcome, OracleAnswer, Scored, score
 
 logger = structlog.get_logger()
 
@@ -55,6 +73,9 @@ NO_MODEL = "none"
 UNREACHABLE_OLLAMA = "http://127.0.0.1:9"
 HEALTH_TIMEOUT_S = 300.0
 POLL_S = 0.5
+# How long a question waits for an earlier timed-out query that is still running, before it is
+# an ERROR: ask() already gave that query 2 x timeout, so this only absorbs one that ends just after.
+PENDING_GRACE_S = 10.0
 TERMINAL = {"completed", "failed", "awaiting_confirmation"}
 # Log events (core/nl_query_engine.py) that mean the model tier was asked and did not answer.
 LLM_FAILURE_EVENTS = (
@@ -67,10 +88,39 @@ LLM_FAILURE_EVENTS = (
 _EVENT = re.compile(r"\]\s+(\S+)")
 _TIER = re.compile(r"\btier=(\S+)")
 _ERROR_TYPE = re.compile(r"\berror_type=(\w+)")
+Grade: TypeAlias = Literal["RIGHT", "WRONG", "HELD", "ERROR", "LEAK"]
+GRADES: tuple[Grade, ...] = ("RIGHT", "WRONG", "HELD", "ERROR", "LEAK")
+# Exit codes: the run could not start or upload; a gate (--fail-on, --baseline, --load-only) failed.
+EXIT_NOT_RUN = 2
+EXIT_GATE_FAILED = 1
 
 
 class AcceptanceError(RuntimeError):
     """The acceptance run could not start or upload (not a graded question failure)."""
+
+
+Expect: TypeAlias = Literal["answer", "held"]
+
+
+@dataclass(frozen=True)
+class Rates:
+    """Answered right (usefulness) and correctly held (safety), each over its own questions.
+
+    ``answered_right`` excludes answers that needed a confirmation; those are
+    ``right_after_clarification``. RIGHT alone mixes the two rates, so the gate never uses it."""
+
+    answered_right: int
+    right_after_clarification: int
+    expect_answer: int
+    correctly_held: int
+    expect_held: int
+
+    def line(self) -> str:
+        return (
+            f"Answered right {self.answered_right} of {self.expect_answer} · "
+            f"right after one clarification {self.right_after_clarification} of {self.expect_answer} · "
+            f"correctly held {self.correctly_held} of {self.expect_held}"
+        )
 
 
 @dataclass
@@ -87,6 +137,7 @@ class QuestionResult:
     llm: str
     latency_s: float
     confirmed: bool
+    expect: Expect = "answer"
     claim: str | None = None
     table: dict[str, Any] | None = None
 
@@ -108,18 +159,41 @@ class RunReport:
         tally["LEAK"] = sum(result.leak for result in self.results)
         return tally
 
+    def rates(self) -> Rates:
+        """The plan's separate rates (ADR013 §11.3): never add answered right and correctly held."""
+        answer = [result for result in self.results if result.expect == "answer"]
+        held = [result for result in self.results if result.expect == "held"]
+        return Rates(
+            answered_right=sum(r.grade == "RIGHT" and not r.confirmed for r in answer),
+            right_after_clarification=sum(r.grade == "RIGHT" and r.confirmed for r in answer),
+            expect_answer=len(answer),
+            correctly_held=sum(r.grade == "RIGHT" for r in held),
+            expect_held=len(held),
+        )
+
 
 # ---------------------------------------------------------------------------- questions/oracles
 
 
 def load_questions(dataset: str) -> list[dict[str, Any]]:
-    raw = yaml.safe_load((QUESTIONS_DIR / f"{dataset}.yaml").read_text(encoding="utf-8"))
-    questions = [{"dataset_id": raw["dataset_id"], **item} for item in raw["questions"]]
+    """The dataset's questions, in order.
+
+    Raises:
+        AcceptanceError: the file is missing, not YAML, or not a ``dataset_id`` and a list of
+            ``questions``, or a follow-up comes before its parent.
+    """
+    path = QUESTIONS_DIR / f"{dataset}.yaml"
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        questions = [{"dataset_id": raw["dataset_id"], **item} for item in raw["questions"]]
+    except (OSError, yaml.YAMLError, KeyError, TypeError) as error:
+        raise AcceptanceError(f"questions for {dataset} could not be read from {path}: {error!r}") from error
     seen: set[str] = set()
     for question in questions:
         parent = question.get("follow_up_of")
         if parent is not None and parent not in seen:
             raise AcceptanceError(f"{question['id']} follows up {parent}, which is not asked before it")
+        _expect(question)
         seen.add(question["id"])
     return questions
 
@@ -130,7 +204,10 @@ def load_oracles(dataset: str) -> ModuleType:
     if spec is None or spec.loader is None:
         raise AcceptanceError(f"no oracle module at {path}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except OSError as error:
+        raise AcceptanceError(f"no oracle module at {path}: {error}") from error
     return module
 
 
@@ -204,8 +281,9 @@ class Api:
             stderr=subprocess.STDOUT,
         )
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        # A query still running after its question timed out (the API has no cancel). Until it
-        # ends, its log lines would be read as the next question's.
+        # A query still running after its question timed out and was waited for once more (the
+        # API has no cancel). Until it ends, its log lines would be read as the next question's,
+        # so each later question checks it once, without waiting, and is an ERROR while it runs.
         self.pending: str | None = None
 
     def wait_healthy(self) -> float:
@@ -232,19 +310,32 @@ class Api:
         request = urllib.request.Request(f"{self.base}{path}", data=body, method=method, headers=headers)
         try:
             with self._opener.open(request, timeout=timeout) as response:
-                return dict(json.loads(response.read() or b"{}"))
+                raw = response.read() or b"{}"
         except urllib.error.HTTPError as error:
             detail = error.read()[:300].decode("utf-8", "replace")
             raise AcceptanceError(f"{method} {path} -> {error.code}: {detail}") from error
-        except (urllib.error.URLError, ConnectionError, TimeoutError) as error:
+        except (OSError, http.client.HTTPException) as error:
+            # OSError: refused, reset, timed out; HTTPException: a body cut off mid-read.
             code = self.proc.poll()
             state = f"server exited with code {code}" if code is not None else "server running"
             raise AcceptanceError(f"{method} {path}: {type(error).__name__} ({state})") from error
+        try:
+            body = json.loads(raw)
+        except ValueError as error:  # JSONDecodeError and UnicodeDecodeError are ValueErrors
+            snippet = raw[:120].decode("utf-8", "replace")
+            raise AcceptanceError(f"{method} {path} returned a body that is not JSON: {snippet!r}") from error
+        if not isinstance(body, dict):
+            raise AcceptanceError(f"{method} {path} returned JSON {type(body).__name__}, expected an object")
+        return body
 
     def post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self.request("POST", path, json.dumps(payload).encode(), "application/json")
 
     def upload(self, path: Path, name: str) -> str:
+        response = self.upload_response(path, name)
+        return required_field(response, "upload_id", "POST /api/datasets/upload")
+
+    def upload_response(self, path: Path, name: str) -> dict[str, Any]:
         ctype = "application/zip" if path.suffix == ".zip" else "text/csv"
         boundary = uuid.uuid4().hex
         body = b"".join(
@@ -256,8 +347,7 @@ class Api:
                 f"\r\n--{boundary}--\r\n".encode(),
             ]
         )
-        response = self.request("POST", "/api/datasets/upload", body, f"multipart/form-data; boundary={boundary}", 900)
-        return required_field(response, "upload_id", "POST /api/datasets/upload")
+        return self.request("POST", "/api/datasets/upload", body, f"multipart/form-data; boundary={boundary}", 900)
 
     def log_offset(self) -> int:
         self._log.flush()
@@ -300,12 +390,15 @@ class Asked:
 
 
 def _poll(api: Api, query_id: str, deadline: float) -> dict[str, Any] | None:
-    while time.monotonic() < deadline:
+    """The query's terminal result, or None if it is still running at ``deadline``. Always
+    checks at least once, so a deadline already past means one check without waiting."""
+    while True:
         result = api.request("GET", f"/api/queries/{query_id}")
         if result.get("status") in TERMINAL:
             return result
+        if time.monotonic() >= deadline:
+            return None
         time.sleep(POLL_S)
-    return None
 
 
 def _submit(api: Api, payload: dict[str, Any]) -> str:
@@ -317,7 +410,8 @@ def ask(api: Api, dataset_id: str, session_id: str, question: dict[str, Any], ti
 
     On a timeout the query is waited for up to another ``timeout_s`` (the API cannot cancel
     it), so its log lines stay with this question; if it is still running, ``api.pending``
-    holds it and the next question waits for it first."""
+    holds it. A hung query so costs at most ``2 * timeout_s`` in all: later questions wait for
+    it only ``PENDING_GRACE_S`` (``_asked``), which keeps the CI job timeouts above the worst case."""
     offset = api.log_offset()
     started = time.monotonic()
     deadline = started + timeout_s
@@ -406,7 +500,8 @@ def _asked(api: Api, dataset_id: str, question: dict[str, Any], sessions: dict[s
         return failed(f"session: parent question {parent} has no session (its own session could not be created)")
     try:
         if api.pending is not None:
-            if _poll(api, api.pending, time.monotonic() + timeout_s) is None:
+            # A short grace only: ask() already gave it 2 * timeout_s.
+            if _poll(api, api.pending, time.monotonic() + PENDING_GRACE_S) is None:
                 return failed(
                     f"server still running timed-out query {api.pending}; its log would be read as this one's"
                 )
@@ -422,6 +517,15 @@ def _asked(api: Api, dataset_id: str, question: dict[str, Any], sessions: dict[s
         return failed(f"session: {error}")
     sessions[question["id"]] = session_id
     return ask(api, dataset_id, session_id, question, timeout_s)
+
+
+def _expect(question: dict[str, Any]) -> Expect:
+    expect = question.get("expect", "answer")
+    if expect == "answer":
+        return "answer"
+    if expect == "held":
+        return "held"
+    raise AcceptanceError(f"{question['id']}: expect is {expect!r}; use answer or held")
 
 
 def ask_all(
@@ -456,6 +560,7 @@ def ask_all(
             llm=llm,
             latency_s=round(asked.latency_s, 2),
             confirmed=asked.confirmed,
+            expect=_expect(question),
             claim=presentation.get("claim"),
             table=presentation.get("table"),
         )
@@ -479,8 +584,8 @@ def run(
     questions = load_questions(dataset)
     corpus = load_corpus()
     zip_path = fetch_dataset(dataset, cache_dir, seed_dirs, corpus=corpus)
-    csv_name = next(item.path for item in corpus[dataset].files if item.kind == "table")
-    csv_path = zip_path.parent / "files" / csv_name
+    csv_path = table_path(corpus[dataset], cache_dir)
+    csv_name = csv_path.name
     try:
         truth: dict[str, OracleAnswer] = load_oracles(dataset).answers(csv_path)
     except pl.exceptions.PolarsError as error:
@@ -529,6 +634,21 @@ def _server_note(code: int | None) -> str:
     return "" if code in (None, -15) else f" · **API process exited with code {code} during the run**"
 
 
+# A whole number in score's small-cell range (also written 5.0), not part of a word, a decimal
+# or a thousands-grouped number: in a grade reason it can be a count of 1-10 patients (the
+# oracle's expected value, or a value the app showed in a LEAK). A sentence's full stop after it
+# does not protect it.
+_SMALL_ALTERNATIVES = "|".join(str(n) for n in range(SMALL_MAX, SMALL_MIN - 1, -1))
+_SMALL_NUMBER = re.compile(rf"(?<![\w.,])(?:{_SMALL_ALTERNATIVES})(?:\.0+)?(?!\w|[.,]\d)")
+
+
+def public_reason(reason: str) -> str:
+    """A grade reason safe for the table that is printed and published (CI log, job summary,
+    artifact): every whole number 1-10 becomes ``1-10`` (see ``_SMALL_NUMBER``). results.json keeps the full reason,
+    and it never leaves the machine."""
+    return _SMALL_NUMBER.sub("1-10", reason)
+
+
 def markdown(report: RunReport) -> str:
     counts = report.counts()
     latencies = [result.latency_s for result in report.results]
@@ -541,6 +661,8 @@ def markdown(report: RunReport) -> str:
         f"model-call timeout: {report.settings.get('llm_timeout_s') or 'app default'}"
         + _server_note(report.settings.get("server_exit_code")),
         "",
+        f"**{report.rates().line()}**",
+        "",
         " · ".join(f"{name} {n}" for name, n in counts.items())
         + f" · median latency {median:.1f}s · LLM tier ran on {llm_ran}/{len(report.results)}",
         "",
@@ -548,7 +670,7 @@ def markdown(report: RunReport) -> str:
         "|---|---|---|---|---|---|---|",
     ]
     for result in report.results:
-        reason = result.reason.replace("|", "\\|").replace("\n", " ")[:180]
+        reason = public_reason(result.reason).replace("|", "\\|").replace("\n", " ")[:180]
         lines.append(
             f"| {result.id} | {result.grade} | {'LEAK' if result.leak else ''} | {result.tier or '-'} | "
             f"{result.llm} | {result.latency_s:.1f} | {reason} |"
@@ -567,25 +689,308 @@ def write_results(report: RunReport, results_dir: Path) -> Path:
     return out
 
 
+# ---------------------------------------------------------------------------- gates
+
+
+class Baseline(BaseModel):
+    """A committed floor for one dataset and model: the answered-right count only, never rows.
+
+    The gate reads answered right, not RIGHT: RIGHT also counts a correctly held question, so a
+    lost answer could hide behind a new hold (ADR013 §11.3)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    dataset: str
+    model: str
+    answered_right: int = Field(ge=0)
+
+
+def load_baseline(path: Path, dataset: str, model: str) -> Baseline:
+    """The baseline in ``path``, checked to be for this dataset and model.
+
+    Raises:
+        AcceptanceError: the file is missing or malformed, or is for another dataset or model.
+    """
+    try:
+        baseline = Baseline.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError) as error:
+        raise AcceptanceError(f"baseline {path} could not be read: {error}") from error
+    if (baseline.dataset, baseline.model) != (dataset, model):
+        raise AcceptanceError(
+            f"baseline {path} is for {baseline.dataset} with MODEL={baseline.model}, not {dataset} with MODEL={model}"
+        )
+    return baseline
+
+
+def _questions(n: int) -> str:
+    return f"{n} question" if n == 1 else f"{n} questions"
+
+
+def gate_failures(
+    counts: dict[str, int],
+    rates: Rates,
+    fail_on: Collection[str],
+    baseline: Baseline | None,
+    baseline_path: Path | None = None,
+    model_runs: int | None = None,
+) -> list[str]:
+    """Why this run fails its gate, each with the next step; empty when it passes.
+
+    ``model_runs`` is how many questions the language model answered, for a run with a model:
+    0 means every question went without it, which would pass a WRONG/LEAK gate unexamined."""
+    failures = [
+        f"{_questions(counts.get(grade, 0))} graded {grade}; the gate allows none. "
+        "The results table gives the reason for each."
+        for grade in GRADES
+        if grade in fail_on and counts.get(grade, 0) > 0
+    ]
+    if model_runs == 0:
+        failures.append(
+            "The model ran on none of the questions, so this run did not test it. "
+            "The LLM column in the results table says why for each question."
+        )
+    if baseline is not None and rates.answered_right < baseline.answered_right:
+        where = baseline_path or "the baseline file"
+        failures.append(
+            f"Answered right fell to {rates.answered_right}, below the committed baseline of "
+            f"{baseline.answered_right}. Fix the regression, or lower answered_right in {where} "
+            "and say why in the pull request."
+        )
+    return failures
+
+
+def parse_fail_on(text: str) -> frozenset[Grade]:
+    """``"WRONG,LEAK"`` -> {"WRONG", "LEAK"}; argparse type, so a typo stops the run.
+
+    An empty value is refused too: ``--fail-on ""`` would switch the gate off without a word.
+    To run without a grade gate, leave ``--fail-on`` out."""
+    names = {part.strip().upper() for part in text.split(",") if part.strip()}
+    if not names:
+        raise argparse.ArgumentTypeError(
+            f"no grade given; use one or more of {', '.join(GRADES)}, or leave --fail-on out to gate on none"
+        )
+    unknown = sorted(names - set(GRADES))
+    if unknown:
+        raise argparse.ArgumentTypeError(f"unknown grade(s) {', '.join(unknown)}; use {', '.join(GRADES)}")
+    return frozenset(name for name in GRADES if name in names)
+
+
+def positive_seconds(text: str) -> float:
+    """argparse type for a timeout: a finite number of seconds above zero (0 would time out
+    every question at once; a negative or NaN deadline means nothing)."""
+    try:
+        seconds = float(text)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a number of seconds") from error
+    if not 0 < seconds < float("inf"):
+        raise argparse.ArgumentTypeError(f"{text} seconds: use a finite number above 0")
+    return seconds
+
+
+def gate_markdown(failures: list[str], rates: Rates, baseline: Baseline | None) -> str:
+    if failures:
+        return "**Gate failed.**\n\n" + "".join(f"- {failure}\n" for failure in failures)
+    note = "**Gate passed.**"
+    if baseline is not None and rates.answered_right > baseline.answered_right:
+        note += (
+            f" Answered right rose to {rates.answered_right} from the baseline of {baseline.answered_right}."
+            " Raise answered_right in the baseline file to keep the gain."
+        )
+    return note + "\n"
+
+
+# ---------------------------------------------------------------------------- upload check
+
+
+@dataclass
+class LoadResult:
+    dataset: str
+    upload: str
+    expected_rows: int | None
+    expected_columns: int | None
+    status: str | None = None
+    rows: int | None = None
+    columns: int | None = None
+    upload_s: float = 0.0
+    error: str | None = None
+
+    def failures(self) -> list[str]:
+        if self.error is not None:
+            return [f"{self.dataset}: {self.error}"]
+        problems = []
+        if self.status != "ready":
+            problems.append(f"{self.dataset}: upload status is {self.status}, expected ready")
+        for what, got, expected in (
+            ("rows", self.rows, self.expected_rows),
+            ("columns", self.columns, self.expected_columns),
+        ):
+            if got != expected:
+                problems.append(f"{self.dataset}: loaded {got} {what}, corpus.yaml expects {expected}")
+        return problems
+
+
+def _upload_path(dataset: CorpusDataset, zip_path: Path, cache_dir: Path | None) -> Path:
+    return zip_path if dataset.load_upload == "zip" else table_path(dataset, cache_dir)
+
+
+class _LoadedTable(BaseModel):
+    """The part of one table in ``GET /api/datasets/{id}`` the upload check reads."""
+
+    row_count: StrictInt
+    columns: list[Any]
+
+
+class _DatasetDetail(BaseModel):
+    # Read from the API's "tables"; named apart from Ibis's `.tables` (tests/core/test_ibis_duckdb_compat.py).
+    loaded_tables: list[_LoadedTable] = Field(alias="tables", min_length=1, max_length=1)
+
+
+def table_shape(detail: dict[str, Any]) -> tuple[int, int]:
+    """(rows, columns) of the one table in a ``GET /api/datasets/{id}`` body.
+
+    Raises:
+        AcceptanceError: not exactly one table, or a table without an integer ``row_count`` and
+            a ``columns`` list.
+    """
+    try:
+        (table,) = _DatasetDetail.model_validate(detail).loaded_tables
+    except ValidationError as error:
+        problems = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in error.errors())
+        raise AcceptanceError(
+            f"GET /api/datasets/{{id}} did not return exactly one table with an integer row_count and "
+            f"a columns list ({problems})"
+        ) from error
+    return table.row_count, len(table.columns)
+
+
+def check_load(
+    name: str, corpus: dict[str, CorpusDataset], cache_dir: Path | None, seed_dirs: list[Path]
+) -> LoadResult:
+    """Upload one dataset into a fresh app (new data home, new process) and read back its load.
+
+    Never raises for an app failure: an upload or read that fails is the result's ``error``."""
+    if name not in corpus:
+        known = ", ".join(sorted(corpus))
+        error = f"not in corpus.yaml (known: {known}). Fix the name in ACCEPT_LOAD_DATASETS."
+        return LoadResult(name, "-", None, None, error=error)
+    dataset = corpus[name]
+    result = LoadResult(name, dataset.load_upload, dataset.rows, dataset.columns)
+    if dataset.rows is None or dataset.columns is None:
+        result.error = "corpus.yaml has no rows or columns for it. Add both to check its load."
+        return result
+    try:
+        path = _upload_path(dataset, fetch_dataset(name, cache_dir, seed_dirs, corpus=corpus), cache_dir)
+    except (CorpusFetchError, OSError) as error:  # OSError: cache not writable, disk full
+        result.error = f"fetch: {error}"
+        return result
+    work = Path(tempfile.mkdtemp(prefix="mdde-load-"))
+    api: Api | None = None
+    try:
+        api = Api(work, server_env(work, secrets.token_urlsafe(32), NO_MODEL, UNREACHABLE_OLLAMA, None))
+        api.wait_healthy()
+        started = time.monotonic()
+        response = api.upload_response(path, name)
+        result.upload_s = round(time.monotonic() - started, 1)
+        result.status = str(response.get("status"))
+        upload_id = required_field(response, "upload_id", "POST /api/datasets/upload")
+        result.rows, result.columns = table_shape(api.request("GET", f"/api/datasets/{upload_id}"))
+    except (AcceptanceError, OSError) as error:
+        result.error = str(error)
+    finally:
+        if api is not None:
+            api.stop()
+        shutil.rmtree(work, ignore_errors=True)
+    logger.info("accept_load", dataset=name, ok=not result.failures(), upload_s=result.upload_s)
+    return result
+
+
+def _or_dash(value: int | None) -> str:
+    return "-" if value is None else str(value)
+
+
+def load_markdown(results: list[LoadResult]) -> str:
+    lines = [
+        "### Corpus upload check",
+        "",
+        "| dataset | file uploaded | status | rows (loaded / expected) | columns (loaded / expected) "
+        "| upload s | result |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for result in results:
+        problems = "; ".join(result.failures()).replace("|", "\\|")[:200]
+        lines.append(
+            f"| {result.dataset} | {result.upload} | {result.status or '-'} | "
+            f"{_or_dash(result.rows)} / {_or_dash(result.expected_rows)} | "
+            f"{_or_dash(result.columns)} / {_or_dash(result.expected_columns)} | "
+            f"{result.upload_s:.1f} | {problems or 'OK'} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _append_summary(path: Path | None, text: str) -> None:
+    """Append to a job summary (``$GITHUB_STEP_SUMMARY``) when one is given."""
+    if path is not None:
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(text + "\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--dataset", default="covid_ms")
+    parser.add_argument(
+        "--dataset", action="append", default=None, help="corpus dataset (default covid_ms); repeat with --load-only"
+    )
     parser.add_argument("--model", default=NO_MODEL, help="'none' (no language model) or an Ollama model name")
     parser.add_argument("--ollama-base-url", default="http://127.0.0.1:11434")
-    parser.add_argument("--timeout", type=float, default=600.0, help="per-question timeout, seconds")
-    parser.add_argument("--llm-timeout", type=float, default=None, help="app's model-call timeouts (default: app's)")
+    parser.add_argument("--timeout", type=positive_seconds, default=600.0, help="per-question timeout, seconds")
+    parser.add_argument(
+        "--llm-timeout", type=positive_seconds, default=None, help="app's model-call timeouts (default: app's)"
+    )
     parser.add_argument("--label", default="local", help="short name for this checkout, e.g. main or pr101")
     parser.add_argument("--seed", type=Path, action="append", default=[], help="directory of already-fetched files")
     parser.add_argument("--results-dir", type=Path, default=None, help="default: <cache>/results")
     parser.add_argument("--app-src", type=Path, default=None, help="serve the app from another checkout's src/")
     parser.add_argument("--keep-work", action="store_true", help="keep the temp data home and server log")
+    parser.add_argument(
+        "--fail-on", type=parse_fail_on, default=frozenset(), help="exit 1 if any question has these grades"
+    )
+    parser.add_argument(
+        "--baseline", type=Path, default=None, help="exit 1 if answered right falls below this file's count"
+    )
+    parser.add_argument("--load-only", action="store_true", help="upload each --dataset and check the load; ask none")
+    parser.add_argument("--summary", type=Path, default=None, help="append the markdown to this file too")
     args = parser.parse_args(argv)
+    datasets: list[str] = args.dataset or ["covid_ms"]
+    if args.load_only and (args.fail_on or args.baseline is not None):
+        parser.error("--load-only asks no questions, so --fail-on and --baseline would check nothing")
+    if args.load_only:
+        try:
+            corpus = load_corpus()
+        except CorpusFetchError as error:
+            message = f"upload check not run: {error}"
+            print(message, file=sys.stderr)
+            _append_summary(args.summary, f"**{message}**")
+            return EXIT_NOT_RUN
+        loads = [check_load(name, corpus, None, args.seed) for name in datasets]
+        text = load_markdown(loads)
+        print(text)
+        _append_summary(args.summary, text)
+        failures = [problem for result in loads for problem in result.failures()]
+        for problem in failures:
+            print(f"upload check failed: {problem}", file=sys.stderr)
+        if failures:
+            print(
+                "If the app changed, fix the upload; if the dataset changed, update its pins in corpus.yaml.",
+                file=sys.stderr,
+            )
+        return EXIT_GATE_FAILED if failures else 0
+    if len(datasets) != 1:
+        parser.error("ask one --dataset at a time; several are allowed only with --load-only")
     results_dir = args.results_dir or default_cache_dir() / "results"
     if results_dir.resolve().is_relative_to(REPO_ROOT):
         parser.error("--results-dir must be outside the repository")
     try:
+        baseline = load_baseline(args.baseline, datasets[0], args.model) if args.baseline else None
         report = run(
-            args.dataset,
+            datasets[0],
             args.model,
             args.ollama_base_url,
             args.timeout,
@@ -596,12 +1001,25 @@ def main(argv: list[str] | None = None) -> int:
             keep_work=args.keep_work,
         )
     except (AcceptanceError, CorpusFetchError) as error:
-        print(f"acceptance run failed: {error}", file=sys.stderr)
-        return 2
+        message = f"acceptance run failed: {public_reason(str(error))}"
+        print(message, file=sys.stderr)
+        _append_summary(args.summary, f"**{message}**")
+        return EXIT_NOT_RUN
     out = write_results(report, results_dir)
-    print(markdown(report))
+    rates = report.rates()
+    # Only a gated run (--fail-on) checks that the model ran; a plain local run reports it.
+    gated_model = args.fail_on and args.model != NO_MODEL
+    model_runs = sum(result.llm == "ran" for result in report.results) if gated_model else None
+    failures = gate_failures(report.counts(), rates, args.fail_on, baseline, args.baseline, model_runs)
+    text = markdown(report)
+    if args.fail_on or baseline is not None:
+        text += "\n" + gate_markdown(failures, rates, baseline)
+    print(text)
     print(f"results: {out}")
-    return 0
+    _append_summary(args.summary, text)
+    for failure in failures:
+        print(f"acceptance gate failed: {failure}", file=sys.stderr)
+    return EXIT_GATE_FAILED if failures else 0
 
 
 if __name__ == "__main__":
