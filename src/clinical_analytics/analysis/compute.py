@@ -12,7 +12,13 @@ import numpy as np
 import polars as pl
 from scipy import stats
 
-from clinical_analytics.analysis.grouping import SMALL_VALUE_MODEL_REFUSAL, grouping_problem, is_small_level
+from clinical_analytics.analysis.grouping import (
+    SMALL_VALUE_MODEL_REFUSAL,
+    TERM_NAME_CLASH_MODEL_REFUSAL,
+    grouping_problem,
+    is_small_level,
+    predictor_model_refusal,
+)
 from clinical_analytics.analysis.numeric_text import statistic_refusal
 from clinical_analytics.analysis.sample_floors import (
     MIN_COMPARISON_N,
@@ -879,8 +885,13 @@ def _code_text(series: pl.Series) -> pl.Series:
 
 def _level_sizes(values: pl.Series, keys: pl.Series | None = None) -> dict[Any, int]:
     """Patients holding each present value of ``values``: rows, or with ``keys`` (the patient
-    key of each row, when rows are visits) the distinct keys. A row with no key is no patient,
-    so a level's count can only fall, never rise (fail closed)."""
+    key of each row, when rows are visits) the fewest patients the rows can be.
+
+    A row with no key is still someone, who may or may not be a keyed patient of the same value,
+    so a value counts its distinct keys and never fewer than 1. That is a lower bound: a value
+    whose count could be 1-10 is counted as 1-10, never as 0 or 11+ (fail closed). Nine visits
+    with no key are 1 patient, not 0; 11 keyed patients and some unkeyed visits are 11.
+    """
     if keys is None:
         counts = values.drop_nulls().alias("value").value_counts(name="__n")
     else:
@@ -888,7 +899,7 @@ def _level_sizes(values: pl.Series, keys: pl.Series | None = None) -> dict[Any, 
             pl.DataFrame({"value": values, "key": keys})
             .drop_nulls("value")
             .group_by("value")
-            .agg(pl.col("key").drop_nulls().n_unique().alias("__n"))
+            .agg(pl.col("key").drop_nulls().n_unique().clip(lower_bound=1).alias("__n"))
         )
     return dict(zip(counts.get_column("value").to_list(), counts.get_column("__n").to_list(), strict=True))
 
@@ -907,6 +918,13 @@ def _ambiguous_event_message(column: str, series: pl.Series, keys: pl.Series | N
     )
 
 
+def _two_valued(series: pl.Series) -> bool:
+    """At most two distinct values. A numeric predictor with two values (dose 5 or 10 mg, grade
+    0 or 3) is fitted as a slope, but with an intercept that slope is a two-level comparison: its
+    odds ratio rests on, and gives back, the patients at each value just like a 0/1 term."""
+    return series.drop_nulls().n_unique() <= 2
+
+
 def _term_sizes(
     frame: pl.DataFrame, kinds: Mapping[str, VariableKind], categorical: list[str], keys: pl.Series | None
 ) -> dict[str, int | None]:
@@ -917,8 +935,8 @@ def _term_sizes(
 
     A level held by 1-10 patients would be named by its term (or, for a 0/1 predictor, by the
     column) beside an odds ratio that rests on those patients; a reference level that small is
-    behind every other level's odds ratio. The sizes are the one source of the refusal
-    (``compute_predictor_analysis``) and of what the presenter shows.
+    behind every other level's odds ratio. With ``_cell_sizes`` they are recorded in the payload
+    and decided by ``predictor_model_refusal``, in compute and again in the presenter.
 
     ``frame``: the complete cases the model is fitted on, before indicators are made; ``kinds``:
     ``classify_variable`` of each predictor; ``keys``: the patient key of each row of ``frame``
@@ -932,10 +950,64 @@ def _term_sizes(
             sizes.update(
                 {f"{column}_{level}": min(n, reference) for level, n in levels.items() if level != min(levels)}
             )
-        elif kind == "binary":
+        elif _coded(frame, column, kind, categorical):
             sizes[column] = min(_level_sizes(frame[column], keys).values())
         else:
             sizes[column] = None
+    return sizes
+
+
+def _coded(frame: pl.DataFrame, column: str, kind: VariableKind, categorical: list[str]) -> bool:
+    """Whether ``column`` enters the model as levels (indicators, a 0/1 term, or a slope over two
+    values), so its terms rest on the patients at each level. A slope over three or more values
+    names no level."""
+    return column in categorical or kind == "binary" or _two_valued(frame[column])
+
+
+def _cell_sizes(
+    frame: pl.DataFrame,
+    kinds: Mapping[str, VariableKind],
+    categorical: list[str],
+    outcome_col: str,
+    keys: pl.Series | None,
+) -> dict[str, int | None]:
+    """For each term of ``_term_sizes``, the fewest patients holding one of its levels with one
+    outcome value: the term's own level and the level it is compared with (for a categorical, its
+    reference; for a 0/1 or two-valued predictor, both values). None for a slope.
+
+    Every level and the event total can be large while a level's events are few (328 and 813
+    patients, 15 events, 9 and 6 of them by level). The odds ratio and its CI, with level and
+    event totals that other answers show, give those cells back, so a cell of 1-10 withholds the
+    model (``predictor_model_refusal``). A combination nobody has is no cell (0 is not small).
+    ``frame``: complete cases with the outcome already 0/1.
+    """
+    outcome = frame[outcome_col].cast(pl.Utf8)
+    sizes: dict[str, int | None] = {}
+    for column, kind in kinds.items():
+        if not _coded(frame, column, kind, categorical):
+            sizes[column] = None
+            continue
+        level = _code_text(frame[column]) if column in categorical else frame[column].cast(pl.Utf8)
+        # One value per (level, outcome) cell; the outcome is "0" or "1", so the joined text
+        # is never ambiguous.
+        cells = pl.DataFrame({"level": level}).with_columns(
+            pl.concat_str([pl.col("level"), outcome], separator="\x1f").alias("cell")
+        )
+        level_of = dict(cells.unique().select("cell", "level").iter_rows())
+        per_level: dict[str, int] = {}
+        for cell, n in _level_sizes(cells["cell"], keys).items():
+            per_level[level_of[cell]] = min(n, per_level.get(level_of[cell], n))
+        if column in categorical:
+            reference = min(per_level)
+            sizes.update(
+                {
+                    f"{column}_{value}": min(n, per_level[reference])
+                    for value, n in per_level.items()
+                    if value != reference
+                }
+            )
+        else:
+            sizes[column] = min(per_level.values())
     return sizes
 
 
@@ -945,11 +1017,16 @@ def compute_predictor_analysis(
     """
     Logistic regression of a binary outcome on the named predictors.
 
-    A model is refused when a predictor level, a 0/1 predictor's value or an outcome value is
-    held by 1-10 patients (``_term_sizes``): its term or claim would name them. Folding the
+    A model is refused when a predictor level, a two-valued predictor's value or an outcome value
+    is held by 1-10 patients (``_term_sizes``): its term or claim would name them. Folding the
     level into "Other" changes the model, so it is refused instead, naming no column or level.
+    It is also refused when every one of those is large but a predictor value holds 1-10
+    patients with one outcome value (``_cell_sizes``): the odds ratio and its CI, with totals
+    shown elsewhere, give that cell back. Both sizes are returned (``term_sizes``,
+    ``cell_sizes``) and decided by ``predictor_model_refusal``, the rule the presenter applies.
     ``entity_key``: the patient key when rows are visits (``SemanticLayer.count_entity_key``);
-    the sizes then count distinct patients, never rows.
+    the sizes then count distinct patients, never rows (``_level_sizes``: a row with no key
+    still counts as a patient).
 
     The outcome is recoded explicitly to 0/1 and the modelled event level is reported, so a
     1/2-coded or text outcome is never fitted on raw codes. Coded categorical predictors
@@ -1020,12 +1097,18 @@ def compute_predictor_analysis(
     kinds = {p: classify_variable(analysis_df[p]) for p in predictors}
     categorical = [p for p in predictors if _needs_indicators(analysis_df[p], kinds[p])]
     term_sizes = _term_sizes(analysis_df, kinds, categorical, keys)
-    if any(n is not None and is_small_level(n) for n in term_sizes.values()):
-        return {**base, "error": SMALL_VALUE_MODEL_REFUSAL}
+    cell_sizes = _cell_sizes(analysis_df, kinds, categorical, outcome_col, keys)
+    refusal = predictor_model_refusal(term_sizes, term_sizes, cell_sizes)
+    if refusal is not None:
+        return {**base, "error": refusal}
     analysis_df_pd = analysis_df.with_columns([_code_text(analysis_df[c]) for c in categorical]).to_pandas()
     if categorical:
         analysis_df_pd = pd.get_dummies(analysis_df_pd, columns=categorical, drop_first=True, dtype=int)
     model_predictors = [c for c in analysis_df_pd.columns if c != outcome_col]
+    if sorted(model_predictors) != sorted(term_sizes):
+        # Two predictors made one term name (a column "site_West" beside "site" with a level
+        # West): the sizes stored under it are one predictor's, not the other's (fail closed).
+        return {**base, "error": TERM_NAME_CLASH_MODEL_REFUSAL}
 
     try:
         _, summary_df = run_logistic_regression(analysis_df_pd, outcome_col, model_predictors)
@@ -1057,6 +1140,7 @@ def compute_predictor_analysis(
         "summary": summary_dict,
         "significant_predictors": significant_predictors,
         "term_sizes": term_sizes,
+        "cell_sizes": cell_sizes,
         "schema": {col: str(dtype) for col, dtype in summary_df.dtypes.items()},
     }
 

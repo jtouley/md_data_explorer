@@ -499,6 +499,75 @@ def _visit_service(make_semantic_layer: Any, frame: pl.DataFrame) -> QueryServic
     return _service(make_semantic_layer, frame, declarations=store)
 
 
+def _visits_sex_varies(differing: int = 3) -> pl.DataFrame:
+    """60 patients x 2 visits. positive and age are one value per patient; sex is too, except for
+    the first ``differing`` patients, who have F at one visit and M at the other."""
+    patients = [f"P{index:03d}" for index in range(60)]
+    first = pl.DataFrame(
+        {
+            "patient_id": patients,
+            "sex": ["F" if index % 2 else "M" for index in range(60)],
+            "positive": ["yes" if index % 4 == 0 else "no" for index in range(60)],
+            "age": [30 + index for index in range(60)],
+        }
+    )
+    second = first.with_columns(
+        pl.when(pl.int_range(pl.len()) < differing)
+        .then(pl.when(pl.col("sex") == "F").then(pl.lit("M")).otherwise(pl.lit("F")))
+        .otherwise(pl.col("sex"))
+        .alias("sex")
+    )
+    return pl.concat([first, second])
+
+
+class TestGroupedShareAtVisitGrain:
+    """A share asked "by <group>" is a rate plan, so the visit-grain group check applies: a
+    patient whose sex differs between visits would be counted in both groups (n=43 of 40)."""
+
+    @pytest.mark.parametrize(
+        "filters",
+        [
+            pytest.param([], id="no_filter"),
+            pytest.param([FilterSpec(column="age", operator="<", value=70)], id="with_filter"),
+        ],
+    )
+    def test_ask_groupedShare_groupVariesWithinPatient_refused(
+        self, make_semantic_layer: Any, filters: list[FilterSpec]
+    ) -> None:
+        # Arrange: the plan as the parser builds it, a share with a grouping
+        service = _visit_service(make_semantic_layer, _visits_sex_varies())
+        plan = QueryPlan(
+            intent="COUNT",
+            proportion_column="positive",
+            proportion_value="yes",
+            group_by="sex",
+            filters=filters,
+            scope="filtered" if filters else "all",
+            confidence=0.99,
+        )
+
+        # Act
+        result = _ask(service, plan)
+
+        # Assert
+        assert _shown(result).startswith("REFUSED sex differs between rows of the same patient")
+
+    def test_ask_groupedShare_groupOnePerPatient_answersPerGroupInPatients(self, make_semantic_layer: Any) -> None:
+        # Arrange: no patient's sex differs, so the per-group share is a patient share
+        service = _visit_service(make_semantic_layer, _visits_sex_varies(differing=0))
+        plan = QueryPlan(
+            intent="COUNT", proportion_column="positive", proportion_value="yes", group_by="sex", confidence=0.99
+        )
+
+        # Act
+        result = _ask(service, plan)
+
+        # Assert: 30 patients per sex, never 60 visit rows
+        shown = _shown(result)
+        assert shown.startswith("ANSWER positive = yes by sex")
+        assert "n=60 patients" in shown
+
+
 class TestVisitGrainUnits:
     def test_ask_shareOfPatientLevelEventAtVisitGrain_countsPatients(self, make_semantic_layer: Any) -> None:
         # Arrange: by visits the share would be 70 of 200 (35.0%); by patients it is 40 of 170

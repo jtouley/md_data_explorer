@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- macOS 13 (Ventura) or later on Apple silicon or Intel; Windows 10/11 x64; Linux x86_64/aarch64 with glibc 2.28+. These are the platforms ONNX Runtime 1.23.2, the embedding runtime, ships wheels for (macOS 12 has none for Python 3.13). See `docs/development/packaging.md`.
+- macOS 13 (Ventura) or later on Apple silicon or Intel; Windows 10/11 x64; Linux x86_64/aarch64 with glibc 2.28+. These are the platforms ONNX Runtime 1.23 (held below 1.24), the embedding runtime, ships wheels for (macOS 12 has none for Python 3.13). See `docs/development/packaging.md`.
 - [uv](https://docs.astral.sh/uv/) - installs a supported Python for you (`pyproject.toml` requires `>=3.11,<3.14`)
 - Node.js 22.12 or later and npm, for the Electron desktop app (Electron 43 needs it; CI uses Node 22)
 - `make` on macOS/Linux

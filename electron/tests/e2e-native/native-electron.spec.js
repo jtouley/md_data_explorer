@@ -10,6 +10,8 @@ const API_URL = 'http://127.0.0.1:8000/health';
 process.env.CLINICAL_ANALYTICS_DEV_NO_AUTH = '1';
 process.env.CLINICAL_ANALYTICS_EXTERNAL_BACKEND = '1';
 const RENDERER_URL = 'http://localhost:5173';
+/** Preload for the main process that copies its stdout/stderr to a file (see the file). */
+const CAPTURE_MAIN_OUTPUT = require('node:path').join(__dirname, 'support', 'captureMainOutput.js');
 
 let apiProcess;
 let rendererProcess;
@@ -427,28 +429,37 @@ test.describe.serial('Native Electron binary harness', () => {
     // Arrange: a "python" that never serves, so the app stays on its startup window
     const fs = require('node:fs');
     const os = require('node:os');
-    const dir = fs.mkdtempSync(require('node:path').join(os.tmpdir(), 'ca-slow-python-'));
-    const slowPython = require('node:path').join(dir, 'python');
+    const path = require('node:path');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ca-slow-python-'));
+    const slowPython = path.join(dir, 'python');
     fs.writeFileSync(slowPython, '#!/bin/sh\nexec sleep 300\n', { mode: 0o755 });
+    // The main process copies its own stdout/stderr here from its first line: a listener on
+    // app.process().stdout attaches only after launch, and misses what was printed before it.
+    const outputFile = path.join(dir, 'main-output.log');
     const env = {
       ...process.env,
       ELECTRON_DISABLE_SANDBOX: '1',
       CLINICAL_ANALYTICS_PYTHON: slowPython,
+      CA_TEST_MAIN_OUTPUT: outputFile,
     };
     delete env.ELECTRON_RUN_AS_NODE;
     delete env.CLINICAL_ANALYTICS_EXTERNAL_BACKEND;
     delete env.CLINICAL_ANALYTICS_DEV_NO_AUTH;
     delete env.CLINICAL_ANALYTICS_API_TOKEN;
-    const app = await electron.launch({ args: ['--no-sandbox', ELECTRON_ROOT], env });
+    const app = await electron.launch({
+      args: ['--no-sandbox', '-r', CAPTURE_MAIN_OUTPUT, ELECTRON_ROOT],
+      env,
+    });
     const child = app.process();
-    let output = '';
-    child.stdout.on('data', (chunk) => (output += chunk));
-    child.stderr.on('data', (chunk) => (output += chunk));
-    const exited = new Promise((resolve) => child.once('exit', (code) => resolve(code)));
+    const output = () => (fs.existsSync(outputFile) ? fs.readFileSync(outputFile, 'utf8') : '');
+    const exited = new Promise((resolve) => {
+      if (child.exitCode !== null) resolve(child.exitCode);
+      else child.once('exit', (code) => resolve(code));
+    });
     try {
       const startup = await app.firstWindow();
       expect(startup.url().startsWith('data:text/html')).toBe(true);
-      await expect.poll(() => output).toContain('Backend starting at');
+      await expect.poll(output).toContain('Backend starting at');
 
       // Act: the user closes the startup window (the same as quitting during startup)
       await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
@@ -459,8 +470,8 @@ test.describe.serial('Native Electron binary harness', () => {
 
       // Assert: a clean quit; an error box would have kept the app open
       expect(code).toBe(0);
-      expect(output).not.toMatch(/could not start/);
-      expect(output).toContain('Backend stopped (terminated)');
+      expect(output()).not.toMatch(/could not start/);
+      expect(output()).toContain('Backend stopped (terminated)');
     } finally {
       if (child.exitCode === null) child.kill('SIGKILL');
       fs.rmSync(dir, { recursive: true, force: true });

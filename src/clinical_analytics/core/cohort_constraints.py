@@ -17,16 +17,21 @@ from typing import Any
 from clinical_analytics.core.column_parser import parse_column_name
 from clinical_analytics.core.query_plan import STATISTIC_WORDS, CohortStep, Statistic
 from clinical_analytics.core.question_vocabulary import (
+    DERIVED_ADJECTIVE_SUFFIXES,
+    DERIVED_ADJECTIVE_SUFFIXES_AFTER_A,
     GROUPING_WORDS,
     NEGATION_CUES,
     NO_LIMIT_WORDS,
     QUANTITY_WORDS,
-    QUESTION_FORM_WORDS,
     RANGE_PATTERN,
+    STANDALONE_STATISTIC_WORDS,
     NegationScope,
+    is_question_form_word,
     negation_scope,
     range_ends,
     range_in_order,
+    statistic_phrases_as_std,
+    without_statistic_phrases,
 )
 
 _OVER = re.compile(r"\b(?:over|above|older than)\s+(\d+(?:\.\d+)?)\b", re.IGNORECASE)
@@ -157,13 +162,15 @@ class PeelResult:
 def asked_statistic(text: str, median_is_cutoff: bool = False) -> Statistic | None:
     """The statistic the question's first statistic word asks for ("median age" -> median).
 
-    "median" in a cutoff ("older than the median age") limits the patients; it is not the
-    statistic asked for, so it is skipped when ``median_is_cutoff``.
+    A lone "standard" or "deviation" asks for nothing ("the standard arm", "protocol
+    deviation"); together they ask for std. "median" in a cutoff ("older than the median
+    age") limits the patients; it is not the statistic asked for, so it is skipped when
+    ``median_is_cutoff``.
     """
-    for word in re.findall(r"[a-z]+", text.lower()):
+    for word in re.findall(r"[a-z]+", statistic_phrases_as_std(text.lower())):
         if word == "median" and median_is_cutoff:
             continue
-        if word in STATISTIC_WORDS:
+        if word in STANDALONE_STATISTIC_WORDS:
             return STATISTIC_WORDS[word]
     return None
 
@@ -557,9 +564,12 @@ def _value_hits(
 ) -> list[tuple[str, Any, int]]:
     """(column, value, position) of each stored value the question names, one value per column."""
     hits: list[tuple[str, Any, int]] = []
-    # The question's grammar ("count", "number", "by", "per", "average") never names a value:
-    # "count by sex" is not location_name = "Count Lake".
-    tokens = _tokens(text, digits=True) - QUESTION_FORM_WORDS
+    # The question's grammar ("count", "counts", "number", "by", "per", "average", "standard
+    # deviation") never names a value: "count by sex" is not location_name = "Count Lake". A
+    # lone "standard" is not grammar: "the standard arm" names arm = "Standard". The phrase
+    # is blanked, not removed, so positions stay positions in the question.
+    text = without_statistic_phrases(text)
+    tokens = {token for token in _tokens(text, digits=True) if not is_question_form_word(token)}
     words = frozenset(re.findall(r"[a-z0-9]+", text))
     for column in columns:
         # Rank (exact word, inflection, shared stem), then specificity: how many words of the
@@ -680,12 +690,13 @@ def _label_at(
 ) -> tuple[int, int] | None:
     """(rank, position) of a stored value named in the question, or None.
 
-    Rank 0 is every word of the value, 1 an English inflection, 2 a whole word of the value
-    or a word that shares its stem ("diabetic" for "diabetes", "counties" for "County"). A
-    word is matched whole, never by prefix: "count" does not name "County", nor "northern"
-    "North" (see _names_word). A word inside another word does not count: "male" is inside
-    "female" and must never select it. A value with a one-letter or number word ("drug A",
-    "Type 2") is named only by those words in that order: "on a drug" does not name "drug A".
+    Rank 0 is every word of the value, 1 an English inflection, 2 a whole word of the value,
+    a word that shares its stem ("diabetic" for "diabetes", "counties" for "County"), or an
+    adjective made from it ("asthmatic" for "Asthma"). A word is matched whole, never by
+    prefix: "count" does not name "County", nor "northern" "North" (see _names_word). A word
+    inside another word does not count: "male" is inside "female" and must never select it.
+    A value with a one-letter or number word ("drug A", "Type 2") is named only by those
+    words in that order: "on a drug" does not name "drug A".
     """
     words = re.findall(r"[a-z0-9]+", label)
     if len(words) > 1 and any(len(word) == 1 or word.isdigit() for word in words):
@@ -711,18 +722,50 @@ def _label_at(
 def _names_word(word: str, part: str) -> bool:
     """True when the question word ``word`` names the value word ``part`` as a whole word.
 
-    The same word or its plural ("statins", "statin"), or a shared stem where both words go
-    on past it ("diabetic", "diabetes"; "counties", "county"). Never a prefix: "count" is the
-    start of "county" and "north" the start of "northern", but a word that is only the start
-    of another is a different word.
+    The same word or its plural ("statins", "statin"), a shared stem where both words go on
+    past it ("diabetic", "diabetes"; "counties", "county"), or an adjective made from the
+    other word, either way round (_derived_adjective: "asthmatic" names "Asthma", and
+    "asthma" names "Asthmatic"). Never a bare prefix: "count" is
+    the start of "county" and "north" the start of "northern", but a word that is only the
+    start of another is a different word.
     """
     from clinical_analytics.core.word_accounting import stem_match
 
-    if word.rstrip("s") == part.rstrip("s"):
+    if _same_or_plural(word, part):
         return True
-    if word.startswith(part) or part.startswith(word):
-        return False
+    if part.startswith(word):
+        return _derived_adjective(part, word)
+    if word.startswith(part):
+        return _derived_adjective(word, part)
     return stem_match(word, part)
+
+
+def _same_or_plural(word: str, part: str) -> bool:
+    """The same word, or one is the other plus a plural "s". A word ending in "ss" is not a
+    plural: "loss" never names "Los" (Angeles)."""
+    if word == part:
+        return True
+    longer, shorter = (word, part) if len(word) > len(part) else (part, word)
+    return longer == shorter + "s" and not shorter.endswith("s")
+
+
+def _derived_adjective(word: str, part: str) -> bool:
+    """True when ``word`` is the word ``part`` plus an adjective ending.
+
+    Only the closed list of question_vocabulary.DERIVED_ADJECTIVE_SUFFIXES, optionally plural
+    ("asthmatics"), on a value word of at least STEM_MATCH_MIN_PREFIX letters: the same
+    floor stem matching uses, so a short word such as "sept" (a month) is never the stem of
+    "septic". Any other extension is a different word: "county", "headache", "liver",
+    "controlled", "northern".
+    """
+    from clinical_analytics.core.nl_query_config import STEM_MATCH_MIN_PREFIX
+
+    if len(part) < STEM_MATCH_MIN_PREFIX or not word.startswith(part):
+        return False
+    ending = word[len(part) :]
+    endings = {ending, ending[:-1]} if ending.endswith("s") else {ending}
+    allowed = DERIVED_ADJECTIVE_SUFFIXES | (DERIVED_ADJECTIVE_SUFFIXES_AFTER_A if part.endswith("a") else frozenset())
+    return bool(endings & allowed)
 
 
 def _named_words(tokens: set[str], label_tokens: frozenset[str]) -> int:
@@ -767,9 +810,9 @@ def _qualified(text: str, at: int, columns: list[str], values_for: Callable[[str
     itself. A word that names a column or a stored value ("female smokers") is a limit of
     its own, not a qualifier.
     """
-    before = re.findall(r"[a-z0-9]+", text[:at])
+    before = re.findall(r"[a-z0-9]+", statistic_phrases_as_std(text[:at]))
     content = [word for word in before if word not in NO_LIMIT_WORDS]
-    if content and content[-1] in STATISTIC_WORDS:
+    if content and content[-1] in STANDALONE_STATISTIC_WORDS:
         return True
     if not before:
         return False

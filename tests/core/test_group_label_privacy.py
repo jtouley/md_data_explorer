@@ -62,6 +62,7 @@ class TestGroupingProblem:
             pytest.param(1, True, id="one"),
             pytest.param(10, True, id="ten"),
             pytest.param(11, False, id="eleven"),
+            pytest.param(-3, True, id="negative_fails_closed"),
             pytest.param(None, True, id="missing_fails_closed"),
             pytest.param("x", True, id="not_a_count_fails_closed"),
         ],

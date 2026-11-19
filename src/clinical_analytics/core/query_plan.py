@@ -128,6 +128,24 @@ class QueryPlan:
     # The statistic the question asked for (DESCRIBE). None: the question named none.
     statistic: Statistic | None = None
 
+    def __post_init__(self) -> None:
+        """A share asked "by <group>" is a rate per group, so make it one rate plan here.
+
+        Execution, suppression and the visit-grain checks all key a per-group share on
+        ``rate_column`` with ``group_by``; a ``proportion_column`` with a grouping used to be run
+        as one overall share (the grouping silently dropped). Every constructor (the parser, the
+        model tier, ``from_dict``, ``dataclasses.replace``) passes through here. A plan that also
+        names a different rate is left as it is and refused by validation before it runs
+        (``SemanticLayer._validate_plan``).
+        """
+        if self.proportion_column is None or not self.group_by:
+            return
+        same = (self.rate_column, self.rate_value) == (self.proportion_column, self.proportion_value)
+        if self.rate_column is not None and not same:
+            return
+        self.rate_column, self.rate_value = self.proportion_column, self.proportion_value
+        self.proportion_column, self.proportion_value = None, None
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "QueryPlan":
         """
