@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import re
+import ssl
+import urllib.error
+import urllib.request
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
+from clinical_analytics.eval.corpus import fetch as fetch_module
 from clinical_analytics.eval.corpus.fetch import (
     ChecksumMismatchError,
+    CorpusConfigError,
+    CorpusDataset,
     CorpusFetchError,
     build_zip,
     default_cache_dir,
@@ -18,6 +26,7 @@ from clinical_analytics.eval.corpus.fetch import (
     fetch_file,
     load_corpus,
     sha256_file,
+    table_path,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -203,3 +212,80 @@ class TestShippedCorpus:
         # Assert
         assert cache.parts[-len(expected_parts) :] == expected_parts
         assert not cache.resolve().is_relative_to(REPO_ROOT)
+
+
+class TestDownloadErrors:
+    @pytest.mark.parametrize(
+        "error",
+        [
+            urllib.error.URLError("name resolution failed"),
+            TimeoutError("timed out"),
+            ConnectionResetError("reset"),
+            http.client.IncompleteRead(b"partial", 100),
+            http.client.RemoteDisconnected("closed"),
+            ssl.SSLError("bad record mac"),
+        ],
+    )
+    def test_download_networkFailure_raisesFetchErrorNamingUrl(
+        self, monkeypatch: pytest.MonkeyPatch, error: Exception
+    ) -> None:
+        # Arrange
+        def fail(*_args: object, **_kwargs: object) -> None:
+            raise error
+
+        monkeypatch.setattr(urllib.request, "urlopen", fail)
+
+        # Act / Assert
+        with pytest.raises(CorpusFetchError, match="could not download https://example.org/x.csv"):
+            fetch_module._download("https://example.org/x.csv")
+
+
+class TestLoadCorpusErrors:
+    @pytest.mark.parametrize(
+        "text",
+        ["datasets: [\n", "just a string\n", "datasets:\n  - name: x\n", "other: []\n"],
+    )
+    def test_loadCorpus_malformedYaml_raisesConfigError(self, tmp_path: Path, text: str) -> None:
+        # Arrange
+        path = tmp_path / "corpus.yaml"
+        path.write_text(text)
+
+        # Act / Assert
+        with pytest.raises(CorpusConfigError, match="corpus.yaml"):
+            load_corpus(path)
+
+    def test_loadCorpus_missingFile_raisesConfigError(self, tmp_path: Path) -> None:
+        # Act / Assert
+        with pytest.raises(CorpusConfigError, match="could not be loaded"):
+            load_corpus(tmp_path / "absent.yaml")
+
+
+class TestTablePath:
+    def test_tablePath_sameLayoutAsFetchDataset(
+        self,
+        tmp_path: Path,
+        make_corpus_dataset: Callable[..., tuple[CorpusDataset, dict[str, bytes]]],
+        make_downloader: Callable[[dict[str, bytes]], tuple[Callable[[str], bytes], list[str]]],
+    ) -> None:
+        # Arrange
+        dataset, urls = make_corpus_dataset()
+        download, _ = make_downloader(urls)
+
+        # Act
+        fetch_dataset(dataset.name, tmp_path, download=download, corpus={dataset.name: dataset})
+        path = table_path(dataset, tmp_path)
+
+        # Assert
+        assert path.is_file()
+        assert sha256_file(path) == dataset.files[0].sha256
+
+    def test_tablePath_noTableFile_raisesConfigError(
+        self, make_corpus_dataset: Callable[..., tuple[CorpusDataset, dict[str, bytes]]]
+    ) -> None:
+        # Arrange
+        dataset, _ = make_corpus_dataset()
+        dataset = dataset.model_copy(update={"files": dataset.files[1:]})
+
+        # Act / Assert
+        with pytest.raises(CorpusConfigError, match="no file of kind table"):
+            table_path(dataset)
