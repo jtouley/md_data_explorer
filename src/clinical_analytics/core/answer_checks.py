@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Final
 
 import polars as pl
 import structlog
@@ -43,6 +43,7 @@ from clinical_analytics.core.plan_values import plan_values
 from clinical_analytics.core.query_plan import QueryPlan
 from clinical_analytics.core.result_presentation import AMOUNT, DataNote, counted_note, text_note
 from clinical_analytics.core.schema_inference import patient_key_by_name
+from clinical_analytics.core.shown_counts import Condition
 
 logger = structlog.get_logger(__name__)
 
@@ -125,7 +126,12 @@ def missing_key_note(grain: Grain, visits: bool) -> DataNote | None:
         return None
     counted = "; those rows are not counted as patients" if visits else ""
     key = grain.key.replace(AMOUNT, "")
-    return counted_note(f"Data check: {key} is missing on {AMOUNT} rows{counted}.", grain.missing_keys, grain.rows)
+    return counted_note(
+        f"Data check: {key} is missing on {AMOUNT} rows{counted}.",
+        grain.missing_keys,
+        grain.rows,
+        rows=[Condition("isnull", grain.key)],
+    )
 
 
 def declared_visits(grain: Grain, declarations: Declarations, dataset_version: str | None) -> bool:
@@ -229,7 +235,14 @@ def _implausible_numeric(layer: Any, column: str) -> Implausible | None:
     count = int(values.aggregate(k=outside.cast("int64").sum()).to_polars().item() or 0)
     if count == 0:
         return None
-    return Implausible(column=column, count=count, present=int(present), bounds=plausibility_text(bounds))
+    return Implausible(
+        column=column,
+        count=count,
+        present=int(present),
+        bounds=plausibility_text(bounds),
+        minimum=float(bounds.minimum),
+        maximum=None if bounds.maximum is None else float(bounds.maximum),
+    )
 
 
 def implausible_in_layer(layer: Any, column: str) -> Implausible | None:
@@ -267,6 +280,9 @@ def implausible_sentences(plan: QueryPlan, layer: Any) -> list[tuple[str, str, D
             f"(likely entry errors), included as recorded.",
             result.count,
             result.present,
+            rows=[Condition("outside", column, (result.minimum, result.maximum))]
+            if result.minimum is not None
+            else None,
         )
         found.append((column, hold, note))
     return found
@@ -385,7 +401,15 @@ def missingness_notes(layer: Any, columns: list[str], already: set[str]) -> list
         if missing * 100 <= MISSINGNESS_WARN_PERCENT * rows:
             continue
         name = short_name(column).replace(AMOUNT, "")
-        notes.append(counted_note(f"Data check: {name} has {AMOUNT} of its values missing.", missing, rows, "percent"))
+        notes.append(
+            counted_note(
+                f"Data check: {name} has {AMOUNT} of its values missing.",
+                missing,
+                rows,
+                "percent",
+                rows=[Condition("isnull", column)],
+            )
+        )
     return notes
 
 
@@ -406,6 +430,10 @@ def report_notes(report: QualityReport | None, columns: list[str]) -> list[DataN
     return notes
 
 
+# The quality report's missing-values check (contracts.quality): its count is the rows with no value.
+NULL_METRIC: Final = "nullValues"
+
+
 def _report_note(check: QualityCheckResult, rows: int | str) -> DataNote | None:
     """One report check as a note. The report suppressed its counts against the report's own
     lines only, so a count it shows is carried apart from the text (the presenter checks it
@@ -423,12 +451,15 @@ def _report_note(check: QualityCheckResult, rows: int | str) -> DataNote | None:
         return None
     body = check.message[len(head) :]
     head = head.replace(AMOUNT, "")
+    # The rows behind the count, for the log of shown counts: named only for missing values
+    # (every row with none); any other check's count is never written ("some").
+    counted_rows = [Condition("isnull", check.column)] if check.metric == NULL_METRIC and check.column else None
     if check.percent is not None and body.startswith(f"{check.percent:.1f}% ") and total is not None:
         rest = body[len(f"{check.percent:.1f}%") :].replace(AMOUNT, "")
-        return counted_note(f"Data check: {head}{AMOUNT}{rest}.", check.count, total, "percent")
+        return counted_note(f"Data check: {head}{AMOUNT}{rest}.", check.count, total, "percent", rows=counted_rows)
     if body.startswith(f"{check.count} "):
         rest = body[len(str(check.count)) :].replace(AMOUNT, "")
-        return counted_note(f"Data check: {head}{AMOUNT}{rest}.", check.count, total)
+        return counted_note(f"Data check: {head}{AMOUNT}{rest}.", check.count, total, rows=counted_rows)
     logger.warning("report_note_count_not_found", check_id=check.id, metric=check.metric)
     return None
 

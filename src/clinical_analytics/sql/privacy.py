@@ -30,6 +30,7 @@ from collections.abc import Hashable
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
 import structlog
 from sqlglot import exp
 
@@ -41,8 +42,9 @@ from clinical_analytics.core.result_presentation import (
     _suppress_lines,
     _table,
 )
+from clinical_analytics.core.shown_counts import ROWS_UNIT, ShownCountLog, ShownSet, Universe
 from clinical_analytics.sql import config
-from clinical_analytics.sql.catalog import SqlCatalog
+from clinical_analytics.sql.catalog import POSITIONED_COLUMN, POSITIONED_VIEW, SqlCatalog
 from clinical_analytics.sql.errors import SqlRefusedError
 from clinical_analytics.sql.render import render
 from clinical_analytics.sql.sandbox import SandboxConnection
@@ -93,6 +95,16 @@ class PatientRowsUnconfirmedError(SqlRefusedError):
 
 
 @dataclass(frozen=True)
+class ShownLogTarget:
+    """Where an answer's shown counts are checked and logged: the dataset version's log
+    (``core.shown_counts``), shared with the question box."""
+
+    log: ShownCountLog
+    dataset: str
+    version: str
+
+
+@dataclass(frozen=True)
 class SqlAnswer:
     sql: str  # the checked query, as shown to the user
     columns: list[str]
@@ -137,9 +149,14 @@ def answer_query(
     sandbox: SandboxConnection,
     catalog: SqlCatalog,
     *,
+    shown_log: ShownLogTarget,
     confirmed_patient_rows: int | None = None,
 ) -> SqlAnswer:
     """The query's answer with small cells suppressed and small groups folded.
+
+    ``shown_log``: the dataset version's log of shown counts. The answer is shown only when its
+    counts, with every count already shown for the version, reveal no count of 1-10 patients;
+    then they are logged (``core.shown_counts``).
 
     ``confirmed_patient_rows``: the row count on which the user confirmed one row per patient for
     this dataset version (None: not confirmed). It is needed only when rows can't be shown to be
@@ -148,7 +165,8 @@ def answer_query(
     Raises:
         PatientRowsUnconfirmedError: no ID on some or all rows, and no matching confirmation.
         SqlRefusedError: rows are visits, too many groups or conditions, the query could not
-            run, or (ungrouped) the answer would let a small count be worked out.
+            run, or (ungrouped) the answer would let a small count be worked out, alone or with
+            answers already shown.
     """
     confirmed = patient_rows(sandbox, catalog, confirmed_patient_rows)
     conditions = _conditions(query)
@@ -163,7 +181,101 @@ def answer_query(
     logger.info("governed_sql_answered", groups=frame.height, measures=len(query.measures), hidden=len(hidden))
     if query.dimension is None and hidden:
         raise SqlRefusedError(WITHHELD)
-    return _present(query, records, cells, hidden, conditions, confirmed)
+    answer, shown_groups = _present(query, records, cells, hidden, conditions, confirmed)
+    steps = _shown_steps(cells, hidden, conditions)
+    sets = _shown_sets(query, sandbox, conditions, coded, records, shown_groups, steps)
+    verdict = shown_log.log.admit(shown_log.dataset, shown_log.version, _universe(sandbox, catalog), sets)
+    if not verdict.shown:
+        raise SqlRefusedError(str(verdict.reason))
+    return answer
+
+
+def _universe(sandbox: SandboxConnection, catalog: SqlCatalog) -> Universe:
+    """The stored rows as the log knows them (rows are patients on this path)."""
+    row = sandbox.run_unsuppressed(catalog.fingerprint_sql()).row(0, named=True)
+    return Universe(rows=int(row["n"]), fingerprint=f"{int(row['n'])}:{row['h']}")
+
+
+def _shown_steps(cells: dict[Cell, int], hidden: set[Any], conditions: _Conditions) -> list[int]:
+    """The step-by-step count's steps shown (``_step_note``), the dataset total left out."""
+    if not conditions.where:
+        return []
+    steps = _steps(conditions)
+    return [n for n in range(1, len(steps)) if not any(c in hidden for c in cells if c[1] & steps[n] == steps[n])]
+
+
+def _shown_sets(
+    query: GovernedQuery,
+    sandbox: SandboxConnection,
+    conditions: _Conditions,
+    coded: _Coded,
+    records: list[dict[str, Any]],
+    groups: list[int],
+    steps: list[int],
+) -> list[ShownSet]:
+    """The rows behind each count the answer shows: per shown group, each count aggregate's rows
+    (WHERE, its FILTER and the group) and, for a value aggregate over a coded column, its rows per
+    value (with n, a mean of codes gives each value's count back); and each shown step.
+
+    A measure that is one count aggregate must have its set's size, or the answer is refused.
+
+    Raises:
+        SqlRefusedError: a set's size differs from the count shown.
+    """
+    keys: list[exp.Expr] = [exp.alias_(exp.column(POSITIONED_COLUMN, quoted=True), "__row")]
+    if query.dimension is not None:
+        keys.append(exp.alias_(_try(query.dimension), "__d"))
+    keys += [exp.alias_(conditions.indicator(i), f"__c{i}") for i in range(len(conditions.terms))]
+    for c, (column, values) in enumerate(zip(coded.columns, coded.values, strict=True)):
+        case = exp.case()
+        ref = exp.column(column, quoted=True)
+        for j, value in enumerate(values):
+            case = case.when(exp.EQ(this=ref.copy(), expression=exp.convert(value)), exp.Literal.number(j))
+        keys.append(exp.alias_(case.else_(exp.Literal.number(-1)), f"__v{c}"))
+    frame = sandbox.run_unsuppressed(
+        render(exp.select(*keys).from_(exp.Table(this=exp.to_identifier(POSITIONED_VIEW, quoted=True))))
+    )
+    rows = frame.get_column("__row").to_numpy()
+    if query.dimension is not None:
+        index = {_group_key(record.get("__d")): g for g, record in enumerate(records)}
+        group_of = np.asarray([index.get(_group_key(v), -1) for v in frame.get_column("__d").to_list()])
+    else:
+        group_of = np.zeros(frame.height, dtype=np.int64)
+
+    def meets(mask: int) -> np.ndarray:
+        flags = np.ones(frame.height, dtype=bool)
+        for i in range(len(conditions.terms)):
+            if mask >> i & 1:
+                flags &= frame.get_column(f"__c{i}").fill_null(False).to_numpy().astype(bool)
+        return flags
+
+    sets: list[ShownSet] = []
+    where = conditions.where_mask
+    for g in groups:
+        in_group = group_of == g
+        for k, agg in enumerate(query.aggregates):
+            flags = in_group & meets(where | conditions.of_aggregate[k])
+            if agg.kind == "count":
+                shown = ShownSet(unit=ROWS_UNIT, positions=rows[flags])
+                _check_size(query, records[g], k, shown.size)
+                sets.append(shown)
+            elif agg.column in coded.columns:
+                levels = frame.get_column(f"__v{coded.columns.index(agg.column)}").to_numpy()
+                for j in range(len(coded.values[coded.columns.index(agg.column)])):
+                    sets.append(ShownSet(unit=ROWS_UNIT, positions=rows[flags & (levels == j)]))
+    step_masks = _steps(conditions)
+    sets += [ShownSet(unit=ROWS_UNIT, positions=rows[meets(step_masks[n])]) for n in steps]
+    return [s for s in sets if s.size > 0]
+
+
+def _check_size(query: GovernedQuery, record: dict[str, Any], k: int, size: int) -> None:
+    """Each measure that is aggregate ``k`` alone shows its count: the set must have that size."""
+    for i, measure in enumerate(query.measures):
+        if isinstance(measure.template, exp.Column) and measure.template.name.removeprefix(AGG_MARKER) == str(k):
+            value = record.get(f"__m{i}")
+            if value is None or int(value) != size:
+                logger.error("governed_sql_shown_count_mismatch")
+                raise SqlRefusedError("The query could not be checked against answers already shown.")
 
 
 def patient_rows(sandbox: SandboxConnection, catalog: SqlCatalog, confirmed_rows: int | None) -> bool:
@@ -399,10 +511,12 @@ def _present(
     hidden: set[Any],
     conditions: _Conditions,
     confirmed: bool,
-) -> SqlAnswer:
+) -> tuple[SqlAnswer, list[int]]:
+    """The answer, and the groups whose measures it shows (not hidden, not folded)."""
     grouped = query.dimension is not None
     min_values = config.SMALL_CELL
     where = conditions.where_mask
+    folded_groups: set[int] = set()
     base = {g: 0 for g in range(len(records))}
     hidden_groups_at = set()
     for (g, mask, _levels_of), count in cells.items():
@@ -457,6 +571,7 @@ def _present(
                 else "Some groups are combined in one row with no numbers, so small groups can't be worked out."
             )
         table = _limited(table, query.limit, fold.label if fold else None)
+        folded_groups = {g for g in displayed if _label(records[g]["__d"]) in fold}
     elif table is not None and query.limit is not None:
         table = {"columns": table["columns"], "rows": table["rows"][: query.limit]}
     steps = _step_note(cells, hidden, conditions)
@@ -467,12 +582,22 @@ def _present(
             f'Values marked "{SECONDARY_SUPPRESSED}" are hidden: showing them would show, or let a reader '
             f"work out, a count of 1 to {min_values - 1} patients."
         )
-    return SqlAnswer(
+    answer = SqlAnswer(
         sql=query.shown_sql,
         columns=table["columns"] if table is not None else columns,
         rows=table["rows"] if table is not None else [],
         notes=notes,
     )
+    # Only rows the table still holds after LIMIT: a group cut by LIMIT shows nothing.
+    kept_rows = table["rows"] if table is not None else []
+    if grouped:
+        assert query.dimension_name is not None
+        kept = {str(row.get(query.dimension_name)) for row in kept_rows}
+        kept_groups = [g for g in displayed if _label(records[g]["__d"]) in kept]
+    else:
+        kept_groups = displayed if kept_rows else []
+    shown_groups = [g for g in kept_groups if g not in hidden_groups_at and g not in folded_groups]
+    return answer, shown_groups
 
 
 def _step_note(cells: dict[Cell, int], hidden: set[Any], conditions: _Conditions) -> str | None:

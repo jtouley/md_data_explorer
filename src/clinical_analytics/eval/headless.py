@@ -19,6 +19,7 @@ from clinical_analytics.analysis.variable_types import display_level
 from clinical_analytics.core.query_service import QueryService
 from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED, present_analysis, term_label
 from clinical_analytics.core.semantic import SemanticLayer
+from clinical_analytics.core.shown_counts import ShownCountLog, Universe, _State
 from clinical_analytics.eval.catalog import DATASET_FILES, load_dataset_frame
 
 _LAYERS: dict[str, SemanticLayer] = {}
@@ -162,10 +163,27 @@ def actual_value(kind: str, stat: str | None, group_by: str | None, payload: dic
     return None
 
 
+class _EachQuestionAlone(ShownCountLog):
+    """The log of shown counts for graders that ask every suite question as if it were the first
+    one shown on its rows: each answer is checked against the totals the app shows and nothing
+    else, and nothing is kept. The suites grade one question at a time (and the concurrency suite
+    compares threaded answers with each asked alone), so a log shared across hundreds of unrelated
+    suite questions, and across tests, would make each grade depend on what ran before it. The log
+    across questions is tested in tests/core/test_shown_counts_*.py, tests/sql/test_shown_counts_sql.py
+    and the acceptance runs through the API. Never used by the app."""
+
+    def _load(self, universe: Universe) -> _State | None:
+        return None
+
+    def _save(self, universe: Universe, state: _State) -> None:
+        return None
+
+
 def service_for(dataset_id: str, workspace: Path | None = None) -> QueryService:
-    """Reuse one query service so pattern config and embeddings load once per dataset."""
+    """Reuse one query service so pattern config and embeddings load once per dataset; each
+    question it answers is checked by the log of shown counts as if asked first (``_EachQuestionAlone``)."""
     if dataset_id not in _SERVICES:
-        _SERVICES[dataset_id] = QueryService(layer_for(dataset_id, workspace))
+        _SERVICES[dataset_id] = QueryService(layer_for(dataset_id, workspace), shown_log=_EachQuestionAlone())
     return _SERVICES[dataset_id]
 
 

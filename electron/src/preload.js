@@ -510,7 +510,7 @@ const clinicalAPI = {
   /**
    * Delete a dataset and everything derived from it (files, tables, sessions, results).
    * @param {string} datasetId
-   * @returns {Promise<{ dataset_id: string, removed_paths: number, dropped_tables: number, deleted_sessions: number }>}
+   * @returns {Promise<{ dataset_id: string, removed_paths: number, dropped_tables: number, deleted_sessions: number, kept: string }>}
    */
   async deleteDataset(datasetId) {
     const enc = encodeURIComponent(datasetId);

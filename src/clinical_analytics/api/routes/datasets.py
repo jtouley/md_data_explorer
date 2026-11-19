@@ -605,6 +605,13 @@ def _upload_cohort_notes(storage: UserDatasetStorage, upload_id: str) -> list[st
     return [*metadata.get(ZIP_NOTES_KEY, []), *describe_cohort_build(metadata.get(COHORT_BUILD_KEY))]
 
 
+# Said on every delete (API and app): the log of shown counts is kept (core.shown_counts, ADR013 §12).
+SHOWN_COUNTS_KEPT_NOTE = (
+    "A record of counts already shown is kept, so re-uploading the same rows stays protected. "
+    "It holds row numbers and counts, not patient values or IDs."
+)
+
+
 class DatasetDeleteResponse(BaseModel):
     """What a dataset delete removed."""
 
@@ -614,6 +621,10 @@ class DatasetDeleteResponse(BaseModel):
     removed_paths: int = Field(..., description="Files and folders removed from the data home")
     dropped_tables: int = Field(..., description="DuckDB tables dropped")
     deleted_sessions: int = Field(..., description="Sessions (with their messages) deleted")
+    kept: str = Field(
+        default=SHOWN_COUNTS_KEPT_NOTE,
+        description="What a delete keeps on purpose: the record of counts already shown on these rows",
+    )
 
 
 # .zip: tables plus their documentation (ADR004), the multi-table path; .xpt: SAS transport (NHANES);

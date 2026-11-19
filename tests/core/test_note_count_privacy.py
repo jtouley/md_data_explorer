@@ -34,9 +34,13 @@ from clinical_analytics.core.result_presentation import (
     present_analysis,
     text_note,
 )
+from clinical_analytics.core.shown_counts import Condition
 from tests.core.test_answer_data_checks import _ask, _service, _shown
 
 IDS = [f"P{i:03d}" for i in range(200)]
+# The rows a note's count counts, for the log of shown counts (a note without them never shows
+# its count): these tests check the note rule, so any named rows do.
+_ROWS = [Condition("isnull", "x")]
 
 
 def _ask_version(service: QueryService, plan: QueryPlan, version: str) -> Any:
@@ -110,7 +114,7 @@ class TestNoteCountAgainstAnswer:
     )
     def test_presentAnalysis_noteCountNearShownCount_isSome(self, total: int, count: int, amount: str) -> None:
         # Arrange: the note's line is 200 values (rest = 200 - count)
-        note = counted_note(f"age has {AMOUNT} values outside 0–122 years.", count, 200)
+        note = counted_note(f"age has {AMOUNT} values outside 0–122 years.", count, 200, rows=_ROWS)
 
         # Act
         claim = present_analysis(_count_answer(total, [note]))["claim"]
@@ -124,7 +128,7 @@ class TestNoteCountAgainstAnswer:
     )
     def test_presentAnalysis_noteRestSmall_isSome(self, rest: int, amount: str) -> None:
         # Arrange: the answer shows 500, far from both the note's count and its rest
-        note = counted_note(f"x is missing on {AMOUNT} rows.", 200 - rest, 200)
+        note = counted_note(f"x is missing on {AMOUNT} rows.", 200 - rest, 200, rows=_ROWS)
 
         # Act
         claim = present_analysis(_count_answer(500, [note]))["claim"]
@@ -134,7 +138,7 @@ class TestNoteCountAgainstAnswer:
 
     def test_presentAnalysis_percentNoteNearShownCount_isSome(self) -> None:
         # Arrange: 15 of 200 missing is 7.5%, which with the row count is 15; the answer shows 20
-        note = counted_note(f"Data check: age has {AMOUNT} of its values missing.", 15, 200, "percent")
+        note = counted_note(f"Data check: age has {AMOUNT} of its values missing.", 15, 200, "percent", rows=_ROWS)
 
         # Act
         near = present_analysis(_count_answer(20, [note]))["claim"]
@@ -146,8 +150,8 @@ class TestNoteCountAgainstAnswer:
 
     def test_presentAnalysis_secondNoteNearFirstNotesCount_isSome(self) -> None:
         # Arrange: the first note writes 40; the second (45) would give back 5 beside it
-        first = counted_note(f"a has {AMOUNT} values outside 0–9.", 40, 300)
-        second = counted_note(f"b has {AMOUNT} values outside 0–9.", 45, 300)
+        first = counted_note(f"a has {AMOUNT} values outside 0–9.", 40, 300, rows=_ROWS)
+        second = counted_note(f"b has {AMOUNT} values outside 0–9.", 45, 300, rows=_ROWS)
 
         # Act
         claim = present_analysis(_count_answer(150, [first, second]))["claim"]
@@ -157,7 +161,7 @@ class TestNoteCountAgainstAnswer:
 
     def test_presentAnalysis_hiddenTotal_noteStillChecked(self) -> None:
         # Arrange: a total of 5 is shown as <11; the note's 15 is checked against 11 too
-        note = counted_note(f"age has {AMOUNT} values outside 0–122 years.", 15, 200)
+        note = counted_note(f"age has {AMOUNT} values outside 0–122 years.", 15, 200, rows=_ROWS)
 
         # Act
         claim = present_analysis(_count_answer(5, [note]))["claim"]
@@ -192,10 +196,13 @@ class TestNoteCountAgainstAnswer:
     @pytest.mark.parametrize(
         ("note", "kept"),
         [
-            pytest.param("Data check: ldl: some values outside 0–400 mg/dL.", True, id="no_small_integer_kept"),
+            # Any integer in a plain note may be a count whose rows the log of shown counts can't
+            # name, so such a note is dropped (ADR013 §12); producers use counted or text notes.
+            pytest.param("Data check: ldl: some values outside 0–400 mg/dL.", False, id="bound_integer_dropped"),
             pytest.param("Data check: x has 15 rows.", False, id="count_near_shown_20_dropped"),
             pytest.param("Data check: sex: some values are not in the codebook (1, 2).", False, id="small_dropped"),
-            pytest.param("Data check: x has 60 rows.", True, id="far_integer_kept"),
+            pytest.param("Data check: x has 60 rows.", False, id="far_integer_dropped"),
+            pytest.param("Data check: x has no values outside its range.", True, id="no_integer_kept"),
             pytest.param("", False, id="empty_dropped"),
         ],
     )
@@ -246,7 +253,7 @@ class TestNoteCountAgainstAnswer:
     def test_countedNote_malformed_raises(self, text: str, total: int | None, form: Any) -> None:
         # Arrange / Act / Assert: a producer's mistake fails loudly, never ships a raw count
         with pytest.raises(ValueError):
-            counted_note(text, 15, total, form)
+            counted_note(text, 15, total, form, rows=_ROWS)
 
     def test_shownCounts_shareBesideN_givesBothCountsBack(self) -> None:
         # Arrange: 6% of 100 is 6 with the value and 94 without; decimals and percents are not counts

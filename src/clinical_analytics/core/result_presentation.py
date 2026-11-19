@@ -13,7 +13,7 @@ import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import date, datetime
-from typing import Any, Final, Literal, TypeAlias, TypedDict, TypeGuard
+from typing import Any, Final, Literal, NotRequired, TypeAlias, TypedDict, TypeGuard
 
 import numpy as np
 
@@ -37,6 +37,7 @@ from clinical_analytics.analysis.sample_floors import (
 )
 from clinical_analytics.analysis.variable_types import display_level, header_has_code_labels, short_name
 from clinical_analytics.core.nl_query_config import SMALL_CELL_THRESHOLD
+from clinical_analytics.core.shown_counts import Condition, CountScope, CountUnit, ShownCount
 
 
 class TablePayload(TypedDict):
@@ -47,6 +48,46 @@ class TablePayload(TypedDict):
 class Presentation(TypedDict):
     claim: str | None
     table: TablePayload | None
+    # Every count the claim and table show, or let a reader work out from what they show, as the
+    # rows or patients behind it: what the log of shown counts checks (core.shown_counts).
+    shown: NotRequired[list[ShownCount]]
+
+
+def _count(value: Any, conditions: Iterable[Condition] = (), unit: CountUnit = "counted") -> list[ShownCount]:
+    """A shown count (none for 0 or a value that is not a count: an empty set reveals nothing)."""
+    return [ShownCount(int(value), tuple(conditions), unit)] if _is_count(value) and int(value) > 0 else []
+
+
+def _n_counts(
+    analysis: Mapping[str, Any], hidden: set[Any], conditions: Iterable[Condition], unit: CountUnit = "counted"
+) -> list[ShownCount]:
+    """n and the cohort (n + excluded) when the n clause shows them (``_n_clause``)."""
+    n_used, excluded = analysis.get("n_used"), analysis.get("n_excluded")
+    if not _is_count(n_used) or N_USED in hidden or N_EXCLUDED in hidden:
+        return []
+    cohort = int(n_used) + int(excluded) if _is_count(excluded) else None
+    return [*_count(n_used, conditions, unit), *_count(cohort, (), unit)]
+
+
+def _two_valued_count(conditions: Iterable[Condition], column: str) -> list[ShownCount]:
+    """The count a statistic of a two-valued column gives back with its n: the rows at the larger
+    value (a mean of 0/1 died, 0.06 of n=100, is 6). Not printed, so not checked against a value;
+    on a column with more than two values no count is given back, and none is logged."""
+    return [ShownCount(None, (*conditions, Condition("upper_value", column)), "rows")]
+
+
+def _value_shown(value: Any, analysis: Mapping[str, Any]) -> bool:
+    """A statistic shown of a column that behaves like categories (not a measurement)."""
+    return (
+        value is not None
+        and not _hidden_cell(value)
+        and isinstance(value, int | float)
+        and analysis.get("table_min_cell") != NO_COUNT_TABLE
+    )
+
+
+def _complete(*columns: Any) -> tuple[Condition, ...]:
+    return tuple(Condition("complete", str(c)) for c in columns if c)
 
 
 def to_json_safe(value: Any) -> Any:
@@ -588,7 +629,7 @@ def _fold_crosstab(
 
 def _too_many_levels(column: str, levels: int) -> Presentation:
     """No table for a grouping with more levels than a reader can scan without seeing patients."""
-    return {"claim": too_many_levels_message(column, levels), "table": None}
+    return {"claim": too_many_levels_message(column, levels), "table": None, "shown": []}
 
 
 def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
@@ -616,7 +657,7 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
         # check, or was stored before it, and is withheld (fail closed).
         mean_refusal = table_statistic_refusal(analysis.get("table_min_cell"), may_rest_on_no_table=True)
         if mean_refusal is not None:
-            return {"claim": mean_refusal, "table": None}
+            return {"claim": mean_refusal, "table": None, "shown": []}
     if test_type in ("welch_t_test", "t_test", "anova"):
         sizes = {str(g): group_sizes.get(str(g)) for g in group_means}
         hidden = suppress_with_exclusions(analysis, sizes, floor=MIN_GROUP_N * max(len(sizes), 1))
@@ -635,6 +676,16 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
             }
             for g, m in group_means.items()
         ]
+        # compute counts rows complete in the outcome and the group (visit rows included).
+        complete = _complete(outcome, group_col)
+        counts_shown = _n_counts(analysis, hidden, complete, "rows")
+        for g in group_means:
+            cell = [Condition("eq_text", str(group_col), str(g)), *complete]
+            if str(g) not in hidden and str(g) not in small_groups:
+                counts_shown += _count(sizes[str(g)], cell, "rows")
+            if "table_min_cell" in analysis and not _unchecked(str(g), sizes[str(g)], hidden):
+                # A two-valued outcome: the group's mean with its n gives back the rows at each value.
+                counts_shown += _two_valued_count(cell, str(outcome))
 
     if test_type in ("welch_t_test", "t_test"):
         diff = _num(analysis.get("mean_diff"))
@@ -648,7 +699,11 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
                 f"than {_limit(None)} patients",
                 [n_clause],
             )
-            return {"claim": claim + ".", "table": _fold_rows(_table(rows), fold, small_groups.label)}
+            return {
+                "claim": claim + ".",
+                "table": _fold_rows(_table(rows), fold, small_groups.label),
+                "shown": counts_shown,
+            }
         if len(groups) == 2 and diff is not None:
             first, second = label[groups[0]], label[groups[1]]
             if round(abs(diff), 2) == 0:
@@ -665,7 +720,7 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
                 claim += ", not statistically significant"
             claim = _with_details(claim, [ci_clause, p_clause, n_clause])
             claim += f". Unadjusted comparison by {group_col}."
-        return {"claim": claim, "table": _fold_rows(_table(rows), fold, small_groups.label)}
+        return {"claim": claim, "table": _fold_rows(_table(rows), fold, small_groups.label), "shown": counts_shown}
 
     if test_type == "anova":
         claim = None
@@ -676,7 +731,7 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
                 f"Mean {outcome_name} {verb} across {n_groups} {group_col} groups", [p_clause, n_clause]
             )
             claim += ". Unadjusted."
-        return {"claim": claim, "table": _fold_rows(_table(rows), fold, small_groups.label)}
+        return {"claim": claim, "table": _fold_rows(_table(rows), fold, small_groups.label), "shown": counts_shown}
 
     # chi-square / Fisher on a contingency table (rows = outcome levels, columns = groups)
     # With a cell of 1-10 patients the test is withheld, with the rule compute applied
@@ -717,8 +772,10 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
         warning = analysis.get("warning")
         if warning:
             claim += f" {warning}"
+    complete = _complete(outcome, group_col)
+    counts_shown = _n_counts(analysis, hidden, complete, "rows")
     if not contingency:
-        return {"claim": claim, "table": None}
+        return {"claim": claim, "table": None, "shown": counts_shown}
     rows = []
     for i, row in enumerate(contingency):
         shown: dict[str, Any] = {outcome_name: display_level(outcome, row.get(outcome))}
@@ -744,7 +801,15 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
         else set()
     )
     rows = _fold_crosstab(rows, [label[g] for g in groups], blank_cols, blank_rows, HIDDEN_GROUPS_LABEL)
-    return {"claim": claim, "table": _table(rows)}
+    for i, row in enumerate(contingency):
+        for j, g in enumerate(groups):
+            if (i, j) not in hidden and label[g] not in blank_cols and i not in blank_rows:
+                cell = [
+                    Condition("eq_text", str(outcome), str(row.get(outcome))),
+                    Condition("eq_text", str(group_col), g),
+                ]
+                counts_shown += _count(cells[(i, j)], [*cell, *complete], "rows")
+    return {"claim": claim, "table": _table(rows), "shown": counts_shown}
 
 
 def _present_predictor(analysis: Mapping[str, Any]) -> Presentation:
@@ -753,7 +818,9 @@ def _present_predictor(analysis: Mapping[str, Any]) -> Presentation:
     event_level = analysis.get("event_level")
     event = _event_phrase(outcome, event_level) if event_level is not None else outcome_name
     summary = analysis.get("summary") or {}
-    n_clause = _n_clause(analysis, suppress_with_exclusions(analysis, {}, floor=MIN_REGRESSION_N))
+    n_hidden = suppress_with_exclusions(analysis, {}, floor=MIN_REGRESSION_N)
+    n_clause = _n_clause(analysis, n_hidden)
+    counts_shown = _n_counts(analysis, n_hidden, _complete(outcome, *(analysis.get("predictor_columns") or [])), "rows")
     # A term names a level ("site_West") beside an odds ratio that rests on its patients and its
     # reference level's, and with the totals other answers show it gives back how many of them
     # had the outcome. With 1-10 in a level, or in a level with one outcome value, the model is
@@ -768,7 +835,7 @@ def _present_predictor(analysis: Mapping[str, Any]) -> Presentation:
     ]
     refusal = predictor_model_refusal(terms, analysis.get("term_sizes"), analysis.get("cell_sizes"))
     if refusal is not None:
-        return {"claim": refusal, "table": None}
+        return {"claim": refusal, "table": None, "shown": []}
     rows = [
         {
             "variable": term_label(var),
@@ -801,7 +868,7 @@ def _present_predictor(analysis: Mapping[str, Any]) -> Presentation:
         claim = f"No predictor reached p<0.05 for {event}. {_with_details(model, [n_clause])}; {adjustment}."
     else:
         claim = None
-    return {"claim": claim, "table": _table(rows)}
+    return {"claim": claim, "table": _table(rows), "shown": counts_shown}
 
 
 def _present_relationship(analysis: Mapping[str, Any]) -> Presentation:
@@ -827,7 +894,9 @@ def _present_relationship(analysis: Mapping[str, Any]) -> Presentation:
     pairs.sort(key=lambda r: abs(r["r"]) if isinstance(r["r"], float) else -1.0, reverse=True)
     # n_observations + its exclusions (+ filtered-out rows) is the row count, as for n_used
     sample = {**analysis, "n_used": analysis.get("n_observations")}
-    n_clause = _n_clause(sample, suppress_with_exclusions(sample, {}, floor=MIN_CORRELATION_N))
+    n_hidden = suppress_with_exclusions(sample, {}, floor=MIN_CORRELATION_N)
+    n_clause = _n_clause(sample, n_hidden)
+    counts_shown = _n_counts(sample, n_hidden, _complete(*(analysis.get("variables") or [])), "rows")
     claim = None
     if pairs and isinstance(pairs[0]["r"], float):
         top = pairs[0]
@@ -843,7 +912,7 @@ def _present_relationship(analysis: Mapping[str, Any]) -> Presentation:
         # One sentence for every withheld pair; the small-cell one when any pair has a small cell.
         reason = SMALL_CELL_TEST_REFUSAL if SMALL_CELL_TEST_REFUSAL in refusals else refusals[0]
         claim = f"{claim} {reason}" if claim else reason
-    return {"claim": claim, "table": _table(pairs)}
+    return {"claim": claim, "table": _table(pairs), "shown": counts_shown}
 
 
 def _present_survival(analysis: Mapping[str, Any]) -> Presentation:
@@ -901,9 +970,16 @@ def _present_survival(analysis: Mapping[str, Any]) -> Presentation:
             }
             for g, m in group_medians.items()
         ]
+        # compute counts rows complete in time, event and group (visit rows included).
+        complete = _complete(time_col, event_col, group_col)
+        counts_shown = _n_counts(analysis, hidden, complete, "rows")
+        for g in group_medians:
+            if g not in hidden and g not in folded:
+                counts_shown += _count(sizes[g], [Condition("eq_text", str(group_col), g), *complete], "rows")
         return {
             "claim": claim,
             "table": _fold_rows(_table(rows), {display_level(group_col, g) for g in folded}, folded.label),
+            "shown": counts_shown,
         }
     n_used, n_events = analysis.get("n_used"), analysis.get("n_events")
     parts: dict[str, Any] = {}
@@ -927,14 +1003,25 @@ def _present_survival(analysis: Mapping[str, Any]) -> Presentation:
         claim = _with_details(f"Median time to {event} was not reached during follow-up ({time_col})", [n_clause]) + "."
     # Summary only: the Kaplan-Meier step table lists individual event times and its steps reveal
     # counts in small risk sets.
+    complete = _complete(time_col, event_col)
+    survival_counts: list[ShownCount] | None = _n_counts(analysis, hidden, complete, "rows")
+    if counted and "events" not in hidden:
+        if analysis.get("event_text") is None:
+            # The events are shown but the set behind them can't be named: the counts are not
+            # listed, so the log withholds the answer (never shown unchecked).
+            survival_counts = None
+        else:
+            event_cell = Condition("eq_text", str(event_col), str(analysis.get("event_text")))
+            survival_counts = [*(survival_counts or []), *_count(parts["events"], [event_cell, *complete], "rows")]
+    listed = {} if survival_counts is None else {"shown": survival_counts}
     if not counted:
-        return {"claim": claim, "table": None}
+        return {"claim": claim, "table": None, **listed}  # type: ignore[typeddict-item]
     row = {
         "n": _mask(n_used) if N_USED in hidden else n_used,
         **{k: _mask(v) if k in hidden else v for k, v in parts.items()},
         f"median {time_col}": _mask(median) if median_hidden else median,
     }
-    return {"claim": claim, "table": _table([row])}
+    return {"claim": claim, "table": _table([row]), **listed}  # type: ignore[typeddict-item]
 
 
 def _present_descriptive(analysis: Mapping[str, Any]) -> Presentation:
@@ -990,7 +1077,11 @@ def _present_descriptive(analysis: Mapping[str, Any]) -> Presentation:
                 )
                 claim += "."
             row: dict[str, Any] = {"variable": name, "n": shown_n, **stats}
-            return {"claim": claim, "table": _table([row])}
+            # n counts rows with a finite value (visit rows included); n + missing is the cohort.
+            counts_shown = [] if n_hidden else _n_counts(sample, set(), [Condition("complete", str(col))], "rows")
+            if _value_shown(stats.get("mean"), analysis):
+                counts_shown += _two_valued_count([Condition("complete", str(col))], str(col))
+            return {"claim": claim, "table": _table([row]), "shown": counts_shown}
         counts = list(analysis.get("value_counts") or [])
         rows = [{name: display_level(col, r.get(col)), "count": r.get("count")} for r in counts]
         # The listed levels (value_counts().head(10)), the levels cut from the list and the
@@ -1011,6 +1102,12 @@ def _present_descriptive(analysis: Mapping[str, Any]) -> Presentation:
             if i in hidden:
                 row["count"] = _mask(row["count"])
         table = _fold_rows(_table(rows), small, fold.label)
+        counts_shown = [
+            count
+            for i, r in enumerate(counts)
+            if i not in hidden and i not in fold
+            for count in _count(r.get("count"), [Condition("eq", str(col), r.get(col))])
+        ]
         claim = None
         if table and table["rows"]:
             top = table["rows"][0]
@@ -1023,11 +1120,19 @@ def _present_descriptive(analysis: Mapping[str, Any]) -> Presentation:
                 claim = f"Most common {name}: {top[name]} (count hidden to protect privacy)."
             else:
                 claim = f"Most common {name}: {top[name]} ({top['count']} {noun})."
-        return {"claim": claim, "table": table}
+        return {"claim": claim, "table": table, "shown": counts_shown}
     rows_n = analysis.get("row_count")
     cols = analysis.get("column_count")
     claim = f"The dataset has {rows_n} rows and {cols} columns." if rows_n is not None and cols is not None else None
-    return {"claim": claim, "table": _table(list(analysis.get("summary_stats") or []))}
+    stats_rows = list(analysis.get("summary_stats") or [])
+    counts_shown = _count(rows_n, (), "rows") if claim is not None else []
+    for stat in stats_rows:
+        if stat.get("statistic") == "count":  # Polars describe(): values per column
+            for column, value in stat.items():
+                if column != "statistic":
+                    whole = int(value) if isinstance(value, float) and value.is_integer() else value
+                    counts_shown += _count(whole, [Condition("notnull", str(column))], "rows")
+    return {"claim": claim, "table": _table(stats_rows), "shown": counts_shown}
 
 
 # Why a statistic of a column that behaves like categories is withheld; one wording for a small
@@ -1067,13 +1172,14 @@ def _present_count(analysis: Mapping[str, Any]) -> Presentation:
             rows = [dict(r) for r in group_counts]
         if len(rows) > MAX_GROUP_LEVELS:
             return _too_many_levels(str(group_col), len(rows))
+        raw_levels = [row.get(group_col) for row in rows]
         for row in rows:
             row[group_col] = display_level(group_col, row.get(group_col))
         if _total_hidden(analysis, total):
             # Every group is then small (or the filtered-out rows are), and k groups of at least
             # 1 with a total under the threshold can pin each one (10 groups -> all 1), so the
             # groups are not listed.
-            return {"claim": _hidden_total_claim(analysis, total), "table": None}
+            return {"claim": _hidden_total_claim(analysis, total), "table": None, "shown": []}
         noun = "group" if len(rows) == 1 else "groups"
         counted = f"{total} {_unit(analysis)}" if _unit(analysis) else f"{total} total"
         claim = f"{counted} across {len(rows)} {group_col} {noun}." if total is not None else None
@@ -1082,12 +1188,17 @@ def _present_count(analysis: Mapping[str, Any]) -> Presentation:
         masked = suppress_counts(counts)
         fold = _small_parts(dict(enumerate(counts)), {i for i, v in enumerate(masked) if _hidden_cell(v)})
         small = {str(rows[i][group_col]) for i in fold}
-        return {"claim": claim, "table": _fold_rows(_table(rows, count_columns=("count",)), small, fold.label)}
+        counts_shown = [*_count(total)] if claim is not None else []
+        for i, count in enumerate(counts):
+            if i not in fold and not _hidden_cell(masked[i]):
+                counts_shown += _count(count, [Condition("eq", str(group_col), raw_levels[i])])
+        table = _fold_rows(_table(rows, count_columns=("count",)), small, fold.label)
+        return {"claim": claim, "table": table, "shown": counts_shown}
     if _total_hidden(analysis, total):
-        return {"claim": _hidden_total_claim(analysis, total), "table": None}
+        return {"claim": _hidden_total_claim(analysis, total), "table": None, "shown": []}
     unit = f" {_unit(analysis)}" if _unit(analysis) else ""
     claim = f"Total count: {total}{unit}." if total is not None else None
-    return {"claim": claim, "table": None}
+    return {"claim": claim, "table": None, "shown": _count(total) if claim is not None else []}
 
 
 _STATISTIC_LABELS = {"mean": "Mean", "median": "Median", "min": "Minimum", "max": "Maximum", "std": "SD of"}
@@ -1193,6 +1304,7 @@ def _present_proportion(analysis: Mapping[str, Any]) -> Presentation:
         return {
             "claim": f"No patient who matched has '{column}' recorded, so there is no share to report.",
             "table": None,
+            "shown": [],
         }
     n_used = analysis.get("n_used")
     withheld = _share_withheld(analysis.get("events"), n_used, N_USED, hidden_n)
@@ -1217,7 +1329,11 @@ def _present_proportion(analysis: Mapping[str, Any]) -> Presentation:
         "proportion": SECONDARY_SUPPRESSED if withheld else share,
         "n": SECONDARY_SUPPRESSED if N_USED in hidden_n else n_used,
     }
-    return {"claim": claim + ".", "table": _table([row])}
+    recorded = Condition("recorded", column)
+    counts_shown = _n_counts(analysis, hidden_n, [recorded])
+    if not withheld:
+        counts_shown += _count(analysis.get("events"), [Condition("event", column, analysis.get("value")), recorded])
+    return {"claim": claim + ".", "table": _table([row]), "shown": counts_shown}
 
 
 def _present_rate(analysis: Mapping[str, Any]) -> Presentation:
@@ -1235,12 +1351,19 @@ def _present_rate(analysis: Mapping[str, Any]) -> Presentation:
     n_clause = _n_clause(analysis, hidden)
     small_groups = _small_parts(sizes, hidden)
     rows, parts, withheld = [], [], False
+    recorded = Condition("recorded", column)
+    counts_shown = _n_counts(analysis, hidden, [recorded])
     for g in groups:
         key, n, events = str(g.get("group")), g.get("n"), g.get("events")
         rate = _num(g.get("rate"))
         label = _group_label(group_col, g.get("group"))
         rate_hidden = _share_withheld(events, n, key, hidden)
         withheld = withheld or rate_hidden
+        if key not in hidden and key not in small_groups:
+            cell = Condition("eq", group_col, g.get("group"))
+            counts_shown += _count(n, [cell, recorded])
+            if not rate_hidden:
+                counts_shown += _count(events, [cell, Condition("event", column, analysis.get("value")), recorded])
         rows.append(
             {
                 group_col: label,
@@ -1260,7 +1383,7 @@ def _present_rate(analysis: Mapping[str, Any]) -> Presentation:
             "patients or was not recorded."
         )
     fold = {_group_label(group_col, g.get("group")) for g in groups if str(g.get("group")) in small_groups}
-    return {"claim": claim, "table": _fold_rows(_table(rows), fold, small_groups.label)}
+    return {"claim": claim, "table": _fold_rows(_table(rows), fold, small_groups.label), "shown": counts_shown}
 
 
 def _present_grouped_statistic(analysis: Mapping[str, Any]) -> Presentation:
@@ -1288,14 +1411,22 @@ def _present_grouped_statistic(analysis: Mapping[str, Any]) -> Presentation:
     value_column = f"{statistic} {metric}"
     small_groups = _small_parts(sizes, hidden)
     rows, parts, by_cell = [], [], False
+    # The statistic counts rows with a value (SQL count(metric)), visit rows included.
+    measured = Condition("notnull", str(analysis.get("metric")))
+    counts_shown = _n_counts(analysis, hidden, [measured], "rows")
     for g in groups:
         key, value = str(g.get("group")), _num(g.get("value"))
+        cell = [Condition("eq", group_col, g.get("group")), measured]
+        if key not in hidden and key not in small_groups:
+            counts_shown += _count(g.get("n"), cell, "rows")
         label = _group_label(group_col, g.get("group"))
         size_hidden = _unchecked(key, g.get("n"), hidden)
         cell_hidden = value is not None and _value_statistic_withheld(g, N_USED in hidden)
         by_cell = by_cell or (cell_hidden and not size_hidden)
         withheld = size_hidden or cell_hidden
         shown = SECONDARY_SUPPRESSED if withheld else value
+        if share_like and not withheld and value is not None:
+            counts_shown += _two_valued_count(cell, str(analysis.get("metric")))
         rows.append({group_col: label, value_column: shown, "n": SECONDARY_SUPPRESSED if key in hidden else g.get("n")})
         if key not in small_groups:  # a small group's label is folded into Other
             parts.append(f"{label} {'not shown' if withheld else ('no values' if value is None else _fmt(value))}")
@@ -1308,7 +1439,7 @@ def _present_grouped_statistic(analysis: Mapping[str, Any]) -> Presentation:
     if by_cell:
         claim += f" A value is not shown where {VALUE_CELL_REASON}."
     fold = {_group_label(group_col, g.get("group")) for g in groups if str(g.get("group")) in small_groups}
-    return {"claim": claim, "table": _fold_rows(_table(rows), fold, small_groups.label)}
+    return {"claim": claim, "table": _fold_rows(_table(rows), fold, small_groups.label), "shown": counts_shown}
 
 
 def _total_hidden(analysis: Mapping[str, Any], total: Any) -> bool:
@@ -1357,25 +1488,38 @@ def present_analysis(analysis: Mapping[str, Any] | None) -> Presentation:
     claim, each count in them checked against the counts the claim and table show
     (``_note_sentence``).
     """
+    presentation, _counts = present_with_counts(analysis)
+    return presentation
+
+
+def present_with_counts(analysis: Mapping[str, Any] | None) -> tuple[Presentation, list[ShownCount] | None]:
+    """``present_analysis``, and every count it shows (``ShownCount``) for the log of shown counts.
+
+    The counts are None when the presenter did not list them: the log then withholds the answer,
+    since what it shows can't be checked.
+    """
     if not analysis or analysis.get("error"):
-        return {"claim": None, "table": None}
+        return {"claim": None, "table": None}, []
     presenter = _PRESENTERS.get(str(analysis.get("type")))
     if presenter is None:
-        return {"claim": None, "table": None}
-    presentation = presenter(analysis)
-    claim = presentation["claim"]
+        return {"claim": None, "table": None}, []
+    presented = presenter(analysis)
+    counts = presented.get("shown")
+    claim = presented["claim"]
     if claim is None:
-        return presentation
-    shown = _shown_counts(claim, presentation["table"])
-    notes: list[Any] = [_implausible_note(analysis.get("implausible")), *(analysis.get("data_notes") or [])]
+        return {"claim": None, "table": presented["table"]}, counts
+    shown = _shown_counts(claim, presented["table"])
+    notes: list[Any] = [_implausible_note(analysis), *(analysis.get("data_notes") or [])]
     kept: list[str] = []
     for note in notes:
-        sentence = _note_sentence(note, shown)
+        sentence, logged = _note_with_count(note, shown)
         if sentence:
             kept.append(sentence)
+        if logged is not None and counts is not None:
+            counts = [*counts, logged]
     if kept:
         claim = " ".join([claim, *kept])
-    return {"claim": claim, "table": presentation["table"]}
+    return {"claim": claim, "table": presented["table"]}, counts
 
 
 NoteForm: TypeAlias = Literal["number", "percent"]
@@ -1390,12 +1534,15 @@ class CountedNote(TypedDict):
     """A data note that carries a count: the text with ``AMOUNT`` where the count goes, the count,
     the total of its line (the count plus the rest; None when it has no known line) and how the
     count is written (a number, or a percent of ``total``). Notes carry their count apart from
-    their text so the presenter can check it against what the answer shows."""
+    their text so the presenter can check it against what the answer shows. ``rows``: the rows
+    the count counts, for the log of shown counts; a note without it never shows its count
+    (``_note_with_count``)."""
 
     text: str
     count: int
     total: int | None
     form: NoteForm
+    rows: NotRequired[ShownCount]
 
 
 class TextNote(TypedDict):
@@ -1418,13 +1565,25 @@ def text_note(text: str) -> TextNote:
     return {"text": text, "counted": False}
 
 
-def counted_note(text: str, count: int, total: int | None, form: NoteForm = "number") -> CountedNote:
-    """A note whose ``count`` is written where ``text`` has ``AMOUNT`` (once, and only there)."""
+def counted_note(
+    text: str,
+    count: int,
+    total: int | None,
+    form: NoteForm = "number",
+    rows: Iterable[Condition] | None = None,
+    scope: CountScope = "dataset",
+) -> CountedNote:
+    """A note whose ``count`` is written where ``text`` has ``AMOUNT`` (once, and only there).
+    ``rows``: the conditions the counted rows meet (within the dataset, or the answer's cohort
+    for ``scope="cohort"``); without them the count is never written ("some")."""
     if text.count(AMOUNT) != 1:
         raise ValueError("A counted note's text must hold its amount placeholder exactly once")
     if form == "percent" and not (_is_count(total) and int(total) > 0):
         raise ValueError("A percent note needs the positive total it is a percent of")
-    return {"text": text, "count": count, "total": total, "form": form}
+    note: CountedNote = {"text": text, "count": count, "total": total, "form": form}
+    if rows is not None:
+        note["rows"] = ShownCount(int(count), tuple(rows), "rows", scope)
+    return note
 
 
 def note_text(note: DataNote) -> str:
@@ -1474,6 +1633,33 @@ def _note_count_withheld(count: int, total: int | None, shown: set[int]) -> bool
     return any(part > 0 and 0 < abs(part - other) < limit for part in parts for other in shown)
 
 
+def _note_with_count(note: Any, shown: set[int]) -> tuple[str | None, ShownCount | None]:
+    """A data note as shown, and the count it shows for the log of shown counts (None: it shows
+    none). Every count shown is logged, and none that is not:
+    - a counted note writes its count only when ``_note_sentence`` allows it and the rows behind
+      it are named (``CountedNote.rows``); otherwise it reads "some" and logs nothing;
+    - a plain ``str`` note is of unknown provenance, so any integer in it may be a count that
+      can't be logged: such a note is dropped (fail closed); one with no integer is shown.
+    """
+    if isinstance(note, str):
+        return (None, None) if _SHOWN_INTEGER.search(note) else (_note_sentence(note, shown), None)
+    if isinstance(note, Mapping) and note.get("counted") is not False and "count" in note:
+        rows = note.get("rows")
+        if not isinstance(rows, ShownCount):
+            # The rows behind the count are not named, so it could not be logged: never written.
+            # Checked on a copy of ``shown``: a count not written adds nothing to it.
+            if _note_sentence(note, set(shown)) is None:
+                return None, None  # malformed: dropped, as _note_sentence drops it
+            return str(note.get("text")).replace(AMOUNT, WITHHELD_AMOUNT), None
+        count, total = note.get("count"), note.get("total")
+        withheld = not _is_count(count) or _note_count_withheld(
+            int(count), int(total) if _is_count(total) else None, shown
+        )
+        sentence = _note_sentence(note, shown)
+        return sentence, (rows if sentence is not None and not withheld else None)
+    return _note_sentence(note, shown), None
+
+
 def _note_sentence(note: Any, shown: set[int]) -> str | None:
     """A data note as it is shown, or None when it is dropped. ``shown``: the counts the answer
     shows so far, to which each written count is added (a later note is checked against it).
@@ -1515,10 +1701,12 @@ def _note_sentence(note: Any, shown: set[int]) -> str | None:
     return text.replace(AMOUNT, amount)
 
 
-def _implausible_note(implausible: Any) -> DataNote | None:
+def _implausible_note(analysis: Mapping[str, Any]) -> DataNote | None:
     """'Includes 12 values of age outside 0–122 years (likely entry errors).' The count is "some"
     when it, or the rest of the values the statistic used, is from 1 to 10, or when it is that
-    close to a count the answer shows (``_note_sentence``)."""
+    close to a count the answer shows (``_note_sentence``). Its rows, for the log of shown counts:
+    the answer's cohort outside the range, complete in the columns a comparison reads."""
+    implausible = analysis.get("implausible")
     if not isinstance(implausible, Mapping):
         return None
     count, total = implausible.get("count"), implausible.get("line_total")
@@ -1530,4 +1718,9 @@ def _implausible_note(implausible: Any) -> DataNote | None:
     if not _is_count(total):
         # The line is unknown, so the count cannot be checked; the disclosure is still made.
         return text_note(text.replace(AMOUNT, WITHHELD_AMOUNT))
-    return counted_note(text, int(count), int(total))
+    minimum, maximum = implausible.get("minimum"), implausible.get("maximum")
+    rows = None
+    if isinstance(minimum, int | float) and implausible.get("column"):
+        others = (analysis.get("group_col"),) if analysis.get("type") == "comparison" else ()
+        rows = [Condition("outside", str(implausible["column"]), (minimum, maximum)), *_complete(*others)]
+    return counted_note(text, int(count), int(total), rows=rows, scope="cohort")

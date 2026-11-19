@@ -9,17 +9,27 @@ with the dataset's confirmed level merges applied, so SQL sees the same levels a
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypeAlias
 
+import duckdb
+import polars as pl
 from open_data_contract_standard.model import OpenDataContractStandard, SchemaProperty
 from sqlglot import exp
 
 from clinical_analytics.contracts.config import UNIFIED_OBJECT_NAME
 from clinical_analytics.contracts.declarations import LevelMapping
 from clinical_analytics.contracts.quality import is_id_property, is_restricted_property
+from clinical_analytics.core.shown_counts import (
+    DIGEST_TIME_ZONE,
+    column_profile_sql,
+    content_columns,
+    fingerprint_sql,
+    row_number_sql,
+)
 from clinical_analytics.sql.errors import SqlRefusedError
 from clinical_analytics.sql.render import render
 
@@ -27,6 +37,9 @@ LogicalType: TypeAlias = Literal[
     "string", "integer", "number", "boolean", "date", "timestamp", "time", "array", "object"
 ]
 _NUMERIC: frozenset[str] = frozenset({"integer", "number", "boolean"})
+# The view with row positions the log of shown counts reads, and its position column.
+POSITIONED_VIEW = "__mdde_positioned"
+POSITIONED_COLUMN = "__mdde_row_position"
 
 
 @dataclass(frozen=True)
@@ -48,6 +61,9 @@ class SqlCatalog:
     columns: tuple[ColumnSpec, ...]
     parquet_path: Path
     levels: tuple[LevelMapping, ...] = ()
+    # Stored columns the upload made up, left out of a row's digest (shown_counts.synthesized_columns
+    # of the layer's config): the same set the question box leaves out.
+    synthesized: tuple[str, ...] = ()
 
     def column(self, name: str) -> ColumnSpec | None:
         """A column by name, case-insensitive as DuckDB identifiers are."""
@@ -64,11 +80,34 @@ class SqlCatalog:
         A column can have several confirmed merges (one per canonical level: f/female to F, m/male
         to M); each becomes one WHEN of the column's CASE, so every merge applies.
         """
+        reader = exp.func("read_parquet", exp.Literal.string(str(self.parquet_path)))
+        return f'CREATE VIEW "{UNIFIED_OBJECT_NAME}" AS {render(exp.select(*self._columns()).from_(reader))}'
+
+    def positioned_view_sql(self) -> str:
+        """The same view with each row's number (``shown_counts.row_number_sql``, as the question
+        box numbers them) as ``POSITIONED_COLUMN``, named ``POSITIONED_VIEW``: read only by the
+        log of shown counts (``sql.privacy``); a query can't name it (the validator reads one table)."""
+        reader = render(exp.func("read_parquet", exp.Literal.string(str(self.parquet_path))))
+        numbered = f'SELECT {row_number_sql(self._content_columns())} AS "{POSITIONED_COLUMN}", * FROM {reader}'
+        columns = ", ".join(render(c) for c in self._columns())
+        return f'CREATE VIEW "{POSITIONED_VIEW}" AS SELECT "{POSITIONED_COLUMN}", {columns} FROM ({numbered})'
+
+    def fingerprint_sql(self) -> str:
+        """Row count and fingerprint of the stored rows: ``SemanticLayer.row_fingerprint``'s value."""
+        reader = render(exp.func("read_parquet", exp.Literal.string(str(self.parquet_path))))
+        return fingerprint_sql(self._content_columns(), reader)
+
+    def _content_columns(self) -> list[str]:
+        """The stored columns a row's digest reads (the Parquet's, not only the contract's), chosen
+        as the question box chooses them (``shown_counts.content_columns``)."""
+        return list(_digest_columns(self.parquet_path, self.synthesized))
+
+    def _columns(self) -> list[exp.Expr]:
         merges: dict[str, list[LevelMapping]] = {}
         for mapping in self.levels:
             if mapping.spellings:
                 merges.setdefault(mapping.column, []).append(mapping)
-        select = []
+        select: list[exp.Expr] = []
         for col in self.columns:
             ref = exp.column(col.name, quoted=True)
             value: exp.Expr = ref
@@ -81,9 +120,7 @@ class SqlCatalog:
                     )
                 value = case.else_(ref.copy())
             select.append(exp.alias_(value, col.name, quoted=True))
-        reader = exp.func("read_parquet", exp.Literal.string(str(self.parquet_path)))
-        query = exp.select(*select).from_(reader)
-        return f'CREATE VIEW "{UNIFIED_OBJECT_NAME}" AS {render(query)}'
+        return select
 
     @classmethod
     def from_contract(
@@ -120,3 +157,15 @@ def _spec(prop: SchemaProperty) -> ColumnSpec:
         is_id=is_id_property(prop),
         phi=is_restricted_property(prop),
     )
+
+
+@functools.lru_cache(maxsize=32)
+def _digest_columns(parquet_path: Path, synthesized: tuple[str, ...]) -> tuple[str, ...]:
+    """``SqlCatalog._content_columns`` for one stored file, counted once (a plain in-memory DuckDB
+    of this process reads it: no user SQL runs here)."""
+    columns = list(pl.read_parquet_schema(parquet_path))
+    reader = render(exp.func("read_parquet", exp.Literal.string(str(parquet_path))))
+    with duckdb.connect(":memory:") as con:
+        con.execute(f"SET TimeZone = '{DIGEST_TIME_ZONE}'")
+        profile = con.execute(column_profile_sql(columns, reader)).fetchall()
+    return tuple(content_columns(columns, list(profile[0]), synthesized))

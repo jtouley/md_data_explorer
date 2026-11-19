@@ -1231,6 +1231,7 @@ def compute_predictor_analysis(
     base: dict[str, Any] = {
         "type": "predictor",
         "outcome_col": outcome_col,
+        "predictor_columns": list(predictors),
         "n_used": n_used,
         "n_excluded": n_in_scope - n_used,
     }
@@ -1385,6 +1386,7 @@ def compute_survival_analysis(
     result: dict[str, Any] = {
         **base,
         "event_level": code_key(event_level),
+        "event_text": str(event_level),  # the event as text, for the log of shown counts
         "n_events": n_events,
         "summary": summary_df.to_dict(orient="records"),
         "median_survival": median_survival,

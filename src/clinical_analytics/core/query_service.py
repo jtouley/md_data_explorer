@@ -14,9 +14,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import polars as pl
 import structlog
 
+from clinical_analytics.analysis.compute import _apply_context_filters
 from clinical_analytics.analysis.grouping import grouping_problem
 from clinical_analytics.analysis.variable_types import short_name
 from clinical_analytics.contracts import config as contract_config
@@ -32,6 +34,7 @@ from clinical_analytics.contracts.quality import QualityReport
 from clinical_analytics.contracts.store import latest_report
 from clinical_analytics.core import answer_checks, estimates
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
+from clinical_analytics.core.answer_sets import Refine, ShownCountMismatchError, answer_sets, layer_universe
 from clinical_analytics.core.conversation_manager import ConversationManager
 from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line, plan_fingerprint
 from clinical_analytics.core.identifier_rules import ROW_KEY_CONFIG_FLAG
@@ -39,9 +42,18 @@ from clinical_analytics.core.log_redaction import error_fields
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD, MODEL_STEP_FAILED_REASON
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 from clinical_analytics.core.plan_values import absent_value_reason, plan_values
-from clinical_analytics.core.query_plan import CohortStepError, QueryPlan
-from clinical_analytics.core.result_presentation import note_text, present_analysis
+from clinical_analytics.core.query_plan import CohortStepError, QueryPlan, grouped_statistic
+from clinical_analytics.core.result_presentation import Presentation, note_text, present_analysis, present_with_counts
 from clinical_analytics.core.semantic import SemanticLayer
+from clinical_analytics.core.shown_counts import (
+    NOT_CHECKED_REASON,
+    PUBLISHED_ESTIMATES_LOG,
+    FileShownCountLog,
+    MemoryShownCountLog,
+    ShownCount,
+    ShownCountLog,
+    Verdict,
+)
 from clinical_analytics.core.word_accounting import (
     coded_grouping_reason,
     explain_hold,
@@ -189,6 +201,24 @@ def all_null_statistics_reason(result: Any, plan: QueryPlan) -> str | None:
     return "The patients who matched have no recorded values to report."
 
 
+def _compute_cohort(plan: QueryPlan, context: AnalysisContext) -> Refine | None:
+    """For an answer computed by ``analysis.compute`` (not one SQL aggregate), the filters it
+    applies again to the plan's cohort (``_apply_context_filters``: the plan's filters, a filter on
+    the grouping column included, or the legacy ``context.filters``), with the columns they read.
+    A frequency over visit rows counts the plan's cohort as it is (``_entity_frequency``)."""
+    if plan.proportion_column or (plan.rate_column and plan.group_by) or plan.intent == "COUNT":
+        return None
+    if grouped_statistic(plan) is not None:
+        return None
+    filters = (context.query_plan.filters if context.query_plan and context.query_plan.filters else None) or (
+        context.filters or []
+    )
+    if not filters:
+        return None
+    columns = tuple(str(f.column) for f in filters)
+    return Refine(columns=columns, apply=lambda frame: _apply_context_filters(frame, context)[0])
+
+
 def _to_polars(result: Any) -> pl.DataFrame | None:
     try:
         return pl.from_pandas(result)
@@ -240,6 +270,7 @@ class QueryService:
         semantic_layer: SemanticLayer,
         declarations: DeclarationStore | None = None,
         data_dir: Path | None = None,
+        shown_log: ShownCountLog | None = None,
     ) -> None:
         """
         Initialize query service with semantic layer.
@@ -249,6 +280,8 @@ class QueryService:
             declarations: Where confirmed grain and category mappings are stored (default: this
                 process only; the API passes the data directory's file store)
             data_dir: Data directory holding quality reports; None: answers carry no report notes
+            shown_log: The log of counts already shown per dataset version (ADR013 section 12);
+                default: the data directory's file log, or this service's memory with none
         """
         self.semantic_layer = semantic_layer
         self.declarations: DeclarationStore = declarations if declarations is not None else MemoryDeclarationStore()
@@ -256,6 +289,10 @@ class QueryService:
         # holds for this service only, never under a key another dataset could share.
         self._unsaved = MemoryDeclarationStore()
         self.data_dir = data_dir
+        # Every answer passes the log before it is returned: there is no way to ask without it.
+        if shown_log is None:
+            shown_log = FileShownCountLog(data_dir) if data_dir is not None else MemoryShownCountLog()
+        self.shown_log = shown_log
         self.nl_engine = NLQueryEngine(semantic_layer)
         self.conversation_manager = ConversationManager()
 
@@ -683,16 +720,32 @@ class QueryService:
                             issues.append({"message": str(analysis["error"]), "severity": "error"})
                         else:
                             analysis = self._with_findings(analysis, findings, query_plan)
-                            if self._declared_estimates(declarations, dataset_version):
+                            estimates_declared = self._declared_estimates(declarations, dataset_version)
+                            if estimates_declared:
                                 # Rows of a declared estimate file are estimates: a count is rows.
                                 analysis = {**analysis, "unit": "rows"}
-                            claim = present_analysis(analysis).get("claim")
+                            presentation, shown = present_with_counts(analysis)
+                            # Declared public estimates are shown as published (ADR014 section 7): the
+                            # log neither withholds nor records them (ADR013 section 12).
+                            log = PUBLISHED_ESTIMATES_LOG if estimates_declared else self.shown_log
+                            verdict = self._admit_shown(
+                                prepared, query_plan, context, analysis, presentation, shown, log
+                            )
+                            if verdict.shown:
+                                claim = presentation.get("claim")
+                            else:
+                                # Withheld whole: nothing of it is returned, and nothing is logged.
+                                analysis, result = None, None
+                                failure_reason = verdict.reason
+                                issues.append({"message": str(verdict.reason), "severity": "error"})
         except CohortStepError as e:
             # Already plain language: say why the limit could not be applied.
             failure_reason = str(e)
             issues.append({"message": failure_reason, "severity": "error"})
+            analysis, result, claim = None, None, None  # never an answer the log did not admit
         except Exception as e:
             issues.append({"message": f"Execution failed: {str(e)}", "severity": "error"})
+            analysis, result, claim = None, None, None  # never an answer the log did not admit
 
         return QueryResult(
             plan=query_plan,
@@ -708,6 +761,51 @@ class QueryService:
             plan_line=plan_line,
             plan_hash=plan_hash,
         )
+
+    def _admit_shown(
+        self,
+        prepared: _Prepared,
+        plan: QueryPlan,
+        context: AnalysisContext,
+        analysis: dict[str, Any],
+        presentation: Presentation,
+        shown: list[ShownCount] | None,
+        shown_log: ShownCountLog,
+    ) -> Verdict:
+        """Check the answer's shown counts against the counts already shown for this dataset
+        version, and log them if it may be shown (``core.shown_counts``). Locked (``_finish``).
+
+        An answer whose presenter does not list what it shows, or whose sets can't be rebuilt
+        with the sizes it shows, is withheld: it can't be checked.
+        """
+        if presentation.get("claim") is None and presentation.get("table") is None:
+            return Verdict(shown=True)  # nothing is shown
+        if shown_log is PUBLISHED_ESTIMATES_LOG:
+            return Verdict(shown=True)  # published estimates: nothing is checked or recorded
+        log = logger.bind(dataset_key=prepared.declaration_key, analysis_type=analysis.get("type"))
+        if shown is None:
+            log.error("shown_counts_not_listed")
+            return Verdict(shown=False, reason=NOT_CHECKED_REASON)
+        if not shown:
+            return Verdict(shown=True)
+        # A COUNT of distinct IDs (patients, admissions, another ID column) is logged as each ID's
+        # first row, never skipped: distinct encounter IDs minus patients is a patient count too.
+        entity = plan.entity_key if plan.intent == "COUNT" else None
+        try:
+            universe = layer_universe(self.semantic_layer)
+            sets = answer_sets(
+                self.semantic_layer,
+                plan,
+                shown,
+                universe,
+                refine=_compute_cohort(plan, context),
+                entity_key=entity,
+            )
+        except (ShownCountMismatchError, CohortStepError, duckdb.Error, pl.exceptions.PolarsError) as e:
+            log.error("shown_counts_not_rebuilt", **error_fields(e))
+            return Verdict(shown=False, reason=NOT_CHECKED_REASON)
+        key = prepared.declaration_key or "unsaved"
+        return shown_log.admit(key, prepared.dataset_version, universe, sets)
 
     def _grain(self, declarations: Declarations, dataset_version: str | None) -> answer_checks.Grain:
         """The layer's grain. Rows of a declared estimate table are estimates, so no column is a

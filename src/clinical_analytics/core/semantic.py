@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import ibis
+import numpy as np
 import pandas as pd
 import polars as pl
 from ibis import _
@@ -32,6 +33,14 @@ from clinical_analytics.core.execution_gate import evaluate_execution_gate
 from clinical_analytics.core.log_redaction import stable_hash
 from clinical_analytics.core.mapper import load_dataset_config
 from clinical_analytics.core.schema import UnifiedCohort
+from clinical_analytics.core.shown_counts import (
+    DIGEST_TIME_ZONE,
+    column_profile_sql,
+    content_columns,
+    fingerprint_sql,
+    row_number_sql,
+    synthesized_columns,
+)
 
 if TYPE_CHECKING:
     from clinical_analytics.core.dataset import Granularity
@@ -47,6 +56,9 @@ from clinical_analytics.core.query_plan import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Each row's position in the stored table, carried only by the view the log of shown counts reads.
+ROW_POSITION = "__mdde_row_position"
 
 
 def _quote_ident(name: str) -> str:
@@ -269,6 +281,9 @@ def _apply_duckdb_limits(raw: Any) -> None:
     """
     raw.execute(f"SET memory_limit = '{nl_query_config.DUCKDB_MEMORY_LIMIT.sql}'")
     raw.execute(f"SET threads = {int(nl_query_config.DUCKDB_THREADS)}")
+    # Timestamps with a time zone read as text in UTC, as in the SQL sandbox: the log of shown
+    # counts numbers rows by their text (core.shown_counts).
+    raw.execute(f"SET TimeZone = '{DIGEST_TIME_ZONE}'")
 
 
 def _sample_counts(frame: pl.DataFrame, base_rows: int) -> dict[str, int]:
@@ -652,6 +667,7 @@ class SemanticLayer:
         self._cohort_views: list[str] = []
 
         # Register data source
+        self._raw_table_name: str | None = None
         self._register_source()
 
         # Build base semantic view (lazy - no SQL executed yet)
@@ -664,6 +680,11 @@ class SemanticLayer:
         # (values, rows per value) of a column, counted once until a level remap changes it.
         self._value_counts: dict[str, tuple[pl.Series, pl.Series]] = {}
         self.count_entity_key = None
+        # The log of shown counts: level merges in order, the rows' fingerprint, patient maps.
+        self._remaps: list[tuple[str, dict[str, str]]] = []
+        self._fingerprint: str | None = None
+        self._digest_columns: list[str] | None = None
+        self._patient_of_row: dict[str, np.ndarray] = {}
 
         # Alias index (lazy initialization)
         self._alias_index: dict[str, str] | None = None  # normalized_alias -> canonical_name
@@ -792,6 +813,7 @@ class SemanticLayer:
 
                 # Now reference it via Ibis
                 self.raw = self.con.table(validated_name)
+                self._raw_table_name = validated_name
                 logger.info(f"Successfully registered source table '{validated_name}' from {abs_path}")
 
         elif "frame" in init_params:
@@ -808,6 +830,7 @@ class SemanticLayer:
             finally:
                 duckdb_con.unregister("_staged_frame")
             self.raw = self.con.table(validated_name)
+            self._raw_table_name = validated_name
             logger.info(f"Registered in-memory source table '{validated_name}'")
 
         elif "db_table" in init_params:
@@ -820,6 +843,7 @@ class SemanticLayer:
             validated_name = _validate_table_identifier(table_name)
             logger.debug(f"Using database table source: {validated_name}")
             self.raw = self.con.table(validated_name)
+            self._raw_table_name = validated_name
             logger.info(f"Successfully registered database table '{validated_name}'")
         else:
             raise ValueError(f"No valid source found in config for {self.dataset_name}")
@@ -833,7 +857,11 @@ class SemanticLayer:
         """
         if self._base_view is not None:
             return self._base_view
+        self._base_view = self._view_over(self.raw)
+        return self._base_view
 
+    def _view_over(self, raw: Any) -> Any:
+        """The semantic view's columns over ``raw`` (the source table, or it with row positions)."""
         mutations = {}
 
         # 1. Build outcome columns from config
@@ -894,12 +922,89 @@ class SemanticLayer:
         # patient_id should already be mapped, outcome will be set later
 
         # Build the view with all mutations
-        if mutations:
-            self._base_view = self.raw.mutate(**mutations)
-        else:
-            self._base_view = self.raw
+        return raw.mutate(**mutations) if mutations else raw
 
-        return self._base_view
+    def _positioned_view(self) -> Any:
+        """The base view with each row's number as ``ROW_POSITION``: rows numbered by content
+        (``shown_counts.row_number_sql``), never by a pseudo-column a dataset column could shadow,
+        the confirmed level merges applied in the order the base view applied them. For the log
+        of shown counts only (``core.shown_counts``): never offered as a column.
+
+        Raises:
+            CohortStepError: the source is not a table, or a column has the position's name.
+        """
+        if self._raw_table_name is None:
+            raise CohortStepError("Rows of this dataset have no stored position.")
+        if ROW_POSITION.casefold() in {c.casefold() for c in self.raw.columns}:
+            raise CohortStepError("Rows of this dataset have no stored position.")
+        positioned = _validate_table_identifier(f"{self._raw_table_name}_positioned")
+        with self._con_lock:
+            self.con.con.execute(
+                f'CREATE OR REPLACE TEMP VIEW "{positioned}" AS SELECT '
+                f'{row_number_sql(self._content_columns())} AS "{ROW_POSITION}", * '
+                f'FROM "{self._raw_table_name}"'
+            )
+            raw = self.con.table(positioned)
+        view = self._view_over(raw)
+        for column, mapping in self._remaps:
+            view = view.mutate(**{column: view[column].substitute(mapping)})
+        return view
+
+    def shown_rows(self, plan: "QueryPlan", columns: list[str]) -> pl.DataFrame:
+        """The plan's cohort rows (its filters and cohort steps, exactly as the answer applied
+        them) as ``ROW_POSITION`` and ``columns``, for the log of shown counts.
+
+        Raises:
+            CohortStepError: a limit can't be applied, or rows have no stored position.
+        """
+        with self._con_lock, self._cohort_views_dropped():
+            view = self._filtered_view(plan, base=self._positioned_view())
+            rows: pl.DataFrame = view.select([ROW_POSITION, *dict.fromkeys(columns)]).to_polars()
+            return rows
+
+    def _content_columns(self) -> list[str]:
+        """The stored columns a row's digest reads, in content order (``shown_counts.content_columns``):
+        those that tell rows apart, without the columns the upload made up. Counted once per layer."""
+        if self._digest_columns is None:
+            columns = list(self.raw.columns)
+            with self._con_lock:
+                profile = self.con.con.execute(column_profile_sql(columns, f'"{self._raw_table_name}"')).fetchall()
+            self._digest_columns = content_columns(columns, list(profile[0]), synthesized_columns(self.config))
+        return self._digest_columns
+
+    def row_fingerprint(self) -> str:
+        """Row count and SHA-256 over the rows' sorted digests, once per layer: the key of the log
+        of shown counts (``shown_counts.fingerprint_sql``). The same rows give the same value
+        whatever the upload, row order, column order or names."""
+        if self._fingerprint is None:
+            if self._raw_table_name is None:
+                raise CohortStepError("Rows of this dataset have no stored position.")
+            with self._con_lock:
+                # fetchall: the result is read to the end, so no unfinished result is left on the
+                # connection for the next query on it.
+                ((rows, digest),) = self.con.con.execute(
+                    fingerprint_sql(self._content_columns(), f'"{self._raw_table_name}"')
+                ).fetchall()
+            self._fingerprint = f"{int(rows)}:{digest}"
+        return self._fingerprint
+
+    def patient_of_row(self, key: str) -> np.ndarray:
+        """For each row position, the position of the first row with its ``key`` (-1: no key):
+        the patient, or another counted ID (an admission), as one row."""
+        cached = self._patient_of_row.get(key)
+        if cached is not None:
+            return cached
+        with self._con_lock:
+            view = self._positioned_view()
+            frame = view.select([ROW_POSITION, key]).to_polars()
+        rows = self.get_base_row_count()
+        keyed = frame.filter(pl.col(key).is_not_null()).with_columns(
+            pl.col(ROW_POSITION).min().over(key).alias("__first")
+        )
+        mapping = np.full(rows, -1, dtype=np.int64)
+        mapping[keyed.get_column(ROW_POSITION).to_numpy()] = keyed.get_column("__first").to_numpy()
+        self._patient_of_row[key] = mapping
+        return mapping
 
     def get_base_row_count(self) -> int:
         """Rows in the base view (the dataset row count the app shows), counted once per layer."""
@@ -2733,13 +2838,14 @@ class SemanticLayer:
 
         return run_key
 
-    def _filtered_view(self, plan: "QueryPlan") -> Any:
+    def _filtered_view(self, plan: "QueryPlan", base: Any = None) -> Any:
         """Row-level base view with the plan filters applied.
 
         This is the frame execute_query_plan validates. Non-COUNT rendering
-        must use it so a cohort alias cannot rename outcome.
+        must use it so a cohort alias cannot rename outcome. ``base``: the view to filter (the
+        positioned view, for the log of shown counts); default the base view.
         """
-        view = self.get_base_view()
+        view = self.get_base_view() if base is None else base
 
         # Filter deduplication: remove redundant filters (filtering and grouping on same field)
         effective_filters = []
@@ -3200,6 +3306,7 @@ class SemanticLayer:
         with self._con_lock:
             view = self.get_base_view()
             self._base_view = view.mutate(**{column: view[column].substitute(mapping)})
+            self._remaps.append((column, dict(mapping)))
             # The column's levels changed: its cached distinct count and value counts are stale.
             self._base_counts.pop(column, None)
             self._value_counts.pop(column, None)

@@ -81,6 +81,8 @@ def test_deleteDataset_uploadWithSessionsOverlaysAndResults_leavesNoTraceInDataH
     body = response.json()
     assert body["deleted_sessions"] == 1
     assert body["dropped_tables"] == 0  # typed Parquet only: nothing was in the DuckDB store
+    # The log of shown counts is kept on purpose, and the response says so (ADR013 §12)
+    assert "re-uploading the same rows stays protected" in body["kept"]
     assert _traces(data_home(), needles) == []
     assert not store.exists() or dataset_id.encode() not in store.read_bytes()
     assert marker.encode() not in _session_db_bytes()

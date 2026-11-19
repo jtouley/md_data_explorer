@@ -14,8 +14,9 @@ import pytest
 from open_data_contract_standard.model import OpenDataContractStandard
 
 from clinical_analytics.contracts.declarations import LevelMapping
+from clinical_analytics.core.shown_counts import MemoryShownCountLog
 from clinical_analytics.sql.catalog import SqlCatalog
-from clinical_analytics.sql.privacy import SqlAnswer, answer_query
+from clinical_analytics.sql.privacy import ShownLogTarget, SqlAnswer, answer_query
 from clinical_analytics.sql.sandbox import SandboxConnection
 from clinical_analytics.sql.validate import validate_sql
 
@@ -73,6 +74,11 @@ def ask_sql(make_sql_catalog: Callable[..., SqlCatalog]) -> Callable[..., SqlAns
             catalog = default[0]
         query = validate_sql(sql, catalog)
         with SandboxConnection(catalog) as sandbox:
-            return answer_query(query, sandbox, catalog, confirmed_patient_rows=confirmed_patient_rows)
+            # A log of its own per question: these tests check one answer at a time
+            # (tests/sql/test_shown_counts_sql.py checks answers across questions).
+            target = ShownLogTarget(MemoryShownCountLog(), "test", "v1")
+            return answer_query(
+                query, sandbox, catalog, shown_log=target, confirmed_patient_rows=confirmed_patient_rows
+            )
 
     return _ask

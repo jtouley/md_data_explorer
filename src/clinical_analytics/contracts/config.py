@@ -19,6 +19,8 @@ ODCS_KIND: Final = "DataContract"
 CONTRACT_SUFFIX: Final = ".odcs.yaml"
 CONTRACTS_DIRNAME: Final = "contracts"
 DQ_DIRNAME: Final = "dq"
+# The log of shown counts, one file per dataset version (core.shown_counts, ADR013 section 12).
+SHOWN_COUNTS_DIRNAME: Final = "shown_counts"
 GENERATOR: Final = "clinical_analytics.contracts.builder"
 # Every contract for a dataset version. Not bumped yet when a patch is accepted later: the
 # re-contract trigger is deferred (docs/architecture/AS_BUILT_ARCHITECTURE.md, known limits).
