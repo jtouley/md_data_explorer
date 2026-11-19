@@ -107,6 +107,8 @@ def test_uploadDataset_declaredGbdTable_valueColumnKeptRowsNumbered(
     assert {"val", "lower", "upper", ROW_NUMBER_COLUMN} <= set(stored.columns)
     assert "patient_id" not in stored.columns
     assert metadata["synthetic_id_metadata"]["patient_id"]["patient_id_source"] == "row_index"
+    assert body["population_estimates"] is True
+    assert body["one_row_per_patient"] is None  # a public table is never asked "Is each row one patient?"
 
 
 @pytest.mark.parametrize(
@@ -144,3 +146,27 @@ def test_uploadDataset_declaredVisitFile_patientIdKeptNotEstimates(
     assert response.status_code == 200, body
     assert body["population_estimates_note"] == POPULATION_ESTIMATES_NOT_DETECTED
     assert metadata["synthetic_id_metadata"]["patient_id"]["patient_id_source"] != "row_index"
+
+
+@pytest.mark.parametrize(
+    ("column", "ident"),
+    [
+        ("category", lambda p: f"Subject {p:02d}"),
+        ("indicator", lambda p: f"{['LOPEZ', 'SMITH', 'NGUYEN'][p % 3]}, {['ANA', 'JOHN', 'MAI'][p // 3 % 3]}{p}"),
+    ],
+    ids=["subject_labels", "last_first_labels"],
+)
+def test_uploadDataset_declaredPeopleAsLabels_patientRulesStillApply(
+    test_client: TestClient, isolated_data_home, column, ident
+):
+    # Arrange: probe g5, people disguised as a label column beside a month
+    rows = [f'"{ident(p)}",{m},{5 + p % 6}.{p % 10}' for p in range(1, 31) for m in ("2024-01", "2024-02", "2024-03")]
+    body = ("\n".join([f"{column},visit_month,hba1c_pct", *rows]) + "\n").encode()
+
+    # Act
+    response = _upload(test_client, body, POPULATION_ESTIMATES_FORM_VALUE)
+    payload = response.json()
+
+    # Assert
+    assert response.status_code == 200, payload
+    assert payload["population_estimates_note"] == POPULATION_ESTIMATES_NOT_DETECTED

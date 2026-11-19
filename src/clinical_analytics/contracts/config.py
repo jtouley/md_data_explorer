@@ -698,6 +698,10 @@ ESTIMATE_JOIN_MONTH_HOLD: Final = (
     "{source} is a monthly table ({column}). Confirm 'all months' to see each month of the year asked, "
     "or choose one month."
 )
+ESTIMATE_JOIN_MONTH_BESIDE_ANNUAL: Final = (
+    "{source} is a monthly table ({column}) and another table has one value per year. Choose the month to "
+    "line up with the year; an annual total or average of the months isn't published, so none is computed."
+)
 ESTIMATE_JOIN_NAME_MONTH_YEAR: Final = "{source} is a monthly table. Name a year (or a month, such as 2023-03)."
 ESTIMATE_JOIN_SEASON_TREND: Final = (
     "{source} reports by flu season ({column}), which spans two calendar years, so it can't be lined up with "
@@ -724,7 +728,8 @@ ESTIMATE_JOIN_COUNTY_TABLE: Final = (
 ESTIMATE_JOIN_NO_STATE: Final = "{source} has no state column, so it can't be joined or ranked by state."
 ESTIMATE_JOIN_NOT_STATES: Final = (
     "{source}: {count} location values aren't states and were left out ({levels}). Counties, cities and local "
-    "health jurisdictions (Detroit, out-Wayne) are parts of a state, never joined as one."
+    "health jurisdictions (Detroit, out-Wayne) are parts of a state, and territories, regions and countries "
+    "aren't states, so none is joined as one."
 )
 ESTIMATE_JOIN_AGE_SUMMARIES_DROPPED: Final = (
     "{source}: summary ages (all ages, age-standardized, bands that contain other bands) are left out of a "

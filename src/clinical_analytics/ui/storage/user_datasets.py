@@ -1879,6 +1879,7 @@ class UserDatasetStorage:
                         "patient_id_source": "row_index",
                         "patient_id_columns": None,
                         "row_number_column": ROW_NUMBER_COLUMN,
+                        "population_estimates": True,  # never asked "Is each row one patient?"
                     }
                 else:
                     df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(tables[0]["data"])

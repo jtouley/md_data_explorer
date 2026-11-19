@@ -25,6 +25,7 @@ numeric column named as a patient ID refuse the table. Reasons never quote a val
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, Literal, TypeAlias
@@ -116,6 +117,7 @@ _LABEL_VOCABULARY: Final = frozenset(
         "week", "weeks", "ending", "date", "dates", "year", "years", "month", "season", "type", "data", "value",
         "state", "states", "county", "region", "national", "age", "group", "groups", "category", "overall",
         "all", "other", "unknown", "reported", "confirmed", "probable", "new", "per", "population", "count",
+        "vitamin", "serogroup", "serotype", "strain", "hepatitis", "influenza", "dose", "doses", "coli",
     }
 )  # fmt: skip
 _LABEL_TOKENS: Final = frozenset(
@@ -127,6 +129,33 @@ _LABEL_TOKENS: Final = frozenset(
     }
 )  # fmt: skip
 _ID_SUFFIX: Final = frozenset({"id", "code", "cd", "no", "num", "nbr", "number", "key"})
+# Words that make a label a person, record or bed ("Patient 7", "Subject 01", "Room A12").
+_PERSON_WORDS: Final = frozenset(
+    {
+        "patient", "pt", "subject", "resident", "participant", "member", "client", "case", "mrn", "record",
+        "room", "bed", "person", "enc", "encounter", "pid", "enrollee", "respondent", "inmate", "student",
+        "employee", "child", "infant", "baby", "mother", "donor", "chart", "acct", "account",
+    }
+)  # fmt: skip
+# A column named only by these holds people's names ("name", "full_name", "Last Name").
+_NAME_COLUMN_TOKENS: Final = frozenset(
+    {"name", "names", "first", "last", "full", "given", "family", "surname", "middle"}
+)
+# A letters-then-digits code inside a label ("A12", "MRN.0007", "Patient7"); public-health codes
+# that look like one are named here ("COVID-19", "H1N1", "PM2.5").
+_CODE_TOKEN: Final = re.compile(
+    r"(?<![A-Za-z0-9.])([A-Za-z]{1,8}[-_.#]?\d+(\.\d+)?[A-Za-z]?"
+    r"|(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]+)(?![A-Za-z0-9])"
+)
+_PUBLIC_CODES: Final = re.compile(
+    r"^(covid-?19|sars-cov-?2|h\d{1,2}n\d{1,2}|hiv-?[12]|htlv-?[12]|hpv-?\d{1,2}|pm2\.5|pm10|cd4|hba1c|"
+    r"vitamin\s?d3?|b12|ivd\d*|cvd19|covid19|mmr2?|dtap\d?|tdap\d?|pcv\d{2}|ppsv23|hepb\d?|ccc2|q[1-4]|h[1-9]|"
+    r"pdm09|\d{1,2}(st|nd|rd|th)|\d{1,2}v)$",
+    re.IGNORECASE,
+)
+# "Smith J", "J. Smith", "Smith, J.": a surname with an initial.
+_NAME_INITIAL: Final = re.compile(r"^([A-Z][A-Za-z'’\-]+,?\s+[A-Z]\.?|[A-Z]\.?\s+[A-Z][A-Za-z'’\-]+)$")
+_LAST_FIRST: Final = re.compile(r"^[A-Za-z'’\-]+(\s[A-Za-z'’\-]+)?,\s*[A-Za-z'’\-.]+(\s[A-Za-z'’\-.]+)?$")
 
 
 def tokens(column: str) -> list[str]:
@@ -136,9 +165,19 @@ def tokens(column: str) -> list[str]:
 
 
 def _text(value: Any) -> str:
+    """A value as text, NFKC-normalised (fullwidth "ＭＲＮ０００７" reads as "MRN0007")."""
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
-    return str(value).strip()
+    text = unicodedata.normalize("NFKC", str(value))
+    # Format characters (zero-width space and joiners) never split a word: "Pat\u200bient".
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Cf").strip()
+
+
+def mixed_script(text: str) -> bool:
+    """Letters from Latin and another script in one value: a lookalike ("Pаtient" with a Cyrillic
+    "а"). Accented Latin ("Doña Ana County", "Bayamón") is Latin."""
+    scripts = {unicodedata.name(ch, "?").split(" ")[0] for ch in text if ch.isalpha()}
+    return "LATIN" in scripts and len(scripts) > 1
 
 
 def _age(value: str) -> bool:
@@ -160,8 +199,12 @@ def _race(value: str) -> bool:
 def classify_value(value: Any, column: str) -> ValueClass | None:
     """The public dimension one value belongs to, matched whole; None when it is none of them."""
     if value is None or (isinstance(value, str) and not value.strip()):
-        return "total"  # an empty key level is a total row (CDC WONDER's "Total" rows)
+        # An empty level: recognised (CDC WONDER's "Total" rows are empty), but never evidence of a
+        # published total, since one blank cell in a patient grid is empty too.
+        return "placeholder"
     text = _text(value)
+    if mixed_script(text):
+        return None
     folded = text.casefold()
     names = set(tokens(column))
     if folded in _PLACEHOLDERS:
@@ -178,7 +221,7 @@ def classify_value(value: Any, column: str) -> ValueClass | None:
     if place.kind in ("state", "nation", "territory", "region", "country"):
         return "place"
     if place.kind == "other":
-        return "total"
+        return "total" if folded in _TOTALS else "placeholder"
     if place.kind == "substate" and (
         _county_shaped(text) or geography.is_detroit(text) or geography.is_out_wayne(text)
     ):
@@ -219,16 +262,31 @@ def is_label(value: Any, column: str) -> bool:
     if value is None:
         return True
     text = _text(value)
+    if mixed_script(text) or not text.isascii() and not _latin(text):
+        return False  # a lookalike letter from another script
+    if _PUBLIC_CODES.match(text):
+        return True  # "PM2.5", "COVID-19"
     if _ICD.match(text):
-        return bool(set(tokens(column)) & {"cause", "icd", "ucd", "mcd", "diagnosis", "code"})
+        return bool(set(tokens(column)) & {"icd", "ucd", "mcd", "diagnosis", "code"})
     if not re.search(r"[A-Za-z]{3,}", text) and not re.search(r"[A-Za-z]+[-/][A-Za-z]+", text):
         return False
+    words = set(re.findall(r"[a-z]+", text.casefold()))
+    if words & _PERSON_WORDS:
+        return False  # "Patient 7", "Subject 01", "Room A12"
+    if any(not _PUBLIC_CODES.match(m.group(0)) for m in _CODE_TOKEN.finditer(text)):
+        return False  # "MRN.0007", "A12", "Pt7"
     return not (id_shaped(text) or person_name(text))
+
+
+def _latin(text: str) -> bool:
+    return all(not ch.isalpha() or unicodedata.name(ch, "?").startswith("LATIN") for ch in text)
 
 
 def id_shaped(text: str) -> bool:
     """An SSN, MRN, case number, contact detail, hash or ID code shape (whole value)."""
     text = text.strip()
+    if _PUBLIC_CODES.match(text):
+        return False  # "COVID-19", "H1N1": a disease, not an ID
     if _SSN.match(text) or _MRN.match(text) or _CONTACT.match(text) or _HEX.match(text) and re.search(r"\d", text):
         return True
     case = _CASE_NUMBER.match(text)
@@ -240,11 +298,16 @@ def id_shaped(text: str) -> bool:
 def person_name(text: str) -> bool:
     """Shaped like a person's name ("Ana Lopez", "J. Smith") or initials, and holding no word of a
     public-health label."""
+    text = _text(text)
     if _INITIALS.match(text):
         return True
-    if not _PERSON_NAME.match(text):
+    words = set(re.findall(r"[a-z]+", text.casefold()))
+    if words & _LABEL_VOCABULARY:
         return False
-    return not (set(re.findall(r"[a-z]+", text.casefold())) & _LABEL_VOCABULARY)
+    if _LAST_FIRST.match(text) or _NAME_INITIAL.match(text):
+        return True  # "LOPEZ, ANA", "Lopez, Ana", "Smith J", "J. Smith"
+    # Any case: "ana lopez", "ANA LOPEZ" read as "Ana Lopez".
+    return bool(_PERSON_NAME.match(text) or _PERSON_NAME.match(text.title()))
 
 
 @dataclass(frozen=True)
@@ -281,21 +344,22 @@ def other_column_problem(column: str, values: Sequence[Any], *, is_numeric: bool
     SSN, MRN or case-number shapes, ID-like codes, person names, or a name that says patient ID.
     ``id_alias``: a code column 1:1 with an accepted key column (GBD location_id), which is fine."""
     name_tokens = set(tokens(column))
-    joined = "".join(tokens(column))
-    named_id = (
-        joined in config.ESTIMATE_PERSON_NAMES
-        or _patient_key_name(joined)
-        or (bool(name_tokens & config.ESTIMATE_PERSON_TOKENS) and bool(name_tokens & _ID_SUFFIX))
-    )
+    if person_id_named(column):
+        return True  # "subject_id" of year-shaped values is still a subject ID
     if is_numeric:
-        return named_id  # "patient_id" stored as a float (SPSS), "member_no"; never "Patient Days"
+        return False  # "Patient Days", "Member Months", "Beneficiary Count" are values
+    if name_tokens & config.ESTIMATE_PERSON_TOKENS:
+        return True  # "Client type", "member": a text column about people
     present = [_text(v) for v in values if v is not None]
     if not present:
         return False
+    if name_tokens and name_tokens <= _NAME_COLUMN_TOKENS:
+        # "name", "full_name": people's names, unless every value is a place (Census NAME).
+        return not all(classify_value(v, column) == "place" for v in present)
+    if any(mixed_script(v) for v in present):
+        return True
     if all(classify_value(v, column) is not None for v in present):
         return False  # years, FIPS, states, totals: public values whatever the column is called
-    if named_id or name_tokens & config.ESTIMATE_PERSON_TOKENS:
-        return True
     if any(_SSN.match(v) or _MRN.match(v) or (_CASE_NUMBER.match(v) and not _season(v)) for v in present):
         return not id_alias
     if not id_alias and sum(person_name(v) for v in present) * 10 >= len(present) * 3:
@@ -303,6 +367,41 @@ def other_column_problem(column: str, values: Sequence[Any], *, is_numeric: bool
     if not id_alias and sum(id_shaped(v) for v in present) * 2 >= len(present):
         return True
     return False
+
+
+def year_with_period(columns: Sequence[str], listed_by: Mapping[str, Sequence[Any]]) -> bool:
+    """Two time keys that are one time dimension: a year column beside week numbers (FluView,
+    NREVSS: YEAR x WEEK) or month numbers 1-12 (Year x Month)."""
+    if len(columns) != 2:
+        return False
+    years = [c for c in columns if all(v is None or _YEAR.match(_text(v)) for v in listed_by[c])]
+    if len(years) != 1:
+        return False
+    (period,) = [c for c in columns if c not in years]
+    names = set(tokens(period))
+    values = [_text(v) for v in listed_by[period] if v is not None]
+    if not values or not all(v.isdigit() for v in values):
+        return False
+    if names & {"week", "wk", "mmwr"}:
+        return all(1 <= int(v) <= 53 for v in values)
+    if names & {"month", "mo"}:
+        return all(1 <= int(v) <= 12 for v in values)
+    return False
+
+
+def person_id_named(column: str) -> bool:
+    """A column named as a person or record ID ("subject_id", "patient_id", "mrn", "MemberNo"),
+    which refuses the table whatever its values (ADR014 §7)."""
+    names = tokens(column)
+    name_tokens = set(names)
+    joined = "".join(names)
+    person = name_tokens & config.ESTIMATE_PERSON_TOKENS
+    return (
+        joined in config.ESTIMATE_PERSON_NAMES
+        or _patient_key_name(joined)
+        or (bool(person) and bool(name_tokens & _ID_SUFFIX))
+        or (bool(names) and name_tokens <= config.ESTIMATE_PERSON_TOKENS)  # "mrn", "patient", "Client"
+    )
 
 
 def _patient_key_name(joined: str) -> bool:

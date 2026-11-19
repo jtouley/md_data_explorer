@@ -109,14 +109,20 @@ _TERRITORY_KEYS: Final = frozenset(
         "united states virgin islands",
         "commonwealth of the northern mariana islands",
         "northern mariana islands",
+        # Freely associated states: listed among US jurisdictions in CDC tables (NNDSS, WONDER),
+        # so one of them never makes "Georgia" read as the country.
+        "palau", "republic of palau", "marshall islands", "republic of the marshall islands",
+        "micronesia", "federated states of micronesia", "micronesia (federated states of)", "fsm", "rmi",
     }
-)
+)  # fmt: skip
 # Census regions and divisions, HHS regions: groups of states, never countries.
 _REGIONS: Final = frozenset(
     {
         "northeast", "midwest", "south", "west", "north central",
         "new england", "middle atlantic", "mid-atlantic", "east north central", "west north central",
         "south atlantic", "east south central", "west south central", "mountain", "pacific",
+        # NNDSS's abbreviated census divisions
+        "mid. atlantic", "e.n. central", "w.n. central", "s. atlantic", "e.s. central", "w.s. central",
     }
 )  # fmt: skip
 _HHS_REGION: Final = re.compile(r"^(hhs\s+)?region\s*(10|[1-9])(\s*[-–:(].*)?$", re.IGNORECASE)
@@ -165,7 +171,12 @@ _BY_NAME: Final = {s.name.casefold(): s for s in STATES} | {
     "washington, dc": _BY_FIPS["11"],
 }
 
-NATION_LEVELS: Final = frozenset({"united states", "us", "u.s.", "usa", "united states of america", "national"})
+NATION_LEVELS: Final = frozenset(
+    {
+        "united states", "us", "u.s.", "usa", "united states of america", "national", "us residents",
+        "u.s. residents", "nationwide", "us total", "u.s. total", "united states total",
+    }
+)  # fmt: skip
 # A level naming part of a state: a county, a city or a local health jurisdiction. "Out-Wayne" is
 # Wayne County excluding Detroit; "Detroit" is the city's own jurisdiction.
 _SUBSTATE: Final = re.compile(

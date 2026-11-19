@@ -192,7 +192,49 @@ def _bound_pairs(columns: Sequence[str], numeric: set[str]) -> dict[str, tuple[s
         ]
         if len(values) == 1 and column not in used:
             pairs[values[0]] = (column, by_norm[ci_stem + "_upper"])
+    _labelled_bound_pairs(by_norm, pairs)
     return pairs
+
+
+# "<value> Lower 95% Confidence Interval", "Lower 95% CI", "lci": a side word, an optional level
+# and an optional interval word, after the value's own name (or alone, beside one rate).
+_SIDE_BOUND: Final = re.compile(
+    r"^(?P<stem>.*?)_?(?P<side>lower|upper|low|high|lci|uci|lcl|ucl)(?P<tail>(_\d+)?(_(pct|percent))?"
+    r"(_(ci|cl|confidence_interval|confidence_limit|interval|limit|bound|confidence))?)$"
+)
+_LOWER_SIDES: Final = {"lower": "upper", "low": "high", "lci": "uci", "lcl": "ucl"}
+
+
+def _labelled_bound_pairs(by_norm: Mapping[str, str], pairs: dict[str, tuple[str, str]]) -> None:
+    """Pairs the earlier passes missed: WONDER's "Crude Rate Lower 95% Confidence Interval" with
+    "Crude Rate", and AtlasPlus's standalone "Lower 95% CI"/"Upper 95% CI" with its one rate."""
+    used = {c for pair in pairs.values() for c in pair}
+    for norm, column in by_norm.items():
+        match = _SIDE_BOUND.match(norm)
+        if match is None or column in used or match.group("side") not in _LOWER_SIDES:
+            continue
+        stem, tail = match.group("stem"), match.group("tail")
+        if not stem and not tail and match.group("side") in ("low", "lower"):
+            continue  # a bare "lower"/"low" is the standalone pass's
+        high = _LOWER_SIDES[match.group("side")]
+        upper = by_norm.get(f"{stem}_{high}{tail}" if stem else f"{high}{tail}")
+        if upper is None or upper in used:
+            continue
+        if stem:
+            value = by_norm.get(stem)
+            candidates = [value] if value is not None else []
+        else:
+            candidates = [
+                c
+                for n, c in by_norm.items()
+                if c not in used
+                and c not in (column, upper)
+                and _SIDE_BOUND.match(n) is None
+                and value_kind(c) == "rate"
+            ]
+        if len(candidates) == 1 and candidates[0] not in pairs:
+            pairs[candidates[0]] = (column, upper)
+            used |= {column, upper}
 
 
 def _flag(column: str, suffix: str, flags: set[str]) -> str | None:
@@ -387,6 +429,9 @@ def _public_shape_problem(
         found: list[Any] = view.select(column).distinct().to_polars().get_column(column).to_list()
         return found
 
+    # A column named as a person or record ID refuses the table whatever its values, key or not.
+    if any(public_shape.person_id_named(c) for c in (*candidates, *numeric)):
+        return "person_id_column"
     kinds_seen: list[frozenset[str]] = []
     has_label = False
     for column in key:
@@ -395,10 +440,23 @@ def _public_shape_problem(
             return "key_not_a_public_dimension"
         kinds_seen.append(verdict.kinds)
         has_label = has_label or verdict.label
-    time_keys = sum("time" in kinds and not (kinds - {"time", "total"}) for kinds in kinds_seen)
-    if time_keys > 1:
+    time_only = [
+        c
+        for c, kinds in zip(key, kinds_seen, strict=True)
+        if "time" in kinds and not kinds - {"time", "total", "placeholder"}
+    ]
+    if len(time_only) > 1 and not public_shape.year_with_period(time_only, listed_by):
         return "two_time_keys"  # a year beside a visit month: an ID shaped like years, not a public grid
     all_kinds = frozenset().union(*kinds_seen) if kinds_seen else frozenset()
+    # Every public source has a place: a key of places, or one place for the whole file (a state's
+    # own table). A time-only or label-only table is refused (ADR014 §7).
+    single_place = any(
+        levels.get(c) == 1 and public_shape.classify_value(distinct(c)[0], c) == "place"
+        for c in candidates
+        if c not in key and schema[c].is_string()
+    )
+    if "place" not in all_kinds and not single_place:
+        return "no_place"
     if has_label:
         rated = any(v.kind == "rate" for v in values) or any(
             kind == "rate" for levels_ in metric_levels.values() for kind in levels_.values()

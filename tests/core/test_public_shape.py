@@ -51,8 +51,8 @@ class TestClassifyValue:
             pytest.param("18-34", "Age Group", "age", id="age_band"),
             pytest.param("Female", "Sex", "sex", id="sex"),
             pytest.param("Total", "Sex", "total", id="total"),
-            pytest.param(None, "Sex", "total", id="null_is_total"),
-            pytest.param("", "Gender", "total", id="empty_is_total"),
+            pytest.param(None, "Sex", "placeholder", id="null_is_placeholder"),
+            pytest.param("", "Gender", "placeholder", id="empty_is_placeholder"),
             pytest.param("MRN0001", "location", None, id="mrn_not_place"),
             pytest.param("1-1", "age_group", None, id="person_band_not_age"),
             pytest.param("Alabamaville", "State", None, id="prefix_never_matches"),
@@ -350,3 +350,245 @@ class TestContactDetails:
 
         # Assert
         assert table is None
+
+
+_LAST = ["LOPEZ", "SMITH", "NGUYEN", "PATEL", "KIM", "GARCIA", "JONES", "BROWN", "DAVIS", "MILLER"]
+_FIRST = ["ANA", "JOHN", "MAI", "RAJ"]
+_PEOPLE_AS_LABELS = [
+    pytest.param("type", lambda p: f"Patient {p}", id="patient_n"),
+    pytest.param("category", lambda p: f"Subject {p:02d}", id="subject_nn"),
+    pytest.param("cause_name", lambda p: f"Resident {p}", id="resident_n"),
+    pytest.param("indicator", lambda p: f"{_LAST[p % 10]}, {_FIRST[p // 10]}", id="last_first"),
+    pytest.param("type", lambda p: f"{_FIRST[p // 10].lower()} {_LAST[p % 10].lower()}", id="lowercase_name"),
+    pytest.param("type", lambda p: f"MRN.{p:04d}", id="mrn_dotted"),
+    pytest.param("type", lambda p: f"Room A{p}", id="room"),
+    pytest.param("measure", lambda p: f"Pаtient{p}", id="cyrillic_lookalike"),
+    pytest.param("location", lambda p: "ＭＲＮ" + "".join(chr(0xFF10 + int(d)) for d in f"{p:04d}"), id="fullwidth"),
+    pytest.param("cause", lambda p: f"I{20 + p}", id="icd_as_proxy"),
+    # sharp-edges, round 5
+    pytest.param("type", lambda p: f"{_LAST[p % 10].title()} {chr(65 + p)}", id="surname_initial"),
+    pytest.param("type", lambda p: f"{chr(65 + p)}. {_LAST[p % 10].title()}", id="initial_surname"),
+    pytest.param("type", lambda p: f"Pat\u200bient {p}", id="zero_width_split"),
+    pytest.param("type", lambda p: f"Pat1ent {p}", id="digit_in_word"),
+]
+
+
+class TestRoundFiveGuard:
+    """Round 5: a place key is required; labels never carry people; ID names refuse whatever the
+    values; a blank is a placeholder, never a total."""
+
+    @pytest.mark.parametrize(("column", "ident"), _PEOPLE_AS_LABELS)
+    def test_detectFrame_peopleAsLabelsWithMonthOnly_neverEstimates(self, column, ident):
+        # Arrange
+        frame = pl.DataFrame(
+            [{column: ident(p), "visit_month": m, "hba1c_pct": 5.0 + p % 6} for p in range(1, 31) for m in _MONTHS]
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is None
+
+    @pytest.mark.parametrize(("column", "ident"), _PEOPLE_AS_LABELS)
+    def test_detectFrame_peopleAsLabelsBesideStates_neverEstimates(self, column, ident):
+        # Arrange: a place key does not let a person through as a label
+        frame = pl.DataFrame(
+            [
+                {"State": s, column: ident(p), "Year": y, "Rate": 1.0, "lower": 0.5, "upper": 2.0}
+                for p in range(1, 6)
+                for s in ("Ohio", "Iowa")
+                for y in (2022, 2023)
+            ]
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is None
+
+    @pytest.mark.parametrize(
+        "labels",
+        [
+            pytest.param(["Syphilis", "Chlamydia", "COVID-19", "Influenza A(H1N1)"], id="disease_codes"),
+            pytest.param(["Kidney disease", "Heart disease"], id="lowercase_labels"),
+            pytest.param(["Vitamin D", "E. coli", "PM2.5", "Influenza A(H1N1)pdm09", "Hepatitis B"], id="named_codes"),
+        ],
+    )
+    def test_detectFrame_publicLabelsBesideStates_accepted(self, labels):
+        # Arrange
+        frame = pl.DataFrame(
+            [
+                {"State": s, "cause_name": c, "Year": y, "Rate": 1.0, "lower": 0.5, "upper": 2.0}
+                for c in labels
+                for s in ("Ohio", "Iowa")
+                for y in (2022, 2023)
+            ]
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is not None
+
+    def test_detectFrame_timeAndLabelsWithoutPlace_neverEstimates(self):
+        # Arrange: a public-looking label x year table with no place at all
+        frame = pl.DataFrame(
+            [
+                {"cause_name": c, "Year": y, "Rate": 1.0, "lower": 0.5, "upper": 2.0}
+                for c in ("Syphilis", "Chlamydia")
+                for y in (2021, 2022, 2023)
+            ]
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is None
+
+    def test_detectFrame_onePlaceForWholeFile_accepted(self):
+        # Arrange: a state's own table: one state, so the place is a one-value column
+        frame = pl.DataFrame(
+            [
+                {"State": "Michigan", "cause_name": c, "Year": y, "Rate": 1.0, "lower": 0.5, "upper": 2.0}
+                for c in ("Syphilis", "Chlamydia")
+                for y in (2021, 2022, 2023)
+            ]
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is not None
+
+    @pytest.mark.parametrize(
+        ("id_column", "ident"),
+        [
+            pytest.param("subject_id", lambda p: str(2000 + p), id="subject_id_year_shaped"),
+            pytest.param("patient_id", lambda p: str(202400 + p), id="patient_id_mmwr_shaped"),
+            pytest.param("mrn", lambda p: _STATE_NAMES[p], id="mrn_state_names"),
+        ],
+    )
+    def test_detectFrame_personIdNamedColumn_refusedWhateverValues(self, id_column, ident):
+        # Arrange
+        frame = pl.DataFrame(
+            [
+                {id_column: ident(p), "State": "Ohio", "event": e, "hba1c_pct": 6.0 + p / 10}
+                for p in range(1, 31)
+                for e in ("Screening", "Baseline", "Followup")
+            ]
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is None
+
+    def test_detectFrame_fullNameAttribute_refused(self):
+        # Arrange: a public-shaped key, with a person's name beside each row
+        frame = pl.DataFrame(
+            [
+                {"State": s, "Year": y, "full_name": f"{_LAST[i % 10]}, {_FIRST[i % 4]}", "Rate": 1.0}
+                for i, s in enumerate(_STATE_NAMES[:20])
+                for y in (2022, 2023)
+            ]
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is None
+
+    def test_detectFrame_demographicGridWithOneBlank_neverEstimates(self):
+        # Arrange: one blank race cell must not read as a published total
+        import itertools
+
+        cells = list(
+            itertools.product(["Female", "Male"], ["18-34", "35-49", "50-64", "65+"], ["White", "Black", "Asian"])
+        )
+        frame = pl.DataFrame(
+            [
+                {"sex": s, "age_group": a, "race": None if i == 0 else r, "a1c_pct": 6.0 + i / 10}
+                for i, (s, a, r) in enumerate(cells)
+            ]
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is None
+
+    @pytest.mark.parametrize(
+        ("period", "values"),
+        [
+            pytest.param("WEEK", range(1, 53), id="fluview_year_week"),
+            pytest.param("Month", range(1, 13), id="year_month"),
+        ],
+    )
+    def test_detectFrame_yearWithPeriodNumbers_accepted(self, period, values):
+        # Arrange
+        frame = pl.DataFrame(
+            [
+                {"REGION": s, "YEAR": y, period: w, "% WEIGHTED ILI": 1.0 + w / 10}
+                for s in _STATE_NAMES[:5]
+                for y in (2023, 2024)
+                for w in values
+            ]
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is not None
+        assert {d.name for d in table.dimensions} == {"REGION", "YEAR", period}
+
+    def test_detectFrame_yearBesideVisitMonth_neverEstimates(self):
+        # Arrange
+        frame = pl.DataFrame(
+            [
+                {"State": s, "Year": y, "visit_month": m, "Rate": 1.0}
+                for s in _STATE_NAMES[:5]
+                for y in (2022, 2023)
+                for m in _MONTHS
+            ]
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is None
+
+    def test_detectFrame_nndssDivisionsAndUsResidents_accepted(self):
+        # Arrange: NNDSS's abbreviated census divisions and its "US RESIDENTS" national row
+        areas = ["US RESIDENTS", "New England", "Mid. Atlantic", "E.N. Central", "W.S. Central", "Pacific"]
+        areas += [s.upper() for s in _STATE_NAMES[:20]]
+        frame = pl.DataFrame(
+            [
+                {"Reporting Area": a, "MMWR Year": 2023, "MMWR Week": w, "Legionellosis, Cum 2023": 40 + i + w}
+                for i, a in enumerate(areas)
+                for w in (10, 11)
+            ]
+        )
+
+        # Act
+        table = detect_frame(frame)
+
+        # Assert
+        assert table is not None
+
+    @pytest.mark.parametrize("level", ["Palau", "Marshall Islands", "Federated States of Micronesia"])
+    def test_classify_freelyAssociatedState_territoryNotCountry(self, level):
+        # Act
+        kind = geography.classify(level).kind
+
+        # Assert
+        assert kind == "territory"

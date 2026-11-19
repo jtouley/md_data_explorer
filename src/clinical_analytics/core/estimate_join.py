@@ -263,12 +263,15 @@ def standardization_by_source(
         for m in re.finditer(rf"(?<![\w]){re.escape(s.name)}(?![\w])", text, re.IGNORECASE)
     )
     chosen: dict[str, Literal["age-standardized", "crude"] | None] = {s.dataset_id: None for s in sources}
-    if len(sources) >= 2 and mentions and re.search(r"\brespectively\b", text, re.IGNORECASE):
-        # "GBD and WONDER, age-standardized and crude respectively": tables in the order named,
-        # phrases in the order written. Bound only when the counts match; otherwise none is bound.
-        named = list(dict.fromkeys(dataset_id for _s, _e, dataset_id in mentions))
-        if len(named) == len(phrases):
-            for dataset_id, (_s, _e, std) in zip(named, phrases, strict=True):
+    explicit = any(_explicit_table(text, end, mentions) is not None for _s, end, _std in phrases)
+    respectively = re.search(r"\brespectively\b", text, re.IGNORECASE)
+    if len(sources) >= 2 and respectively and not explicit:
+        # "GBD and WONDER, age-standardized and crude respectively": bound only when "respectively"
+        # closes a list of phrases that follows a list of the tables, the same length; otherwise
+        # nothing is bound and the choice is held. An explicit "for WONDER" always wins.
+        listed = _respectively_lists(text, respectively.start(), phrases, mentions)
+        if listed is not None:
+            for dataset_id, std in listed:
                 chosen[dataset_id] = std
         return chosen
     if len(kinds) <= 1 or len(sources) < 2 or not mentions:
@@ -293,6 +296,60 @@ def standardization_by_source(
             bound = min(mentions, key=lambda m: min(abs(m[0] - end), abs(start - m[1])))[2]
         chosen[bound] = chosen[bound] or std
     return chosen
+
+
+_LIST_SEPARATOR: Final = r"\s*(,\s*and|,|and|&)\s*"
+
+
+def _explicit_table(text: str, end: int, mentions: Sequence[tuple[int, int, str]]) -> str | None:
+    """The table a phrase ending at ``end`` names right after it ("crude for GBD"), or None."""
+    return next(
+        (
+            dataset_id
+            for m_start, _m_end, dataset_id in mentions
+            if m_start >= end
+            and re.fullmatch(
+                r"\s*(rates?\s+|values?\s+|estimates?\s+)?(for|in|from|of)\s+(the\s+)?",
+                text[end:m_start],
+                re.IGNORECASE,
+            )
+        ),
+        None,
+    )
+
+
+def _respectively_lists(
+    text: str,
+    at: int,
+    phrases: Sequence[tuple[int, int, Literal["age-standardized", "crude"]]],
+    mentions: Sequence[tuple[int, int, str]],
+) -> list[tuple[str, Literal["age-standardized", "crude"]]] | None:
+    """(table, standardization) pairs when "respectively" at ``at`` closes "<T1> and <T2>, <P1> and
+    <P2>": phrases joined only by list words, right before it, after the tables joined the same way.
+    None for anything else (years, places or other words in between)."""
+    before = [p for p in phrases if p[1] <= at]
+    if len(before) < 2 or not re.fullmatch(r"\s*((rates?|values?|estimates?)\s*)?,?\s*", text[before[-1][1] : at]):
+        return None
+    run = [before[-1]]
+    for phrase in reversed(before[:-1]):
+        gap = text[phrase[1] : run[0][0]]
+        if not re.fullmatch(r"\s*((rates?|values?|estimates?)\s*)?" + _LIST_SEPARATOR, gap, re.IGNORECASE):
+            break
+        run.insert(0, phrase)
+    tables = [m for m in mentions if m[1] <= run[0][0]]
+    if not tables or not re.fullmatch(
+        r"[\s,:;–-]*((use|using|with)\s+)?", text[tables[-1][1] : run[0][0]], re.IGNORECASE
+    ):
+        return None
+    listed = [tables[-1]]
+    for mention in reversed(tables[:-1]):
+        if not re.fullmatch(_LIST_SEPARATOR, text[mention[1] : listed[0][0]], re.IGNORECASE):
+            break
+        listed.insert(0, mention)
+    names = [m[2] for m in listed]
+    if len(names) != len(run) or len(set(names)) != len(names):
+        return None
+    return [(name, phrase[2]) for name, phrase in zip(names, run, strict=True)]
 
 
 def _standardization_matches(text: str) -> list[tuple[re.Match[str], Literal["age-standardized", "crude"]]]:
@@ -463,6 +520,7 @@ class _Pins:
     roles: dict[Role, str] = field(default_factory=dict)
     constants: dict[Role, tuple[str, Any]] = field(default_factory=dict)  # role -> (column, its one level)
     year_aligned: int | None = None  # a chosen year shown beside the question's year
+    annual_partner: bool = False  # another table in the question has one value per year
 
 
 def _choice(source: SourceInput, choices: Mapping[str, Any], column: str) -> Any:
@@ -680,7 +738,11 @@ def _harmonize(
         )
         for level in others.get("ambiguous", []):
             notes.append(config.ESTIMATE_JOIN_AMBIGUOUS_PLACE.format(source=source.name, level=level))
-        substate = others.get("substate", []) + others.get("territory", []) + others.get("unknown", [])
+        substate = [
+            level
+            for kind in ("substate", "territory", "region", "country", "other", "unknown")
+            for level in others.get(kind, [])
+        ]
         if substate:
             notes.append(
                 config.ESTIMATE_JOIN_NOT_STATES.format(
@@ -707,13 +769,17 @@ def _harmonize(
         keys.append("year")
     elif season_col is not None:
         raise JoinRefusedError(config.ESTIMATE_JOIN_SEASON_TREND.format(source=source.name, column=season_col))
-    month_col = pins.roles.get("month")
-    if month_col is not None:
-        exprs.append(pl.col(month_col).cast(pl.String).str.strip_chars().alias("month"))
-        keys.append("month")
     elif "year" in pins.constants:
         exprs.append(pl.lit(int(pins.constants["year"][1]), dtype=pl.Int64).alias("year"))
         keys.append("year")
+    month_col = pins.roles.get("month")
+    if month_col is not None and month_col in pins.pinned and "year" not in keys:
+        # One month chosen to line up with an annual table: joined on its year, shown as chosen.
+        exprs.append(pl.lit(int(str(pins.pinned[month_col])[:4]), dtype=pl.Int64).alias("year"))
+        keys.append("year")
+    elif month_col is not None:
+        exprs.append(pl.col(month_col).cast(pl.String).str.strip_chars().alias("month"))
+        keys.append("month")
     # sex
     sex_col = pins.roles.get("sex")
     if sex_col is not None:
@@ -773,7 +839,9 @@ def _harmonize(
         if asked.months:
             frame = frame.filter(pl.col("month").is_in(asked.months))
         elif asked.years:
-            frame = frame.filter(pl.col("month").str.slice(0, 4).cast(pl.Int64, strict=False).is_in(asked.years))
+            frame = frame.filter(
+                pl.col("month").str.slice(0, 4).cast(pl.Int64, strict=False).is_in(_years_asked(asked))
+            )
     if "sex" in keys:
         if asked.sexes:
             frame = frame.filter(pl.col("sex").is_in(asked.sexes))
@@ -895,6 +963,14 @@ def _resolve_roles(source: SourceInput, pins: _Pins, asked: Asked, choices: Mapp
         pins.refusals.append(config.ESTIMATE_JOIN_NAME_STATE.format(source=source.name))
 
 
+def _years_asked(asked: Asked) -> list[int]:
+    """The years a question covers: "from 2019 to 2023" is every year in between when it asks for a
+    series (by month, a trend); otherwise the years it names."""
+    if asked.trend and len(asked.years) >= 2:
+        return list(range(min(asked.years), max(asked.years) + 1))
+    return list(asked.years)
+
+
 def _resolve_month(source: SourceInput, pins: _Pins, asked: Asked, choices: Mapping[str, Any]) -> None:
     """A monthly table: a named month is used; "by month" or the confirmed "all months" shows each
     month of the asked year; a year alone is held to ask which (never one month picked silently)."""
@@ -906,6 +982,26 @@ def _resolve_month(source: SourceInput, pins: _Pins, asked: Asked, choices: Mapp
     assert dimension is not None  # noqa: S101
     available = sorted(str(v) for v in dimension.values if v is not None)
     chosen = choices.get(month_col)
+    in_year = [m for m in available if not asked.years or int(m[:4]) in _years_asked(asked)]
+    if pins.annual_partner:
+        # Beside a table with one value per year, one month lines up with it, never "all months"
+        # (each annual value would repeat beside twelve months) and never a month picked silently.
+        if len(asked.months) == 1 and asked.months[0] in available:
+            pins.pinned[month_col] = asked.months[0]
+            return
+        if chosen is not None and str(chosen) in available:
+            pins.pinned[month_col] = chosen
+            return
+        if not in_year:
+            pins.refusals.append(config.ESTIMATE_JOIN_NAME_MONTH_YEAR.format(source=source.name))
+            return
+        pins.holds.append(
+            (
+                config.ESTIMATE_JOIN_MONTH_BESIDE_ANNUAL.format(source=source.name, column=month_col),
+                HoldOption(source.dataset_id, source.name, month_col, in_year[0], tuple(in_year)),
+            )
+        )
+        return
     if asked.months:
         return
     if asked.by_month or chosen == ALL_MONTHS_CHOICE:
@@ -915,7 +1011,6 @@ def _resolve_month(source: SourceInput, pins: _Pins, asked: Asked, choices: Mapp
     if chosen is not None and str(chosen) in available:
         pins.pinned[month_col] = chosen
         return
-    in_year = [m for m in available if not asked.years or int(m[:4]) in asked.years]
     if not in_year:
         pins.refusals.append(config.ESTIMATE_JOIN_NAME_MONTH_YEAR.format(source=source.name))
         return
@@ -974,6 +1069,9 @@ def prepare(
     pinned_all: list[tuple[SourceInput, _Pins, ValueColumn]] = []
     sources_used = list(sources)
     by_source = standardization_by_source(sources, asked.text)
+    monthly = [
+        source.table is not None and any(role_of(d) == "month" for d in source.table.dimensions) for source in sources
+    ]
     asked_for = {s.dataset_id: dataclasses.replace(asked, standardization=by_source[s.dataset_id]) for s in sources}
     question_asked = asked
     for index, source in enumerate(sources):
@@ -983,6 +1081,7 @@ def prepare(
         source = dataclasses.replace(source, saved_choices={**source.saved_choices, **own})
         sources_used[index] = source
         pins = _pin_dimensions(source, asked, own, single)
+        pins.annual_partner = monthly[index] and not all(monthly)
         _resolve_roles(source, pins, asked, own)
         value, value_hold = _choose_value(source, asked, own)
         if value_hold is not None:
@@ -1466,6 +1565,7 @@ def _disagree(
             {
                 "group": label,
                 f"{o.source.name}: {o.value.name}": vo,
+                **({f"{o.source.name} lower": lo, f"{o.source.name} upper": uo} if both else {}),
                 f"{m.source.name}: {m.value.name}": vm,
                 f"{m.source.name} lower": lm,
                 f"{m.source.name} upper": um,

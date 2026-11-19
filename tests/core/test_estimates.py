@@ -572,3 +572,66 @@ class TestPartialCountyNesting:
         kept = [f.value for f in grounded.filters if f.column == "location_name"]
         assert refusal is None
         assert kept == [["TexPlace01 County", "TexPlace02 County", "TexPlace03 County"]]
+
+
+class TestLabelledIntervals:
+    """Round 5 item 5: interval columns pair with their value and are never offered as values."""
+
+    @pytest.mark.parametrize(
+        ("columns", "expected"),
+        [
+            pytest.param(
+                ["Cases", "Rate per 100000", "Lower 95% CI", "Upper 95% CI"],
+                {"Rate per 100000": ("Lower 95% CI", "Upper 95% CI")},
+                id="atlasplus",
+            ),
+            pytest.param(
+                ["Crude Rate", "Crude Rate Lower 95% Confidence Interval", "Crude Rate Upper 95% Confidence Interval"],
+                {
+                    "Crude Rate": (
+                        "Crude Rate Lower 95% Confidence Interval",
+                        "Crude Rate Upper 95% Confidence Interval",
+                    )
+                },
+                id="wonder",
+            ),
+            pytest.param(["rate", "lci", "uci"], {"rate": ("lci", "uci")}, id="lci_uci"),
+            pytest.param(["val", "lower", "upper"], {"val": ("lower", "upper")}, id="gbd"),
+            pytest.param(
+                ["incidence", "incidence_lower", "incidence_upper"],
+                {"incidence": ("incidence_lower", "incidence_upper")},
+                id="suffix",
+            ),
+        ],
+    )
+    def test_boundPairs_labelledIntervalColumns_pairedWithValue(self, columns, expected):
+        # Act
+        pairs = estimates._bound_pairs(columns, set(columns))
+
+        # Assert
+        assert pairs == expected
+
+    def test_detect_atlasIntervalColumns_notOfferedAsValues(self):
+        # Arrange
+        frame = pl.DataFrame(
+            [
+                {
+                    "Geography": s,
+                    "Year": y,
+                    "Cases": 300,
+                    "Rate per 100000": 10.0,
+                    "Lower 95% CI": 8.0,
+                    "Upper 95% CI": 12.0,
+                }
+                for s in ("Ohio", "Iowa", "Utah")
+                for y in (2022, 2023)
+            ]
+        )
+
+        # Act
+        table = _detect(frame)
+
+        # Assert
+        assert table is not None
+        assert [v.name for v in table.values] == ["Cases", "Rate per 100000"]
+        assert table.value("Rate per 100000").lower == "Lower 95% CI"

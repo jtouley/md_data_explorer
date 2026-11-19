@@ -1094,6 +1094,12 @@ class TestAllowlistRoundJoins:
             ("GBD and WONDER, age-standardized and crude respectively", {"GBD": "age-standardized", "WONDER": "crude"}),
             ("WONDER and GBD, crude and age-adjusted respectively", {"WONDER": "crude", "GBD": "age-standardized"}),
             ("GBD and WONDER, age-standardized respectively", {"GBD": None, "WONDER": None}),
+            ("GBD and WONDER in 2019 and 2023, age-standardized and crude respectively", {"GBD": None, "WONDER": None}),
+            ("GBD and WONDER for Ohio and Iowa, crude and age-adjusted respectively", {"GBD": None, "WONDER": None}),
+            (
+                "Age-adjusted for WONDER and crude for GBD, respectively",
+                {"WONDER": "age-standardized", "GBD": "crude"},
+            ),
         ],
     )
     def test_standardizationBySource_respectively_boundInOrder(self, question, expected):
@@ -1160,3 +1166,149 @@ def _held_defaults(result: ej.JoinAnswer) -> dict[str, dict[str, object]]:
     for option in result.options:
         chosen.setdefault(option.dataset_id, {})[option.column] = option.default
     return chosen
+
+
+def _annual(states: int = 10) -> ej.SourceInput:
+    """A synthetic annual table with intervals: states x 2019-2023 (made-up rates)."""
+    rows = [
+        {"State": st.name, "Year": y, "Rate per 100000": float(10 + i), "lower": 9.0, "upper": 11.0}
+        for i, st in enumerate(STATES[:states])
+        for y in range(2019, 2024)
+    ]
+    return _source(pl.DataFrame(rows), "annual")
+
+
+def _monthly_years() -> ej.SourceInput:
+    rows = [
+        {"State": st.name, "Month": f"{y}-{m:02d}", "Rate per 100000": float(m + i)}
+        for i, st in enumerate(STATES[:10])
+        for y in range(2019, 2024)
+        for m in range(1, 13)
+    ]
+    return _source(pl.DataFrame(rows), "monthly")
+
+
+class TestRoundFiveJoins:
+    """Round 5 items 5-6: real intervals in the disagreement screen; months, seasons, Georgia."""
+
+    def test_answer_disagreeWithOverlappingIntervals_noneDisagree(self):
+        # Arrange: GBD 10 (9-11) against AtlasPlus 12 (8-16): the intervals overlap
+        gbd = _source(
+            pl.DataFrame(
+                [
+                    dict(measure_name="Incidence", location_name=st.name, sex_name="Both", age_name="All ages",
+                         cause_name="Syphilis", metric_name="Rate", year=y, val=10.0, upper=11.0, lower=9.0)
+                    for st in STATES[:30]
+                    for y in (2022, 2023)
+                ]
+            ),
+            "GBD",
+        )  # fmt: skip
+        atlas = _source(
+            pl.DataFrame(
+                [
+                    {"Indicator": "Primary and Secondary Syphilis", "Year": y, "Geography": st.name, "Cases": 300,
+                     "Rate per 100000": 12.0, "Lower 95% CI": 8.0, "Upper 95% CI": 16.0}
+                    for st in STATES[:30]
+                    for y in (2022, 2023)
+                ]
+            ),
+            "ATLAS",
+        )  # fmt: skip
+        choices = {"ATLAS": {ej.VALUE_CHOICE: "Rate per 100000", ej.STANDARDIZATION_CHOICE: "crude"}}
+
+        # Act
+        result = ej.answer(
+            [gbd, atlas], "Does the ATLAS rate disagree with GBD for syphilis in 2023 in all states?", choices
+        )
+        if result.status == "held":
+            result = ej.answer(
+                [gbd, atlas],
+                "Does the ATLAS rate disagree with GBD for syphilis in 2023 in all states?",
+                {**_held_defaults(result), **choices},
+            )
+
+        # Assert
+        assert result.status == "answered", result.message
+        rows = result.table["rows"]
+        assert {r["reported vs interval"] for r in rows} == {"intervals overlap"}
+        assert rows[0]["ATLAS lower"] == 8.0 and rows[0]["ATLAS upper"] == 16.0
+
+    def test_answer_seasonTableWithOneYearColumn_alignedNoError(self):
+        # Arrange: a season table that also carries a one-value Year column
+        flu = _source(
+            pl.DataFrame(
+                [
+                    {
+                        "Geography": st.name,
+                        "Season": se,
+                        "Year": 2023,
+                        "Estimate (%)": 50.0 + i,
+                        "lower": 45.0,
+                        "upper": 55.0,
+                    }
+                    for i, st in enumerate(STATES[:10])
+                    for se in ("2022-23", "2023-24")
+                ]
+            ),
+            "flu",
+        )
+        question = "Coverage and rate in Alaska in 2023"
+
+        # Act
+        held = ej.answer([flu, _annual()], question)
+        answered = ej.answer([flu, _annual()], question, _held_defaults(held))
+
+        # Assert
+        assert held.status == "held"
+        assert answered.status == "answered", answered.message
+
+    def test_answer_byMonthOverYearRange_everyYearKept(self):
+        # Act
+        result = ej.answer([_monthly_years()], "Rate in Alaska by month from 2019 to 2023")
+
+        # Assert
+        assert result.status == "answered", result.message
+        assert sorted({r["month"][:4] for r in result.table["rows"]}) == ["2019", "2020", "2021", "2022", "2023"]
+        assert len(result.table["rows"]) == 60
+
+    def test_answer_monthlyBesideAnnual_heldForOneMonthNeverAllMonths(self):
+        # Arrange
+        sources = [_monthly_years(), _annual()]
+        question = "Rate in Alaska in 2023 in monthly and annual"
+
+        # Act
+        held = ej.answer(sources, question)
+        chosen = ej.answer(sources, question, {"monthly": {"Month": "2023-03"}})
+
+        # Assert
+        assert held.status == "held"
+        [option] = held.options
+        assert ej.ALL_MONTHS_CHOICE not in option.levels
+        assert option.levels == tuple(f"2023-{m:02d}" for m in range(1, 13))
+        assert chosen.status == "answered", chosen.message
+        oracle = sources[0].frame.filter((pl.col("State") == "Alaska") & (pl.col("Month") == "2023-03"))
+        assert chosen.table["rows"][0]["monthly: Rate per 100000"] == oracle.get_column("Rate per 100000").item()
+
+    @pytest.mark.parametrize("extra", ["Palau", "Marshall Islands", "Federated States of Micronesia"])
+    def test_answer_freelyAssociatedState_georgiaKeptLevelNoted(self, extra):
+        # Arrange
+        places = [st.name for st in STATES] + [extra]
+        source = _source(
+            pl.DataFrame(
+                [
+                    {"Geography": p, "Year": y, "Rate per 100000": 1.0 + i}
+                    for i, p in enumerate(places)
+                    for y in (2022, 2023)
+                ]
+            ),
+            "geo",
+        )
+
+        # Act
+        result = ej.answer([source], "Rank states by rate in 2023")
+
+        # Assert
+        assert result.status == "answered", result.message
+        assert "Georgia" in {r["state"] for r in result.table["rows"]}
+        assert any(extra in n and "left out" in n for n in result.notes)
