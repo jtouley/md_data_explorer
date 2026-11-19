@@ -11,6 +11,7 @@ import polars as pl
 import structlog
 from open_data_contract_standard.model import OpenDataContractStandard
 
+from clinical_analytics.contracts import config
 from clinical_analytics.contracts.builder import ContractInputs, build_contract
 from clinical_analytics.contracts.errors import ContractDamagedError, ContractError, ContractValidationError
 from clinical_analytics.contracts.quality import QualityNotRun, QualityReport, run_quality
@@ -129,6 +130,17 @@ def _previous_contract(
         return None
 
 
+def population_estimates_properties(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Contract properties for an upload declared public population estimates (ADR014): the
+    privacy class and the statement the uploader agreed to. Empty for any other upload."""
+    if metadata.get("population_estimates") is not True:
+        return {}
+    return {
+        "privacyClass": config.POPULATION_ESTIMATES_PRIVACY_CLASS,
+        "populationEstimates": config.POPULATION_ESTIMATES_STATEMENT,
+    }
+
+
 def check_upload(
     data_dir: Path,
     df: pl.DataFrame,
@@ -170,6 +182,7 @@ def check_upload(
             source_file_sha256=metadata.get("source_file_sha256"),
             resolved=_resolve(df, patches) if accepted else None,
             accepted_patch_ids=accepted,
+            extra_custom_properties=population_estimates_properties(metadata),
         )
         contract = build_contract(df, inputs)
         if not write_contract(data_dir, upload_id, dataset_version, contract):

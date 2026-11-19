@@ -64,7 +64,7 @@ from clinical_analytics.eval.corpus.fetch import (
     load_corpus,
     table_path,
 )
-from clinical_analytics.eval.corpus.score import SMALL_MAX, SMALL_MIN, ApiOutcome, OracleAnswer, Scored, score
+from clinical_analytics.eval.corpus.score import AGGREGATE, SMALL_MAX, SMALL_MIN, ApiOutcome, OracleAnswer, Scored, score
 
 logger = structlog.get_logger()
 
@@ -338,16 +338,24 @@ class Api:
     def post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self.request("POST", path, json.dumps(payload).encode(), "application/json")
 
-    def upload(self, path: Path, name: str) -> str:
-        response = self.upload_response(path, name)
+    def upload(self, path: Path, name: str, population_estimates: bool = False) -> str:
+        """Upload through the real route; ``population_estimates`` ticks the uploader's mark that
+        the file holds public population estimates and no patient-level data (ADR014)."""
+        response = self.upload_response(path, name, population_estimates)
         return required_field(response, "upload_id", "POST /api/datasets/upload")
 
-    def upload_response(self, path: Path, name: str) -> dict[str, Any]:
+    def upload_response(self, path: Path, name: str, population_estimates: bool = False) -> dict[str, Any]:
         ctype = "application/zip" if path.suffix == ".zip" else "text/csv"
         boundary = uuid.uuid4().hex
+        declared = (
+            f'--{boundary}\r\nContent-Disposition: form-data; name="population_estimates"\r\n\r\ntrue\r\n'.encode()
+            if population_estimates
+            else b""
+        )
         body = b"".join(
             [
                 f'--{boundary}\r\nContent-Disposition: form-data; name="dataset_name"\r\n\r\n{name}\r\n'.encode(),
+                declared,
                 f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{path.name}"\r\n'
                 f"Content-Type: {ctype}\r\n\r\n".encode(),
                 path.read_bytes(),
@@ -618,8 +626,12 @@ def run(
     try:
         report.settings["startup_s"] = round(api.wait_healthy(), 1)
         upload_started = time.monotonic()
+        # A question file of ``grain: aggregate`` is a public population-estimate set: uploaded with
+        # the mark a person ticks for it (ADR014). An app without the field ignores it.
+        declared = any(q.get("grain") == AGGREGATE for q in questions)
+        report.settings["population_estimates"] = declared
         try:
-            dataset_id = api.upload(zip_path, dataset)
+            dataset_id = api.upload(zip_path, dataset, declared)
             report.settings["upload"] = "zip (table + dictionary)"
         except AcceptanceError as error:
             if "-> 400" not in str(error) or oracle_input.is_dir():
@@ -627,7 +639,7 @@ def run(
             # Recorded, never silent: the API refused the ZIP, so the table goes up alone and
             # the app answers without the dictionary. (A multi-table set has no such fallback.)
             report.settings["upload"] = f"csv only; ZIP rejected: {str(error)[:200]}"
-            dataset_id = api.upload(oracle_input, dataset)
+            dataset_id = api.upload(oracle_input, dataset, declared)
         report.settings["upload_s"] = round(time.monotonic() - upload_started, 1)
         report.results = ask_all(api, dataset_id, questions, truth, model, timeout_s)
     finally:

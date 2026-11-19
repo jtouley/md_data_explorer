@@ -401,6 +401,32 @@ class DatasetUploadResponse(BaseModel):
         default_factory=list,
         description="Multi-table uploads: tables, rows and features left out of the cohort, and why",
     )
+    population_estimates: bool = Field(
+        default=False,
+        description="The uploader declared the file public population estimates with no patient-level data",
+    )
+
+
+def _declare_population_estimates(upload_id: str) -> None:
+    """Store the uploader's declaration that ``upload_id`` holds public population estimates
+    (ADR014), where questions read declarations. Raises HTTPException 500 when it can't be saved:
+    an upload whose declaration was lost would be answered under the wrong rules."""
+    from clinical_analytics.contracts.config import POPULATION_ESTIMATES_STATEMENT
+    from clinical_analytics.contracts.declarations import FileDeclarationStore, PopulationEstimatesDeclaration
+    from clinical_analytics.contracts.errors import ContractStoreError
+    from clinical_analytics.core.data_home import uploads_dir
+
+    declaration = PopulationEstimatesDeclaration(statement=POPULATION_ESTIMATES_STATEMENT)
+    try:
+        FileDeclarationStore(uploads_dir().parent).update(
+            upload_id, lambda current: current.with_population_estimates(declaration)
+        )
+    except ContractStoreError as e:
+        logger.error("population_estimates_not_saved", upload_id=upload_id, error_type=type(e).__name__)
+        raise HTTPException(
+            status_code=500, detail="The dataset was saved, but its population-estimates mark wasn't. Upload it again."
+        ) from e
+    logger.info("population_estimates_declared", upload_id=upload_id)
 
 
 def _upload_type_notes(storage: UserDatasetStorage, upload_id: str) -> list[str]:
@@ -478,6 +504,12 @@ def load_sample_dataset() -> DatasetUploadResponse:
 async def upload_dataset(
     file: UploadFile = File(..., description="CSV or Excel file to upload"),
     dataset_name: str | None = Form(None, description="Optional display name"),
+    population_estimates: bool = Form(
+        False,
+        description="Public population estimates – no patient-level data: every row is a published estimate "
+        "for a group, never a patient (ADR014). Lifts the 20-group limit and the small-cell rule for "
+        "estimated rates; raw counts keep the small-cell rule.",
+    ),
 ) -> DatasetUploadResponse:
     """Upload a dataset file (CSV, Excel, or SPSS).
 
@@ -514,6 +546,8 @@ async def upload_dataset(
         "dataset_name": display_name,
         "original_filename": filename,
     }
+    if population_estimates:
+        metadata["population_estimates"] = True
 
     storage = UserDatasetStorage()
     # Parsing, DuckDB and Parquet writes block: keep them off the event loop.
@@ -532,12 +566,15 @@ async def upload_dataset(
     # A save can reuse an existing upload_id (e.g. overwrite); drop any cached layer so the
     # next query reads the new data instead of the previous upload's DuckDB view.
     invalidate_semantic_layer_cache(upload_id)
-    log.info("dataset_upload_completed", upload_id=upload_id)
+    if population_estimates:
+        await asyncio.to_thread(_declare_population_estimates, upload_id)
+    log.info("dataset_upload_completed", upload_id=upload_id, population_estimates=population_estimates)
     return DatasetUploadResponse(
         upload_id=upload_id,
         dataset_name=display_name,
         status="ready",
         message=message,
+        population_estimates=population_estimates,
         quality=await asyncio.to_thread(_upload_quality, storage, upload_id),
         type_notes=_upload_type_notes(storage, upload_id),
         cohort_notes=_upload_cohort_notes(storage, upload_id),

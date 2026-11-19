@@ -635,6 +635,8 @@ class SemanticLayer:
         self.state_generation = 0
         # Confirmed level merges already applied to this layer: (column, spellings, version).
         self.applied_levels: set[tuple[str, tuple[str, ...], str | None]] = set()
+        # (state_generation, EstimateTable or None): QueryService's estimate-table detection (ADR014).
+        self.estimate_table_cache: tuple[int, Any] | None = None
         self._closed = False
         # Temporary views the current cohort query created; dropped once its rows are read.
         self._cohort_views: list[str] = []
