@@ -193,14 +193,14 @@ fetch-embedding-model: ensure-venv ## Build step: fetch the pinned ONNX embeddin
 	$(PYTHON_RUN) scripts/fetch_embedding_model.py
 
 # Acceptance run on a public dataset (see src/clinical_analytics/eval/corpus/run.py). Fetches the
-# checked upload ZIP into $$MDDE_BENCH_CACHE (default ~/.cache/mdde-bench), starts a fresh API
+# checked upload (ZIP, CSV or workbook) into $$MDDE_BENCH_CACHE (default ~/.cache/mdde-bench), starts a fresh API
 # with a temp data home, asks tests/eval/corpus/questions/$(DATASET).yaml and prints the grades.
 DATASET ?= covid_ms
 MODEL ?= none
 OLLAMA_BASE_URL ?= http://127.0.0.1:11434
 ACCEPT_TIMEOUT ?= 600
 ACCEPT_ARGS ?=
-accept: ensure-venv fetch-embedding-model ## Acceptance run: make accept DATASET=covid_ms MODEL=none|<ollama model> [OLLAMA_BASE_URL=...] [ACCEPT_ARGS="--llm-timeout 300"]
+accept: ensure-venv fetch-embedding-model ## Acceptance run: make accept DATASET=covid_ms|hcv_data|cgd_infections|... (corpus.yaml) MODEL=none|<ollama model> [OLLAMA_BASE_URL=...] [ACCEPT_ARGS="--llm-timeout 300"]
 	@echo "$(GREEN)Acceptance run: $(DATASET), MODEL=$(MODEL)...$(NC)"
 	$(PYTHON_RUN) -m clinical_analytics.eval.corpus.run --dataset $(DATASET) --model $(MODEL) \
 		--ollama-base-url $(OLLAMA_BASE_URL) --timeout $(ACCEPT_TIMEOUT) $(ACCEPT_ARGS)

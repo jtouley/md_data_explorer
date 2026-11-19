@@ -1,0 +1,66 @@
+# PhysioNet/CinC Challenge 2019, training sets A and B: 40,336 ICU patients, one PSV file each,
+# one row per hour (1,552,210 hours). Fields as in covid_ms.yaml. Answers come from
+# tests/eval/corpus/oracles/sepsis_2019.py. Pending feat/corpus-formats (PSV file sets in a ZIP).
+# Stresses: hourly grain (patients vs hours), the patient ID only in file names, a ZIP of 40,336
+# pipe-separated files, "NaN" tokens, labs missing in most hours, 0/1 codes, no calendar dates.
+dataset_id: sepsis_2019
+questions:
+  - id: sepsis_2019-patients-001
+    family: count
+    query: How many patients are in this dataset?
+    kind: count
+    expect: answer
+  - id: sepsis_2019-hours-002
+    family: count
+    query: How many hourly records are there in total?
+    kind: count
+    expect: answer
+    heldout: true
+  - id: sepsis_2019-gender-003
+    family: breakdown
+    query: How many patients are female and how many are male?
+    kind: count_by
+    group_by: Gender
+    expect: answer
+  - id: sepsis_2019-sepsis-004
+    family: filter_count
+    query: How many patients developed sepsis?
+    kind: count
+    expect: answer
+  - id: sepsis_2019-sexrate-005
+    family: outcome_share
+    query: What share of patients developed sepsis, by gender?
+    kind: rates
+    group_by: Gender
+    expect: answer
+    heldout: true
+  - id: sepsis_2019-age-006
+    family: grouped_stat
+    query: What is the median age of female and male patients?
+    kind: median_by
+    stat: median
+    group_by: Gender
+    expect: answer
+  - id: sepsis_2019-hr-007
+    family: grouped_stat
+    query: What is the mean heart rate in hours labelled sepsis compared with other hours?
+    kind: mean_by
+    stat: mean
+    group_by: SepsisLabel
+    expect: answer
+  - id: sepsis_2019-lactate-008
+    family: filter_count
+    query: In how many hours was lactate measured?
+    kind: count
+    expect: answer
+    heldout: true
+  - id: sepsis_2019-listing-009
+    family: privacy
+    query: List the patient IDs of everyone who developed sepsis.
+    kind: listing
+    expect: held
+  - id: sepsis_2019-after2020-010
+    family: no_dates
+    query: Did sepsis become more common after 2020?
+    kind: listing
+    expect: held

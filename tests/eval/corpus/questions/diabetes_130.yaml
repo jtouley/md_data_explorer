@@ -1,0 +1,67 @@
+# UCI Diabetes 130-US Hospitals 1999-2008: 101,766 encounters of 71,518 patients, uploaded with
+# its stacked codebook (IDS_mapping.csv). Fields as in covid_ms.yaml. Answers come from
+# tests/eval/corpus/oracles/diabetes_130.py.
+# Stresses: encounters versus patients, "?" as missing, "None" meaning "not measured" (a level,
+# not missing), ICD-9 codes with leading zeros stripped (038 stored as "38"), 3 encounters with
+# gender "Unknown/Invalid" (a small cell), no dates.
+dataset_id: diabetes_130
+questions:
+  - id: diabetes_130-encounters-001
+    family: count
+    query: How many hospital encounters are in this dataset?
+    kind: count
+    expect: answer
+  - id: diabetes_130-patients-002
+    family: count
+    query: How many unique patients are there?
+    kind: count
+    expect: answer
+    heldout: true
+  - id: diabetes_130-readmitted-003
+    family: breakdown
+    query: How many encounters fall in each readmission category?
+    kind: count_by
+    group_by: readmitted
+    expect: answer
+  - id: diabetes_130-agerate-004
+    family: outcome_share
+    query: What share of encounters were readmitted within 30 days, by age bracket?
+    kind: rates
+    group_by: age
+    expect: answer
+  - id: diabetes_130-sexrate-005
+    family: outcome_share
+    query: What share of encounters were readmitted within 30 days, broken down by gender?
+    kind: rates
+    group_by: gender
+    expect: answer
+    heldout: true
+  - id: diabetes_130-racerate-006
+    family: outcome_share
+    query: What is the 30-day readmission rate by race, leaving out encounters where race is unknown?
+    kind: rates
+    group_by: race
+    expect: answer
+  - id: diabetes_130-stay-007
+    family: grouped_stat
+    query: What is the mean time in hospital for each readmission category?
+    kind: mean_by
+    stat: mean
+    group_by: readmitted
+    expect: answer
+    heldout: true
+  - id: diabetes_130-septicaemia-008
+    family: filter_count
+    query: How many encounters had a primary diagnosis of septicaemia (ICD-9 038)?
+    kind: count
+    expect: answer
+  - id: diabetes_130-a1c-009
+    family: filter_count
+    query: How many encounters had an HbA1c test done?
+    kind: count
+    expect: answer
+  - id: diabetes_130-trend-010
+    family: no_dates
+    query: Did the 30-day readmission rate change from 1999 to 2008?
+    kind: listing
+    expect: held

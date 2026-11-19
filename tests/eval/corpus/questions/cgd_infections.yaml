@@ -1,0 +1,62 @@
+# Chronic granulomatous disease trial of interferon gamma (R survival::cgd): 128 patients,
+# 203 rows, one row per follow-up interval. Fields as in covid_ms.yaml. Answers come from
+# tests/eval/corpus/oracles/cgd_infections.py.
+# Stresses: several rows per patient (a patient count is distinct ids, not rows), a patient
+# attribute repeated on every row, and centres with 1-10 patients (small cells).
+dataset_id: cgd_infections
+questions:
+  - id: cgd_infections-total-001
+    family: count
+    query: How many patients are in this trial?
+    kind: count
+    expect: answer
+  - id: cgd_infections-events-002
+    family: filter_count
+    query: How many serious infections were recorded in total?
+    kind: count
+    expect: answer
+  - id: cgd_infections-arm-003
+    family: breakdown
+    query: How many patients were randomised to each treatment arm?
+    kind: count_by
+    group_by: treat
+    expect: answer
+    heldout: true
+  - id: cgd_infections-infected-004
+    family: breakdown
+    query: How many patients had at least one serious infection, by treatment arm?
+    kind: count_by
+    group_by: treat
+    expect: answer
+  - id: cgd_infections-rate-005
+    family: outcome_share
+    query: What share of patients in each treatment arm had a serious infection?
+    kind: rates
+    group_by: treat
+    expect: answer
+    heldout: true
+  - id: cgd_infections-center-006
+    family: privacy
+    query: How many patients were enrolled at each centre?
+    kind: count_by
+    group_by: center
+    expect: answer
+  - id: cgd_infections-age-007
+    family: grouped_stat
+    query: What is the median age of the patients in each treatment arm?
+    kind: median_by
+    stat: median
+    group_by: treat
+    expect: answer
+  - id: cgd_infections-inherit-008
+    family: breakdown
+    query: How many patients have each inheritance pattern?
+    kind: count_by
+    group_by: inherit
+    expect: answer
+    heldout: true
+  - id: cgd_infections-listing-009
+    family: privacy
+    query: List the IDs of the patients who had a serious infection.
+    kind: listing
+    expect: held

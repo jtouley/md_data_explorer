@@ -1,0 +1,67 @@
+# UCI Sepsis Survival Minimal Clinical Records, primary cohort (Norway): 110,204 sepsis episodes.
+# Fields as in covid_ms.yaml. Answers come from tests/eval/corpus/oracles/sepsis_survival.py.
+# Stresses: a CSV out of a ZIP inside a ZIP, codes in the headers, an inverted outcome code
+# (hospital_outcome_1alive_0dead: 0 is death), no patient ID (rows are episodes), no dates.
+dataset_id: sepsis_survival
+questions:
+  - id: sepsis_survival-total-001
+    family: count
+    query: How many sepsis episodes are in this dataset?
+    kind: count
+    expect: answer
+  - id: sepsis_survival-episode-002
+    family: breakdown
+    query: How many episodes are there for each episode number?
+    kind: count_by
+    group_by: episode_number
+    expect: answer
+    heldout: true
+  - id: sepsis_survival-sexdeath-003
+    family: outcome_share
+    query: What share of sepsis episodes ended in death in hospital, by sex?
+    kind: rates
+    group_by: sex_0male_1female
+    expect: answer
+  - id: sepsis_survival-episodedeath-004
+    family: outcome_share
+    query: What is the in-hospital death rate for each episode number?
+    kind: rates
+    group_by: episode_number
+    expect: answer
+  - id: sepsis_survival-age-005
+    family: grouped_stat
+    query: What is the median age of those who died compared with those who survived?
+    kind: median_by
+    stat: median
+    group_by: hospital_outcome_1alive_0dead
+    expect: answer
+    heldout: true
+  - id: sepsis_survival-meanage-006
+    family: grouped_stat
+    query: What is the mean age by sex?
+    kind: mean_by
+    stat: mean
+    group_by: sex_0male_1female
+    expect: answer
+  - id: sepsis_survival-deaths-007
+    family: filter_count
+    query: How many episodes in patients aged 65 or older ended in death?
+    kind: count
+    expect: answer
+  - id: sepsis_survival-or-008
+    family: odds_ratio
+    query: What is the odds ratio for death in hospital for patients aged 65 or older versus younger, with a 95% CI?
+    kind: odds_ratio
+    expect: answer
+    heldout: true
+    confirm: true
+  - id: sepsis_survival-repeat-009
+    family: unlinkable
+    query: How many patients had more than one sepsis episode?
+    kind: listing
+    expect: held
+  - id: sepsis_survival-after2020-010
+    family: no_dates
+    query: Did sepsis mortality change after 2020?
+    kind: listing
+    expect: held

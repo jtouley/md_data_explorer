@@ -8,15 +8,18 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from clinical_analytics.eval.corpus.fetch import (
     ChecksumMismatchError,
     CorpusFetchError,
+    UploadPackage,
     build_zip,
     default_cache_dir,
     fetch_dataset,
     fetch_file,
     load_corpus,
+    oracle_input,
     sha256_file,
 )
 
@@ -170,6 +173,126 @@ class TestBuildZip:
         assert out.read_bytes() == built.read_bytes()
 
 
+class TestPackageEntries:
+    def test_fetchDataset_memberOfNestedZip_uploadsCheckedMemberAndOracleReadsIt(
+        self, tmp_path, make_archive_dataset, make_downloader
+    ):
+        # Arrange
+        dataset, urls, table = make_archive_dataset()
+        download, _ = make_downloader(urls)
+
+        # Act
+        upload = fetch_dataset(dataset.name, tmp_path, download=download, corpus={dataset.name: dataset})
+
+        # Assert
+        assert upload.name == "table.csv"
+        assert upload.read_bytes() == table
+        assert oracle_input(dataset, upload).read_bytes() == table
+
+    def test_fetchDataset_memberChecksumMismatch_raises(self, tmp_path, make_archive_dataset, make_downloader):
+        # Arrange
+        dataset, urls, _ = make_archive_dataset(member_sha256="0" * 64)
+        download, _ = make_downloader(urls)
+
+        # Act / Assert
+        with pytest.raises(ChecksumMismatchError, match="inner.zip!table.csv"):
+            fetch_dataset(dataset.name, tmp_path, download=download, corpus={dataset.name: dataset})
+
+    def test_fetchDataset_memberMissing_raisesFetchError(self, tmp_path, make_archive_dataset, make_downloader):
+        # Arrange
+        dataset, urls, _ = make_archive_dataset()
+        dataset.upload_package.contents[0].member = "inner.zip!absent.csv"
+        download, _ = make_downloader(urls)
+
+        # Act / Assert
+        with pytest.raises(CorpusFetchError, match="absent.csv"):
+            fetch_dataset(dataset.name, tmp_path, download=download, corpus={dataset.name: dataset})
+
+    @pytest.mark.parametrize(
+        "package",
+        [
+            pytest.param(
+                {
+                    "contents": [{"name": "t.csv", "from": "a.zip", "make": "extract", "member": "t.csv"}],
+                    "zip": "x.zip",
+                },
+                id="extract_without_sha256",
+            ),
+            pytest.param(
+                {"contents": [{"name": "t.csv", "from": "t.csv", "member": "t.csv"}], "zip": "x.zip"},
+                id="member_on_copy",
+            ),
+            pytest.param({"upload": "file", "contents": []}, id="file_without_entry"),
+            pytest.param(
+                {"upload": "file", "contents": [{"name": "a", "from": "a"}, {"name": "b", "from": "b"}]},
+                id="file_with_two_entries",
+            ),
+            pytest.param({"contents": [{"name": "a", "from": "a"}]}, id="zip_without_name"),
+            pytest.param({"zip": "x.zip", "contents": []}, id="zip_without_entries"),
+            pytest.param({"upload": "prebuilt", "zip": "x.zip", "recipe": "r"}, id="prebuilt_without_sha256"),
+            pytest.param({"upload": "prebuilt", "zip": "x.zip", "sha256": "0" * 64}, id="prebuilt_without_recipe"),
+        ],
+    )
+    def test_uploadPackage_inconsistentShape_rejected(self, package):
+        # Arrange / Act / Assert
+        with pytest.raises(ValidationError):
+            UploadPackage.model_validate(package)
+
+
+class TestPrebuiltUpload:
+    @staticmethod
+    def _dataset(body: bytes, make_corpus_dataset):
+        dataset, urls = make_corpus_dataset()
+        dataset.upload_package = UploadPackage.model_validate(
+            {"upload": "prebuilt", "zip": "set.zip", "sha256": hashlib.sha256(body).hexdigest(), "recipe": "snapshot"}
+        )
+        return dataset, urls
+
+    def test_fetchDataset_prebuiltInSeed_linkedIntoCacheAndReturned(
+        self, tmp_path, make_corpus_dataset, make_downloader
+    ):
+        # Arrange
+        body = b"PK-synthetic-prebuilt"
+        dataset, urls = self._dataset(body, make_corpus_dataset)
+        download, _ = make_downloader(urls)
+        seed = tmp_path / "seed"
+        seed.mkdir()
+        (seed / "set.zip").write_bytes(body)
+
+        # Act
+        upload = fetch_dataset(dataset.name, tmp_path / "cache", [seed], download, {dataset.name: dataset})
+
+        # Assert
+        assert upload.read_bytes() == body
+        assert upload.parent == tmp_path / "cache" / dataset.name
+
+    @pytest.mark.parametrize(
+        ("seeded", "cached", "error"),
+        [
+            pytest.param(None, None, CorpusFetchError, id="in_no_seed"),
+            pytest.param(b"other", None, CorpusFetchError, id="seed_differs"),
+            pytest.param(None, b"stale", ChecksumMismatchError, id="cache_differs"),
+        ],
+    )
+    def test_fetchDataset_prebuiltMissingOrChanged_raises(
+        self, tmp_path, make_corpus_dataset, make_downloader, seeded, cached, error
+    ):
+        # Arrange
+        dataset, urls = self._dataset(b"PK-synthetic-prebuilt", make_corpus_dataset)
+        download, _ = make_downloader(urls)
+        seed = tmp_path / "seed"
+        seed.mkdir()
+        if seeded is not None:
+            (seed / "set.zip").write_bytes(seeded)
+        if cached is not None:
+            (tmp_path / "cache" / dataset.name).mkdir(parents=True)
+            (tmp_path / "cache" / dataset.name / "set.zip").write_bytes(cached)
+
+        # Act / Assert
+        with pytest.raises(error):
+            fetch_dataset(dataset.name, tmp_path / "cache", [seed], download, {dataset.name: dataset})
+
+
 class TestShippedCorpus:
     def test_loadCorpus_shippedYaml_pinsHttpsUrlsAndChecksums(self):
         # Arrange / Act
@@ -178,7 +301,11 @@ class TestShippedCorpus:
         # Assert
         assert "covid_ms" in corpus
         for dataset in corpus.values():
-            assert re.fullmatch(r"[0-9a-f]{64}", dataset.upload_package.sha256 or "")
+            package = dataset.upload_package
+            if package.upload in ("zip", "prebuilt"):
+                assert re.fullmatch(r"[0-9a-f]{64}", package.sha256 or "")
+            for entry in package.contents:
+                assert entry.make == "copy" or re.fullmatch(r"[0-9a-f]{64}", entry.sha256 or "")
             for item in dataset.files:
                 assert item.url.startswith("https://")
                 assert re.fullmatch(r"[0-9a-f]{64}", item.sha256)

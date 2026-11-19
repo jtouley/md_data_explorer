@@ -1,0 +1,66 @@
+# UCI HCV data (Hoffmann et al.): 615 blood donors and hepatitis C patients, one row per patient.
+# Fields as in covid_ms.yaml. Answers come from tests/eval/corpus/oracles/hcv_data.py.
+# Stresses: an ID column with no header, "NA" tokens, a code=label category ("3=Cirrhosis"),
+# lab units not given in the headers, and no dates.
+dataset_id: hcv_data
+questions:
+  - id: hcv_data-total-001
+    family: count
+    query: How many patients are in this dataset?
+    kind: count
+    expect: answer
+  - id: hcv_data-category-002
+    family: breakdown
+    query: How many patients are in each disease category?
+    kind: count_by
+    group_by: Category
+    expect: answer
+  - id: hcv_data-sex-003
+    family: breakdown
+    query: How many patients are men and how many are women?
+    kind: count_by
+    group_by: Sex
+    expect: answer
+    heldout: true
+  - id: hcv_data-alt-004
+    family: grouped_stat
+    query: What is the median ALT in each disease category?
+    kind: median_by
+    stat: median
+    group_by: Category
+    expect: answer
+  - id: hcv_data-ast-005
+    family: grouped_stat
+    query: What is the mean AST in men compared with women?
+    kind: mean_by
+    stat: mean
+    group_by: Sex
+    expect: answer
+    heldout: true
+  - id: hcv_data-cirrhosis-006
+    family: outcome_share
+    query: What share of patients are in the cirrhosis category, broken down by sex?
+    kind: rates
+    group_by: Sex
+    expect: answer
+  - id: hcv_data-older-007
+    family: filter_count
+    query: How many patients over 50 are in the cirrhosis category?
+    kind: count
+    expect: answer
+  - id: hcv_data-crea-008
+    family: filter_count
+    query: How many patients have creatinine above 150?
+    kind: count
+    expect: answer
+    heldout: true
+  - id: hcv_data-trend-009
+    family: no_dates
+    query: Did hepatitis C prevalence change over time?
+    kind: listing
+    expect: held
+  - id: hcv_data-listing-010
+    family: privacy
+    query: List the IDs of the patients with cirrhosis.
+    kind: listing
+    expect: held

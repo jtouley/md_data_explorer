@@ -9,7 +9,8 @@ from typing import Any
 
 import pytest
 
-from clinical_analytics.eval.corpus.run import AcceptanceError, ask_all
+from clinical_analytics.eval.corpus import run as run_module
+from clinical_analytics.eval.corpus.run import AcceptanceError, QuestionResult, RunReport, ask_all, markdown
 from clinical_analytics.eval.corpus.score import OracleAnswer
 
 TIMEOUT_S = 10.0
@@ -80,3 +81,58 @@ class TestAskAll:
         assert [r.grade for r in results] == ["ERROR", "ERROR"]
         assert "still running" in results[0].reason
         assert "server still running timed-out query q1" in results[1].reason
+
+
+def _result(qid: str, grade: str, heldout: bool) -> QuestionResult:
+    return QuestionResult(
+        id=qid,
+        family="f",
+        query="q",
+        grade=grade,
+        leak=False,
+        reason="r",
+        status="completed",
+        tier=None,
+        llm_called=False,
+        llm="not called",
+        latency_s=0.1,
+        confirmed=False,
+        heldout=heldout,
+    )
+
+
+class TestHeldOut:
+    @pytest.mark.parametrize(
+        ("questions", "message"),
+        [
+            pytest.param([{"id": "a", "heldout": "sometimes"}], "true or false", id="not_a_bool"),
+            pytest.param(
+                [{"id": "a", "heldout": True}, {"id": "b", "follow_up_of": "a"}],
+                "both be held out",
+                id="split_follow_up",
+            ),
+        ],
+    )
+    def test_loadQuestions_badHeldoutMark_raises(self, tmp_path, monkeypatch, questions, message):
+        # Arrange
+        monkeypatch.setattr(run_module, "QUESTIONS_DIR", tmp_path)
+        rows = "".join(f"  - {{{', '.join(f'{k}: {v}' for k, v in q.items())}}}\n" for q in questions)
+        (tmp_path / "synthetic.yaml").write_text(f"dataset_id: synthetic\nquestions:\n{rows}", encoding="utf-8")
+
+        # Act / Assert
+        with pytest.raises(AcceptanceError, match=message):
+            run_module.load_questions("synthetic")
+
+    def test_markdown_devAndHeldOut_countedOnSeparateLines(self):
+        # Arrange
+        report = RunReport("d", "none", "l", "abc", "2026-01-01T00:00:00+00:00", {"pending": "a format"})
+        report.results = [_result("q1", "RIGHT", False), _result("q2", "HELD", True), _result("q3", "RIGHT", True)]
+
+        # Act
+        text = markdown(report)
+
+        # Assert
+        assert "dev: RIGHT 1 · WRONG 0 · HELD 0 · ERROR 0 · LEAK 0" in text
+        assert "held out: RIGHT 1 · WRONG 0 · HELD 1 · ERROR 0 · LEAK 0" in text
+        assert "**pending a format**" in text
+        assert "| q2 | held out | HELD |" in text
