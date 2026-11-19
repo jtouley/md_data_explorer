@@ -83,5 +83,7 @@ jobs:
         with:
           name: acceptance-covid_ms-llama3.2-3b
           path: ${{ runner.temp }}/accept-results/*/results.md
-          if-no-files-found: error
+          # warn: a run that stopped before grading (exit 2) has no table, and its own step already
+          # names why; an error here would add a second, misleading failure.
+          if-no-files-found: warn
           retention-days: 30

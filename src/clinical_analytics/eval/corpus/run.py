@@ -51,7 +51,7 @@ from typing import Any, Literal, TypeAlias
 import polars as pl
 import structlog
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 
 from clinical_analytics.eval.corpus.fetch import (
     CorpusDataset,
@@ -61,7 +61,7 @@ from clinical_analytics.eval.corpus.fetch import (
     load_corpus,
     table_path,
 )
-from clinical_analytics.eval.corpus.score import ApiOutcome, OracleAnswer, Scored, score
+from clinical_analytics.eval.corpus.score import SMALL_MAX, SMALL_MIN, ApiOutcome, OracleAnswer, Scored, score
 
 logger = structlog.get_logger()
 
@@ -73,6 +73,9 @@ NO_MODEL = "none"
 UNREACHABLE_OLLAMA = "http://127.0.0.1:9"
 HEALTH_TIMEOUT_S = 300.0
 POLL_S = 0.5
+# How long a question waits for an earlier timed-out query that is still running, before it is
+# an ERROR: ask() already gave that query 2 x timeout, so this only absorbs one that ends just after.
+PENDING_GRACE_S = 10.0
 TERMINAL = {"completed", "failed", "awaiting_confirmation"}
 # Log events (core/nl_query_engine.py) that mean the model tier was asked and did not answer.
 LLM_FAILURE_EVENTS = (
@@ -173,8 +176,18 @@ class RunReport:
 
 
 def load_questions(dataset: str) -> list[dict[str, Any]]:
-    raw = yaml.safe_load((QUESTIONS_DIR / f"{dataset}.yaml").read_text(encoding="utf-8"))
-    questions = [{"dataset_id": raw["dataset_id"], **item} for item in raw["questions"]]
+    """The dataset's questions, in order.
+
+    Raises:
+        AcceptanceError: the file is missing, not YAML, or not a ``dataset_id`` and a list of
+            ``questions``, or a follow-up comes before its parent.
+    """
+    path = QUESTIONS_DIR / f"{dataset}.yaml"
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        questions = [{"dataset_id": raw["dataset_id"], **item} for item in raw["questions"]]
+    except (OSError, yaml.YAMLError, KeyError, TypeError) as error:
+        raise AcceptanceError(f"questions for {dataset} could not be read from {path}: {error!r}") from error
     seen: set[str] = set()
     for question in questions:
         parent = question.get("follow_up_of")
@@ -191,7 +204,10 @@ def load_oracles(dataset: str) -> ModuleType:
     if spec is None or spec.loader is None:
         raise AcceptanceError(f"no oracle module at {path}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except OSError as error:
+        raise AcceptanceError(f"no oracle module at {path}: {error}") from error
     return module
 
 
@@ -394,8 +410,8 @@ def ask(api: Api, dataset_id: str, session_id: str, question: dict[str, Any], ti
 
     On a timeout the query is waited for up to another ``timeout_s`` (the API cannot cancel
     it), so its log lines stay with this question; if it is still running, ``api.pending``
-    holds it. A hung query so costs at most ``2 * timeout_s`` in all: later questions check it
-    once without waiting (``_asked``), which keeps the CI job timeouts above the worst case."""
+    holds it. A hung query so costs at most ``2 * timeout_s`` in all: later questions wait for
+    it only ``PENDING_GRACE_S`` (``_asked``), which keeps the CI job timeouts above the worst case."""
     offset = api.log_offset()
     started = time.monotonic()
     deadline = started + timeout_s
@@ -484,8 +500,8 @@ def _asked(api: Api, dataset_id: str, question: dict[str, Any], sessions: dict[s
         return failed(f"session: parent question {parent} has no session (its own session could not be created)")
     try:
         if api.pending is not None:
-            # One check, no wait: ask() already gave it 2 * timeout_s.
-            if _poll(api, api.pending, time.monotonic()) is None:
+            # A short grace only: ask() already gave it 2 * timeout_s.
+            if _poll(api, api.pending, time.monotonic() + PENDING_GRACE_S) is None:
                 return failed(
                     f"server still running timed-out query {api.pending}; its log would be read as this one's"
                 )
@@ -618,14 +634,17 @@ def _server_note(code: int | None) -> str:
     return "" if code in (None, -15) else f" · **API process exited with code {code} during the run**"
 
 
-# A whole number 1-10 not part of a decimal or a word: in a grade reason it can be a count of
-# 1-10 patients (the oracle's expected value, or a value the app showed in a LEAK).
-_SMALL_NUMBER = re.compile(r"(?<![\w.])(?:10|[1-9])(?![\w.])")
+# A whole number in score's small-cell range (also written 5.0), not part of a word, a decimal
+# or a thousands-grouped number: in a grade reason it can be a count of 1-10 patients (the
+# oracle's expected value, or a value the app showed in a LEAK). A sentence's full stop after it
+# does not protect it.
+_SMALL_ALTERNATIVES = "|".join(str(n) for n in range(SMALL_MAX, SMALL_MIN - 1, -1))
+_SMALL_NUMBER = re.compile(rf"(?<![\w.,])(?:{_SMALL_ALTERNATIVES})(?:\.0+)?(?!\w|[.,]\d)")
 
 
 def public_reason(reason: str) -> str:
     """A grade reason safe for the table that is printed and published (CI log, job summary,
-    artifact): every whole number 1-10 becomes ``1-10``. results.json keeps the full reason,
+    artifact): every whole number 1-10 becomes ``1-10`` (see ``_SMALL_NUMBER``). results.json keeps the full reason,
     and it never leaves the machine."""
     return _SMALL_NUMBER.sub("1-10", reason)
 
@@ -813,6 +832,18 @@ def _upload_path(dataset: CorpusDataset, zip_path: Path, cache_dir: Path | None)
     return zip_path if dataset.load_upload == "zip" else table_path(dataset, cache_dir)
 
 
+class _LoadedTable(BaseModel):
+    """The part of one table in ``GET /api/datasets/{id}`` the upload check reads."""
+
+    row_count: StrictInt
+    columns: list[Any]
+
+
+class _DatasetDetail(BaseModel):
+    # Read from the API's "tables"; named apart from Ibis's `.tables` (tests/core/test_ibis_duckdb_compat.py).
+    loaded_tables: list[_LoadedTable] = Field(alias="tables", min_length=1, max_length=1)
+
+
 def table_shape(detail: dict[str, Any]) -> tuple[int, int]:
     """(rows, columns) of the one table in a ``GET /api/datasets/{id}`` body.
 
@@ -820,16 +851,15 @@ def table_shape(detail: dict[str, Any]) -> tuple[int, int]:
         AcceptanceError: not exactly one table, or a table without an integer ``row_count`` and
             a ``columns`` list.
     """
-    tables = detail.get("tables")
-    if not isinstance(tables, list) or len(tables) != 1:
-        found = len(tables) if isinstance(tables, list) else type(tables).__name__
-        raise AcceptanceError(f"GET /api/datasets/{{id}} returned tables={found}, expected a list of 1")
-    table = tables[0]
-    rows = table.get("row_count") if isinstance(table, dict) else None
-    columns = table.get("columns") if isinstance(table, dict) else None
-    if isinstance(rows, bool) or not isinstance(rows, int) or not isinstance(columns, list):
-        raise AcceptanceError("GET /api/datasets/{id} returned a table without an integer row_count and a columns list")
-    return rows, len(columns)
+    try:
+        (table,) = _DatasetDetail.model_validate(detail).loaded_tables
+    except ValidationError as error:
+        problems = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in error.errors())
+        raise AcceptanceError(
+            f"GET /api/datasets/{{id}} did not return exactly one table with an integer row_count and "
+            f"a columns list ({problems})"
+        ) from error
+    return table.row_count, len(table.columns)
 
 
 def check_load(
@@ -849,7 +879,7 @@ def check_load(
         return result
     try:
         path = _upload_path(dataset, fetch_dataset(name, cache_dir, seed_dirs, corpus=corpus), cache_dir)
-    except CorpusFetchError as error:
+    except (CorpusFetchError, OSError) as error:  # OSError: cache not writable, disk full
         result.error = f"fetch: {error}"
         return result
     work = Path(tempfile.mkdtemp(prefix="mdde-load-"))
@@ -971,7 +1001,7 @@ def main(argv: list[str] | None = None) -> int:
             keep_work=args.keep_work,
         )
     except (AcceptanceError, CorpusFetchError) as error:
-        message = f"acceptance run failed: {error}"
+        message = f"acceptance run failed: {public_reason(str(error))}"
         print(message, file=sys.stderr)
         _append_summary(args.summary, f"**{message}**")
         return EXIT_NOT_RUN

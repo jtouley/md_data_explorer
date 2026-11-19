@@ -409,8 +409,9 @@ class _PendingApi:
 
 
 class TestPendingQuery:
-    def test_asked_pendingQueryStillRunning_isErrorWithoutWaiting(self) -> None:
+    def test_asked_pendingQueryStillRunning_isErrorAfterGraceOnly(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Arrange
+        monkeypatch.setattr(run_module, "PENDING_GRACE_S", 0.0)
         api = _PendingApi()
         started = time.monotonic()
 
@@ -483,6 +484,10 @@ class TestPublicReason:
             pytest.param("shown 0, expected 11", "shown 0, expected 11", id="zero_and_eleven_kept"),
             pytest.param("p=0.03 shown, rate 4.5", "p=0.03 shown, rate 4.5", id="decimals_kept"),
             pytest.param("'19' and q7 and covid_ms-or-012", "'19' and q7 and covid_ms-or-012", id="words_kept"),
+            pytest.param("Patients who died: 3.", "Patients who died: 1-10.", id="full_stop_after_count"),
+            pytest.param("shown 5.0, expected 5", "shown 1-10, expected 1-10", id="float_form_masked"),
+            pytest.param("total 1,141 patients", "total 1,141 patients", id="thousands_grouped_kept"),
+            pytest.param("total 1,005 patients", "total 1,005 patients", id="grouped_with_zeros_kept"),
             pytest.param("", "", id="empty"),
         ],
     )
@@ -506,3 +511,41 @@ class TestPublicReason:
         # Assert
         assert "shown 1-10, expected 1-10" in text
         assert "expected 7" not in text
+
+
+class TestSetupErrors:
+    def test_load_questions_unknownDataset_raisesAcceptanceError(self) -> None:
+        # Act / Assert
+        with pytest.raises(AcceptanceError, match="questions for no_such_dataset could not be read"):
+            run_module.load_questions("no_such_dataset")
+
+    def test_main_unknownDataset_exitsNotRunWithSummaryLine(self, tmp_path: Path) -> None:
+        # Arrange
+        summary = tmp_path / "summary.md"
+
+        # Act
+        code = main(["--dataset", "no_such_dataset", "--results-dir", str(tmp_path / "out"), "--summary", str(summary)])
+
+        # Assert
+        assert code == run_module.EXIT_NOT_RUN
+        assert "acceptance run failed" in summary.read_text()
+
+    def test_check_load_cacheNotWritable_isFetchErrorNotCrash(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        make_corpus_dataset: Callable[..., tuple[CorpusDataset, dict[str, bytes]]],
+    ) -> None:
+        # Arrange
+        dataset, _ = make_corpus_dataset()
+        dataset = dataset.model_copy(update={"rows": 3, "columns": 2})
+
+        def unwritable(*_args: object, **_kwargs: object) -> Path:
+            raise PermissionError("cache is read-only")
+
+        monkeypatch.setattr(run_module, "fetch_dataset", unwritable)
+
+        # Act
+        result = check_load(dataset.name, {dataset.name: dataset}, None, [])
+
+        # Assert
+        assert result.error is not None and result.error.startswith("fetch: cache is read-only")

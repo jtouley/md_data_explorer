@@ -154,8 +154,10 @@ jobs:
     # model), under 1 of upload check. Worst case, so the job ends with its table instead of
     # being cancelled: every question slow but finishing costs 2 x ACCEPT_TIMEOUT (the harness
     # waits once more for a timed-out query; a query still running after that makes later
-    # questions ERROR at once), so 15 questions x 120 s = 30 minutes, plus 5 of setup and two
-    # app starts (300 s health limit each). Raise this with the question count.
+    # questions ERROR after a short grace), so 15 questions x 120 s = 30 minutes, plus 5 of
+    # setup and two app starts (300 s health limit each). Raise this with the question count.
+    # Not covered: an upload request that stalls (the harness allows each 900 s); that ends in
+    # a cancelled job, not a pass.
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -189,5 +191,7 @@ jobs:
           name: acceptance-covid_ms-none
           # The markdown table only (grades, tiers, latencies, reasons), not results.json.
           path: ${{ runner.temp }}/accept-results/*/results.md
-          if-no-files-found: error
+          # warn: a run that stopped before grading (exit 2) has no table, and its own step already
+          # names why; an error here would add a second, misleading failure.
+          if-no-files-found: warn
           retention-days: 30

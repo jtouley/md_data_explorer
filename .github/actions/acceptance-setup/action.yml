@@ -12,7 +12,11 @@ runs:
     - name: Cache public corpus downloads
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: ~/.cache/mdde-bench
+        # Downloads only: the default results directory under it (a local run's results.json,
+        # with the app's answers) is never saved into a cache other workflow runs can read.
+        path: |
+          ~/.cache/mdde-bench
+          !~/.cache/mdde-bench/results
         # corpus.yaml pins every file's sha256, so a new checksum is a new key. On a cache hit the
         # fetcher still checks each file against its pin and stops on a mismatch.
         key: corpus-${{ hashFiles('src/clinical_analytics/eval/corpus/corpus.yaml') }}
