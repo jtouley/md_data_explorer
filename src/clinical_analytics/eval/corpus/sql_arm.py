@@ -112,7 +112,8 @@ ModelFn: TypeAlias = Callable[[str, str], str]
 
 
 class ArmError(RuntimeError):
-    """The arm could not run (bad model URL, model unreachable before any question)."""
+    """The arms could not start: the model URL is not loopback, or the server there does not
+    answer or does not serve the model (checked once, before any question)."""
 
 
 class ModelCallError(RuntimeError):
@@ -194,14 +195,22 @@ class SqlTool(Protocol):
 
 
 class RawSqlTool:
-    """Raw mode: the table in an in-memory DuckDB, with file and network access switched off
-    once loaded. Every result is shown as computed."""
+    """Raw mode: the table in a DuckDB file opened read-only, with file and network access
+    switched off. Every result is shown as computed (no governance), but no statement can change
+    the table, so one question's stray DELETE cannot spoil the questions after it."""
 
     def __init__(self, csv_path: Path) -> None:
-        self.con = duckdb.connect(":memory:")
-        self.con.execute(f"CREATE TABLE {TABLE_NAME} AS SELECT * FROM read_csv(?)", [str(csv_path)])
-        self.con.execute("SET enable_external_access = false")
-        self.con.execute("SET lock_configuration = true")
+        self.work = Path(tempfile.mkdtemp(prefix="mdde-raw-sql-"))
+        database = str(self.work / "extract.duckdb")
+        try:
+            with duckdb.connect(database) as loader:
+                loader.execute(f"CREATE TABLE {TABLE_NAME} AS SELECT * FROM read_csv(?)", [str(csv_path)])
+            self.con = duckdb.connect(database, read_only=True)
+            self.con.execute("SET enable_external_access = false")
+            self.con.execute("SET lock_configuration = true")
+        except duckdb.Error:
+            shutil.rmtree(self.work, ignore_errors=True)
+            raise
 
     def schema(self) -> str:
         rows = self.con.execute(f"DESCRIBE {TABLE_NAME}").fetchall()
@@ -215,16 +224,18 @@ class RawSqlTool:
             rows = cursor.fetchmany(MAX_RESULT_ROWS + 1)
         except duckdb.Error as error:
             return f"SQL error: {error}"
-        return _rows_text(columns, [list(r) for r in rows[:MAX_RESULT_ROWS]], len(rows) - MAX_RESULT_ROWS)
+        return _rows_text(columns, [list(r) for r in rows[:MAX_RESULT_ROWS]], max(len(rows) - MAX_RESULT_ROWS, 0))
 
     def close(self) -> None:
         self.con.close()
+        shutil.rmtree(self.work, ignore_errors=True)
 
 
 def _rows_text(columns: list[str], rows: list[list[Any]], extra: int = 0) -> str:
+    """A result as text for the model; ``extra`` is how many rows were cut (0: none)."""
     lines = [" | ".join(columns)]
     lines += [" | ".join(str(v)[:MAX_CELL_CHARS] for v in row) for row in rows]
-    if extra:
+    if extra > 0:
         lines.append(f"(only the first {MAX_RESULT_ROWS} rows are shown)")
     return "\n".join(lines)
 
@@ -288,16 +299,46 @@ class GovernedSqlTool:
 # ---------------------------------------------------------------------------- the model
 
 
+def _loopback_opener(base_url: str) -> urllib.request.OpenerDirector:
+    """An opener without proxies for ``base_url``, which must be http(s) on a loopback host.
+
+    Raises:
+        ArmError: ``base_url`` is not on this machine.
+    """
+    parts = urlsplit(base_url)
+    if parts.scheme not in ("http", "https") or parts.hostname not in LOOPBACK_HOSTS:
+        raise ArmError(f"model URL {base_url!r} is not on this machine; use a loopback address such as 127.0.0.1")
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def check_model(base_url: str, model: str, timeout_s: float = 10.0) -> None:
+    """Fail at once, not after one timeout per question, when the server at ``base_url`` does not
+    answer ``GET /api/tags`` or does not list ``model`` (``name`` or ``name:latest``).
+
+    Raises:
+        ArmError: not loopback, no answer, or the model is not served there.
+    """
+    opener = _loopback_opener(base_url)
+    try:
+        with opener.open(base_url.rstrip("/") + "/api/tags", timeout=timeout_s) as response:
+            listing = json.loads(response.read())
+    except (OSError, ValueError) as error:
+        raise ArmError(
+            f"no model server answered at {base_url} ({type(error).__name__}); start it, then retry"
+        ) from error
+    names = {str(m.get("name")) for m in listing.get("models", []) if isinstance(m, dict)}
+    if model not in names and f"{model}:latest" not in names:
+        served = ", ".join(sorted(names)) or "none"
+        raise ArmError(f"{base_url} does not serve {model!r} (it serves: {served}); pull it or pick another")
+
+
 def ollama_model(base_url: str, model: str, timeout_s: float) -> ModelFn:
     """A ModelFn over Ollama's /api/generate (JSON mode, temperature 0) on a loopback address.
 
     Raises:
         ArmError: ``base_url`` is not http(s) on a loopback host.
     """
-    parts = urlsplit(base_url)
-    if parts.scheme not in ("http", "https") or parts.hostname not in LOOPBACK_HOSTS:
-        raise ArmError(f"model URL {base_url!r} is not on this machine; use a loopback address such as 127.0.0.1")
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    opener = _loopback_opener(base_url)
     url = base_url.rstrip("/") + "/api/generate"
 
     def call(system: str, prompt: str) -> str:
@@ -592,6 +633,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--results-dir must be outside the repository")
     try:
         model = ollama_model(args.ollama_base_url, args.model, args.timeout)
+        check_model(args.ollama_base_url, args.model)
     except ArmError as error:
         parser.error(str(error))
     app_src = args.app_src.resolve() if args.app_src else None

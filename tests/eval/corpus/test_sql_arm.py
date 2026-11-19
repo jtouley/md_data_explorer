@@ -30,6 +30,7 @@ from clinical_analytics.eval.corpus.sql_arm import (
     RawSqlTool,
     TableAnswer,
     answer_question,
+    check_model,
     comparison_markdown,
     main,
     ollama_model,
@@ -205,6 +206,29 @@ class TestSqlTool:
         # Assert
         assert text.startswith("SQL error")
 
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            pytest.param("DELETE FROM unified WHERE sex = 'male'", id="delete"),
+            pytest.param("SELECT 1; DROP TABLE unified", id="drop_after_select"),
+            pytest.param("CREATE TABLE t AS SELECT 1", id="create"),
+        ],
+    )
+    def test_run_writeStatement_refusedTableIntact(self, sql_tool, sql):
+        # Arrange / Act
+        text = sql_tool.run(sql)
+
+        # Assert: the next question still sees every row.
+        assert text.startswith("SQL error")
+        assert sql_tool.run("SELECT count(*) AS n FROM unified") == "n\n4"
+
+    def test_run_shortResult_noTruncationNote(self, sql_tool):
+        # Arrange / Act
+        text = sql_tool.run("SELECT count(*) AS n FROM unified")
+
+        # Assert
+        assert "only the first" not in text
+
     def test_run_manyRows_cappedWithNote(self, sql_tool):
         # Arrange / Act
         text = sql_tool.run("SELECT * FROM range(200)")
@@ -220,6 +244,15 @@ class TestSqlTool:
 
 class _FakeOllama(BaseHTTPRequestHandler):
     bodies: list[dict[str, Any]] = []
+    served: list[str] = ["some-model:latest"]
+
+    def do_GET(self) -> None:  # noqa: N802 - http.server's name
+        reply = json.dumps({"models": [{"name": name} for name in type(self).served]}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(reply)))
+        self.end_headers()
+        self.wfile.write(reply)
 
     def do_POST(self) -> None:  # noqa: N802 - http.server's name
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -235,21 +268,44 @@ class _FakeOllama(BaseHTTPRequestHandler):
         pass
 
 
+@pytest.fixture
+def fake_ollama() -> Iterator[str]:
+    """A loopback Ollama stand-in (GET /api/tags, POST /api/generate); yields its base URL."""
+    _FakeOllama.bodies = []
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _FakeOllama)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_port}"
+    server.shutdown()
+    server.server_close()
+
+
+class TestCheckModel:
+    @pytest.mark.parametrize(
+        "name", [pytest.param("some-model", id="bare_name"), pytest.param("some-model:latest", id="tag")]
+    )
+    def test_checkModel_served_passes(self, fake_ollama, name):
+        # Arrange / Act / Assert
+        check_model(fake_ollama, name)
+
+    def test_checkModel_notServed_armErrorNamesWhatIs(self, fake_ollama):
+        # Arrange / Act / Assert
+        with pytest.raises(ArmError, match="does not serve 'other'.*some-model:latest"):
+            check_model(fake_ollama, "other")
+
+    def test_checkModel_nothingListening_armError(self):
+        # Arrange / Act / Assert
+        with pytest.raises(ArmError, match="no model server answered"):
+            check_model("http://127.0.0.1:9", "m", 2.0)
+
+
 class TestOllamaModel:
-    def test_ollamaModel_loopbackServer_jsonModeNoStreamTemperatureZero(self):
+    def test_ollamaModel_loopbackServer_jsonModeNoStreamTemperatureZero(self, fake_ollama):
         # Arrange
-        _FakeOllama.bodies = []
-        server = ThreadingHTTPServer(("127.0.0.1", 0), _FakeOllama)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        model = ollama_model(f"http://127.0.0.1:{server.server_port}", "some-model", 5.0)
+        model = ollama_model(fake_ollama, "some-model", 5.0)
 
         # Act
-        try:
-            reply = model("system text", "prompt text")
-        finally:
-            server.shutdown()
-            server.server_close()
+        reply = model("system text", "prompt text")
 
         # Assert
         assert reply == '{"sql": "SELECT 1"}'
@@ -281,6 +337,8 @@ class TestOllamaModel:
             model("s", "p")
 
 
+@pytest.mark.slow
+@pytest.mark.integration
 class TestRunArm:
     def test_runArm_fellowHepb_scriptedModel_gradedWithBlanksAndListingRedacted(self, corpus_cache):
         # Arrange: one SQL turn and a final answer per question; the listing is answered (badly).
@@ -319,6 +377,18 @@ class TestRunArm:
         assert [s.id for s in report.skipped] == ["fellow_hepb-state-comparison-07"]
         assert {b.id: b.status for b in report.blanks}["screened_pct"] == "WRONG"
         assert (corpus_cache / "fellow_hepb" / "files" / "fellow_hepb.csv").is_file()
+
+
+class TestMain:
+    def test_main_modelNotServed_exitsBeforeAnyQuestion(self, fake_ollama, capsys):
+        # Arrange / Act
+        with pytest.raises(SystemExit) as exit_info:
+            main(["--dataset", "fellow_cdiff", "--model", "missing", "--ollama-base-url", fake_ollama])
+
+        # Assert
+        assert exit_info.value.code == 2
+        assert "does not serve 'missing'" in capsys.readouterr().err
+        assert _FakeOllama.bodies == []
 
     def test_main_nonLoopbackModelUrl_exitsBeforeAnyQuestion(self, capsys):
         # Arrange / Act
@@ -431,6 +501,8 @@ class TestModesAndComparison:
         with pytest.raises(argparse.ArgumentTypeError, match="use one or more of"):
             parse_modes(text)
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_comparisonMarkdown_threeColumns_separateRatesAndNotRun(self, corpus_cache):
         # Arrange: the raw arm declines everything; the governed column did not run.
         model, _ = _scripted(*[{"answer": {"type": "decline", "reason": "no"}}] * 10)

@@ -198,6 +198,38 @@ class TestMeasles:
         # Assert
         assert answer.value == {"Pregnant": 300.0}
 
+    def test_unreadableIgg_onlyQuestionsReadingItError(self, write_extract, fellow_oracles):
+        # Arrange
+        path = write_extract(MEASLES, ["P1,M1,2024-01-01,Pregnant,30,0,<5,mIU/mL"])
+
+        # Act
+        answers = fellow_oracles.answers(path, "fellow_measles")
+
+        # Assert
+        assert answers["fellow_measles-median-igg-by-group-03"].oracle_error is not None
+        assert answers["fellow_measles-checked-by-group-01"].value == {"Pregnant": 1}
+
+    def test_unknownIggUnitOnEveryRow_medianErrorsNotEmptyAnswer(self, write_extract, fellow_oracles):
+        # Arrange
+        path = write_extract(MEASLES, ["P1,M1,2024-01-01,Pregnant,30,0,7,AU/mL"])
+
+        # Act
+        answer = fellow_oracles.answers(path, "fellow_measles")["fellow_measles-median-igg-by-group-03"]
+
+        # Assert
+        assert "AU/mL" in (answer.oracle_error or "")
+
+    def test_rates_emptyGroup_leftOutAsCountsLeaveItOut(self, write_extract, fellow_oracles):
+        # Arrange
+        path = write_extract(MEASLES, ["P1,M1,2024-01-01,Pregnant,30,2,,", "P2,M2,2024-01-01,,30,2,,"])
+
+        # Act
+        answers = fellow_oracles.answers(path, "fellow_measles")
+
+        # Assert
+        assert answers["fellow_measles-two-doses-by-group-02"].value == {"Pregnant": 1.0}
+        assert answers["fellow_measles-checked-by-group-01"].value == {"Pregnant": 1}
+
     def test_unknownIggUnit_onlyUnitQuestionsError(self, write_extract, fellow_oracles):
         # Arrange
         path = write_extract(MEASLES, ["P1,M1,2024-01-01,Pregnant,30,0,7,AU/mL"])
@@ -210,6 +242,8 @@ class TestMeasles:
         assert answers["fellow_measles-checked-by-group-01"].oracle_error is None
 
 
+@pytest.mark.slow
+@pytest.mark.integration
 class TestScenarioFiles:
     @pytest.mark.parametrize("extract", EXTRACTS)
     def test_questionFile_everyAskedQuestionHasAnOracleOnGeneratedData(self, tmp_path, extract):

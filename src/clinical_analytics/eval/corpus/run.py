@@ -223,6 +223,10 @@ def load_questions(dataset: str) -> list[dict[str, Any]]:
     """
     _, questions = _question_file(dataset)
     load_scenario(dataset)
+    try:
+        split(questions)
+    except ScenarioError as error:
+        raise AcceptanceError(f"questions for {dataset}: {error}") from error
     seen: set[str] = set()
     for question in questions:
         parent = question.get("follow_up_of")

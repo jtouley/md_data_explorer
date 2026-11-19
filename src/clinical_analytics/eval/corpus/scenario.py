@@ -121,11 +121,19 @@ def parse_scenario(raw: dict[str, Any], questions: Sequence[dict[str, Any]]) -> 
 
 
 def split(questions: Sequence[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[SkippedQuestion]]:
-    """(questions to ask, questions skipped because they need a missing capability)."""
+    """(questions to ask, questions skipped because they need a missing capability).
+
+    Raises:
+        ScenarioError: a question follows up a skipped one (it would be asked without its parent).
+    """
     asked: list[dict[str, Any]] = []
     skipped: list[SkippedQuestion] = []
     for question in questions:
         capability = needs(question)
+        parent = question.get("follow_up_of")
+        waits_on = {s.id: s.needs for s in skipped}
+        if capability is None and parent in waits_on:
+            raise ScenarioError(f"{question['id']} follows up {parent}, which is not asked (needs {waits_on[parent]})")
         if capability is None:
             asked.append(question)
         else:
@@ -148,17 +156,19 @@ def blank_results(
         mine = [q for q in questions if blank.id in (q.get("blanks") or [])]
         ids = tuple(q["id"] for q in mine)
         waiting = sorted({str(q["needs"]) for q in mine if q.get("needs")})
+        asked = [q["id"] for q in mine if not q.get("needs")]
+        graded = [by_id[i] for i in asked if i in by_id]
+        notes = [f"{r.id.split('-', 1)[-1]} {'LEAK' if r.leak else r.grade}" for r in graded]
+        if missing := sorted(set(asked) - set(by_id)):
+            notes.append(f"not graded: {missing}")
+        status: BlankStatus = "ERROR" if missing else _status(graded)
+        # A failure on an asked question always shows; otherwise a blank that also needs a
+        # missing capability waits on it, whatever its asked questions got.
+        if waiting and status not in ("LEAK", "WRONG", "ERROR"):
+            status = "WAITS"
         if waiting:
-            rolled.append(BlankResult(blank.id, blank.text, "WAITS", ids, f"needs {', '.join(waiting)}"))
-            continue
-        graded = [by_id[i] for i in ids if i in by_id]
-        if len(graded) != len(ids):
-            missing = sorted(set(ids) - set(by_id))
-            rolled.append(BlankResult(blank.id, blank.text, "ERROR", ids, f"not graded: {missing}"))
-            continue
-        status = _status(graded)
-        note = ", ".join(f"{r.id.split('-', 1)[-1]} {'LEAK' if r.leak else r.grade}" for r in graded)
-        rolled.append(BlankResult(blank.id, blank.text, status, ids, note))
+            notes.append(f"needs {', '.join(waiting)}")
+        rolled.append(BlankResult(blank.id, blank.text, status, ids, ", ".join(notes)))
     return rolled
 
 

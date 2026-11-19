@@ -95,6 +95,14 @@ class TestSplit:
         assert [q["id"] for q in asked] == ["d-trend-01", "d-positivity-02", "d-or-03", "d-listing-05"]
         assert [(s.id, s.needs) for s in skipped] == [("d-rank-04", "aggregate_mode")]
 
+    def test_split_followUpOfSkipped_refused(self):
+        # Arrange
+        questions = [*QUESTIONS, {"id": "d-more-06", "query": "and by sex", "follow_up_of": "d-rank-04"}]
+
+        # Act / Assert
+        with pytest.raises(ScenarioError, match="follows up d-rank-04, which is not asked"):
+            split(questions)
+
     def test_split_noNeeds_allAsked(self):
         # Arrange
         questions = [{"id": "a", "query": "q"}]
@@ -133,6 +141,28 @@ class TestBlankResults:
         assert rolled["trend"].status == expected
         assert rolled["or"].status == "RIGHT"
         assert rolled["rank"].status == "WAITS"
+
+    @pytest.mark.parametrize(
+        ("grade", "leak", "expected"),
+        [
+            pytest.param("RIGHT", False, "WAITS", id="right_still_waits"),
+            pytest.param("HELD", False, "WAITS", id="held_waits"),
+            pytest.param("WRONG", False, "WRONG", id="wrong_shows"),
+            pytest.param("WRONG", True, "LEAK", id="leak_shows"),
+        ],
+    )
+    def test_blankResults_askedAndWaitingQuestion_failureNeverHiddenByWait(self, grade, leak, expected):
+        # Arrange: the rank blank is filled by one asked question and one that needs aggregate mode.
+        scenario = Scenario.model_validate(SCENARIO)
+        questions = [*QUESTIONS, _q("d-local-rank-06", "rank")]
+        results = [_Graded("d-local-rank-06", grade, leak)]
+
+        # Act
+        rolled = {r.id: r for r in blank_results(scenario, questions, results)}
+
+        # Assert
+        assert rolled["rank"].status == expected
+        assert "needs aggregate_mode" in rolled["rank"].note
 
     def test_blankResults_questionNotGraded_errorNamesIt(self):
         # Arrange

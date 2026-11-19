@@ -26,6 +26,8 @@ def _frame(extract: str) -> pl.DataFrame:
     return pl.read_csv(io.BytesIO(generate(extract, "table")), infer_schema=False)
 
 
+@pytest.mark.slow
+@pytest.mark.integration
 class TestGenerate:
     @pytest.mark.parametrize("extract", EXTRACTS)
     def test_generate_sameSeedTwice_sameBytes(self, extract):
@@ -71,6 +73,8 @@ class TestGenerate:
         # Assert
         assert (frame.height, frame.width) == (dataset.rows, dataset.columns)
 
+
+class TestGenerateErrors:
     @pytest.mark.parametrize(
         ("extract", "part"),
         [pytest.param("tb", "table", id="unknown_extract"), pytest.param("cdiff", "rows", id="unknown_part")],
@@ -89,6 +93,8 @@ class TestGenerate:
         assert "usage" in capsys.readouterr().err
 
 
+@pytest.mark.slow
+@pytest.mark.integration
 class TestTraps:
     @pytest.mark.parametrize("extract", ["cdiff", "hepb", "measles"])
     def test_extract_hasExactDuplicateRows(self, extract):

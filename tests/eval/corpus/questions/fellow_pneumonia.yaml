@@ -23,7 +23,9 @@ questions:
     expect: answer
   - id: fellow_pneumonia-pathogens-70-02
     family: breakdown
-    query: Which pathogens did we find in pneumonia patients 70 and older, and in how many admissions each?
+    query: >-
+      In pneumonia admissions in patients 70 and older, how many had each pathogen, and how many
+      had no pathogen identified?
     kind: count_by
     group_by: pathogen
     blanks: [pathogen, share_of_cases]
@@ -32,7 +34,7 @@ questions:
     family: outcome_share
     query: >-
       For pneumonia admissions in patients 70 and older, what share had a pneumococcal vaccine on
-      record, by pathogen?
+      record, by pathogen? Keep the admissions with no pathogen identified as their own group.
     kind: rates
     group_by: pathogen
     blanks: [unvaccinated]
@@ -41,7 +43,7 @@ questions:
     family: outcome_share
     query: >-
       For pneumonia admissions in patients 70 and older, what share had this season's flu shot on
-      record, by pathogen?
+      record, by pathogen? Keep the admissions with no pathogen identified as their own group.
     kind: rates
     group_by: pathogen
     blanks: [unvaccinated]

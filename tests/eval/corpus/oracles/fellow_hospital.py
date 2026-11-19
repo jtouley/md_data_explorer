@@ -82,7 +82,12 @@ def _rates_over(units: Callable[[pl.LazyFrame], pl.LazyFrame], group: str) -> Or
                 cells |= {(key,): n, (key, "events"): events, (key, "non_events"): n - events}
             return OracleAnswer(value, "proportion", cells)
 
-        query = units(frame).group_by(group).agg(pl.len().alias("n"), pl.col("event").sum().alias("events"))
+        query = (
+            units(frame)
+            .filter(pl.col(group).is_not_null())
+            .group_by(group)
+            .agg(pl.len().alias("n"), pl.col("event").sum().alias("events"))
+        )
         return Query("proportion", query, finish)
 
     return build
@@ -271,19 +276,20 @@ def _measles_patients(frame: pl.LazyFrame) -> pl.LazyFrame:
 
 
 def _with_unit_check(oracle: Oracle) -> Oracle:
-    """Fail the oracle (graded ERROR) if the file has an IgG unit the dictionary does not name."""
+    """Fail the oracle (graded ERROR) if the file has an IgG unit the dictionary does not name.
+    The units are read on their own, so the check holds even when the answer has no rows."""
 
     def build(frame: pl.LazyFrame) -> Query:
         inner = oracle(frame)
-        units = frame.select(pl.col("measles_igg_unit").drop_nulls().unique().implode().alias("units"))
+        units = frame.select(pl.col("measles_igg_unit").drop_nulls().unique())
 
         def finish(df: pl.DataFrame) -> OracleAnswer:
-            found = set(df["units"][0].to_list()) if df.height else set()
+            found = set(units.collect()["measles_igg_unit"].to_list())
             if extra := sorted(found - {"IU/mL", "mIU/mL"}):
                 raise OracleError(f"measles_igg_unit has units {extra} outside the dictionary")
-            return inner.finish(df.drop("units"))
+            return inner.finish(df)
 
-        return Query(inner.unit, inner.frame.join(units, how="cross"), finish)
+        return Query(inner.unit, inner.frame, finish)
 
     return build
 
@@ -323,15 +329,15 @@ def scan(csv_path: Path) -> pl.LazyFrame:
 
 
 def answers(csv_path: Path, dataset: str) -> dict[str, OracleAnswer]:
-    """Every question's answer for one dataset, from one ``collect_all`` over one scan. A question
-    whose data does not support an answer gets ``oracle_error`` instead of aborting the others."""
+    """Every question's answer for one dataset. Each query is collected on its own, so a value one
+    question cannot read (an IgG of "<5", a non-numeric age) makes that question alone
+    ``oracle_error`` (graded ERROR) and the others still get their answers."""
     frame = scan(csv_path)
-    queries = {question_id: oracle(frame) for question_id, oracle in ORACLES[dataset].items()}
-    collected = pl.collect_all([query.frame for query in queries.values()])
     result: dict[str, OracleAnswer] = {}
-    for (question_id, query), df in zip(queries.items(), collected, strict=True):
+    for question_id, oracle in ORACLES[dataset].items():
+        query = oracle(frame)
         try:
-            result[question_id] = query.finish(df)
-        except (OracleError, pl.exceptions.InvalidOperationError) as error:
+            result[question_id] = query.finish(query.frame.collect())
+        except (OracleError, pl.exceptions.PolarsError) as error:
             result[question_id] = OracleAnswer(None, query.unit, oracle_error=str(error))
     return result
