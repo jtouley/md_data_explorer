@@ -88,8 +88,8 @@ class LevelMapping(BaseModel):
     column: str
     spellings: tuple[str, ...]
     canonical: str
-    # Spellings held by at least MIN_CELL_SIZE rows when confirmed: the only ones a plan line
-    # may name beside the merged level (a label of 1 to 10 rows is never shown).
+    # Spellings a plan line names beside the merged level (every spelling of the mapping since
+    # ADR015; older declarations stored only those held by 11 or more rows, and are read as stored).
     named: tuple[str, ...] = ()
     dataset_version: str | None = None
 

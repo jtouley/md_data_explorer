@@ -500,11 +500,11 @@ describe('classifyCell', () => {
     expect(result).toEqual({ kind: 'number', text });
   });
 
-  it('hiddenCellFootnote_usesThreshold11_neverFive', () => {
+  it('hiddenCellFootnote_saysTheSourceSuppressedIt_neverPrivacy', () => {
     // Arrange / Act / Assert
     expect(SMALL_CELL_THRESHOLD).toBe(11);
-    expect(HIDDEN_CELL_FOOTNOTE).toContain('from 1 to 10');
-    expect(HIDDEN_CELL_FOOTNOTE).not.toMatch(/<\s*5|fewer than 5/);
+    expect(HIDDEN_CELL_FOOTNOTE).toContain('Suppressed by the source');
+    expect(HIDDEN_CELL_FOOTNOTE).not.toMatch(/privacy|<\s*5|fewer than 5/);
   });
 });
 

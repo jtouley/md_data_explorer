@@ -29,7 +29,6 @@ import polars as pl
 import structlog
 
 from clinical_analytics.core import nl_query_config
-from clinical_analytics.core.shown_counts import DIGEST_TIME_ZONE
 from clinical_analytics.sql import config
 from clinical_analytics.sql.catalog import SqlCatalog
 from clinical_analytics.sql.errors import SqlRefusedError
@@ -122,12 +121,10 @@ class SandboxConnection:
             con.execute("SET enable_external_access = false")
             con.execute("SET max_temp_directory_size = '0B'")
             con.execute(f"SET memory_limit = '{sandbox_memory_limit().sql}'")
-            # Timestamps with a time zone read as text in UTC, as on the question box's layer:
-            # the log of shown counts numbers rows by their text (core.shown_counts).
-            con.execute(f"SET TimeZone = '{DIGEST_TIME_ZONE}'")
+            # Timestamps with a time zone read in UTC, as on the question box's layer.
+            con.execute(f"SET TimeZone = '{nl_query_config.SESSION_TIME_ZONE}'")
             try:
                 con.execute(catalog.view_sql())
-                con.execute(catalog.positioned_view_sql())
             except duckdb.Error as e:
                 logger.warning("governed_sql_view_failed", error_type=type(e).__name__)
                 raise SqlRefusedError(UNREADABLE) from e
@@ -143,11 +140,10 @@ class SandboxConnection:
             self._slot = False
             _SLOTS.release()
 
-    def run_unsuppressed(self, sql: str) -> pl.DataFrame:
+    def run_generated(self, sql: str) -> pl.DataFrame:
         """Run one SELECT this package generated, within the time limit.
 
-        The rows come back as computed, small cells included: only ``sql.privacy`` calls this,
-        and nothing it returns is shown before suppression.
+        Only SQL that ``sql.answer`` generated from a checked query runs here, never the user's text.
 
         Raises:
             SqlRefusedError: not one SELECT, timed out, or failed (the reason never quotes a value).

@@ -23,7 +23,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from clinical_analytics.contracts.config import POPULATION_ESTIMATES_FORM_VALUE
-from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED
+from clinical_analytics.core.result_presentation import SOURCE_SUPPRESSED
 
 pytestmark = [pytest.mark.slow, pytest.mark.integration]
 
@@ -106,7 +106,7 @@ def test_idea1_hcvWomenMidwest_changeBySexAndWonderDeaths(test_client, isolated_
         ).row(0, named=True)
         deaths = source["Deaths"]
         if deaths == "Suppressed":  # WONDER's own suppression stays, never a number
-            assert row["WONDER: Deaths"] == SECONDARY_SUPPRESSED
+            assert row["WONDER: Deaths"] == SOURCE_SUPPRESSED
         else:
             assert row["WONDER: Deaths"] == float(deaths)
     assert any("WONDER" in m and "count" in m for m in side["method"])

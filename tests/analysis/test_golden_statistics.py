@@ -28,7 +28,6 @@ from clinical_analytics.analysis.compute import (
     compute_predictor_analysis,
     compute_survival_analysis,
 )
-from clinical_analytics.analysis.grouping import HIDDEN_GROUPS_LABEL, SMALL_CELL_TEST_REFUSAL
 from clinical_analytics.core.analysis_types import AnalysisContext
 from clinical_analytics.core.result_presentation import present_analysis
 from clinical_analytics.datasets.demo import get_demo_csv_path
@@ -105,7 +104,7 @@ class TestGoldenComparison:
 
     @pytest.mark.slow
     @pytest.mark.integration
-    def test_compare_sparse2x2_withholdsFisherForPlantedSmallCells(self, load_synthetic_dataset):
+    def test_compare_sparse2x2_fisherMatchesScipyForPlantedSmallCells(self, load_synthetic_dataset):
         # Arrange: generator wrote exposed 3/4 infected, unexposed 1/16 infected
         df = load_synthetic_dataset("sparse_cells")
         planted = np.array([[15, 1], [1, 3]])  # rows: infection 0,1; columns: exposed no, yes
@@ -113,12 +112,12 @@ class TestGoldenComparison:
         # Act
         result = compute_comparison_analysis(df, _context(primary_variable="infection", grouping_variable="exposed"))
 
-        # Assert: the table is the planted one, but its cells of 1 and 3 withhold the test: the
-        # p-value with the margins would give them back
+        # Assert: the planted table, with Fisher's exact test (expected counts under 5) as scipy
+        # computes it; small cells no longer withhold the test (ADR015)
+        _, ref_p = stats.fisher_exact(planted)
         assert [[row["no"], row["yes"]] for row in result["contingency"]] == planted.tolist()
-        assert result["table_min_cell"] == planted.min() == 1
-        for key in ("test_type", "p_value", "odds_ratio", "min_expected_count"):
-            assert key not in result
+        assert result["test_type"] == "fisher_exact"
+        assert result["p_value"] == pytest.approx(ref_p, rel=REL)
         assert result["event_level"] == "1"
         assert result["group_proportions"] == pytest.approx({"no": 1 / 16, "yes": 3 / 4}, rel=REL)
 
@@ -197,10 +196,12 @@ class TestGoldenComparison:
         result = compute_comparison_analysis(df, _context(primary_variable="outcome", grouping_variable="hypertension"))
 
         # Assert: expected counts are all >= 5, so chi-square (Yates-corrected for 2x2), not Fisher;
-        # the demo table has a cell of 9, so the test is withheld; the shares are still computed
+        # the cell of 9 no longer withholds the test (ADR015)
         assert ref_expected.min() >= 5
-        assert result["table_min_cell"] == table.min() == 9
-        assert "p_value" not in result
+        assert table.min() == 9
+        assert result["test_type"] == "chi_square"
+        assert result["p_value"] == pytest.approx(ref_p, rel=REL)
+        assert result["chi2"] == pytest.approx(ref_chi2, rel=REL)
         assert result["group_proportions"] == pytest.approx(ref_props, rel=REL)
         assert result["n_used"] == df.height == 80
 
@@ -330,22 +331,33 @@ class TestGoldenSurvival:
 class TestGoldenPresentation:
     @pytest.mark.slow
     @pytest.mark.integration
-    def test_present_sparseComparison_withholdsTestAndPercentages(self, load_synthetic_dataset):
-        # Arrange: 3 of 4 exposed infected; any percentage for a group of 4 reveals the count,
-        # and so does Fisher's p-value with the margins
+    def test_present_sparseComparison_showsFisherTestAndTrueCells(self, load_synthetic_dataset):
+        # Arrange: 3 of 4 exposed infected: every cell, share and Fisher's p shown (ADR015)
         df = load_synthetic_dataset("sparse_cells")
+        cells = {
+            (exposed, infection): df.filter((pl.col("exposed") == exposed) & (pl.col("infection") == infection)).height
+            for exposed in ("no", "yes")
+            for infection in (0, 1)
+        }
+        _, reference_p = stats.fisher_exact(
+            [[cells[("no", 0)], cells[("yes", 0)]], [cells[("no", 1)], cells[("yes", 1)]]]
+        )
         analysis = compute_comparison_analysis(df, _context(primary_variable="infection", grouping_variable="exposed"))
 
         # Act
         presentation = present_analysis(analysis)
 
         # Assert
-        assert presentation["claim"] == SMALL_CELL_TEST_REFUSAL
-        assert "75%" not in presentation["claim"] and "6%" not in presentation["claim"]
-        shown = [v for row in presentation["table"]["rows"] for k, v in row.items() if k != "infection"]
-        assert all(v == "suppressed" or (isinstance(v, int) and (v == 0 or v >= 11)) for v in shown)
+        assert analysis["test_type"] == "fisher_exact"
+        assert analysis["p_value"] == pytest.approx(reference_p, rel=REL)
+        assert "Fisher's exact test" in presentation["claim"]
+        shown = {row["infection"]: (row["no"], row["yes"]) for row in presentation["table"]["rows"]}
+        assert shown == {
+            "infection=0": (cells[("no", 0)], cells[("yes", 0)]),
+            "infection=1": (cells[("no", 1)], cells[("yes", 1)]),
+        }
 
-    def test_present_groupedCountWithSmallGroup_hidesCellAndComplement(self, load_synthetic_dataset):
+    def test_present_groupedCountWithSmallGroup_showsEveryGroup(self, load_synthetic_dataset):
         # Arrange: 4 exposed vs 16 unexposed with the total of 20 visible in the claim
         df = load_synthetic_dataset("sparse_cells")
         analysis = compute_count_analysis(df, _context(grouping_variable="exposed"))
@@ -354,10 +366,8 @@ class TestGoldenPresentation:
         presentation = present_analysis(analysis)
 
         # Assert
-        # Both are hidden and no count is left visible, so both labels fold into one row whose
-        # label claims no size (16 is not under 11): no label names the 4 exposed
         counts = {row["exposed"]: row["count"] for row in presentation["table"]["rows"]}
-        assert counts == {HIDDEN_GROUPS_LABEL: "suppressed"}
+        assert counts == dict(df.group_by("exposed").len().iter_rows())
 
 
 class TestEdgeInputs:

@@ -32,8 +32,8 @@ from clinical_analytics.core.schema import DataQualityError as schema_DataQualit
 @pytest.mark.parametrize(
     ("n_duplicates", "expected_fragment"),
     [
-        (1, "some duplicate"),
-        (10, "some duplicate"),
+        (1, "1 duplicate"),
+        (10, "10 duplicate"),
         (11, "11 duplicate"),
         (12, "12 duplicate"),
     ],
@@ -59,8 +59,6 @@ def test_build_unified_cohort_duplicateAnchorKeys_raisesDataQualityError(
     assert "patients" in message
     assert "patient_id" in message
     assert expected_fragment in message
-    if n_duplicates < 11:
-        assert f"{n_duplicates} duplicate" not in message
     handler.close()
 
 
@@ -86,7 +84,7 @@ def test_build_unified_cohort_duplicateBeyondSampleWindow_raisesDataQualityError
     handler = MultiTableHandler({"patients": patients})
 
     # Act / Assert
-    with pytest.raises(DataQualityError, match="some duplicate"):
+    with pytest.raises(DataQualityError, match="1 duplicate"):
         handler.build_unified_cohort()
     handler.close()
 
@@ -359,9 +357,9 @@ def _large_fact_table(patient_ids: list[str], **columns: list) -> pl.DataFrame:
 @pytest.mark.parametrize(
     ("n_null_keys", "expected_count_text"),
     [
-        pytest.param(1, "some", id="one_null_key"),
-        pytest.param(2, "some", id="two_null_keys"),
-        pytest.param(10, "some", id="ten_null_keys_small_cell"),
+        pytest.param(1, "1", id="one_null_key"),
+        pytest.param(2, "2", id="two_null_keys"),
+        pytest.param(10, "10", id="ten_null_keys_reported_exactly"),
         pytest.param(11, "11", id="eleven_null_keys_reported_exactly"),
     ],
 )

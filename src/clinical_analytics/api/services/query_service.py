@@ -470,7 +470,7 @@ class AsyncQueryService:
         self._events.setdefault(query_id, []).append(event)
 
     def _analysis_payload(self, result: CoreQueryResult) -> dict[str, Any] | None:
-        """Claim and small-cell-suppressed statistics table for a completed query.
+        """Claim and statistics table for a completed query, every number as computed.
 
         This is everything stored and returned (SSE preview and GET result_data). The raw
         analysis dict (contingency counts, proportions, Kaplan-Meier steps) and the execution

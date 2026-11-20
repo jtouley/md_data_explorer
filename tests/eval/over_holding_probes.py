@@ -278,21 +278,7 @@ NARROWED: frozenset[tuple[str, str]] = frozenset(
     }
 )
 
-# Answerable questions whose answer is now withheld for privacy, never shown wrong. The mean age
-# of patients aged 51-69 is a mean over 19 ages: age then behaves like categories
-# (grouping.behaves_like_categories), a COUNT by age shows each age's patients but the small
-# ones, and the mean is one more equation in those cells, so with an age held by 1-10 patients
-# it is withheld as a share is.
-WITHHELD: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("coh", "average age of patients older than 50 and younger than 70"),
-    }
-)
-
-ANSWERED: tuple[Probe, ...] = tuple(
-    probe for probe in ANSWERABLE if (probe.dataset, probe.query) not in NARROWED | WITHHELD
-)
-HIDDEN_FOR_PRIVACY: tuple[Probe, ...] = tuple(probe for probe in ANSWERABLE if (probe.dataset, probe.query) in WITHHELD)
+ANSWERED: tuple[Probe, ...] = tuple(probe for probe in ANSWERABLE if (probe.dataset, probe.query) not in NARROWED)
 HELD_SINCE_NARROWING: tuple[Probe, ...] = tuple(
     probe for probe in ANSWERABLE if (probe.dataset, probe.query) in NARROWED
 )

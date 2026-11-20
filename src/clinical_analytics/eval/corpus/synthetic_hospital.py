@@ -12,8 +12,9 @@ patient key. Each extract carries deliberate traps that a careless answer gets w
 
 - duplicate visits: exact duplicate rows (a lab order joined twice), repeat visits by the same
   patient, and, for pneumonia, one row per pathogen when two are found in one admission;
-- small subgroups: groups of 1-10 patients that must never be shown (a partial first year,
-  a rare birthplace region, Legionella, a small risk group);
+- small subgroups: groups of 1-10 patients that must be shown exactly on screen and masked as
+  "<11" only at the export boundary (a partial first year, a rare birthplace region, Legionella,
+  a small risk group);
 - mixed units: measles IgG reported in mIU/mL by one lab and IU/mL by another.
 
 The bytes depend only on the seed and this code: ``random.Random`` is stable across Python

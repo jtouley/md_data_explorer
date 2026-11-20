@@ -56,7 +56,7 @@ def dq_frames() -> dict[str, pl.DataFrame]:
 
 
 def fold_frame() -> pl.DataFrame:
-    """Arms of 200, 150 and 5 patients: the 5 is primary-suppressed, the 150 its complement."""
+    """Arms of 200, 150 and 5 patients: every arm is shown with its count (ADR015)."""
     arms = ["A"] * 200 + ["B"] * 150 + ["C"] * 5
     return pl.DataFrame({"patient_id": [f"Q{i:03d}" for i in range(len(arms))], "arm": arms})
 
@@ -99,14 +99,14 @@ def visits_died_frame() -> pl.DataFrame:
 
 
 # (frame, question or fixed plan, confirm, expected presented answer): graded on what the app
-# shows. The 150-patient arm keeps its own row, hidden, never the "groups under 11" label. After
+# shows. Every arm, the 5-patient one included, is shown under its own label with its count. After
 # rows are confirmed as visits, the share of a patient-level event counts patients (40 of 170;
 # by visits it would read 35.0%). The share is asked as a fixed plan: the NL parser does not
 # read "what percentage of patients died?" as a share on this small frame, and parsing is not
 # what the probe tests.
 DIED_SHARE = QueryPlan(intent="COUNT", proportion_column="died", proportion_value=1, confidence=0.99)
 SHOWN_PROBES: tuple[tuple[str, str | QueryPlan, bool, object], ...] = (
-    ("fold", "how many patients by arm?", False, {"A": 200, "B": "hidden", "Other (groups under 11)": "hidden"}),
+    ("fold", "how many patients by arm?", False, {"A": 200, "B": 150, "C": 5}),
     ("visits_died", DIED_SHARE, True, "23.5% of patients had died=1 (n=170 patients)."),
 )
 

@@ -1127,15 +1127,6 @@ def _split_footnotes(body: list[list[str | None]]) -> tuple[list[list[str | None
 # --- the report shown to the user -------------------------------------------------------------
 
 
-def _shown_count(part: int, total: int, limit: int) -> str:
-    """A value count that never reveals 1..limit-1, directly or as the rest of the column."""
-    if 0 < part < limit:
-        return f"fewer than {limit}"
-    if 0 < total - part < limit:
-        return f"all but fewer than {limit}"
-    return str(part)
-
-
 _NOTE_TEXT: Final[dict[str, str]] = {
     "leading_zero": "kept as text: codes with leading zeros (like 02139) must not become numbers",
     "not_numeric": "kept as text: {n} values are not plain numbers (like '<5' or '1,234'), so it is not averaged",
@@ -1185,12 +1176,11 @@ def _count(value: object) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
 
-def describe_column_types(notes: list[dict[str, str | int]], units: dict[str, str], small_cell_limit: int) -> list[str]:
-    """One sentence per staging decision the user should know about (counts small-cell safe)."""
+def describe_column_types(notes: list[dict[str, str | int]], units: dict[str, str]) -> list[str]:
+    """One sentence per staging decision the user should know about, with its count as it is."""
     lines = []
     for note in notes:
-        failed, checked = int(note.get("failed_values", 0)), int(note.get("checked_values", 0))
-        text = _NOTE_TEXT[str(note["reason"])].format(n=_shown_count(failed, checked, small_cell_limit))
+        text = _NOTE_TEXT[str(note["reason"])].format(n=int(note.get("failed_values", 0)))
         lines.append(f"{note['column']}: {text}.")
     if units:
         lines.append("The row under the header was read as units, not a patient, and is not in the data.")

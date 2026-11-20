@@ -301,12 +301,12 @@ export function buildConfirmationHoldPresentation(data, pendingQuery, binding = 
 // These helpers only re-arrange the API's text; they never change a word or a number.
 // ============================================================================
 
-/** Counts from 1 to SMALL_CELL_THRESHOLD - 1 are hidden by the API (never write "<5"). */
+/** The export threshold (ADR015): answers on screen show every count; never write "<5". */
 export const SMALL_CELL_THRESHOLD = 11;
 
-/** The API's marker for every hidden cell (primary and secondary alike, by design). */
+/** The API's marker for a cell a public source suppressed itself (declared estimates, ADR014). */
 export const HIDDEN_CELL_MARKER = 'suppressed';
-/** The API's own small-cell token (`suppress_count` writes exactly this). */
+/** The export boundary's token; answers from older servers may still carry it on screen. */
 export const SMALL_CELL_TOKEN = `<${SMALL_CELL_THRESHOLD}`;
 
 /**
@@ -330,8 +330,8 @@ export function isHiddenCellMarker(s) {
 }
 
 export const HIDDEN_CELL_FOOTNOTE =
-  `Hidden to protect privacy: counts from 1 to ${SMALL_CELL_THRESHOLD - 1} are not shown, ` +
-  'and some other cells are hidden so those counts can’t be worked out from totals.';
+  'Suppressed by the source: the published table withholds this value, so it is never shown as a ' +
+  'number or read as zero.';
 
 /** "hidden" or the API's "<11" anywhere in the claim (the stats line is part of the claim). */
 const CLAIM_HIDES_A_COUNT = new RegExp(`\\bhidden\\b|(^|[^\\w<])${SMALL_CELL_TOKEN}(?!\\d)`, 'i');

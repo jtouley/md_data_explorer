@@ -180,10 +180,6 @@ def find_intervals(schema: Mapping[str, pl.DataType]) -> list[Interval]:
 # combination of columns, or a copy of a column not named as a patient ID), so it keys rows, not
 # patients. ``core.answer_checks.patient_key`` then finds no patient key and every n counts rows.
 ROW_KEY_CONFIG_FLAG: Final = "patient_id_is_row_key"
-# Semantic-layer config key: the columns the upload added to the file (``added_id_columns``: a made-up
-# patient_id, or the row number of a file with no ID). The log of shown counts leaves them out of a
-# row's digest (core.shown_counts): a row number follows the file's row order, not the row.
-SYNTHESIZED_COLUMNS_CONFIG_KEY: Final = "synthesized_columns"
 
 
 def patient_id_is_row_key(metadata: Mapping[str, object]) -> bool:

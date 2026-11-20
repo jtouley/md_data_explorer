@@ -197,7 +197,6 @@ def statistic_refusal(
     distinct values with ``weights``.
     """
     from clinical_analytics.analysis.variable_types import short_name
-    from clinical_analytics.core.result_presentation import line_count_text
 
     name = short_name(series.name)
     total = rows if rows is not None else series.len()
@@ -216,9 +215,8 @@ def statistic_refusal(
     if numbers <= 0 and not parsed.n_censored and not parsed.n_unreadable:
         return all_missing_message(series.name, what), parsed
     if parsed.n_censored:
-        amount = line_count_text(parsed.n_censored, [total - nulls - parsed.n_missing_tokens - parsed.n_censored])
         return (
-            f"{name} has {amount} values recorded as a limit, such as '<5', so a statistic of it would be "
+            f"{name} has {parsed.n_censored} values recorded as a limit, such as '<5', so a statistic of it would be "
             f"wrong. Replace the limits with measured values in the file, or ask for a count by {name}."
         ), parsed
     if parsed.n_unreadable:

@@ -9,7 +9,7 @@ upload asks the user whether each row is one patient.
 * "Yes" stores the dataset version's one-row-per-patient grain: the same ``GrainDeclaration``
   (grain ``patient``, no ID column, the version's row count) that governed SQL stores when its
   refusal is confirmed, bound by the same ``confirmation_token``. Questions then count patients
-  (``answer_checks.declared_patient_rows``) and governed SQL counts and suppresses patients.
+  (``answer_checks.declared_patient_rows``) and governed SQL counts patients.
 * "No" keeps rows, and removes an earlier "yes" on this version.
 * Never answered: nothing is stored and every answer counts rows, exactly as before.
 

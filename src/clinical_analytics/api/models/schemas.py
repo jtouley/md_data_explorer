@@ -92,7 +92,7 @@ class QueryRequest(BaseModel):
 
 
 class SqlQueryRequest(BaseModel):
-    """A user-typed SQL query on one dataset (governed: read-only, checked, small cells hidden)."""
+    """A user-typed SQL query on one dataset (governed: read-only, checked)."""
 
     model_config = ConfigDict(extra="forbid")
 

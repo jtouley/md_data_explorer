@@ -30,10 +30,9 @@ Comparisons across tables need the same kind of number (rate, count, percent), t
 the same standardization: an age-standardized rate is never compared with a crude one, and two
 age-standardized rates only when they use the same standard population.
 
-Privacy: every table must be declared public population estimates for its current version. Counts
-(a count column, or a row whose metric is "Number") keep the small-cell rule, so a count from 1 to
-10 is never shown and a change or rank built on one is not shown either. Cells the source
-suppressed stay suppressed.
+Every table must be declared public population estimates for its current version. Values are
+shown as published (trust the source, ADR014 §7); cells the source suppressed stay suppressed, and
+a change or rank built on one is not shown.
 """
 
 from __future__ import annotations
@@ -51,7 +50,7 @@ import structlog
 from clinical_analytics.contracts import config, geography
 from clinical_analytics.core import estimates
 from clinical_analytics.core.estimates import Dimension, EstimateTable, ValueColumn
-from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED
+from clinical_analytics.core.result_presentation import SOURCE_SUPPRESSED
 
 logger = structlog.get_logger()
 
@@ -1318,7 +1317,7 @@ def _label(row: Mapping[str, Any], keys: Sequence[str]) -> str:
 
 def _value_text(value: float | None, lower: float | None, upper: float | None, hidden: str | None) -> str:
     if hidden in _HIDDEN:
-        return SECONDARY_SUPPRESSED
+        return SOURCE_SUPPRESSED
     return _fmt(value) + estimates._interval(lower, upper)
 
 
@@ -1357,10 +1356,10 @@ def _table(
             if row[f"_unr{index}"] and why is None:
                 unreliable.append(_label(row, keys))
             name = f"{part.source.name}: {part.value.name}"
-            shown[name] = SECONDARY_SUPPRESSED if why in _HIDDEN else value
+            shown[name] = SOURCE_SUPPRESSED if why in _HIDDEN else value
             if part.value.lower and part.value.upper:
-                shown[f"{name} lower"] = SECONDARY_SUPPRESSED if why in _HIDDEN else lower
-                shown[f"{name} upper"] = SECONDARY_SUPPRESSED if why in _HIDDEN else upper
+                shown[f"{name} lower"] = SOURCE_SUPPRESSED if why in _HIDDEN else lower
+                shown[f"{name} upper"] = SOURCE_SUPPRESSED if why in _HIDDEN else upper
         rows.append(shown)
     names = " and ".join(p.source.name for p in prepared)
     if len(rows) == 1:
@@ -1409,10 +1408,10 @@ def _change(
                     if why:
                         hidden[why] = hidden.get(why, 0) + 1
                 entry |= {
-                    f"{first_year}": SECONDARY_SUPPRESSED,
-                    f"{last_year}": SECONDARY_SUPPRESSED,
-                    "change": SECONDARY_SUPPRESSED,
-                    "percent change": SECONDARY_SUPPRESSED,
+                    f"{first_year}": SOURCE_SUPPRESSED,
+                    f"{last_year}": SOURCE_SUPPRESSED,
+                    "change": SOURCE_SUPPRESSED,
+                    "percent change": SOURCE_SUPPRESSED,
                 }
                 change_rows.append(entry)
                 claim_parts.append(config.ESTIMATE_JOIN_CHANGE_HIDDEN.format(group=label, source=part.source.name))

@@ -18,4 +18,4 @@ Assumes you have done the [Installation](installation.md) steps.
 3. Ask `compare outcome by diabetes`, then `compare age by outcome`.
 4. To use your own data, click **Upload a file…**. See [Uploading data](uploading-data.md).
 
-Patient counts from 1 to 10 are shown as `<11` in answers.
+Answers show their true counts, small ones included. Counts from 1 to 10 are written as `<11` only in anything that leaves your machine as a file.

@@ -4,7 +4,7 @@ import { describe, expect, test } from 'vitest';
 import {
   DATA_CHECK_LOADING,
   DATA_CHECK_NOTHING_FLAGGED,
-  DATA_CHECK_PRIVACY_HINT,
+  DATA_CHECK_HINT,
   dataCheckNotRunText,
   dataCheckStatusNote,
   dataCheckNeedsReview,
@@ -59,7 +59,7 @@ describe('dataCheckStatusNote', () => {
 });
 
 describe('renderDataCheck', () => {
-  test('lists the API lines as text, with the privacy footnote', () => {
+  test('lists the API lines as text, with the data-check footnote', () => {
     const p = parts();
     renderDataCheck(p, { status: 'ran', lines: ['ldl: 5.8% missing', '<b>x</b>'], count: 2 });
     expect([...p.list.querySelectorAll('li')].map((li) => li.textContent)).toEqual([
@@ -67,7 +67,7 @@ describe('renderDataCheck', () => {
       '<b>x</b>',
     ]);
     expect(p.list.querySelector('b')).toBeNull();
-    expect(p.hint.textContent).toBe(DATA_CHECK_PRIVACY_HINT);
+    expect(p.hint.textContent).toBe(DATA_CHECK_HINT);
   });
 
   test.each([

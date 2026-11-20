@@ -2,14 +2,19 @@
 """Grade the answer the app presents (claim and table) against an independent oracle.
 
 Reuses the golden kit's presented-answer reading (``eval.headless.presented_answer``), and adds
-what that kit does not check: that every oracle cell of 1-10 patients is hidden (LEAK), the
-odds-ratio and p-value read-outs, and the RIGHT / WRONG / HELD / ERROR grades.
+the odds-ratio and p-value read-outs and the RIGHT / WRONG / HELD / ERROR grades.
+
+On screen every answer shows its true numbers, small counts included (ADR015), so a count of 1-10
+shown on screen is graded on its value like any other. LEAK is about the export boundary only:
+the answer as it would leave the machine (``core.export_boundary.export_answer``) must show no
+oracle cell of 1-10 patients as a number.
 
 - RIGHT: every shown value matches (counts exactly; statistics within 1e-4 relative, or half a
-  unit of the 4 decimals the table is rounded to), labels and unit match, small cells hidden.
-- WRONG: a shown value differs, a row is missing or unexpected, the unit or grain is wrong, a
-  question that must be held is answered, or a LEAK (also flagged).
-- HELD: held or refused (reason recorded), or every value withheld.
+  unit of the 4 decimals the table is rounded to), labels and unit match.
+- WRONG: a shown value differs, a value is withheld, a row is missing or unexpected, the unit or
+  grain is wrong, a question that must be held is answered, or a LEAK at the export boundary
+  (also flagged).
+- HELD: held or refused (reason recorded), or no value shown.
 - ERROR: an exception, a timeout, or a silent fallback of the language-model tier; also a
   question whose oracle could not compute a trustworthy answer (``OracleAnswer.oracle_error``).
 
@@ -26,9 +31,8 @@ add three kinds, graded on the numbers shown whatever the app calls its value co
   of at most two rows. A proportion may be shown as a percent.
 - ``ci_by``: per group {"estimate", "ci_low", "ci_high"}; each row must show all three.
 
-A question whose rows are not patients (``grain: aggregate`` in the question file) is never
-checked for small patient counts: a count of 1-10 there is a count of rows or of events that the
-publisher already suppressed below its own threshold.
+A question whose rows are not patients (``grain: aggregate`` in the question file) has no
+patient cells to check at the export boundary.
 """
 
 from __future__ import annotations
@@ -38,9 +42,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias
 
-from clinical_analytics.analysis.grouping import FOLD_LABELS
 from clinical_analytics.analysis.variable_types import display_level
 from clinical_analytics.api.services.query_service import UNEXPECTED_FAILURE_MESSAGE
+from clinical_analytics.core.export_boundary import SMALL_MAX, SMALL_MIN, export_answer
 from clinical_analytics.eval.headless import HIDDEN, TOTAL_COUNT, count_grain, presented_answer
 
 Grade: TypeAlias = Literal["RIGHT", "WRONG", "HELD", "ERROR"]
@@ -49,10 +53,8 @@ Status: TypeAlias = Literal["completed", "failed", "awaiting_confirmation", "tim
 # patients with and without the outcome in it; ("total",) the whole answer's patients.
 CellKey: TypeAlias = tuple[str, ...]
 
-SMALL_MIN, SMALL_MAX = 1, 10  # a count of 1-10 patients must never be shown
 _REL_TOL = 1e-4
 _ROUNDING_TOL = 5e-5  # half a unit of the 4th decimal the presented table keeps
-_COUNT_COLUMNS = {"count", "n"}
 _VALUE_COLUMN = {"count_by": "count", "rates": "rate", "mean_by": "mean", "median_by": "median"}
 # A number as a reader sees it: "1,234", "-0.5", "12". Not part of a word or a date's digits.
 _NUMBER = re.compile(r"(?<![\w.])-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|(?<![\w.,])-?\d+(?:\.\d+)?")
@@ -68,8 +70,9 @@ class OracleError(ValueError):
 class OracleAnswer:
     """The true answer: ``value`` (int, float, {group: value or None}, {"or","ci_low","ci_high"},
     {"pearson","yates"} p-values, or None for a question that must be held), its unit, and
-    the patients behind each cell. ``undefined`` says why the statistic does not exist on this
-    data; ``oracle_error`` why no trustworthy answer could be computed (graded ERROR)."""
+    the patients behind each cell (for the export-boundary LEAK check). ``undefined`` says why the
+    statistic does not exist on this data; ``oracle_error`` why no trustworthy answer could be
+    computed (graded ERROR)."""
 
     value: Any
     unit: str
@@ -112,44 +115,23 @@ def _label(column: str | None, key: str) -> str:
     return key if column is None else str(display_level(column, key))
 
 
-def _small_group(oracle: OracleAnswer, key: str, kind: str) -> bool:
-    cells = oracle.cell_patients
-    if is_small(cells.get((key,))):
-        return True
-    return kind == "rates" and any(is_small(cells.get((key, part))) for part in ("events", "non_events"))
-
-
-def find_leaks(question: dict[str, Any], oracle: OracleAnswer, presentation: dict[str, Any] | None) -> list[str]:
-    """Every shown count of 1-10 patients, label of a group of 1-10 patients, or rate whose
-    events or non-events are 1-10 (rate and n give both counts)."""
+def find_export_leaks(question: dict[str, Any], oracle: OracleAnswer, presentation: dict[str, Any] | None) -> list[str]:
+    """Counts of 1-10 patients the answer would still show as numbers once it leaves the machine:
+    every whole number from 1 to 10 left in the exported table, and every oracle cell of 1-10
+    patients whose number is left in the exported claim. On screen they are shown (ADR015)."""
     if not presentation or question.get("grain") == AGGREGATE:
         return []
+    exported = export_answer(presentation)
     leaks: list[str] = []
-    match = TOTAL_COUNT.match(presentation.get("claim") or "")
-    if match and match.group(1).isdigit() and is_small(int(match.group(1))):
-        leaks.append(f"total count {match.group(1)} shown")
-    table = presentation.get("table") or {}
-    columns = list(table.get("columns") or [])
-    if not columns:
-        return leaks
-    group_by = question.get("group_by")
-    by_label = {_label(group_by, key[0]): key[0] for key in oracle.cell_patients if len(key) == 1}
-    for row in table.get("rows") or []:
-        label = str(row.get(columns[0]))
-        for column in columns[1:]:
-            value = row.get(column)
-            countlike = column in _COUNT_COLUMNS or (question.get("kind") == "crosstab")
-            if countlike and isinstance(value, int) and not isinstance(value, bool) and is_small(value):
-                leaks.append(f"{label}: {column} {value} shown")
-        key = by_label.get(label)
-        if key is None or label in FOLD_LABELS:
-            continue
-        if is_small(oracle.cell_patients.get((key,))):
-            leaks.append(f"label of a group of {oracle.cell_patients[(key,)]} patients shown: {label}")
-        elif "rate" in columns and isinstance(row.get("rate"), int | float):
-            small = [p for p in ("events", "non_events") if is_small(oracle.cell_patients.get((key, p)))]
-            if small:
-                leaks.append(f"{label}: rate shown with {small[0]} of 1-10 patients")
+    table = exported["table"] or {"columns": [], "rows": []}
+    for row in table["rows"]:
+        for column, value in row.items():
+            if isinstance(value, int) and not isinstance(value, bool) and is_small(value):
+                leaks.append(f"exported table shows {column} {value}")
+    claim = exported["claim"] or ""
+    shown = {int(n) for n in re.findall(r"(?<![\w.,])\d+(?![\w%]|[.,]\d)", claim)}
+    small = sorted({n for n in oracle.cell_patients.values() if is_small(n) and n in shown})
+    leaks += [f"exported claim shows {n}" for n in small]
     return leaks
 
 
@@ -162,23 +144,20 @@ def _missing_rows(missing: list[str], shown: Mapping[str, object]) -> str:
 def _grade_grouped(question: dict[str, Any], oracle: OracleAnswer, shown: Any) -> tuple[Grade, str]:
     if not isinstance(shown, dict):
         return "WRONG", f"expected a table by {question.get('group_by')}, got {_kind_of(shown)}"
-    kind, group_by = question["kind"], question.get("group_by")
-    expected = {_label(group_by, key): (key, value) for key, value in oracle.value.items()}
+    group_by = question.get("group_by")
+    expected = {_label(group_by, key): value for key, value in oracle.value.items()}
     # Sorted, and every missing row named: an oracle's group_by order changes from run to run, so
-    # "the first missing row" would name a different group each run for the same answer.
-    missing = sorted(
-        label
-        for label, (key, value) in expected.items()
-        if label not in shown and not (value is None or _small_group(oracle, key, kind))
-    )  # a row with no value to show, or folded into "Other", may be absent
+    # "the first missing row" would name a different group each run for the same answer. Only a
+    # row with no value to show may be absent; a small group must be shown (ADR015).
+    missing = sorted(label for label, value in expected.items() if label not in shown and value is not None)
     if missing:
         return "WRONG", _missing_rows(missing, shown)
     matched = 0
-    for label, (key, value) in sorted(expected.items()):
+    for label, value in sorted(expected.items()):
         if label not in shown:
             continue
         if shown[label] == HIDDEN:
-            continue  # hidden: required for a small cell, allowed as a secondary suppression
+            return "WRONG", f"'{label}': value withheld on screen, expected {value}"
         if value is None:
             if shown[label] is None:
                 continue
@@ -186,13 +165,11 @@ def _grade_grouped(question: dict[str, Any], oracle: OracleAnswer, shown: Any) -
         if not _close(value, shown[label]):
             return "WRONG", f"'{label}': shown {shown[label]}, expected {value}"
         matched += 1
-    extra = [
-        label for label in shown if label not in expected and not (label in FOLD_LABELS and shown[label] == HIDDEN)
-    ]
+    extra = [label for label in shown if label not in expected]
     if extra:
         return "WRONG", f"unexpected rows {sorted(extra)}"
     if matched == 0:
-        return "HELD", "every value withheld"
+        return "HELD", "no value shown"
     return "RIGHT", f"{matched} value(s) match"
 
 
@@ -340,7 +317,7 @@ def score(question: dict[str, Any], oracle: OracleAnswer, outcome: ApiOutcome) -
         reason = outcome.failure_reason or outcome.error or outcome.status
         return Scored("RIGHT" if expect == "held" else "HELD", False, f"{outcome.status}: {reason}")
     presentation = outcome.presentation or {}
-    leaks = find_leaks(question, oracle, presentation)
+    leaks = find_export_leaks(question, oracle, presentation)
     grade: Grade
     if expect == "held":
         grade, reason = "WRONG", "answered a question that must be held"
@@ -372,7 +349,7 @@ def _grade_value(question: dict[str, Any], oracle: OracleAnswer, presentation: d
         if said and said != oracle.unit and not (said == "rows" and oracle.unit == "patients"):
             return "WRONG", f"grain: counted {said}, expected {oracle.unit}"
         if shown == HIDDEN:
-            return ("RIGHT", "small total hidden") if is_small(oracle.value) else ("HELD", "total withheld")
+            return "WRONG", f"total withheld on screen, expected {oracle.value}"
         if isinstance(shown, int) and shown == oracle.value:
             return "RIGHT", "count matches"
         return "WRONG", f"shown {_kind_of(shown) if not isinstance(shown, int) else shown}, expected {oracle.value}"

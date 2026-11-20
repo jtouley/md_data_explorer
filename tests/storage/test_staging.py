@@ -430,7 +430,7 @@ def test_stage_idless_units_row_withUnitWords_isRemoved_andReported():
 
     # Act
     staged = read_csv_typed(data)
-    lines = describe_column_types([], staged.units, small_cell_limit=11)
+    lines = describe_column_types([], staged.units)
 
     # Assert
     assert staged.data.height == 2
@@ -492,21 +492,21 @@ def test_stage_text_frame_requires_text_columns():
 @pytest.mark.parametrize(
     ("failed", "checked", "shown"),
     [
-        (1, 200, "fewer than 11"),
-        (10, 200, "fewer than 11"),
+        (1, 200, "1"),
+        (10, 200, "10"),
         (11, 200, "11"),
         (50, 200, "50"),
-        (195, 200, "all but fewer than 11"),
+        (195, 200, "195"),
         (189, 200, "189"),
     ],
     ids=["one", "ten", "eleven", "fifty", "complement_small", "complement_eleven"],
 )
-def test_describeColumnTypes_counts_neverRevealSmallCells(failed, checked, shown):
+def test_describeColumnTypes_counts_shownAsTheyAre(failed, checked, shown):
     # Arrange
     notes = [{"column": "creat", "reason": "not_numeric", "failed_values": failed, "checked_values": checked}]
 
     # Act
-    lines = describe_column_types(notes, {}, small_cell_limit=11)
+    lines = describe_column_types(notes, {})
 
     # Assert
     assert lines == [
@@ -516,7 +516,7 @@ def test_describeColumnTypes_counts_neverRevealSmallCells(failed, checked, shown
 
 def test_describeColumnTypes_units_listedPerColumn():
     # Arrange / Act
-    lines = describe_column_types([], {"ldl": "mg/dL"}, small_cell_limit=11)
+    lines = describe_column_types([], {"ldl": "mg/dL"})
 
     # Assert
     assert lines == [

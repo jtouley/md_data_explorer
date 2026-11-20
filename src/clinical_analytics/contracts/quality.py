@@ -16,29 +16,14 @@ Anything else (``sql``, ``text``, ``custom`` rules, ``missingValues``) is report
 with the reason, never skipped silently. NaN in a float column counts as missing, never as out of
 range.
 
-Reports carry counts already suppressed, so the file on disk and the API response are safe to show
-as they are. The model:
-
-* The row count is always shown (the app shows it in the overview and /preview anyway).
-* A column runs at most one bad-value check (codebook, range or duplicates), so it is one exact
-  partition of the rows: ``[missing, bad, rest]`` or ``[missing, rest]``. ``rest`` is never
-  shown but can be worked out when the others are.
-* When any count in a column's line is 1..10 (``rest`` included), every non-zero shown count of
-  that column is hidden. Choosing only some (the smaller, or by a fixed order) would let a reader
-  rule out the worlds where the other choice was made. From 13 rows up this leaves every small
-  count able to be 11 or more for a reader who knows the shown numbers, the row count, that a
-  hidden count is at least 1 and that repeated values leave at least one distinct value.
-* Tables of 1..12 rows (``config.MAX_ROWS_NO_COUNTS``, a fixed cut-off) hide every column count,
-  zeros included, and say "too few rows to report counts".
-* A suppressed count shows the one label "hidden" (never "<11"), loses its percent, and its
-  check's status is always "review" (``config.HIDDEN_STATUS``), whatever the value: a pass/warning
-  would say which side of a threshold it is on (1 of 20 missing "passed" at 5% meant exactly 1).
-  Totals, messages and the summary therefore depend only on shown numbers.
+Every count is reported as measured, small ones included (ADR015): the report is shown on this
+machine, to the person who holds the rows. Reports written before ADR015 may still carry a
+"hidden" count with status "review"; they are read as they are.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, TypeAlias
 
@@ -54,14 +39,12 @@ from clinical_analytics.contracts.errors import QualityCheckError
 logger = structlog.get_logger()
 
 CheckStatus: TypeAlias = Literal["passed", "warning", "failed", "review", "not_run"]
-HIDDEN_NOTE = "count hidden to protect privacy"
 ROWS_KEY = "__rows"
 RANGE_METRIC = "range"
 CENSORED_METRIC = "censoredValues"
 TYPE_METRIC = "logicalType"
 LEVEL_VARIANTS_METRIC = "levelVariants"
 INTERVAL_METRIC = "intervalOrder"
-_BAD_VALUE_METRICS = frozenset({"invalidValues", "duplicateValues", RANGE_METRIC, CENSORED_METRIC, INTERVAL_METRIC})
 _OPERATORS = (
     "mustBe",
     "mustNotBe",
@@ -75,7 +58,7 @@ _OPERATORS = (
 
 
 class QualityCheckResult(BaseModel):
-    """One check, ready to show: counts are small-cell suppressed."""
+    """One check, ready to show, with its count as measured."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -86,9 +69,9 @@ class QualityCheckResult(BaseModel):
     severity: str = Field(..., description="error or warning")
     status: CheckStatus
     count: int | str | None = Field(
-        None, description="Rows affected; 'hidden' (at least 1) when suppressed; None if not run"
+        None, description="Rows affected; None if not run ('hidden' only in reports written before ADR015)"
     )
-    percent: float | None = Field(None, description="Share of rows (1 decimal); None when suppressed")
+    percent: float | None = Field(None, description="Share of rows (1 decimal)")
     message: str = Field(..., description="Plain-language result")
 
 
@@ -102,11 +85,11 @@ class QualityReport(BaseModel):
     dataset_version: str
     contract_version: str
     run_ts: str = Field(..., description="UTC run time, ISO 8601")
-    row_count: int | str = Field(..., description="Rows checked; 'hidden' when suppressed")
+    row_count: int | str = Field(..., description="Rows checked ('hidden' only in reports written before ADR015)")
     passed: int
     warnings: int
     failed: int
-    review: int = Field(0, description="Checks whose count is hidden (status 'review')")
+    review: int = Field(0, description="Checks with status 'review' (only in reports written before ADR015)")
     not_run: int
     summary: list[str] = Field(default_factory=list, description="Short plain-language lines for the UI")
     checks: list[QualityCheckResult] = Field(default_factory=list)
@@ -322,35 +305,7 @@ def compile_contract(contract: OpenDataContractStandard, schema: pl.Schema) -> l
     ids = [c.id for c in checks]
     if len(ids) != len(set(ids)) or ROWS_KEY in ids:
         raise QualityCheckError("Contract rule ids are not unique")
-    return _one_bad_value_check_per_column(checks)
-
-
-def _one_bad_value_check_per_column(checks: list[CompiledCheck]) -> list[CompiledCheck]:
-    """Run at most one bad-value check (codebook, range, duplicates) per column, table-level ones included.
-
-    The disclosure model treats each column as one partition ``[missing, bad, rest]``. Two
-    overlapping bad-value counts on one column (out-of-range values are never codes) would let a
-    reader subtract them; later ones are reported as not run instead.
-    """
-    counted: set[str] = set()
-    out: list[CompiledCheck] = []
-    for c in checks:  # column checks claim their column first
-        column = c.column
-        if c.expr is not None and column is not None and c.metric in _BAD_VALUE_METRICS:
-            if column in counted:
-                c = replace(c, expr=None, not_run_reason=config.OVERLAPPING_CHECK_REASON)
-            else:
-                counted.add(column)
-        out.append(c)
-    # A table-level check (e.g. duplicates over a composite key) counts toward every column it
-    # names: next to "patient_id: 12 repeated", "Table: 11 repeated" would give 1 by subtraction.
-    for i, c in enumerate(out):
-        if c.expr is not None and c.column is None and c.metric in _BAD_VALUE_METRICS:
-            if counted & set(c.columns):
-                out[i] = replace(c, expr=None, not_run_reason=config.OVERLAPPING_CHECK_REASON)
-            else:
-                counted |= set(c.columns)
-    return out
+    return checks
 
 
 def measure(lf: pl.LazyFrame, checks: list[CompiledCheck]) -> dict[str, int]:
@@ -385,153 +340,30 @@ def _passes(rule: dict[str, Any], observed: float) -> bool:
     return bool(result)
 
 
-def _message(check: CompiledCheck, count: int, shown: int | str, percent: float | None, tiny: bool = False) -> str:
+def _message(check: CompiledCheck, count: int, percent: float | None) -> str:
     name = check.display or "Table"
     if check.metric == "rowCount":
-        return f"{shown} rows"
-    if tiny:
-        return f"{name}: {config.TOO_FEW_ROWS_NOTE}"
+        return f"{count} rows"
     if count == 0:
         return f"{name}: no problems found"
-    hidden = shown == config.COUNT_HIDDEN
-    amount = "some" if hidden else shown
-    note = f"; {HIDDEN_NOTE}" if hidden else ""
     if check.metric == "nullValues":
         if check.percent and percent is not None:
             return f"{name}: {percent:.1f}% missing"
-        return (
-            f"{name}: {amount} values missing{note}" if check.percent else f"{name}: {amount} rows have no value{note}"
-        )
+        return f"{name}: {count} values missing" if check.percent else f"{name}: {count} rows have no value"
     if check.metric == "duplicateValues":
-        return f"{name}: {amount} repeated values{note}"
+        return f"{name}: {count} repeated values"
     if check.metric == "invalidValues":
-        return f"{name}: {amount} values are not in the codebook ({check.detail}){note}"
+        return f"{name}: {count} values are not in the codebook ({check.detail})"
     if check.metric == RANGE_METRIC:
-        return f"{name}: {amount} values outside {check.detail}{note}"
+        return f"{name}: {count} values outside {check.detail}"
     if check.metric == CENSORED_METRIC:
-        return f"{name}: {amount} values recorded as a limit (like '<5'), not as numbers{note}"
+        return f"{name}: {count} values recorded as a limit (like '<5'), not as numbers"
     if check.metric == INTERVAL_METRIC:
-        return f"{name}: {amount} rows where {check.detail} does not hold{note}"
-    return f"{name}: {amount} rows flagged{note}"
+        return f"{name}: {count} rows where {check.detail} does not hold"
+    return f"{name}: {count} rows flagged"
 
 
-Line: TypeAlias = tuple[str | None, str | None, str]  # (missing, bad, rest); rest is never shown
-
-
-def _lines(checks: list[CompiledCheck], raw: dict[str, int]) -> tuple[dict[str, str], dict[str, int], list[Line]]:
-    """Cells and lines of the disclosure model (see the module docstring).
-
-    Returns: check id -> cell, cell -> count, and the lines (each sums to the row count).
-    """
-    rows = raw[ROWS_KEY]
-    runnable = [c for c in checks if c.expr is not None and c.metric != "rowCount"]
-    cell_of: dict[str, str] = {}
-    value: dict[str, int] = {}
-    missing_cell: dict[str, str] = {}
-    for c in runnable:
-        if c.metric == "nullValues" and c.column is not None:
-            canonical = missing_cell.setdefault(c.column, c.id)
-            same = canonical != c.id and raw[canonical] == raw[c.id]
-            cell_of[c.id] = canonical if same else c.id
-        else:
-            cell_of[c.id] = c.id
-        value[cell_of[c.id]] = raw[c.id]
-    lines: list[Line] = []
-    for c in runnable:
-        if c.metric == "nullValues":
-            continue
-        m = missing_cell.get(c.column) if c.column is not None else None
-        rest = f"{c.id}::rest"
-        value[rest] = rows - (value[m] if m else 0) - value[c.id]
-        lines.append((m, c.id, rest))
-    in_line = {cell for line in lines for cell in line if cell}
-    for c in runnable:
-        cell = cell_of[c.id]
-        if c.metric == "nullValues" and cell not in in_line:
-            rest = f"{cell}::rest"
-            value[rest] = rows - value[cell]
-            lines.append((cell, None, rest))
-            in_line |= {cell, rest}
-    return cell_of, value, lines
-
-
-def _max_feasible(
-    cell: str, rows: int, value: dict[str, int], hidden: set[str], lines: list[Line], distinct_rests: set[str]
-) -> int:
-    """Largest value a reader could not rule out for ``cell``: hidden counts >= 1, rest >= 0, and
-    for a duplicate check rest (the distinct values) >= 1 whenever any value repeats."""
-
-    def low(c: str | None) -> int:
-        return 0 if c is None else (1 if c in hidden else value[c])
-
-    def rest_floor(bad: str | None, rest: str) -> int:
-        return 1 if rest in distinct_rests and bad is not None and low(bad) > 0 else 0
-
-    if cell.endswith("::rest"):
-        m, bad, _ = next(line for line in lines if line[2] == cell)
-        is_open = (m in hidden) or (bad in hidden)
-        return rows - low(m) - low(bad) if is_open else value[cell]
-    if cell not in hidden:
-        return value[cell]
-    as_missing = [line for line in lines if line[0] == cell]
-    if as_missing:
-        return min(rows - low(bad) - rest_floor(bad, rest) for _, bad, rest in as_missing)
-    m, bad, rest = next(line for line in lines if line[1] == cell)
-    return rows - low(m) - rest_floor(bad, rest)
-
-
-def _hidden_cells(rows: int, value: dict[str, int], lines: list[Line], distinct_rests: set[str]) -> set[str]:
-    """Shown cells to hide (see module docstring). The row count itself is always shown."""
-    limit = config.MIN_CELL_SIZE
-    shown_cells = {c for line in lines for c in line[:2] if c is not None}
-    if config.is_tiny_table(rows):
-        return shown_cells  # zeros too: a lone hidden count could otherwise equal the row count
-    # A line with any count of 1..10 (rest included) hides all its non-zero shown counts, closed
-    # over lines that share a cell. Hiding only some, chosen by size or by a fixed order, lets a
-    # reader rule out the worlds where the other choice would have been made.
-    hidden: set[str] = set()
-    changed = True
-    while changed:
-        changed = False
-        for line in lines:
-            if any(c is not None and (c in hidden or 0 < value[c] < limit) for c in line):
-                extra = {c for c in line[:2] if c is not None and value[c] > 0} - hidden
-                if extra:
-                    hidden |= extra
-                    changed = True
-    small = [c for c, v in value.items() if 0 < v < limit]
-    if any(_max_feasible(c, rows, value, hidden, lines, distinct_rests) < limit for c in small):
-        # Unreachable above MAX_ROWS_NO_COUNTS (see config): rows - 2 >= 11.
-        raise QualityCheckError("Small counts cannot be protected for this table")
-    return hidden
-
-
-def _shown_counts(checks: list[CompiledCheck], raw: dict[str, int]) -> dict[str, tuple[int | str, float | None]]:
-    """Count and percent as shown for every runnable check (the row count is always shown)."""
-    rows = raw[ROWS_KEY]
-    cell_of, value, lines = _lines(checks, raw)
-    distinct_rests = {f"{c.id}::rest" for c in checks if c.metric == "duplicateValues"}
-    hidden = _hidden_cells(rows, value, lines, distinct_rests)
-    shown: dict[str, tuple[int | str, float | None]] = {}
-    for c in checks:
-        if c.expr is None:
-            continue
-        count = raw[c.id]
-        if c.metric == "rowCount":
-            shown[c.id] = (rows, None)
-        elif cell_of[c.id] in hidden:
-            shown[c.id] = (config.COUNT_HIDDEN, None)
-        else:
-            shown[c.id] = (count, round(100.0 * count / rows, 1) if rows else None)
-    return shown
-
-
-def _result(
-    check: CompiledCheck,
-    raw: dict[str, int],
-    shown_counts: dict[str, tuple[int | str, float | None]],
-    tiny: bool = False,
-) -> QualityCheckResult:
+def _result(check: CompiledCheck, raw: dict[str, int]) -> QualityCheckResult:
     common: dict[str, Any] = {
         "id": check.id,
         "column": check.display,
@@ -546,17 +378,15 @@ def _result(
     count, rows = raw[check.id], raw[ROWS_KEY]
     observed: float = (100.0 * count / rows if rows else 0.0) if check.percent else count
     passed = _passes(check.rule, observed)
-    shown, percent = shown_counts[check.id]
+    percent = None if check.metric == "rowCount" or not rows else round(100.0 * count / rows, 1)
     status: CheckStatus = "passed" if passed else ("failed" if check.severity == "error" else "warning")
-    if shown == config.COUNT_HIDDEN:
-        status = config.HIDDEN_STATUS  # never depends on the hidden value
     return QualityCheckResult(
-        **common, status=status, count=shown, percent=percent, message=_message(check, count, shown, percent, tiny)
+        **common, status=status, count=count, percent=percent, message=_message(check, count, percent)
     )
 
 
 def _summary(results: list[QualityCheckResult]) -> list[str]:
-    """Failed, warnings, hidden ("review"), then any other missing values; capped for the upload notice."""
+    """Failed, warnings, then any other missing values; capped for the upload notice."""
     order = {"failed": 0, "warning": 1, "review": 2, "passed": 3, "not_run": 4}
     notable = [
         r
@@ -666,8 +496,7 @@ def level_variant_results(lf: pl.LazyFrame, contract: OpenDataContractStandard) 
     """Text columns whose levels include spellings of one category (Male / male / M).
 
     A warning at upload; a question that groups or limits on such a level is held until the
-    doctor confirms the spellings are one. The message names only spellings held by at least
-    ``MIN_CELL_SIZE`` rows, so it never shows a label of a level with 1 to 10 rows.
+    doctor confirms the spellings are one. The message names up to four of the spellings.
     """
     from clinical_analytics.analysis.grouping import level_variants
 
@@ -692,8 +521,8 @@ def level_variant_results(lf: pl.LazyFrame, contract: OpenDataContractStandard) 
         if not groups:
             continue
         prop = props[column]
-        named = [s for group in groups for s in group if counts[s] >= config.MIN_CELL_SIZE]
-        example = f" (for example {', '.join(named[:4])})" if len(named) >= 2 else ""
+        named = [s for group in groups for s in group]
+        example = f" (for example {', '.join(named[:4])})"
         results.append(
             QualityCheckResult(
                 id=f"{prop.name}{config.LEVEL_VARIANTS_RULE_SUFFIX}",
@@ -720,7 +549,7 @@ def run_quality(
     data_version: str | None = None,
     previous_contract: OpenDataContractStandard | None = None,
 ) -> QualityReport:
-    """Check ``lf`` against ``contract`` and build the suppressed report: the counted checks in one
+    """Check ``lf`` against ``contract`` and build the report: the counted checks in one
     collect, then type conformance (schema only) and category spellings (one more collect).
 
     ``data_version``: the version ``lf`` holds. ``previous_contract``: the contract of the
@@ -751,14 +580,12 @@ def report_from_counts(
     run_at: datetime | None = None,
     extra: list[QualityCheckResult] | None = None,
 ) -> QualityReport:
-    """The suppressed report for raw counts (``measure`` output). Pure: no data is read.
+    """The report for raw counts (``measure`` output). Pure: no data is read.
 
     ``extra``: results that carry no count (type conformance, category spellings), added as they are.
     """
-    shown_counts = _shown_counts(checks, raw)
     rows = raw[ROWS_KEY]
-    tiny = config.is_tiny_table(rows)
-    results = [_result(c, raw, shown_counts, tiny) for c in checks] + list(extra or [])
+    results = [_result(c, raw) for c in checks] + list(extra or [])
     ts = (run_at or datetime.now(UTC)).astimezone(UTC)
     report = QualityReport(
         upload_id=str(_custom_value(contract, "uploadId") or contract.id),
@@ -771,18 +598,10 @@ def report_from_counts(
         failed=sum(r.status == "failed" for r in results),
         review=sum(r.status == "review" for r in results),
         not_run=sum(r.status == "not_run" for r in results),
-        summary=_tiny_summary(rows, results) if tiny else _summary(results),
+        summary=_summary(results),
         checks=results,
     )
     return report
-
-
-def _tiny_summary(rows: int, results: list[QualityCheckResult]) -> list[str]:
-    """One fixed line for a tiny table, plus checks that could not run (schema, not values)."""
-    return [
-        f"{rows} rows: {config.TOO_FEW_ROWS_NOTE}",
-        *(r.message for r in results if r.status == "not_run" and not _deferred(r)),
-    ]
 
 
 def _deferred(result: QualityCheckResult) -> bool:

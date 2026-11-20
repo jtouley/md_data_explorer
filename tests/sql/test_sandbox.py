@@ -55,7 +55,7 @@ def test_sandbox_fileOrNetworkRead_failsAtTheEngine(catalog: SqlCatalog, secret_
 
     # Act / Assert
     with SandboxConnection(catalog) as sandbox, pytest.raises(SqlRefusedError):
-        sandbox.run_unsuppressed(sql)
+        sandbox.run_generated(sql)
 
 
 @pytest.mark.parametrize(
@@ -94,7 +94,7 @@ def test_sandbox_runNonSelect_refused(catalog: SqlCatalog, sql: str) -> None:
 
     # Act / Assert
     with SandboxConnection(catalog) as sandbox, pytest.raises(SqlRefusedError, match="read-only"):
-        sandbox.run_unsuppressed(sql)
+        sandbox.run_generated(sql)
 
 
 def test_sandbox_slowQuery_interruptedAtTimeout(catalog: SqlCatalog) -> None:
@@ -103,7 +103,7 @@ def test_sandbox_slowQuery_interruptedAtTimeout(catalog: SqlCatalog) -> None:
 
     # Act / Assert
     with SandboxConnection(catalog, timeout_s=0.2) as sandbox, pytest.raises(SqlRefusedError, match=TIMED_OUT):
-        sandbox.run_unsuppressed(sql)
+        sandbox.run_generated(sql)
 
 
 def test_sandbox_manyStatements_shareOneDeadline(catalog: SqlCatalog, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -126,10 +126,10 @@ def test_sandbox_manyStatements_shareOneDeadline(catalog: SqlCatalog, monkeypatc
     with sandbox:
         for started_at in (4.0, 8.0):
             now[0] = started_at
-            assert sandbox.run_unsuppressed("SELECT count(*) AS n FROM unified").item() == 300
+            assert sandbox.run_generated("SELECT count(*) AS n FROM unified").item() == 300
         now[0] = 10.0
         with pytest.raises(SqlRefusedError, match=TIMED_OUT):
-            sandbox.run_unsuppressed("SELECT count(*) AS n FROM unified")
+            sandbox.run_generated("SELECT count(*) AS n FROM unified")
     assert armed == [6.0, 2.0]
 
 
@@ -148,7 +148,7 @@ def test_sandbox_failedQuery_reasonNeverQuotesAValue(catalog: SqlCatalog) -> Non
 
     # Act
     with SandboxConnection(catalog) as sandbox, pytest.raises(SqlRefusedError) as refused:
-        sandbox.run_unsuppressed(sql)
+        sandbox.run_generated(sql)
 
     # Assert
     assert "'F'" not in refused.value.reason
@@ -198,7 +198,7 @@ def test_sandbox_allSlotsTaken_busyAfterTheWaitAndSlotFreedOnClose(catalog: SqlC
     first.close()
     first.close()  # twice is safe, and frees the slot once
     with SandboxConnection(catalog, timeout_s=0.05) as second:
-        assert second.run_unsuppressed("SELECT count(*) AS n FROM unified").item() == 300
+        assert second.run_generated("SELECT count(*) AS n FROM unified").item() == 300
 
 
 def test_sandbox_failedOpen_freesItsSlot(catalog: SqlCatalog) -> None:
@@ -224,7 +224,7 @@ def test_sandbox_memoryLimit_isTheSandboxShare(catalog: SqlCatalog) -> None:
 
     # Act
     with SandboxConnection(catalog) as sandbox:
-        got = sandbox.run_unsuppressed("SELECT current_setting('memory_limit') AS m").item()
+        got = sandbox.run_generated("SELECT current_setting('memory_limit') AS m").item()
 
     # Assert
     assert want is not None
@@ -240,7 +240,7 @@ def test_sandbox_viewHasContractColumnsOnly(make_sql_catalog: Callable[..., SqlC
 
     # Act
     with SandboxConnection(narrowed) as sandbox:
-        columns = sandbox.run_unsuppressed("SELECT * FROM unified LIMIT 0").columns
+        columns = sandbox.run_generated("SELECT * FROM unified LIMIT 0").columns
 
     # Assert
     assert "ldl" not in columns

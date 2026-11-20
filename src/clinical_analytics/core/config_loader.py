@@ -153,7 +153,7 @@ class NLQueryConfigDefaults:
     tier_2_semantic_match_threshold: float = 0.75
     clarifying_questions_threshold: float = 0.5
     auto_execute_confidence_threshold: float = 0.75  # Same as tier_2_semantic_match_threshold
-    small_cell_threshold: int = 11  # Counts 1..threshold-1 are displayed as "<threshold"
+    small_cell_threshold: int = 11  # Export boundary: counts 1..threshold-1 written as "<threshold"
     tier_timeout_seconds: float = 5.0
     enable_parallel_tier_matching: bool = False
     semantic_similarity_threshold: float = 0.7

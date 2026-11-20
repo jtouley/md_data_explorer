@@ -18,7 +18,8 @@ from clinical_analytics.contracts.geography import STATES
 from clinical_analytics.core import estimate_join as ej
 from clinical_analytics.core import estimates
 from clinical_analytics.core.estimates import detect_frame
-from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED
+from clinical_analytics.core.nl_query_config import SMALL_CELL_THRESHOLD
+from clinical_analytics.core.result_presentation import SOURCE_SUPPRESSED
 
 
 def _gbd_value(source: ej.SourceInput, **where: object) -> dict[str, float]:
@@ -194,11 +195,11 @@ class TestTraps:
             key = (row["State"], row["Gender"])
             if key not in shown:
                 continue
-            if row["Deaths suppressed"] or (row["Deaths"] is not None and row["Deaths"] < config.MIN_CELL_SIZE):
-                assert shown[key] == SECONDARY_SUPPRESSED
+            if row["Deaths suppressed"] or (row["Deaths"] is not None and row["Deaths"] < SMALL_CELL_THRESHOLD):
+                assert shown[key] == SOURCE_SUPPRESSED
             else:
                 assert shown[key] == row["Deaths"]
-        assert any(v == SECONDARY_SUPPRESSED for v in shown.values())
+        assert any(v == SOURCE_SUPPRESSED for v in shown.values())
         assert all(v != 0 for v in shown.values())
 
     def test_answer_gbdNumberMetric_rankedAsPublished(self, make_public_source):
@@ -216,7 +217,7 @@ class TestTraps:
             & (pl.col("age_name") == "All ages")
             & (pl.col("location_name") != "United States")
         )
-        assert oracle.filter(pl.col("val") < config.MIN_CELL_SIZE).height > 0
+        assert oracle.filter(pl.col("val") < SMALL_CELL_THRESHOLD).height > 0
         ranked = {r["state"]: r["val"] for r in result.table["rows"]}
         assert ranked == dict(oracle.select("location_name", "val").iter_rows())
 
@@ -575,7 +576,7 @@ class TestReviewRegressions:
             & (pl.col("metric_name") == "Number")
         ).row(0, named=True)
         shown = next(r for r in result.table["rows"] if r["metric_name"] == "Number")["GBD: val"]
-        assert 0 < number["val"] < config.MIN_CELL_SIZE  # a modelled count of 1-10
+        assert 0 < number["val"] < SMALL_CELL_THRESHOLD  # a modelled count of 1-10
         assert shown == number["val"]  # published, so shown as published
 
 

@@ -29,7 +29,7 @@ from clinical_analytics.core.counting_unit import (
 )
 from clinical_analytics.core.query_plan import CohortStep, QueryPlan
 from clinical_analytics.core.query_service import QueryService
-from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED, present_analysis
+from clinical_analytics.core.result_presentation import present_analysis
 
 # --------------------------------------------------------------------------- synthetic extracts
 
@@ -233,18 +233,11 @@ class TestRollups:
         # Act
         result = _ask(service, question, _screened_share())
 
-        # Assert: each region's rate matches, or is hidden because 1-10 patients are behind it
+        # Assert: every region's rate matches, small ones included (ADR015)
         assert result.failure_reason is None
         shown = _table(result)
-        matched = 0
-        for region, rate, events, non_events in expected.iter_rows():
-            value = shown[display_level("region", region)]
-            if value == SECONDARY_SUPPRESSED:
-                assert 0 < min(events, non_events) < 11
-                continue
-            assert value == pytest.approx(rate, abs=5e-5)
-            matched += 1
-        assert matched >= 1
+        for region, rate, _events, _non_events in expected.iter_rows():
+            assert shown[display_level("region", region)] == pytest.approx(rate, abs=5e-5)
         assert (
             "when at least one of its rows in that region has it" in result.claim
             or "only when all of its rows in that region that record it have it" in result.claim
@@ -310,8 +303,7 @@ class TestEncounterCounts:
         # they add up to more than the total
         shown = _table(result)
         for pathogen, n in expected.iter_rows():
-            if pathogen in shown and shown[pathogen] != SECONDARY_SUPPRESSED:
-                assert shown[pathogen] == n
+            assert shown[pathogen] == n
         assert (shown["S. pneumoniae"], shown["None identified"], shown["S. aureus"]) == (45, 30, 15)
         assert result.claim.startswith("87 admissions across")
         assert "An admission with rows in more than one pathogen is counted in each" in result.claim

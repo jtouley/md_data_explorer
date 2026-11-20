@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Smallest samples each analysis runs on.
 
-compute.py refuses below these, so a reader who sees an answer knows the sample was at least
-this large; result_presentation.py uses the same numbers when it decides what a hidden count
-would give away.
+compute.py refuses below these: a statistic on fewer rows is not defined or not meaningful
+(a t-test needs two values per group, a logistic model needs enough rows to fit).
 """
 
 from typing import Final

@@ -1,9 +1,11 @@
 # Security policy
 
 Clinical Analytics is a local, offline desktop app for clinicians. Its two promises are that
-**patient data never leaves the machine** and that **patient counts from 1 to 10 are never shown
-or recoverable**. A way to break either promise is a security vulnerability here, and we treat it
-as one.
+**patient data never leaves the machine** and that **anything the app writes out of the machine
+(an export, a results packet, a published log) shows no patient count from 1 to 10**: such counts
+are written as "<11". On screen, to the person who already holds the data, every answer shows its
+true numbers ([ADR015](docs/implementation/ADR/ADR015.md)). A way to break either promise is a
+security vulnerability here, and we treat it as one.
 
 ## Reporting a vulnerability
 
@@ -42,11 +44,12 @@ There are no tagged releases yet. Fixes land on `main`; run the latest `main`.
 
 In scope:
 
-- **Small counts shown or recoverable.** Any answer, chart, table, export, log line, error
-  message, API response or chat history that shows a patient count from 1 to 10, or lets one be
-  worked out: for example by subtracting two suppressed totals, from percentages and a known
-  denominator, from complementary filters, or from repeated queries. The threshold is
-  `small_cell_threshold` in `src/clinical_analytics/core/config_loader.py`.
+- **Small counts leaving the machine.** Any export, results packet, published log or other file
+  written out of the app that shows a patient count from 1 to 10 as a number, i.e. a path that
+  writes an answer out without `core/export_boundary.py`. Masking is per cell: a masked count
+  that can be worked out from the other cells of an exported answer is by design, not a
+  vulnerability (ADR015). Counts shown on screen are not in scope. The threshold is
+  `small_cell_threshold` in `src/clinical_analytics/resources/config/nl_query.yaml`.
 - **Patient data leaving the machine.** Any path by which uploaded data, column names, category
   labels or results reach a network host other than loopback: telemetry, update checks, crash
   reports, remote fonts or scripts in the Electron window, a non-local LLM endpoint used without

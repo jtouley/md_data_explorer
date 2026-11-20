@@ -494,21 +494,22 @@ class TestPublicReason:
     @pytest.mark.parametrize(
         ("reason", "expected"),
         [
-            pytest.param("shown 5, expected 4", "shown 1-10, expected 1-10", id="small_counts_masked"),
-            pytest.param("'Female': shown 10, expected 9", "'Female': shown 1-10, expected 1-10", id="ten_masked"),
+            pytest.param("shown 5, expected 4", "shown <11, expected <11", id="small_counts_masked"),
+            pytest.param("'Female': shown 10, expected 9", "'Female': shown <11, expected <11", id="ten_masked"),
             pytest.param(
                 "LEAK label of a group of 3 patients shown: RRMS; count matches",
-                "LEAK label of a group of 1-10 patients shown: RRMS; count matches",
+                "LEAK label of a group of <11 patients shown: RRMS; count matches",
                 id="leak_count_masked",
             ),
             pytest.param("shown 1141, expected 1140", "shown 1141, expected 1140", id="large_counts_kept"),
             pytest.param("shown 0, expected 11", "shown 0, expected 11", id="zero_and_eleven_kept"),
             pytest.param("p=0.03 shown, rate 4.5", "p=0.03 shown, rate 4.5", id="decimals_kept"),
             pytest.param("'19' and q7 and covid_ms-or-012", "'19' and q7 and covid_ms-or-012", id="words_kept"),
-            pytest.param("Patients who died: 3.", "Patients who died: 1-10.", id="full_stop_after_count"),
-            pytest.param("shown 5.0, expected 5", "shown 1-10, expected 1-10", id="float_form_masked"),
+            pytest.param("Patients who died: 3.", "Patients who died: <11.", id="full_stop_after_count"),
+            pytest.param("shown 5.0, expected 5", "shown <11, expected <11", id="float_form_masked"),
             pytest.param("total 1,141 patients", "total 1,141 patients", id="thousands_grouped_kept"),
             pytest.param("total 1,005 patients", "total 1,005 patients", id="grouped_with_zeros_kept"),
+            pytest.param("5% missing", "5% missing", id="percent_kept"),
             pytest.param("", "", id="empty"),
         ],
     )
@@ -530,7 +531,7 @@ class TestPublicReason:
         text = run_module.markdown(report)
 
         # Assert
-        assert "shown 1-10, expected 1-10" in text
+        assert "shown <11, expected <11" in text
         assert "expected 7" not in text
 
 

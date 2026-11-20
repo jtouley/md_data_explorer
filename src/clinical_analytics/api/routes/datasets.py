@@ -491,8 +491,8 @@ def population_estimates_mark(value: str | None) -> bool:
     """Whether the upload form declares public population estimates (ADR014 §7).
 
     Only the exact acknowledgement value counts. A generic truthy value ("true", "on", "1") is
-    rejected rather than read as yes: a checkbox default or a script flag must never relax the
-    small-cell rule by accident. Absent or empty means not declared.
+    rejected rather than read as yes: a checkbox default or a script flag must never switch a
+    patient table to estimate answers by accident. Absent or empty means not declared.
 
     Raises:
         HTTPException: 400 for any other value.
@@ -547,15 +547,12 @@ def _declare_population_estimates(storage: UserDatasetStorage, upload_id: str) -
 
 
 def _upload_type_notes(storage: UserDatasetStorage, upload_id: str) -> list[str]:
-    """How staging typed this upload's columns, for the user (value counts 1-10 never shown)."""
-    from clinical_analytics.core.nl_query_config import SMALL_CELL_THRESHOLD
+    """How staging typed this upload's columns, for the user, with each count as it is."""
     from clinical_analytics.storage.staging import describe_column_types
     from clinical_analytics.ui.storage.user_datasets import COLUMN_TYPES_KEY, COLUMN_UNITS_KEY
 
     metadata = storage.get_upload_metadata(upload_id) or {}
-    return describe_column_types(
-        metadata.get(COLUMN_TYPES_KEY) or [], metadata.get(COLUMN_UNITS_KEY) or {}, SMALL_CELL_THRESHOLD
-    )
+    return describe_column_types(metadata.get(COLUMN_TYPES_KEY) or [], metadata.get(COLUMN_UNITS_KEY) or {})
 
 
 def _upload_declarations(storage: UserDatasetStorage, upload_id: str) -> Declarations:
@@ -605,13 +602,6 @@ def _upload_cohort_notes(storage: UserDatasetStorage, upload_id: str) -> list[st
     return [*metadata.get(ZIP_NOTES_KEY, []), *describe_cohort_build(metadata.get(COHORT_BUILD_KEY))]
 
 
-# Said on every delete (API and app): the log of shown counts is kept (core.shown_counts, ADR013 §12).
-SHOWN_COUNTS_KEPT_NOTE = (
-    "A record of counts already shown is kept, so re-uploading the same rows stays protected. "
-    "It holds row numbers and counts, not patient values or IDs."
-)
-
-
 class DatasetDeleteResponse(BaseModel):
     """What a dataset delete removed."""
 
@@ -621,10 +611,6 @@ class DatasetDeleteResponse(BaseModel):
     removed_paths: int = Field(..., description="Files and folders removed from the data home")
     dropped_tables: int = Field(..., description="DuckDB tables dropped")
     deleted_sessions: int = Field(..., description="Sessions (with their messages) deleted")
-    kept: str = Field(
-        default=SHOWN_COUNTS_KEPT_NOTE,
-        description="What a delete keeps on purpose: the record of counts already shown on these rows",
-    )
 
 
 # .zip: tables plus their documentation (ADR004), the multi-table path; .xpt: SAS transport (NHANES);

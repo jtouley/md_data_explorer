@@ -11,16 +11,12 @@ import re
 from dataclasses import dataclass
 from typing import Final, Literal, TypeAlias
 
-from clinical_analytics.core.nl_query_config import SMALL_CELL_THRESHOLD
-
 # ODCS v3.2.0 (Bitol). The open-data-contract-standard package pins the same schema version.
 ODCS_API_VERSION: Final = "v3.2.0"
 ODCS_KIND: Final = "DataContract"
 CONTRACT_SUFFIX: Final = ".odcs.yaml"
 CONTRACTS_DIRNAME: Final = "contracts"
 DQ_DIRNAME: Final = "dq"
-# The log of shown counts, one file per dataset version (core.shown_counts, ADR013 section 12).
-SHOWN_COUNTS_DIRNAME: Final = "shown_counts"
 GENERATOR: Final = "clinical_analytics.contracts.builder"
 # Every contract for a dataset version. Not bumped yet when a patch is accepted later: the
 # re-contract trigger is deferred (docs/architecture/AS_BUILT_ARCHITECTURE.md, known limits).
@@ -28,43 +24,10 @@ INITIAL_CONTRACT_VERSION: Final = "1.0.0"
 UNIFIED_OBJECT_NAME: Final = "unified"
 SYNTHETIC_TAG: Final = "synthetic"
 
-# Counts 1..threshold-1 are shown as "<threshold" everywhere in the app (config_loader default 11).
-MIN_CELL_SIZE: Final = SMALL_CELL_THRESHOLD
-
 # Missingness above 5% is flagged. Jakobsen et al., BMC Med Res Methodol 2017;17:162
 # (doi:10.1186/s12874-017-0442-1): complete case analysis "may be used as the primary analysis if
 # the proportions of missing data are below approximately 5%"; above that, the doctor should know.
 MISSINGNESS_WARN_PERCENT: Final = 5.0
-
-# Status of every check whose count is hidden, whatever the hidden value: a pass/warning would
-# say which side of a threshold the hidden count is on, which with the row total can pin it.
-HIDDEN_STATUS: Final = "review"
-
-# The one label for every suppressed count in a quality report: small (1..10) and the others hidden
-# so a small count cannot be worked out. It only says "at least 1" (zero is shown as 0); a second
-# label for small counts would tell a reader the rest are 11 or more.
-COUNT_HIDDEN: Final = "hidden"
-
-# Tables of 1..MAX_ROWS_NO_COUNTS rows report no column counts (zeros included) and say "too few
-# rows to report counts"; the row count is still shown, as it is in the overview and /preview.
-# The cut-off is fixed, so applying it reveals nothing beyond the row count. From
-# MIN_CELL_SIZE + 2 rows up, hiding a column's non-zero counts always leaves every small count
-# able to be MIN_CELL_SIZE or more (rows - 2 >= 11: one hidden neighbour >= 1, and >= 1 distinct
-# value when duplicates are counted).
-MAX_ROWS_NO_COUNTS: Final = MIN_CELL_SIZE + 1
-
-
-def is_tiny_table(rows: int) -> bool:
-    """A table of 1..MAX_ROWS_NO_COUNTS rows: no column count is reported, zeros included, and
-    the contract states no grain. The one rule the builder and the report both use."""
-    return 0 < rows <= MAX_ROWS_NO_COUNTS
-
-
-OVERLAPPING_CHECK_REASON: Final = "another check already counts problem values in this column"
-TOO_FEW_ROWS_NOTE: Final = "too few rows to report counts"
-
-# Fewer rows than the small-cell threshold: every count would be suppressed.
-MIN_ROW_COUNT: Final = MIN_CELL_SIZE
 
 # Cell values that mean "missing" in clinical exports (R NA, SAS/Stata ".", Excel #N/A, ...),
 # matched case-insensitively after strip. Staging nulls them only in a column that otherwise
@@ -115,7 +78,6 @@ SEVERITY_ID: Final[Severity] = "error"
 SEVERITY_CODEBOOK: Final[Severity] = "warning"
 SEVERITY_RANGE: Final[Severity] = "warning"
 SEVERITY_MISSING: Final[Severity] = "warning"
-SEVERITY_ROW_COUNT: Final[Severity] = "warning"
 
 # Without an identifier column the ID checks still appear in the report, as not run.
 ID_NOT_NULL_RULE_ID: Final = "id_not_null"
@@ -420,13 +382,13 @@ ESTIMATE_STANDARDIZED_LEVELS: Final = frozenset(
     {"age_standardized", "age_standardised", "age_adjusted", "age_standardized_rate", "age_adjusted_rate"}
 )
 # Metric-like dimensions whose levels say what the value is (GBD metric_name: Number, Rate, Percent;
-# CDC DataValueType: Number, Crude Prevalence). A count level there keeps the small-cell rule.
+# CDC DataValueType: Number, Crude Prevalence).
 ESTIMATE_METRIC_DIMENSION: Final = re.compile(
     r"(^|_)(metric|unit|units|datavaluetype|data_value_type|metric_name)($|_)"
 )
 ESTIMATE_COUNT_LEVELS: Final = frozenset({"number", "count", "counts", "cases", "number_of_cases", "deaths"})
 # A metric level that positively says its value is a rate or a share ("Rate", "Percent", "Crude
-# Prevalence", "Age-adjusted Rate", "Per 100,000"). Any other level keeps the small-cell rule.
+# Prevalence", "Age-adjusted Rate", "Per 100,000").
 ESTIMATE_RATE_LEVEL: Final = re.compile(
     r"(^|_)(rate|rates|percent|percentage|pct|prevalence|proportion|ratio|coverage|per)($|_)"
 )
@@ -481,9 +443,9 @@ ESTIMATE_OPEN_HOLD: Final = (
 )
 ESTIMATE_UNDECLARED_REFUSAL: Final = (
     "This file looks like population estimates: each row is a value for a group, not a patient. It "
-    "wasn't marked '" + POPULATION_ESTIMATES_LABEL + "' at upload, so each row is treated as one person "
-    "and the small-cell rule hides it. If the file holds only published estimates, upload it again with "
-    "that box ticked."
+    "wasn't marked '" + POPULATION_ESTIMATES_LABEL + "' at upload, so each row is treated as one person, "
+    "and a statistic over the rows would mix estimates. If the file holds only published estimates, "
+    "upload it again with that box ticked."
 )
 ESTIMATE_TOTAL_LEFT_OUT: Final = "{levels} is the total of the other {column} values, so it is left out."
 ESTIMATE_SAVED_CHOICE_NOTE: Final = "Uses {column} = {level}, the choice saved for this dataset."

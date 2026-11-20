@@ -15,7 +15,7 @@ App:  outcome=1 was 43% in diabetes=0 and 100% in diabetes=1; the difference was
 - **Reads your file and works out its shape.** It detects patient IDs, outcomes and variable types, and runs data-quality checks on every upload (missing IDs, duplicates, out-of-range values).
 - **Picks the analysis for you.** Counts, descriptive statistics, group comparisons (chi-square, t-test), correlations and Kaplan–Meier survival. Logistic regression needs you to name the predictors (`do age and hypertension predict outcome`); it does not choose them for you.
 - **Shows its working.** Every answer comes with the plan it ran (outcome, grouping, filters, test). When it isn't sure what you meant, it shows the plan and asks before running it, rather than guessing.
-- **Protects small groups.** Counts of 1 to 10 patients are shown as `<11`, including where they could be worked out from other numbers.
+- **Shows the true numbers.** Every answer shows its real counts, small groups included: the data is already yours, on your machine. Anything that leaves the machine as a file has counts of 1 to 10 written as `<11`, with a note saying so ([ADR015](docs/implementation/ADR/ADR015.md)).
 - **Keeps a conversation.** Past questions are saved in a sidebar, and follow-up questions use what you asked before.
 - **Runs offline after setup.** The analysis engine, the embedding model and the language model all run on your machine.
 

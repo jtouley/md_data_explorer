@@ -2,7 +2,7 @@
 """Governed SQL (behind ``ENABLE_SQL_QUERIES``, off by default).
 
 POST /api/queries/sql runs one user-typed SELECT on the dataset's current version: checked
-against its contract, run read-only in a sandbox, small cells suppressed (``clinical_analytics.sql``).
+against its contract, run read-only in a sandbox, every value shown as computed (``clinical_analytics.sql``).
 """
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ from clinical_analytics.api.models.schemas import SqlQueryRequest, SqlQueryResul
 from clinical_analytics.contracts.declarations import FileDeclarationStore
 from clinical_analytics.core import nl_query_config
 from clinical_analytics.core.data_home import uploads_dir
+from clinical_analytics.sql.answer import PatientRowsUnconfirmedError
 from clinical_analytics.sql.errors import SqlRefusedError
-from clinical_analytics.sql.privacy import PatientRowsUnconfirmedError
 from clinical_analytics.sql.sandbox import SqlBusyError
 from clinical_analytics.sql.service import run_governed_sql
 from clinical_analytics.storage.dataset_deletion import InvalidDatasetIdError, validate_dataset_id

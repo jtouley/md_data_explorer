@@ -17,9 +17,9 @@ n patients; an ANOVA across the three sex rows. This module:
   total level left out of a comparison of its parts, and "different" only when the intervals do
   not overlap. No statistical test runs on estimates.
 
-Detection alone never relaxes a privacy rule: answering needs the dataset to be declared public
-population estimates at upload (``Declarations.population_estimates``). Without that the rows are
-treated like patients, and every group of one row is a small cell.
+Detection alone never changes how rows are read: answering by estimate rows needs the dataset to
+be declared public population estimates at upload (``Declarations.population_estimates``).
+Without that the rows are treated like patient rows and answered as such.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ from clinical_analytics.analysis.variable_types import short_name
 from clinical_analytics.contracts import config
 from clinical_analytics.core.identifier_rules import ROW_NUMBER_COLUMN
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
-from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED
+from clinical_analytics.core.result_presentation import SOURCE_SUPPRESSED
 
 logger = structlog.get_logger()
 
@@ -925,9 +925,9 @@ def estimate_answer(
         # source itself suppressed stays hidden, and is never turned into a number.
         if row.get("suppressed"):
             source_suppressed += 1
-            shown |= {name: SECONDARY_SUPPRESSED}
+            shown |= {name: SOURCE_SUPPRESSED}
             if has_bounds:
-                shown |= {"lower": SECONDARY_SUPPRESSED, "upper": SECONDARY_SUPPRESSED}
+                shown |= {"lower": SOURCE_SUPPRESSED, "upper": SOURCE_SUPPRESSED}
             row["value"] = row["lower"] = row["upper"] = None
         else:
             shown |= {name: row["value"]}
