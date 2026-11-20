@@ -75,14 +75,14 @@ test.describe('Conversation states', () => {
     expect(box.width).toBeGreaterThan(100);
   });
 
-  test('table: numbers right-aligned, hidden cells marked with one footnote', async ({ page }) => {
+  test('table: numbers right-aligned, source-suppressed cells marked with one footnote', async ({ page }) => {
     // Act
     await ask(page, 'Show the event table');
 
     // Assert
     await expect(page.locator('.cell-hidden--hidden')).toHaveText('hidden†');
     await expect(page.locator('.cell-hidden--small')).toHaveText('<11†');
-    await expect(page.getByTestId('hidden-cell-footnote')).toContainText('counts from 1 to 10');
+    await expect(page.getByTestId('hidden-cell-footnote')).toContainText('Suppressed by the source');
     await expect(page.getByTestId('hidden-cell-footnote')).toHaveCount(1);
     const align = await page
       .locator('.result-table td.num')
