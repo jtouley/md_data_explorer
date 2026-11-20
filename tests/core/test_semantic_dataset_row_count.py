@@ -1,4 +1,4 @@
-"""An answer carries the rows its filters removed, so the presenter can suppress that count."""
+"""An answer counts the rows (or patients) its filters keep, whichever filter path applied them."""
 
 import polars as pl
 import pytest
@@ -26,7 +26,7 @@ def _execution_result() -> dict:
     [([AGED_50_PLUS], [], 4), ([], [AGED_50_PLUS], 4), ([AGED_50_PLUS], [AGED_50_PLUS], 4), ([], [], 0)],
     ids=["plan_filter", "legacy_context_filter", "both", "unfiltered"],
 )
-def test_format_execution_result_filters_addRowsFilteredOut(
+def test_format_execution_result_filters_rowCountIsTheFilteredRows(
     make_semantic_layer, plan_filters, legacy_filters, expected
 ):
     # Arrange: compute falls back to context.filters when the plan has none
@@ -43,18 +43,17 @@ def test_format_execution_result_filters_addRowsFilteredOut(
     # Act
     formatted = layer.format_execution_result(_execution_result(), context)
 
-    # Assert: the rows compute analysed and the rows the filters removed add up to the dataset
-    assert formatted["n_filtered_out"] == expected
+    # Assert: the rows compute analysed are the rows the filters kept
     assert formatted["row_count"] == 12 - expected
 
 
 @pytest.mark.parametrize(
-    ("max_age", "expected_total", "expected_filtered_out", "expected_claim"),
-    [(200, 55, 0, "Total count: 55."), (81, 52, 3, "Total count hidden."), (60, 31, 24, "Total count: 31.")],
+    ("max_age", "expected_total", "expected_claim"),
+    [(200, 55, "Total count: 55."), (81, 52, "Total count: 52."), (60, 31, "Total count: 31.")],
     ids=["filter_keeps_everyone", "three_patients_filtered_out", "many_filtered_out"],
 )
-def test_format_execution_result_distinctEntityCount_filteredOutCountsEntities(
-    make_semantic_layer, max_age, expected_total, expected_filtered_out, expected_claim
+def test_format_execution_result_distinctEntityCount_countsEntitiesNotVisits(
+    make_semantic_layer, max_age, expected_total, expected_claim
 ):
     # Arrange: 60 visit rows for 55 patients (five patients have two visits), ages 30 to 84
     patients = [*range(55), *range(5)]
@@ -71,8 +70,8 @@ def test_format_execution_result_distinctEntityCount_filteredOutCountsEntities(
     # Act
     formatted = layer.format_execution_result(execution_result, context)
 
-    # Assert: the five repeat visits are not counted as filtered-out patients
-    assert (formatted["total_count"], formatted["n_filtered_out"]) == (expected_total, expected_filtered_out)
+    # Assert: the five repeat visits are not counted as patients
+    assert formatted["total_count"] == expected_total
     assert present_analysis(formatted)["claim"] == expected_claim
 
 

@@ -14,8 +14,9 @@ clarifying_questions_threshold: 0.5  # Below this, ask clarifying questions
 # because semantic match is the minimum confidence for auto-execution
 auto_execute_confidence_threshold: 0.75
 
-# Patient counts from 1 to (this - 1) are shown as "<N" in claims and tables, so small
-# cells cannot identify individuals. 11 follows common clinical data-use agreements.
+# Export boundary only (ADR015): a count from 1 to (this - 1) in anything that leaves the
+# machine as a file or packet is written as "<N". On screen every count is shown as it is.
+# 11 follows common clinical data-use agreements.
 small_cell_threshold: 11
 
 # The API keeps at most this many datasets open (one in-memory DuckDB each); the least

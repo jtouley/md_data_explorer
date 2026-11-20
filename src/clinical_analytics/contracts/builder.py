@@ -10,8 +10,7 @@ not come from the values themselves, so checking the data against it at upload i
 * coded columns must hold only codes their codebook documents,
 * clinical variables must lie inside plausibility bounds (``contracts.config``),
 * missingness per column is measured, and any empty value is flagged,
-* a value with interval bounds must lie inside them (lower <= value <= upper),
-* the row count must clear the small-cell threshold.
+* a value with interval bounds must lie inside them (lower <= value <= upper).
 
 Observed values (levels, min/max) are never written into the contract: they would make the
 checks pass by construction, and the contract should not repeat patient values.
@@ -131,15 +130,15 @@ def range_text(bounds: config.PlausibilityRange) -> str:
 class Implausible:
     """Values of a column outside its plausibility range: the one result every path reports.
 
-    ``present``: values the check read (non-missing, finite numbers), the line the small-cell
-    rule applies to.
+    ``present``: values the check read (non-missing, finite numbers), the total the count is a
+    share of.
     """
 
     column: str
     count: int
     present: int
     bounds: str
-    # The range as numbers (the log of shown counts rebuilds the values outside it).
+    # The range as numbers.
     minimum: float | None = None
     maximum: float | None = None
 
@@ -373,12 +372,9 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
         present = series.drop_nulls()
         repeated = present.n_unique() < present.len()  # exact, every row
         # A repeated identifier is not a key: the contract says one row per identifier only
-        # when that is true of the data (patient grain), never for visit-level rows. A tiny
-        # table states neither (its report hides every count, so the contract must not tell).
+        # when that is true of the data (patient grain), never for visit-level rows.
         prop["required"] = True
-        if config.is_tiny_table(series.len()):
-            pass
-        elif repeated:
+        if repeated:
             prop["unique"] = False
         else:
             prop.update({"primaryKey": True, "primaryKeyPosition": 1, "unique": True})
@@ -443,8 +439,6 @@ def _granularity(df: pl.DataFrame, id_column: str | None) -> str:
     """The grain the data shows: one row per identifier, or several (rows may be visits)."""
     if id_column is None:
         return "One row per record as uploaded; no identifier column"
-    if config.is_tiny_table(df.height):
-        return "One row per record as uploaded; too few rows to state the grain"
     present = df.get_column(id_column).drop_nulls()
     if present.n_unique() < present.len():
         return f"Several rows per {id_column} (rows may be visits); not one row per patient"
@@ -470,7 +464,6 @@ def build_contract(df: pl.DataFrame, inputs: ContractInputs) -> OpenDataContract
         _custom("uploadId", inputs.upload_id),
         _custom("datasetVersion", inputs.dataset_version),
         _custom("metadataPatchIds", list(inputs.accepted_patch_ids)),
-        _custom("minCellSize", config.MIN_CELL_SIZE),
         _custom("generator", config.GENERATOR),
     ]
     if inputs.source_file_sha256:
@@ -500,15 +493,6 @@ def build_contract(df: pl.DataFrame, inputs: ContractInputs) -> OpenDataContract
                 "quality": [
                     *([] if inputs.id_column else _unidentified_id_rules()),
                     *(_interval_rule(interval, names) for interval in find_intervals(df.schema)),
-                    {
-                        "id": "row_count_min",
-                        "type": "library",
-                        "metric": "rowCount",
-                        "mustBeGreaterOrEqualTo": config.MIN_ROW_COUNT,
-                        "dimension": "completeness",
-                        "severity": config.SEVERITY_ROW_COUNT,
-                        "description": "Below the small-cell threshold every count is suppressed",
-                    },
                 ],
                 "properties": [_property(col, df.get_column(col), names[col], inputs) for col in df.columns],
             }

@@ -214,12 +214,12 @@ export function buildResultTable(tableData, opts = {}) {
       if (cell.kind === 'hidden' || cell.kind === 'small') {
         hasHidden = true;
         const mark = el('span', `cell-hidden cell-hidden--${cell.kind}`);
-        mark.title = 'Hidden to protect privacy';
+        mark.title = 'Suppressed by the source';
         mark.append(document.createTextNode(cell.text));
         const dagger = el('sup', '', '†');
         dagger.setAttribute('aria-hidden', 'true');
         mark.appendChild(dagger);
-        if (cell.kind === 'hidden') mark.setAttribute('aria-label', 'hidden for privacy');
+        if (cell.kind === 'hidden') mark.setAttribute('aria-label', 'suppressed by the source');
         td.appendChild(mark);
       } else {
         td.textContent = i === 0 && cell.kind === 'text' ? plainLevelLabel(cell.text) : cell.text;

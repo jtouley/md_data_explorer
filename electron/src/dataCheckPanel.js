@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 /**
  * Data check (contract quality report) for a cohort: pure helpers + the details-sheet section.
- * The API sends plain-language lines with small counts already hidden; nothing is recomputed.
+ * The API sends plain-language lines with every count as found (ADR015); nothing is recomputed.
  * Meaning is carried by words, never by colour alone (docs/app/DESIGN.md).
  */
 
 export const DATA_CHECK_STILL_USABLE = 'You can still ask questions.';
 export const DATA_CHECK_NOTHING_FLAGGED = 'Nothing flagged.';
-export const DATA_CHECK_PRIVACY_HINT =
-  'Hidden to protect privacy: counts from 1 to 10 are not shown, and some larger counts are hidden too so those can’t be worked out from the totals. A hidden count is never zero.';
+export const DATA_CHECK_HINT =
+  'Checks of the uploaded file against its data contract, with each count as found.';
 export const DATA_CHECK_LOADING = 'Checking…';
 
 const MORE_LINE = /^…and (\d+) more$/;
@@ -86,7 +86,7 @@ export function renderDataCheck({ hint, list }, check) {
     hint.textContent = DATA_CHECK_NOTHING_FLAGGED;
     return;
   }
-  hint.textContent = DATA_CHECK_PRIVACY_HINT;
+  hint.textContent = DATA_CHECK_HINT;
   for (const line of check.lines) {
     const item = document.createElement('li');
     item.textContent = line;

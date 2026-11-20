@@ -14,7 +14,9 @@ A question marked ``held_out: true`` is reported apart from the rest: nobody tun
 so its grades say whether a change generalises beyond the questions it was made for.
 
 Results (JSON and a markdown table) go to a directory outside the repo; the table is printed.
-Only aggregates are written: the claim and table the app presents, never rows.
+Only aggregates are written: the claim and table the app presents, never rows, and both pass the
+export boundary first (``core.export_boundary.export_answer``: counts of 1-10 written as "<11"),
+since a results file leaves the app. Grading reads the answer as shown on screen.
 
 Gates (CI): ``--fail-on WRONG,LEAK,ERROR`` exits 1 when any question has one of those grades
 (and, with a model, when the model ran on no question). ``--baseline FILE`` exits 1 when
@@ -59,6 +61,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 
 from clinical_analytics.contracts.config import POPULATION_ESTIMATES_FORM_VALUE
+from clinical_analytics.core.export_boundary import export_answer, export_text
 from clinical_analytics.eval.corpus.fetch import (
     CorpusDataset,
     CorpusFetchError,
@@ -79,8 +82,6 @@ from clinical_analytics.eval.corpus.scenario import (
 )
 from clinical_analytics.eval.corpus.score import (
     AGGREGATE,
-    SMALL_MAX,
-    SMALL_MIN,
     ApiOutcome,
     OracleAnswer,
     Scored,
@@ -165,6 +166,7 @@ class QuestionResult:
     held_out: bool = False
     claim: str | None = None
     table: dict[str, Any] | None = None
+    export_note: str | None = None
 
 
 @dataclass
@@ -641,14 +643,15 @@ def ask_all(
         if llm.startswith("fell back") and outcome.status == "completed":
             outcome = ApiOutcome(**{**asdict(outcome), "silent_fallback": llm})
         scored: Scored = score(question, truth[question["id"]], outcome)
-        presentation = outcome.presentation or {}
+        # Written to results.json, a file: through the export boundary (graded above on screen).
+        exported = export_answer(outcome.presentation)
         result = QuestionResult(
             id=question["id"],
             family=question.get("family", ""),
             query=question["query"],
             grade=scored.grade,
             leak=scored.leak,
-            reason=scored.reason,
+            reason=public_reason(scored.reason),  # written to results.json: the export boundary
             status=outcome.status,
             tier=tier,
             llm_called=llm_called,
@@ -657,8 +660,9 @@ def ask_all(
             confirmed=asked.confirmed,
             expect=_expect(question),
             held_out=bool(question.get("held_out", False)),
-            claim=presentation.get("claim"),
-            table=presentation.get("table"),
+            claim=exported["claim"],
+            table=dict(exported["table"]) if exported["table"] is not None else None,
+            export_note=exported["note"],
         )
         results.append(result)
         logger.info("accept_question", id=result.id, grade=result.grade, leak=result.leak, latency_s=result.latency_s)
@@ -744,19 +748,11 @@ def _server_note(code: int | None) -> str:
     return "" if code in (None, -15) else f" · **API process exited with code {code} during the run**"
 
 
-# A whole number in score's small-cell range (also written 5.0), not part of a word, a decimal
-# or a thousands-grouped number: in a grade reason it can be a count of 1-10 patients (the
-# oracle's expected value, or a value the app showed in a LEAK). A sentence's full stop after it
-# does not protect it.
-_SMALL_ALTERNATIVES = "|".join(str(n) for n in range(SMALL_MAX, SMALL_MIN - 1, -1))
-_SMALL_NUMBER = re.compile(rf"(?<![\w.,])(?:{_SMALL_ALTERNATIVES})(?:\.0+)?(?!\w|[.,]\d)")
-
-
 def public_reason(reason: str) -> str:
     """A grade reason safe for the table that is printed and published (CI log, job summary,
-    artifact): every whole number 1-10 becomes ``1-10`` (see ``_SMALL_NUMBER``). results.json keeps the full reason,
-    and it never leaves the machine."""
-    return _SMALL_NUMBER.sub("1-10", reason)
+    artifact): every whole number 1-10 becomes "<11" (``core.export_boundary.export_text``, the
+    one masking rule for anything that leaves the machine). results.json stores it masked too."""
+    return export_text(reason)
 
 
 def markdown(report: RunReport) -> str:

@@ -100,7 +100,7 @@ The app runs locally after setup. It is **not a compliance certification**; chec
 - **Where data is stored:** a per-user data home outside the repository - macOS `~/Library/Application Support/ClinicalAnalytics`, Windows `%LOCALAPPDATA%\ClinicalAnalytics`, Linux `$XDG_DATA_HOME/clinical-analytics`. Set `CLINICAL_ANALYTICS_DATA_HOME` to change it. See [Installation](installation.md#where-your-data-lives).
 - **Encryption:** the app does not encrypt files at rest. Turn on FileVault (macOS), BitLocker (Windows) or full-disk encryption (Linux).
 - **LLM:** questions the pattern matcher cannot handle go to Ollama at `OLLAMA_BASE_URL` (default `http://localhost:11434`). Prompts can include column names, category labels and summary results, so keep Ollama on your own machine; never point `OLLAMA_BASE_URL` at a remote server.
-- **Small counts:** patient counts from 1 to 10 are shown as `<11` in answers.
+- **Small counts:** answers on screen show every count as it is; counts from 1 to 10 are written as `<11` only when an answer leaves your machine as a file.
 - **Never copy patient files into the repository.** `make check-data` fails if git tracks data files.
 
 ## Troubleshooting

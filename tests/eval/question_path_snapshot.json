@@ -78,7 +78,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Statistics for age are not shown because fewer than 11 patients have one of its values, or that was not checked, and with n it would let their number be worked out.",
+   "claim": "Mean age was 60.07 (SD 5.27; median 60.00; n=152 patients).",
    "table": {
     "columns": [
      "variable",
@@ -91,12 +91,12 @@
     ],
     "rows": [
      {
-      "max": "suppressed",
-      "mean": "suppressed",
-      "median": "suppressed",
-      "min": "suppressed",
+      "max": 69.0,
+      "mean": 60.0724,
+      "median": 60.0,
+      "min": 51.0,
       "n": 152,
-      "std": "suppressed",
+      "std": 5.2728,
       "variable": "age"
      }
     ]
@@ -315,7 +315,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 121.41 (SD 15.27; median 121.50; n=206 patients; 13 excluded for missing data). Data check: ldl has some of its values missing.",
+   "claim": "Mean ldl was 121.41 (SD 15.27; median 121.50; n=206 patients; 13 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -360,7 +360,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl by sex: F not shown, M not shown (n hidden). Unadjusted. Values are not shown for groups whose size is hidden to protect privacy. Data check: ldl has 5.8% of its values missing.",
+   "claim": "Mean ldl by sex: F 125.77, M 126.31 (n=142 patients; 9 excluded for missing data). Unadjusted. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "sex",
@@ -369,13 +369,13 @@
     ],
     "rows": [
      {
-      "mean ldl": "suppressed",
-      "n": "suppressed",
+      "mean ldl": 125.7746,
+      "n": 71,
       "sex": "F"
      },
      {
-      "mean ldl": "suppressed",
-      "n": "suppressed",
+      "mean ldl": 126.3113,
+      "n": 71,
       "sex": "M"
      }
     ]
@@ -443,7 +443,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl by site: North 125.77, South 129.58, West 132.11 (n=190 patients; 14 excluded for missing data). Unadjusted. Data check: ldl has some of its values missing.",
+   "claim": "Mean ldl by site: North 125.77, South 129.58, West 132.11 (n=190 patients; 14 excluded for missing data). Unadjusted. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "site",
@@ -490,7 +490,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 129.40 (SD 17.64; median 129.60; n hidden). Data check: ldl has 5.8% of its values missing.",
+   "claim": "Mean ldl was 129.40 (SD 17.64; median 129.60; n=187 patients; 9 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -507,7 +507,7 @@
       "mean": 129.4043,
       "median": 129.6,
       "min": 80.9,
-      "n": "suppressed",
+      "n": 187,
       "std": 17.6399,
       "variable": "ldl"
      }
@@ -535,7 +535,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 128.61 (SD 16.51; median 126.70; n hidden). Data check: ldl has 5.8% of its values missing.",
+   "claim": "Mean ldl was 128.61 (SD 16.51; median 126.70; n=135 patients; 9 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -552,7 +552,7 @@
       "mean": 128.6119,
       "median": 126.7,
       "min": 83.7,
-      "n": "suppressed",
+      "n": 135,
       "std": 16.5085,
       "variable": "ldl"
      }
@@ -1548,7 +1548,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Maximum ldl was 164.90 (n hidden). Data check: ldl has 5.8% of its values missing.",
+   "claim": "Maximum ldl was 164.90 (n=54 patients; 2 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -1565,7 +1565,7 @@
       "mean": 129.9056,
       "median": 131.6,
       "min": 96.1,
-      "n": "suppressed",
+      "n": 54,
       "std": 16.9419,
       "variable": "ldl"
      }
@@ -1819,7 +1819,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 129.84 (SD 17.37; median 131.80; n hidden). Data check: ldl has 5.8% of its values missing.",
+   "claim": "Mean ldl was 129.84 (SD 17.37; median 131.80; n=136 patients; 8 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -1836,7 +1836,7 @@
       "mean": 129.8441,
       "median": 131.8,
       "min": 90.7,
-      "n": "suppressed",
+      "n": 136,
       "std": 17.3712,
       "variable": "ldl"
      }
@@ -8507,7 +8507,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 157.60 (SD 5.19; median 157.10; n=19 patients). Data check: ldl has some of its values missing.",
+   "claim": "Mean ldl was 157.60 (SD 5.19; median 157.10; n=19 patients). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -8925,7 +8925,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Statistics for age are not shown because fewer than 11 patients have one of its values, or that was not checked, and with n it would let their number be worked out.",
+   "claim": "Mean age was 81.70 (SD 1.62; median 82.00; n=44 patients).",
    "table": {
     "columns": [
      "variable",
@@ -8938,12 +8938,12 @@
     ],
     "rows": [
      {
-      "max": "suppressed",
-      "mean": "suppressed",
-      "median": "suppressed",
-      "min": "suppressed",
+      "max": 84.0,
+      "mean": 81.7045,
+      "median": 82.0,
+      "min": 79.0,
       "n": 44,
-      "std": "suppressed",
+      "std": 1.6222,
       "variable": "age"
      }
     ]
@@ -9105,7 +9105,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 128.83 (SD 16.63; median 127.90; n=190 patients; 14 excluded for missing data). Data check: ldl has some of its values missing.",
+   "claim": "Mean ldl was 128.83 (SD 16.63; median 127.90; n=190 patients; 14 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -9150,7 +9150,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 129.40 (SD 17.64; median 129.60; n hidden). Data check: ldl has 5.8% of its values missing.",
+   "claim": "Mean ldl was 129.40 (SD 17.64; median 129.60; n=187 patients; 9 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -9167,7 +9167,7 @@
       "mean": 129.4043,
       "median": 129.6,
       "min": 80.9,
-      "n": "suppressed",
+      "n": 187,
       "std": 17.6399,
       "variable": "ldl"
      }
@@ -9195,7 +9195,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 121.41 (SD 15.27; median 121.50; n=206 patients; 13 excluded for missing data). Data check: ldl has some of its values missing.",
+   "claim": "Mean ldl was 121.41 (SD 15.27; median 121.50; n=206 patients; 13 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -9240,7 +9240,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 129.84 (SD 17.37; median 131.80; n hidden). Data check: ldl has 5.8% of its values missing.",
+   "claim": "Mean ldl was 129.84 (SD 17.37; median 131.80; n=136 patients; 8 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -9257,7 +9257,7 @@
       "mean": 129.8441,
       "median": 131.8,
       "min": 90.7,
-      "n": "suppressed",
+      "n": 136,
       "std": 17.3712,
       "variable": "ldl"
      }
@@ -9285,7 +9285,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 128.83 (SD 16.63; median 127.90; n=190 patients; 14 excluded for missing data). Data check: ldl has some of its values missing.",
+   "claim": "Mean ldl was 128.83 (SD 16.63; median 127.90; n=190 patients; 14 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -9483,7 +9483,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Median ldl was 129.60 (n hidden). Data check: ldl has 5.8% of its values missing.",
+   "claim": "Median ldl was 129.60 (n=187 patients; 9 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -9500,7 +9500,7 @@
       "mean": 129.4043,
       "median": 129.6,
       "min": 80.9,
-      "n": "suppressed",
+      "n": 187,
       "std": 17.6399,
       "variable": "ldl"
      }
@@ -9528,7 +9528,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Median ldl was 131.80 (n hidden). Data check: ldl has 5.8% of its values missing.",
+   "claim": "Median ldl was 131.80 (n=136 patients; 8 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -9545,7 +9545,7 @@
       "mean": 129.8441,
       "median": 131.8,
       "min": 90.7,
-      "n": "suppressed",
+      "n": 136,
       "std": 17.3712,
       "variable": "ldl"
      }
@@ -9573,7 +9573,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Median ldl was 127.90 (n=190 patients; 14 excluded for missing data). Data check: ldl has some of its values missing.",
+   "claim": "Median ldl was 127.90 (n=190 patients; 14 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -9791,12 +9791,12 @@
  },
  "negation|snap_codes|how many patients by zip?": {
   "confidence": 0.9,
-  "failure_reason": "zip has 30 different values, so it cannot be used to split patients into groups: each group would show a few patients' exact values. Group by a column with at most 20 categories, or ask about zip as a measurement.",
+  "failure_reason": "zip has 30 different values, too many to split patients into groups that can be read as a table. Group by a column with at most 20 categories, or ask about zip as a measurement.",
   "group_by": "zip",
   "held": false,
   "intent": "COUNT",
   "issues": [
-   "zip has 30 different values, so it cannot be used to split patients into groups: each group would show a few patients' exact values. Group by a column with at most 20 categories, or ask about zip as a measurement."
+   "zip has 30 different values, too many to split patients into groups that can be read as a table. Group by a column with at most 20 categories, or ask about zip as a measurement."
   ],
   "limits": [],
   "metric": null,
@@ -11439,12 +11439,12 @@
  },
  "negation|snap_rev|how many events per subject?": {
   "confidence": 0.9,
-  "failure_reason": "subject_id has 100 different values, so it cannot be used to split patients into groups: each group would show a few patients' exact values. Group by a column with at most 20 categories, or ask about subject_id as a measurement.",
+  "failure_reason": "subject_id has 100 different values, too many to split patients into groups that can be read as a table. Group by a column with at most 20 categories, or ask about subject_id as a measurement.",
   "group_by": "subject_id",
   "held": false,
   "intent": "COUNT",
   "issues": [
-   "subject_id has 100 different values, so it cannot be used to split patients into groups: each group would show a few patients' exact values. Group by a column with at most 20 categories, or ask about subject_id as a measurement."
+   "subject_id has 100 different values, too many to split patients into groups that can be read as a table. Group by a column with at most 20 categories, or ask about subject_id as a measurement."
   ],
   "limits": [],
   "metric": null,
@@ -11550,12 +11550,12 @@
  },
  "negation|snap_rev|how many patients per subject?": {
   "confidence": 0.9,
-  "failure_reason": "subject_id has 100 different values, so it cannot be used to split patients into groups: each group would show a few patients' exact values. Group by a column with at most 20 categories, or ask about subject_id as a measurement.",
+  "failure_reason": "subject_id has 100 different values, too many to split patients into groups that can be read as a table. Group by a column with at most 20 categories, or ask about subject_id as a measurement.",
   "group_by": "subject_id",
   "held": false,
   "intent": "COUNT",
   "issues": [
-   "subject_id has 100 different values, so it cannot be used to split patients into groups: each group would show a few patients' exact values. Group by a column with at most 20 categories, or ask about subject_id as a measurement."
+   "subject_id has 100 different values, too many to split patients into groups that can be read as a table. Group by a column with at most 20 categories, or ask about subject_id as a measurement."
   ],
   "limits": [],
   "metric": null,
@@ -11778,7 +11778,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Statistics for age are not shown because fewer than 11 patients have one of its values, or that was not checked, and with n it would let their number be worked out.",
+   "claim": "Mean age was 60.07 (SD 5.27; median 60.00; n=152 patients).",
    "table": {
     "columns": [
      "variable",
@@ -11791,12 +11791,12 @@
     ],
     "rows": [
      {
-      "max": "suppressed",
-      "mean": "suppressed",
-      "median": "suppressed",
-      "min": "suppressed",
+      "max": 69.0,
+      "mean": 60.0724,
+      "median": 60.0,
+      "min": 51.0,
       "n": 152,
-      "std": "suppressed",
+      "std": 5.2728,
       "variable": "age"
      }
     ]
@@ -11841,7 +11841,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 128.61 (SD 16.51; median 126.70; n hidden). Data check: ldl has 5.8% of its values missing.",
+   "claim": "Mean ldl was 128.61 (SD 16.51; median 126.70; n=135 patients; 9 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -11858,7 +11858,7 @@
       "mean": 128.6119,
       "median": 126.7,
       "min": 83.7,
-      "n": "suppressed",
+      "n": 135,
       "std": 16.5085,
       "variable": "ldl"
      }
@@ -11907,12 +11907,12 @@
  },
  "over_holding|snap_coh|compare ldl by age": {
   "confidence": 0.95,
-  "failure_reason": "age has 50 different values, so it cannot be used to split patients into groups: each group would show a few patients' exact values. Group by a column with at most 20 categories, or ask about age as a measurement.",
+  "failure_reason": "age has 50 different values, too many to split patients into groups that can be read as a table. Group by a column with at most 20 categories, or ask about age as a measurement.",
   "group_by": "age",
   "held": false,
   "intent": "COMPARE_GROUPS",
   "issues": [
-   "age has 50 different values, so it cannot be used to split patients into groups: each group would show a few patients' exact values. Group by a column with at most 20 categories, or ask about age as a measurement."
+   "age has 50 different values, too many to split patients into groups that can be read as a table. Group by a column with at most 20 categories, or ask about age as a measurement."
   ],
   "limits": [],
   "metric": "ldl",
@@ -11942,7 +11942,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 14.35 higher in placebo than drug (95% CI 10.04 to 18.66; Welch t-test p<0.001; n=190 patients; 14 excluded for missing data). Unadjusted comparison by treatment. Data check: ldl has some of its values missing.",
+   "claim": "Mean ldl was 14.35 higher in placebo than drug (95% CI 10.04 to 18.66; Welch t-test p<0.001; n=190 patients; 14 excluded for missing data). Unadjusted comparison by treatment. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "treatment",
@@ -13959,7 +13959,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 120.57 (SD 15.28; median 119.80; n hidden). Data check: ldl has 5.8% of its values missing.",
+   "claim": "Mean ldl was 120.57 (SD 15.28; median 119.80; n=103 patients; 6 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -13976,7 +13976,7 @@
       "mean": 120.5709,
       "median": 119.8,
       "min": 80.9,
-      "n": "suppressed",
+      "n": 103,
       "std": 15.2774,
       "variable": "ldl"
      }
@@ -14124,7 +14124,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 4.07 higher in M than F, not statistically significant (95% CI -2.49 to 10.64; Welch t-test p=0.221; n hidden). Unadjusted comparison by sex. Data check: ldl has 5.8% of its values missing.",
+   "claim": "Mean ldl was 4.07 higher in M than F, not statistically significant (95% CI -2.49 to 10.64; Welch t-test p=0.221; n=100 patients; 5 excluded for missing data). Unadjusted comparison by sex. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "sex",
@@ -14133,13 +14133,13 @@
     ],
     "rows": [
      {
-      "mean ldl": "suppressed",
-      "n": "suppressed",
+      "mean ldl": 132.11,
+      "n": 50,
       "sex": "F"
      },
      {
-      "mean ldl": "suppressed",
-      "n": "suppressed",
+      "mean ldl": 136.184,
+      "n": 50,
       "sex": "M"
      }
     ]
@@ -14166,7 +14166,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 14.35 higher in placebo than drug (95% CI 10.04 to 18.66; Welch t-test p<0.001; n=190 patients; 14 excluded for missing data). Unadjusted comparison by treatment. Data check: ldl has some of its values missing.",
+   "claim": "Mean ldl was 14.35 higher in placebo than drug (95% CI 10.04 to 18.66; Welch t-test p<0.001; n=190 patients; 14 excluded for missing data). Unadjusted comparison by treatment. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "treatment",
@@ -15844,7 +15844,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl by site: North 125.77, South 129.58, West 132.11 (n=190 patients; 14 excluded for missing data). Unadjusted. Data check: ldl has some of its values missing.",
+   "claim": "Mean ldl by site: North 125.77, South 129.58, West 132.11 (n=190 patients; 14 excluded for missing data). Unadjusted. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "site",
@@ -15909,7 +15909,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 129.84 (SD 17.37; median 131.80; n hidden). Data check: ldl has 5.8% of its values missing.",
+   "claim": "Mean ldl was 129.84 (SD 17.37; median 131.80; n=136 patients; 8 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -15926,7 +15926,7 @@
       "mean": 129.8441,
       "median": 131.8,
       "min": 90.7,
-      "n": "suppressed",
+      "n": 136,
       "std": 17.3712,
       "variable": "ldl"
      }
@@ -16026,7 +16026,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 128.37 (SD 16.40; median 129.30; n=198 patients; 14 excluded for missing data). Data check: ldl has some of its values missing.",
+   "claim": "Mean ldl was 128.37 (SD 16.40; median 129.30; n=198 patients; 14 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -16071,7 +16071,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 130.40 (SD 17.61; median 131.90; n hidden). Data check: ldl has 5.8% of its values missing.",
+   "claim": "Mean ldl was 130.40 (SD 17.61; median 131.90; n=140 patients; 8 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -16088,7 +16088,7 @@
       "mean": 130.4,
       "median": 131.9,
       "min": 90.7,
-      "n": "suppressed",
+      "n": 140,
       "std": 17.6066,
       "variable": "ldl"
      }
@@ -16116,7 +16116,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 130.40 (SD 17.61; median 131.90; n hidden). Data check: ldl has 5.8% of its values missing.",
+   "claim": "Mean ldl was 130.40 (SD 17.61; median 131.90; n=140 patients; 8 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -16133,7 +16133,7 @@
       "mean": 130.4,
       "median": 131.9,
       "min": 90.7,
-      "n": "suppressed",
+      "n": 140,
       "std": 17.6066,
       "variable": "ldl"
      }
@@ -16161,7 +16161,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 130.40 (SD 17.61; median 131.90; n hidden). Data check: ldl has 5.8% of its values missing.",
+   "claim": "Mean ldl was 130.40 (SD 17.61; median 131.90; n=140 patients; 8 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -16178,7 +16178,7 @@
       "mean": 130.4,
       "median": 131.9,
       "min": 90.7,
-      "n": "suppressed",
+      "n": 140,
       "std": 17.6066,
       "variable": "ldl"
      }
@@ -16206,7 +16206,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 129.84 (SD 17.37; median 131.80; n hidden). Data check: ldl has 5.8% of its values missing.",
+   "claim": "Mean ldl was 129.84 (SD 17.37; median 131.80; n=136 patients; 8 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -16223,7 +16223,7 @@
       "mean": 129.8441,
       "median": 131.8,
       "min": 90.7,
-      "n": "suppressed",
+      "n": 136,
       "std": 17.3712,
       "variable": "ldl"
      }
@@ -16256,7 +16256,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 128.32 (SD 17.51; median 128.00; n hidden). Data check: ldl has 5.8% of its values missing.",
+   "claim": "Mean ldl was 128.32 (SD 17.51; median 128.00; n=123 patients; 6 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -16273,7 +16273,7 @@
       "mean": 128.3154,
       "median": 128.0,
       "min": 80.9,
-      "n": "suppressed",
+      "n": 123,
       "std": 17.5133,
       "variable": "ldl"
      }
@@ -16342,7 +16342,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 129.42 (SD 18.04; median 130.10; n hidden). Data check: ldl has 5.8% of its values missing.",
+   "claim": "Mean ldl was 129.42 (SD 18.04; median 130.10; n=66 patients; 5 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -16359,7 +16359,7 @@
       "mean": 129.4167,
       "median": 130.1,
       "min": 90.7,
-      "n": "suppressed",
+      "n": 66,
       "std": 18.0386,
       "variable": "ldl"
      }
@@ -16387,7 +16387,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 128.35 (SD 16.81; median 127.30; n=237 patients; 15 excluded for missing data). Data check: ldl has some of its values missing.",
+   "claim": "Mean ldl was 128.35 (SD 16.81; median 127.30; n=237 patients; 15 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -16468,7 +16468,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 128.35 (SD 16.81; median 127.30; n=237 patients; 15 excluded for missing data). Data check: ldl has some of its values missing.",
+   "claim": "Mean ldl was 128.35 (SD 16.81; median 127.30; n=237 patients; 15 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -16554,7 +16554,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 127.16 (SD 16.45; median 127.80; n hidden). Data check: ldl has 5.8% of its values missing.",
+   "claim": "Mean ldl was 127.16 (SD 16.45; median 127.80; n=101 patients; 7 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -16571,7 +16571,7 @@
       "mean": 127.1624,
       "median": 127.8,
       "min": 90.7,
-      "n": "suppressed",
+      "n": 101,
       "std": 16.4476,
       "variable": "ldl"
      }
@@ -16623,7 +16623,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 128.83 (SD 16.63; median 127.90; n=190 patients; 14 excluded for missing data). Data check: ldl has some of its values missing.",
+   "claim": "Mean ldl was 128.83 (SD 16.63; median 127.90; n=190 patients; 14 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -16809,7 +16809,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Maximum ldl was 175.70 (n hidden). Data check: ldl has 5.8% of its values missing.",
+   "claim": "Maximum ldl was 175.70 (n=100 patients; 5 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -16826,7 +16826,7 @@
       "mean": 134.147,
       "median": 133.25,
       "min": 92.0,
-      "n": "suppressed",
+      "n": 100,
       "std": 16.5898,
       "variable": "ldl"
      }

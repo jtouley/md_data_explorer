@@ -12,7 +12,7 @@ import pytest
 
 from clinical_analytics.api.services.query_service import UNEXPECTED_FAILURE_MESSAGE
 from clinical_analytics.eval.corpus.run import _server_note, parse_tiers
-from clinical_analytics.eval.corpus.score import ApiOutcome, OracleAnswer, find_leaks, score
+from clinical_analytics.eval.corpus.score import ApiOutcome, OracleAnswer, find_export_leaks, score
 
 SEX = {"id": "q-sex", "kind": "count_by", "group_by": "sex", "expect": "answer"}
 SEX_COUNTS = OracleAnswer({"female": 900, "male": 240}, "patients", {("female",): 900, ("male",): 240})
@@ -59,8 +59,9 @@ class TestScoreCounts:
             # A dataset with no patient ID says "rows": no grain is claimed, so the number decides.
             pytest.param("Total count: 1141 rows.", 1141, "RIGHT", id="rows_equalToPatients"),
             pytest.param("Total count: 1500 rows.", 1141, "WRONG", id="rows_moreThanPatients"),
-            pytest.param("Total count: <11.", 7, "RIGHT", id="small_total_hidden"),
-            pytest.param("Total count: <11.", 500, "HELD", id="large_total_withheld"),
+            pytest.param("Total count: 7 patients.", 7, "RIGHT", id="small_total_shown"),
+            pytest.param("Total count: <11.", 7, "WRONG", id="small_total_withheld_on_screen"),
+            pytest.param("Total count: <11.", 500, "WRONG", id="large_total_withheld"),
             pytest.param("No answer.", 1141, "WRONG", id="nothing_shown"),
         ],
     )
@@ -75,15 +76,15 @@ class TestScoreCounts:
         assert scored.grade == expected_grade
         assert scored.leak is False
 
-    def test_score_smallTotalShown_wrongAndLeak(self):
-        # Arrange
+    def test_score_smallTotalShown_rightAndNoLeak(self):
+        # Arrange: a count of 4 on screen is the right answer (ADR015); exported it reads "<11"
         oracle = OracleAnswer(4, "patients", {("total",): 4})
 
         # Act
         scored = score(TOTAL, oracle, _done({"claim": "Total count: 4 patients.", "table": None}))
 
         # Assert
-        assert (scored.grade, scored.leak) == ("WRONG", True)
+        assert (scored.grade, scored.leak) == ("RIGHT", False)
 
     @pytest.mark.parametrize(
         ("rows", "expected_grade", "expected_leak"),
@@ -91,9 +92,9 @@ class TestScoreCounts:
             pytest.param([("female", 900), ("male", 240)], "RIGHT", False, id="all_match"),
             pytest.param([("female", 900), ("male", 241)], "WRONG", False, id="one_differs"),
             pytest.param([("female", 900)], "WRONG", False, id="large_row_missing"),
-            pytest.param([("female", 900), ("male", 240), ("unknown", 3)], "WRONG", True, id="extra_small_row"),
-            pytest.param([("female", "suppressed"), ("male", 240)], "RIGHT", False, id="secondary_hidden_allowed"),
-            pytest.param([("female", "suppressed"), ("male", "suppressed")], "HELD", False, id="all_hidden"),
+            pytest.param([("female", 900), ("male", 240), ("unknown", 3)], "WRONG", False, id="extra_small_row"),
+            pytest.param([("female", "suppressed"), ("male", 240)], "WRONG", False, id="one_withheld_on_screen"),
+            pytest.param([("female", "suppressed"), ("male", "suppressed")], "WRONG", False, id="all_withheld"),
         ],
     )
     def test_score_groupedCounts_gradesEveryRow(self, make_count_table, rows, expected_grade, expected_leak):
@@ -110,12 +111,13 @@ class TestScoreCounts:
     @pytest.mark.parametrize(
         ("rows", "expected_grade", "expected_leak"),
         [
-            pytest.param([("a", 500), ("Other (groups under 11)", "suppressed")], "RIGHT", False, id="small_folded"),
-            pytest.param([("a", 500), ("b", "<11")], "WRONG", True, id="small_label_shown"),
-            pytest.param([("a", 500), ("b", 7)], "WRONG", True, id="small_count_shown"),
+            pytest.param([("a", 500), ("b", 7)], "RIGHT", False, id="small_count_shown"),
+            pytest.param([("a", 500)], "WRONG", False, id="small_group_absent"),
+            pytest.param([("a", 500), ("b", "suppressed")], "WRONG", False, id="small_group_withheld"),
+            pytest.param([("a", 500), ("Other (groups under 11)", "suppressed")], "WRONG", False, id="small_folded"),
         ],
     )
-    def test_score_smallGroup_mustBeFoldedNotLabelled(self, make_count_table, rows, expected_grade, expected_leak):
+    def test_score_smallGroup_mustBeShownUnderItsLabel(self, make_count_table, rows, expected_grade, expected_leak):
         # Arrange
         presentation = make_count_table("grp", rows)
 
@@ -142,12 +144,12 @@ class TestScoreRates:
     @pytest.mark.parametrize(
         ("female_rate", "male_rate", "expected_grade", "expected_leak"),
         [
-            pytest.param(0.0156, "suppressed", "RIGHT", False, id="small_events_hidden"),
-            pytest.param(0.0156, 0.0042, "WRONG", True, id="small_events_rate_shown"),
-            pytest.param(0.0200, "suppressed", "WRONG", False, id="rate_differs"),
+            pytest.param(0.0156, 0.0042, "RIGHT", False, id="small_events_rate_shown"),
+            pytest.param(0.0156, "suppressed", "WRONG", False, id="small_events_withheld"),
+            pytest.param(0.0200, 0.0042, "WRONG", False, id="rate_differs"),
         ],
     )
-    def test_score_rateWithSmallEvents_mustHideRate(
+    def test_score_rateWithSmallEvents_mustShowRate(
         self, make_count_table, female_rate, male_rate, expected_grade, expected_leak
     ):
         # Arrange
@@ -320,9 +322,9 @@ class TestScoreStatuses:
         assert scored.grade == expected_grade
 
     @pytest.mark.parametrize("presentation", [None, {}, {"claim": None, "table": None}], ids=["none", "empty", "nulls"])
-    def test_findLeaks_nothingPresented_noLeaks(self, presentation):
+    def test_findExportLeaks_nothingPresented_noLeaks(self, presentation):
         # Arrange / Act
-        leaks = find_leaks(SEX, SEX_COUNTS, presentation)
+        leaks = find_export_leaks(SEX, SEX_COUNTS, presentation)
 
         # Assert
         assert leaks == []
@@ -442,21 +444,31 @@ class TestScoreUndefined:
         assert "oracle" in scored.reason
 
 
-class TestTotalCountReading:
+class TestExportBoundaryLeaks:
     @pytest.mark.parametrize(
-        ("claim", "expected_leak"),
+        "claim",
         [
-            pytest.param("Total count: 5 patients.", True, id="small_total"),
-            pytest.param("Total count: 5.5 patients.", False, id="decimal_not_read_as_5"),
-            pytest.param("Total count: 1141 patients. Unadjusted.", False, id="large_total"),
+            pytest.param("Total count: 5 patients.", id="small_total"),
+            pytest.param("Total count: 5.5 patients.", id="decimal"),
+            pytest.param("Total count: 1141 patients. Unadjusted.", id="large_total"),
         ],
     )
-    def test_findLeaks_totalClaim_readLikePresentedAnswer(self, claim, expected_leak):
-        # Arrange
-        presentation = {"claim": claim, "table": None}
+    def test_findExportLeaks_onScreenSmallCounts_maskedOnceExported(self, claim):
+        # Arrange: the oracle has a cell of 5 patients
+        presentation = {"claim": claim, "table": {"columns": ["grp", "count"], "rows": [{"grp": "b", "count": 5}]}}
 
         # Act
-        leaks = find_leaks(TOTAL, OracleAnswer(1141, "patients"), presentation)
+        leaks = find_export_leaks(TOTAL, OracleAnswer(5, "patients", {("total",): 5}), presentation)
+
+        # Assert: the export boundary masks every one of them
+        assert leaks == []
+
+    def test_findExportLeaks_aggregateGrain_neverChecked(self):
+        # Arrange
+        question = {**TOTAL, "grain": "aggregate"}
+
+        # Act
+        leaks = find_export_leaks(question, OracleAnswer(5, "rows", {("total",): 5}), {"claim": "5", "table": None})
 
         # Assert
-        assert bool(leaks) is expected_leak
+        assert leaks == []

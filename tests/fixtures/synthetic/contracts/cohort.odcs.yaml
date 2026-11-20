@@ -351,14 +351,7 @@ schema:
       unit: percent
       metric: nullValues
       mustBeLessOrEqualTo: 0.0
-  quality:
-  - id: row_count_min
-    description: Below the small-cell threshold every count is suppressed
-    dimension: completeness
-    severity: warning
-    type: library
-    metric: rowCount
-    mustBeGreaterOrEqualTo: 11
+  quality: []
 customProperties:
 - property: uploadId
   value: cohort-synthetic
@@ -366,8 +359,6 @@ customProperties:
   value: 6c159f3dde1491ec
 - property: metadataPatchIds
   value: []
-- property: minCellSize
-  value: 11
 - property: generator
   value: clinical_analytics.contracts.builder
 - property: sourceFileSha256

@@ -175,9 +175,9 @@ class TestComputeRefusesCensoredValues:
 
     @pytest.mark.parametrize(
         ("limits", "amount"),
-        [pytest.param(3, "some", id="small_count_hidden"), pytest.param(30, "30", id="count_shown")],
+        [pytest.param(3, "3", id="small_count_shown"), pytest.param(30, "30", id="count_shown")],
     )
-    def test_describe_textWithLimits_refusesWithSuppressedCount(self, limits: int, amount: str) -> None:
+    def test_describe_textWithLimits_refusesWithItsCount(self, limits: int, amount: str) -> None:
         # Arrange
         frame = pl.DataFrame({"crp": ["<5"] * limits + ["12"] * (N - limits)})
 
@@ -216,8 +216,8 @@ class TestDescriptiveDisclosure:
         # Act
         claim = present_analysis(analysis)["claim"] or ""
 
-        # Assert: 2 values, so the count is hidden ("some")
-        assert "Includes some values of age outside 0–122 years (likely entry errors)." in claim
+        # Assert: the 2 values are counted as they are
+        assert "Includes 2 values of age outside 0–122 years (likely entry errors)." in claim
 
     def test_describe_missingRows_saysHowManyExcludedAndWhy(self) -> None:
         # Arrange
@@ -400,7 +400,7 @@ class TestDataHolds:
         answered = _ask(service, plan, confirm_hash=held.plan_hash)
 
         # Assert
-        assert "age has some values outside 0–122 years" in held.failure_reason
+        assert "age has 2 values outside 0–122 years" in held.failure_reason
         assert "outside 0–122 years (likely entry errors)" in (answered.claim or "")
         assert "n=200 patients" in (answered.claim or "")
 
@@ -583,8 +583,12 @@ class TestVisitGrainUnits:
     @pytest.mark.parametrize(
         ("missing", "expected"),
         [
-            pytest.param(3, "ANSWER The share with died=1 is not shown because n is hidden (n hidden).", id="3"),
-            pytest.param(10, "ANSWER The share with died=1 is not shown because n is hidden (n hidden).", id="10"),
+            pytest.param(
+                3, "ANSWER 24.0% of patients had died=1 (n=167 patients; 3 excluded for missing data).", id="3"
+            ),
+            pytest.param(
+                10, "ANSWER 25.0% of patients had died=1 (n=160 patients; 10 excluded for missing data).", id="10"
+            ),
             pytest.param(
                 11,
                 "ANSWER 25.2% of patients had died=1 (n=159 patients; 11 excluded for missing data). "
@@ -593,7 +597,7 @@ class TestVisitGrainUnits:
             ),
         ],
     )
-    def test_ask_shareAtVisitGrain_fewPatientsMissing_shareWithheldWithN(
+    def test_ask_shareAtVisitGrain_fewPatientsMissing_shareShownWithN(
         self, make_semantic_layer: Any, missing: int, expected: str
     ) -> None:
         # Arrange: died missing on every visit of ``missing`` patients who did not die (P160 on;
@@ -695,31 +699,31 @@ class TestConfirmedSpellingMerge:
         assert {"M", "Male", "male", "Female"} <= set(service._values_with_spellings(mappings)("sex"))
 
 
-class TestSpellingHoldPrivacy:
+class TestSpellingHoldNamesEverySpelling:
     @pytest.mark.parametrize(
         ("levels", "expected"),
         [
             pytest.param(
                 {"Male": 100, "male": 47, "M": 3, "Female": 50},
-                "sex has values that may be one category written differently (Male, male, and some rare "
-                "spellings). Confirm to count them together as Male.",
-                id="three_row_M_not_named",
+                "sex has values that may be one category written differently (M, Male, male). "
+                "Confirm to count them together as Male.",
+                id="three_row_M_named",
             ),
             pytest.param(
                 {"Male": 147, "M": 3, "Female": 50},
-                "sex has values that may be one category written differently (including some rare spellings). "
+                "sex has values that may be one category written differently (M, Male). "
                 "Confirm to count them together as Male.",
-                id="one_large_spelling_generic",
+                id="one_large_spelling",
             ),
             pytest.param(
                 {"m": 4, "M": 3, "Female": 193},
-                "sex has values that may be one category written differently (including some rare spellings). "
-                "Confirm to count them together as one category.",
-                id="all_small_no_label",
+                "sex has values that may be one category written differently (M, m). "
+                "Confirm to count them together as m.",
+                id="all_small_named",
             ),
         ],
     )
-    def test_ask_spellingHold_namesOnlySpellingsOfElevenOrMore(
+    def test_ask_spellingHold_namesEverySpelling(
         self, make_semantic_layer: Any, levels: dict[str, int], expected: str
     ) -> None:
         # Arrange
@@ -746,13 +750,13 @@ class TestPlausibilityOnNumericText:
 
         # Assert
         assert result.requires_confirmation
-        assert "glucose has some values outside 0–2656 mg/dL or mmol/L" in result.failure_reason
+        assert "glucose has 1 values outside 0–2656 mg/dL or mmol/L" in result.failure_reason
 
     @pytest.mark.parametrize(
         ("token", "expected"),
         [
             pytest.param("pending", "REFUSED crp has values like 'pending' that are not numbers", id="named_word"),
-            pytest.param("BLQ", "REFUSED crp has some values recorded as a limit", id="censoring_word"),
+            pytest.param("BLQ", "REFUSED crp has 1 values recorded as a limit", id="censoring_word"),
         ],
     )
     def test_ask_labWithUnreadableToken_refusesNotFrequencyTable(
@@ -950,7 +954,7 @@ class TestNullPatientKeys:
     @pytest.mark.parametrize(
         ("missing", "amount"),
         [
-            pytest.param(2, "some", id="small_count_suppressed"),
+            pytest.param(2, "2", id="small_count_shown"),
             pytest.param(15, "15", id="count_shown"),
         ],
     )
@@ -982,9 +986,8 @@ class TestNullPatientKeys:
             "ANSWER Total count: 170 patients. "
             "Data check: patient_id is missing on 15 rows; those rows are not counted as patients."
         )
-        assert result.analysis["n_filtered_out"] == 0
 
-    def test_ask_frequencyAtVisitGrainWithNullKeys_filteredOutIsZero(self, make_semantic_layer: Any) -> None:
+    def test_ask_frequencyAtVisitGrainWithNullKeys_countsPatients(self, make_semantic_layer: Any) -> None:
         # Arrange
         service = _service(make_semantic_layer, visits_with_null_keys(15))
         plan = QueryPlan(intent="DESCRIBE", metric="sex", confidence=0.99)
@@ -996,7 +999,6 @@ class TestNullPatientKeys:
         # Assert: the table counts 170 patients and no filter removed any
         assert result.analysis is not None, _shown(result)
         assert result.analysis["row_count"] == 170
-        assert result.analysis["n_filtered_out"] == 0
 
 
 class TestUnitOfCountedEntity:

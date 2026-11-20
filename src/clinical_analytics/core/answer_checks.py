@@ -14,18 +14,16 @@ Every check is a DuckDB aggregate over the layer's base view (counts, a median, 
 one column): no column is copied into Python per question. Row and patient counts reuse the
 layer's cached base counts.
 
-A hold sentence names no count of the data checked (the answer that follows a confirmation
-would show counts beside it). A note added to an answer carries its count apart from its text
-(``result_presentation.counted_note``), so the presenter checks it, by the small-cell rule,
-against its own line and the counts that answer shows. Sentences name columns, ranges and category labels held by
-at least ``MIN_CELL_SIZE`` rows, never a patient's value.
+A note added to an answer carries its count apart from its text
+(``result_presentation.counted_note``), which writes it as a number or a percent. Every count
+is shown as it is, small ones included (ADR015).
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Any, Final
+from typing import Any
 
 import polars as pl
 import structlog
@@ -35,7 +33,7 @@ from clinical_analytics.analysis.numeric_text import all_missing_message, statis
 from clinical_analytics.analysis.variable_types import short_name
 from clinical_analytics.contracts.builder import Implausible, find_plausibility_range, implausible_values, range_for
 from clinical_analytics.contracts.builder import range_text as plausibility_text
-from clinical_analytics.contracts.config import MIN_CELL_SIZE, MISSINGNESS_WARN_PERCENT
+from clinical_analytics.contracts.config import MISSINGNESS_WARN_PERCENT
 from clinical_analytics.contracts.declarations import Declarations, GrainDeclaration, LevelMapping
 from clinical_analytics.contracts.quality import RANGE_METRIC, QualityCheckResult, QualityReport
 from clinical_analytics.core.identifier_rules import PATIENT_ROWS_ASKABLE_CONFIG_FLAG, ROW_KEY_CONFIG_FLAG
@@ -43,7 +41,6 @@ from clinical_analytics.core.plan_values import plan_values
 from clinical_analytics.core.query_plan import QueryPlan
 from clinical_analytics.core.result_presentation import AMOUNT, DataNote, counted_note, text_note
 from clinical_analytics.core.schema_inference import patient_key_by_name
-from clinical_analytics.core.shown_counts import Condition
 
 logger = structlog.get_logger(__name__)
 
@@ -130,7 +127,6 @@ def missing_key_note(grain: Grain, visits: bool) -> DataNote | None:
         f"Data check: {key} is missing on {AMOUNT} rows{counted}.",
         grain.missing_keys,
         grain.rows,
-        rows=[Condition("isnull", grain.key)],
     )
 
 
@@ -260,11 +256,8 @@ def implausible_in_layer(layer: Any, column: str) -> Implausible | None:
 
 
 def implausible_sentences(plan: QueryPlan, layer: Any) -> list[tuple[str, str, DataNote]]:
-    """(column, hold sentence, note) for each plan column with implausible values. The hold names
-    no count: the same question's answer follows it once confirmed, and the hold's count beside
-    that answer's count would give back the difference (20 patients over 110 and 15 values over
-    122: 5 patients aged 111-122). The note's count is checked by the presenter against the
-    answer it is added to."""
+    """(column, hold sentence, note) for each plan column with implausible values; the hold and
+    the note name how many values are outside the range."""
     found: list[tuple[str, str, DataNote]] = []
     for column in plan_columns(plan):
         result = implausible_in_layer(layer, column)
@@ -272,7 +265,7 @@ def implausible_sentences(plan: QueryPlan, layer: Any) -> list[tuple[str, str, D
             continue
         name = short_name(column)
         hold = (
-            f"{name} has some values outside {result.bounds}, which are likely entry errors. "
+            f"{name} has {result.count} values outside {result.bounds}, which are likely entry errors. "
             f"Correct them in the file, or confirm to include them in the answer."
         )
         note = counted_note(
@@ -280,34 +273,19 @@ def implausible_sentences(plan: QueryPlan, layer: Any) -> list[tuple[str, str, D
             f"(likely entry errors), included as recorded.",
             result.count,
             result.present,
-            rows=[Condition("outside", column, (result.minimum, result.maximum))]
-            if result.minimum is not None
-            else None,
         )
         found.append((column, hold, note))
     return found
 
 
 def variant_sentence(column: str, group: tuple[str, ...], frequency: dict[str, int]) -> tuple[str, str]:
-    """(canonical spelling, hold sentence) for spellings that may be one category.
-
-    Only spellings held by at least ``MIN_CELL_SIZE`` rows are named, and the canonical one is
-    chosen from those: a label of a level with 1 to 10 rows is never shown. With fewer than two
-    such spellings the sentence names none.
-    """
-    large = [s for s in group if frequency.get(s, 0) >= MIN_CELL_SIZE]
-    pool = large or list(group)
-    canonical = max(pool, key=lambda spelling: (frequency.get(spelling, 0), spelling))
+    """(canonical spelling, hold sentence) for spellings that may be one category: every spelling
+    is named, and the most frequent one is the canonical (ties: the later in text order)."""
+    canonical = max(group, key=lambda spelling: (frequency.get(spelling, 0), spelling))
     name = short_name(column)
-    if len(large) >= 2:
-        rare = ", and some rare spellings" if len(large) < len(group) else ""
-        shown = f"({', '.join(large)}{rare})"
-    else:
-        shown = "(including some rare spellings)"
-    target = canonical if large else "one category"
     return canonical, (
-        f"{name} has values that may be one category written differently {shown}. "
-        f"Confirm to count them together as {target}."
+        f"{name} has values that may be one category written differently ({', '.join(group)}). "
+        f"Confirm to count them together as {canonical}."
     )
 
 
@@ -334,9 +312,8 @@ def variant_findings(
             if (column, group) in confirmed or (values is not None and not values & set(group)):
                 continue
             canonical, sentence = variant_sentence(column, group, frequency)
-            named = tuple(spelling for spelling in group if frequency.get(spelling, 0) >= MIN_CELL_SIZE)
             mapping = LevelMapping(
-                column=column, spellings=group, canonical=canonical, named=named, dataset_version=dataset_version
+                column=column, spellings=group, canonical=canonical, named=group, dataset_version=dataset_version
             )
             found.append((column, mapping, sentence))
     return found
@@ -387,9 +364,7 @@ def missingness_notes(layer: Any, columns: list[str], already: set[str]) -> list
     """A note for each plan column whose share of missing values is above
     ``MISSINGNESS_WARN_PERCENT``, measured now, so any column a question
     uses is flagged, whatever the upload named as analysis variables (a COUNT per plan column,
-    in DuckDB). The share is a count (the app shows the row count), so it is a counted note:
-    "some" when 1 to 10 rows are missing or present, or when the missing rows are that close to a
-    count the answer shows."""
+    in DuckDB), written as a percent of the rows."""
     view = layer.get_base_view()
     known = [c for c in columns if c in view.columns and short_name(c) not in already]
     rows = int(layer._base_count(None))
@@ -407,7 +382,6 @@ def missingness_notes(layer: Any, columns: list[str], already: set[str]) -> list
                 missing,
                 rows,
                 "percent",
-                rows=[Condition("isnull", column)],
             )
         )
     return notes
@@ -430,36 +404,26 @@ def report_notes(report: QualityReport | None, columns: list[str]) -> list[DataN
     return notes
 
 
-# The quality report's missing-values check (contracts.quality): its count is the rows with no value.
-NULL_METRIC: Final = "nullValues"
-
-
 def _report_note(check: QualityCheckResult, rows: int | str) -> DataNote | None:
-    """One report check as a note. The report suppressed its counts against the report's own
-    lines only, so a count it shows is carried apart from the text (the presenter checks it
-    against the answer). A hidden count is already "some", and its message is shown as written.
-    A row-count check names no count (the app shows the row count). A shown count whose place in
-    the message cannot be found is not shown at all (fail closed, logged).
-    """
+    """One report check as a note, its count carried apart from the text. A check with no count
+    is shown as written. A row-count check names no count (the app shows the row count). A count
+    whose place in the message cannot be found is not shown at all (logged)."""
     if check.metric == "rowCount":
         return text_note("Data check: the number of rows does not meet the dataset's contract.")
     if not isinstance(check.count, int) or isinstance(check.count, bool) or check.count == 0:
-        return text_note(f"Data check: {check.message}.".replace(AMOUNT, ""))  # hidden ("some"), or no count
+        return text_note(f"Data check: {check.message}.".replace(AMOUNT, ""))  # no count
     total = rows if isinstance(rows, int) and rows > 0 else None
     head = f"{check.column or 'Table'}: "
     if not check.message.startswith(head):
         return None
     body = check.message[len(head) :]
     head = head.replace(AMOUNT, "")
-    # The rows behind the count, for the log of shown counts: named only for missing values
-    # (every row with none); any other check's count is never written ("some").
-    counted_rows = [Condition("isnull", check.column)] if check.metric == NULL_METRIC and check.column else None
     if check.percent is not None and body.startswith(f"{check.percent:.1f}% ") and total is not None:
         rest = body[len(f"{check.percent:.1f}%") :].replace(AMOUNT, "")
-        return counted_note(f"Data check: {head}{AMOUNT}{rest}.", check.count, total, "percent", rows=counted_rows)
+        return counted_note(f"Data check: {head}{AMOUNT}{rest}.", check.count, total, "percent")
     if body.startswith(f"{check.count} "):
         rest = body[len(str(check.count)) :].replace(AMOUNT, "")
-        return counted_note(f"Data check: {head}{AMOUNT}{rest}.", check.count, total, rows=counted_rows)
+        return counted_note(f"Data check: {head}{AMOUNT}{rest}.", check.count, total)
     logger.warning("report_note_count_not_found", check_id=check.id, metric=check.metric)
     return None
 

@@ -15,7 +15,6 @@ from clinical_analytics.contracts.declarations import FileDeclarationStore
 from clinical_analytics.contracts.store import contract_path, contracts_root, write_contract
 from clinical_analytics.core import nl_query_config
 from clinical_analytics.core.data_home import uploads_dir
-from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED
 from clinical_analytics.sql import config as sql_config
 from clinical_analytics.sql import sandbox as sql_sandbox
 from clinical_analytics.sql.service import (
@@ -98,8 +97,7 @@ def test_sqlRoute_validQuery_answeredWithSqlShownAndLeaseReleased(
     assert body["status"] == "answered"
     assert body["sql"].startswith("SELECT")
     assert body["columns"] == ["ward", "n"]
-    assert "ICU" not in {row["ward"] for row in body["rows"]}
-    assert any(row["n"] == SECONDARY_SUPPRESSED for row in body["rows"])
+    assert {row["ward"]: row["n"] for row in body["rows"]}["ICU"] == 3
     assert layer_cache._entries[DATASET].leases == 0
 
 
@@ -181,7 +179,7 @@ def test_sqlRoute_noIdColumn_refusedUntilConfirmedThenRemembered(
     assert refused["confirmation"] == confirmation_token(VERSION, None, 300)
     assert "300" not in refused["confirmation"]
     assert confirmed["status"] == "answered"
-    assert "ICU" not in {row["ward"] for row in confirmed["rows"]}
+    assert "ICU" in {row["ward"] for row in confirmed["rows"]}
     assert remembered["status"] == "answered"
     grain = store.load(DATASET).grain_for(VERSION)
     assert grain is not None

@@ -1358,5 +1358,4 @@ def test_compute_analysis_by_type_contextFilters_reportRowsFilteredOut(plan_filt
     result = compute_analysis_by_type(df, context)
 
     # Assert
-    assert result["n_filtered_out"] == expected
     assert result["row_count"] == 8

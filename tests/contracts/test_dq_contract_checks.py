@@ -70,7 +70,7 @@ def test_runQuality_contractExpectsNumberDataIsText_typeCheckFails(make_contract
     ("limits", "count", "status"),
     [
         pytest.param(0, 0, "passed", id="none"),
-        pytest.param(3, config.COUNT_HIDDEN, config.HIDDEN_STATUS, id="small_hidden"),
+        pytest.param(3, 3, "warning", id="small_shown"),
         pytest.param(30, 30, "warning", id="shown"),
     ],
 )
@@ -115,8 +115,8 @@ def test_runQuality_categorySpellings_warnedAtUpload(make_contract: Any) -> None
     assert check.message in report.summary
 
 
-def test_runQuality_spellingOfFewRows_notNamed(make_contract: Any) -> None:
-    # Arrange: "m" is held by 3 rows; its label is not shown
+def test_runQuality_spellingOfFewRows_named(make_contract: Any) -> None:
+    # Arrange: "m" is held by 3 rows; it is named like any other spelling (ADR015)
     df = pl.DataFrame({"patient_id": IDS, "sex": ["Male"] * 97 + ["m"] * 3 + ["Female"] * 100})
 
     # Act
@@ -124,7 +124,7 @@ def test_runQuality_spellingOfFewRows_notNamed(make_contract: Any) -> None:
 
     # Assert
     assert check.status == "warning"
-    assert "for example" not in check.message  # only one spelling has 11+ rows: none is named
+    assert "(for example Male, m)" in check.message
 
 
 @pytest.mark.parametrize(
@@ -133,7 +133,7 @@ def test_runQuality_spellingOfFewRows_notNamed(make_contract: Any) -> None:
         pytest.param(100, "warning", id="half_missing_flagged"),
         pytest.param(N, "warning", id="all_missing_flagged"),
         pytest.param(12, "warning", id="above_5pct_flagged"),
-        pytest.param(5, "review", id="below_5pct_count_hidden_never_passed"),
+        pytest.param(5, "warning", id="below_5pct_flagged_never_passed"),
         pytest.param(0, "passed", id="complete"),
     ],
 )
@@ -318,19 +318,6 @@ def test_runQuality_textColumnNamedLikeCountField_noCrash(make_contract: Any, na
     assert _checks(report)[f"{name.strip('_') or 'column_2'}{config.LEVEL_VARIANTS_RULE_SUFFIX}"].status == "warning"
 
 
-def test_smallLevelLabels_columnNamedCount_noCrash() -> None:
-    # Arrange
-    from clinical_analytics.eval.headless import small_level_labels
-
-    frame = pl.DataFrame({"count": ["a"] * 3 + ["b"] * 20})
-
-    # Act
-    labels = small_level_labels(frame, ["count"], threshold=11)
-
-    # Assert
-    assert labels == {"a"}
-
-
 def test_implausibleValues_distinctValuesWithWeights_shareWeightedByRows() -> None:
     # Arrange: 30 distinct readings held by 100 rows each, one of them -5, and 2 words held by
     # one row each: 30/32 distinct values are numbers (< 95%), but 3000/3002 rows are
@@ -390,30 +377,13 @@ def test_checkUpload_previousContractMissing_typeCheckNotRun(tmp_path: Any) -> N
     assert _checks(report)[f"table{config.TYPE_RULE_SUFFIX}"].status == "not_run"
 
 
-@pytest.mark.parametrize(
-    ("rows", "tiny"),
-    [
-        pytest.param(0, False, id="empty"),
-        pytest.param(1, True, id="one"),
-        pytest.param(config.MAX_ROWS_NO_COUNTS, True, id="boundary"),
-        pytest.param(config.MAX_ROWS_NO_COUNTS + 1, False, id="above"),
-    ],
-)
-def test_isTinyTable_boundaries(rows: int, tiny: bool) -> None:
-    # Act / Assert
-    assert config.is_tiny_table(rows) is tiny
-
-
-def test_tinyTableRule_builderAndReportUseOneRule(make_contract: Any, monkeypatch: Any) -> None:
-    # Arrange: change the one rule; both the contract's grain and the report follow it
-    df = pl.DataFrame({"patient_id": IDS, "age": [40] * N})
-    monkeypatch.setattr(config, "is_tiny_table", lambda rows: True)
+def test_buildContract_smallTable_statesItsGrain(make_contract: Any) -> None:
+    # Arrange: 5 rows, one per patient (a tiny table states its grain like any other, ADR015)
+    df = pl.DataFrame({"patient_id": [f"P{i}" for i in range(5)], "age": [40] * 5})
 
     # Act
     contract = make_contract(df)
-    report = run_quality(df.lazy(), contract)
 
     # Assert
     granularity = yaml.safe_load(contract.to_yaml())["schema"][0]["dataGranularityDescription"]
-    assert granularity == "One row per record as uploaded; too few rows to state the grain"
-    assert report.summary[0] == f"{N} rows: {config.TOO_FEW_ROWS_NOTE}"
+    assert granularity == "One row per patient_id"

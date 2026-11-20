@@ -118,8 +118,8 @@ class TestPresentation:
         # Assert
         assert (scored.grade, scored.leak) == ("RIGHT", False), scored.reason
 
-    def test_presentationOf_smallGroupShown_leak(self):
-        # Arrange: the arm has no suppression; a group of 4 patients is shown.
+    def test_presentationOf_smallGroupShown_rightOnScreenNoExportLeak(self):
+        # Arrange: a group of 4 patients shown on screen is the right answer (ADR015).
         answer = TableAnswer(type="table", group_column="g", value_column="count", rows=[("a", 4), ("b", 40)])
         oracle = OracleAnswer({"a": 4, "b": 40}, "patients", {("a",): 4, ("b",): 40})
 
@@ -127,7 +127,7 @@ class TestPresentation:
         scored = score({"id": "q", "kind": "count_by", "group_by": "g"}, oracle, presentation_of(answer))
 
         # Assert
-        assert (scored.grade, scored.leak) == ("WRONG", True)
+        assert (scored.grade, scored.leak) == ("RIGHT", False)
 
     def test_presentationOf_decline_gradedLikeAppRefusal(self):
         # Arrange
@@ -370,7 +370,8 @@ class TestRunArm:
         assert grades["adults-seen-01"] == ("RIGHT", False)
         assert grades["ever-screened-02"] == ("WRONG", False)
         assert grades["new-diagnoses-03"] == ("HELD", False)
-        assert grades["reactive-listing-06"] == ("WRONG", True)
+        # Answering a listing is WRONG; it is not a LEAK, since the exported results mask it (ADR015)
+        assert grades["reactive-listing-06"] == ("WRONG", False)
         listing = next(r for r in report.results if r.id.endswith("listing-06"))
         assert "LH000001" not in listing.reason
         assert listing.table is None

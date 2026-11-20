@@ -48,7 +48,7 @@ When the rows are told apart by one column that is unique on every row but not n
 
 `POST /api/datasets/{dataset_id}/one-row-per-patient` with `{"confirmation": "<token>", "one_row_per_patient": true|false}` records the answer for the dataset's current version and returns `{"dataset_id": ..., "counts": "patients"|"rows"}`.
 
-- `true` stores the version's one-row-per-patient grain, the same declaration governed SQL stores when its refusal is confirmed (same token, `contracts.declarations.confirmation_token`). Questions then count patients, and governed SQL counts and suppresses patients.
+- `true` stores the version's one-row-per-patient grain, the same declaration governed SQL stores when its refusal is confirmed (same token, `contracts.declarations.confirmation_token`). Questions then count patients, and so does governed SQL.
 - `false` keeps rows (and removes an earlier `true` on this version).
 - Until either is sent, nothing is stored and answers count rows.
 

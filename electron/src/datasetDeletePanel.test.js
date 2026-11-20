@@ -28,12 +28,13 @@ describe('renderDatasetDeleteConfirm', () => {
     expect(container.textContent).not.toMatch(/dataset/i);
   });
 
-  test('says the record of counts already shown is kept', () => {
+  test('says the delete cannot be undone and keeps no record of counts', () => {
     // Arrange / Act
     const { container } = setup();
 
     // Assert
-    expect(container.textContent).toContain('re-uploading the same rows stays protected');
+    expect(container.textContent).toContain('It cannot be undone.');
+    expect(container.textContent).not.toContain('counts already shown');
   });
 
   test('shows the dataset name and focuses Cancel, not Delete', () => {

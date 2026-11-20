@@ -20,8 +20,10 @@ The one shape admitted (v1)::
   quantile_cont, stddev, variance), each with an optional FILTER; a value aggregate reads one bare
   numeric column, so its argument cannot encode a count (``avg(1000 * (x > 5) + x / 1e6)``);
 * no joins, subqueries, CTEs, set operations, windows, HAVING, QUALIFY, DISTINCT, GROUPING SETS,
-  table functions, MIN/MAX or list-valued aggregates: each either lists patients or lets a
-  small group be worked out from what is shown (see ``sql/privacy.py``).
+  table functions, MIN/MAX or list-valued aggregates: v1 answers one aggregate table, and these
+  are not supported yet. (They were first refused because they would have let a small group be
+  worked out past on-screen suppression; that suppression is gone (ADR015), so widening the shape
+  is a follow-up, not a privacy question.)
 """
 
 from __future__ import annotations
@@ -50,12 +52,10 @@ NOT_IN_GROUP = "Every output must be the GROUP BY column or a summary (count, av
 ONE_TABLE = (
     f"Only the table {config.TABLE_NAME} can be read, on its own: joins, subqueries and WITH are not supported yet."
 )
-COMBINED_ROWS = (
-    "Combined or total rows (UNION, ROLLUP, GROUPING SETS) can reveal small groups, so they are not supported."
-)
+COMBINED_ROWS = "Combined or total rows (UNION, ROLLUP, GROUPING SETS) are not supported yet."
 HAVING_REFUSAL = (
-    "HAVING, QUALIFY and window functions (rank, lag, ...) are not supported: filtering or ranking groups "
-    "before small groups are hidden would reveal them. Sort the result with ORDER BY instead."
+    "HAVING, QUALIFY and window functions (rank, lag, ...) are not supported yet. "
+    "Sort the result with ORDER BY instead."
 )
 MIN_MAX_REFUSAL = "MIN and MAX show one patient's value. Use median(...) or quantile_cont(column, 0.1 or 0.9)."
 
@@ -71,7 +71,7 @@ _SCALAR_NODES: tuple[type[exp.Expr], ...] = (
     exp.Year, exp.Quarter, exp.Month, exp.Extract, exp.DateDiff, exp.TimestampTrunc, exp.DateTrunc,
     exp.Greatest, exp.Least, exp.StartsWith, exp.Contains, exp.DPipe,
 )  # fmt: skip
-# Around aggregates in a measure: arithmetic and rounding only, on DOUBLE (sql.privacy casts
+# Around aggregates in a measure: arithmetic and rounding only, on DOUBLE (sql.answer casts
 # each aggregate, and runs the arithmetic inside TRY), so no value can make it fail. Casts are left
 # out, TRY_CAST included: casting a count back to BIGINT makes ``count * 4e18`` overflow for some
 # counts and not others, and a failure that depends on a count tells a reader the count.
@@ -120,7 +120,7 @@ class OrderKey:
 
 @dataclass(frozen=True)
 class GovernedQuery:
-    """A query that passed every static check, ready for ``sql.privacy``."""
+    """A query that passed every static check, ready for ``sql.answer``."""
 
     shown_sql: str  # the checked query, generated from the tree (what the user is shown)
     dimension: exp.Expr | None

@@ -21,26 +21,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import ibis
-import numpy as np
 import pandas as pd
 import polars as pl
 from ibis import _
 
-from clinical_analytics.analysis.grouping import NO_COUNT_TABLE, behaves_like_categories
 from clinical_analytics.analysis.numeric_text import is_missing_token, is_numeric_text, missing_token_sql
 from clinical_analytics.core import nl_query_config
 from clinical_analytics.core.execution_gate import evaluate_execution_gate
 from clinical_analytics.core.log_redaction import stable_hash
 from clinical_analytics.core.mapper import load_dataset_config
 from clinical_analytics.core.schema import UnifiedCohort
-from clinical_analytics.core.shown_counts import (
-    DIGEST_TIME_ZONE,
-    column_profile_sql,
-    content_columns,
-    fingerprint_sql,
-    row_number_sql,
-    synthesized_columns,
-)
 
 if TYPE_CHECKING:
     from clinical_analytics.core.dataset import Granularity
@@ -56,9 +46,6 @@ from clinical_analytics.core.query_plan import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Each row's position in the stored table, carried only by the view the log of shown counts reads.
-ROW_POSITION = "__mdde_row_position"
 
 
 def _quote_ident(name: str) -> str:
@@ -281,22 +268,21 @@ def _apply_duckdb_limits(raw: Any) -> None:
     """
     raw.execute(f"SET memory_limit = '{nl_query_config.DUCKDB_MEMORY_LIMIT.sql}'")
     raw.execute(f"SET threads = {int(nl_query_config.DUCKDB_THREADS)}")
-    # Timestamps with a time zone read as text in UTC, as in the SQL sandbox: the log of shown
-    # counts numbers rows by their text (core.shown_counts).
-    raw.execute(f"SET TimeZone = '{DIGEST_TIME_ZONE}'")
+    # Timestamps with a time zone read in UTC, as in the SQL sandbox, so an answer never depends
+    # on the machine's time zone.
+    raw.execute(f"SET TimeZone = '{nl_query_config.SESSION_TIME_ZONE}'")
 
 
-def _sample_counts(frame: pl.DataFrame, base_rows: int) -> dict[str, int]:
-    """n_used, n_excluded (no recorded value) and n_filtered_out (removed by the question's
-    limits) from a frame with n and n_rows; the three add up to the dataset row count."""
+def _sample_counts(frame: pl.DataFrame) -> dict[str, int]:
+    """n_used and n_excluded (no recorded value) from a frame with n and n_rows."""
     used, rows = frame.select(pl.col("n").sum(), pl.col("n_rows").sum()).row(0)
     used, rows = int(used or 0), int(rows or 0)
-    return {"n_used": used, "n_excluded": rows - used, "n_filtered_out": base_rows - rows}
+    return {"n_used": used, "n_excluded": rows - used}
 
 
-def _format_share_result(frame: pl.DataFrame, plan: "QueryPlan", group: str | None, base_rows: int) -> dict[str, Any]:
-    """A proportion (group None) or a rate per group, with the counts suppression needs."""
-    base: dict[str, Any] = _sample_counts(frame, base_rows)
+def _format_share_result(frame: pl.DataFrame, plan: "QueryPlan", group: str | None) -> dict[str, Any]:
+    """A proportion (group None) or a rate per group, with n and the rows without a value."""
+    base: dict[str, Any] = _sample_counts(frame)
     if group is None:
         row = frame.row(0, named=True)
         return {
@@ -314,7 +300,7 @@ def _format_share_result(frame: pl.DataFrame, plan: "QueryPlan", group: str | No
             "rate": row["rate"],
             "events": int(row["events"]),
             "n": int(row["n"]),
-            # The group's size (n plus its rows without a value): presentation suppresses the difference.
+            # The group's size: n plus its rows without a value.
             "n_rows": int(row["n_rows"]),
         }
         for row in frame.iter_rows(named=True)
@@ -329,9 +315,9 @@ def _format_share_result(frame: pl.DataFrame, plan: "QueryPlan", group: str | No
     }
 
 
-def _format_grouped_statistic(frame: pl.DataFrame, plan: "QueryPlan", base_rows: int) -> dict[str, Any]:
+def _format_grouped_statistic(frame: pl.DataFrame, plan: "QueryPlan") -> dict[str, Any]:
     """One statistic of the metric per group, as the plan computed it. ``n_rows``: the group's
-    rows, so the presenter suppresses its rows without a value with its n (as for a rate)."""
+    rows, with and without a value of the metric."""
     statistic = grouped_statistic(plan) or "mean"
     group = str(plan.group_by)
     return {
@@ -343,7 +329,7 @@ def _format_grouped_statistic(frame: pl.DataFrame, plan: "QueryPlan", base_rows:
             {"group": row[group], "value": row[statistic], "n": int(row["n"]), "n_rows": int(row["n_rows"])}
             for row in frame.iter_rows(named=True)
         ],
-        **_sample_counts(frame, base_rows),
+        **_sample_counts(frame),
     }
 
 
@@ -680,11 +666,6 @@ class SemanticLayer:
         # (values, rows per value) of a column, counted once until a level remap changes it.
         self._value_counts: dict[str, tuple[pl.Series, pl.Series]] = {}
         self.count_entity_key = None
-        # The log of shown counts: level merges in order, the rows' fingerprint, patient maps.
-        self._remaps: list[tuple[str, dict[str, str]]] = []
-        self._fingerprint: str | None = None
-        self._digest_columns: list[str] | None = None
-        self._patient_of_row: dict[str, np.ndarray] = {}
 
         # Alias index (lazy initialization)
         self._alias_index: dict[str, str] | None = None  # normalized_alias -> canonical_name
@@ -923,88 +904,6 @@ class SemanticLayer:
 
         # Build the view with all mutations
         return raw.mutate(**mutations) if mutations else raw
-
-    def _positioned_view(self) -> Any:
-        """The base view with each row's number as ``ROW_POSITION``: rows numbered by content
-        (``shown_counts.row_number_sql``), never by a pseudo-column a dataset column could shadow,
-        the confirmed level merges applied in the order the base view applied them. For the log
-        of shown counts only (``core.shown_counts``): never offered as a column.
-
-        Raises:
-            CohortStepError: the source is not a table, or a column has the position's name.
-        """
-        if self._raw_table_name is None:
-            raise CohortStepError("Rows of this dataset have no stored position.")
-        if ROW_POSITION.casefold() in {c.casefold() for c in self.raw.columns}:
-            raise CohortStepError("Rows of this dataset have no stored position.")
-        positioned = _validate_table_identifier(f"{self._raw_table_name}_positioned")
-        with self._con_lock:
-            self.con.con.execute(
-                f'CREATE OR REPLACE TEMP VIEW "{positioned}" AS SELECT '
-                f'{row_number_sql(self._content_columns())} AS "{ROW_POSITION}", * '
-                f'FROM "{self._raw_table_name}"'
-            )
-            raw = self.con.table(positioned)
-        view = self._view_over(raw)
-        for column, mapping in self._remaps:
-            view = view.mutate(**{column: view[column].substitute(mapping)})
-        return view
-
-    def shown_rows(self, plan: "QueryPlan", columns: list[str]) -> pl.DataFrame:
-        """The plan's cohort rows (its filters and cohort steps, exactly as the answer applied
-        them) as ``ROW_POSITION`` and ``columns``, for the log of shown counts.
-
-        Raises:
-            CohortStepError: a limit can't be applied, or rows have no stored position.
-        """
-        with self._con_lock, self._cohort_views_dropped():
-            view = self._filtered_view(plan, base=self._positioned_view())
-            rows: pl.DataFrame = view.select([ROW_POSITION, *dict.fromkeys(columns)]).to_polars()
-            return rows
-
-    def _content_columns(self) -> list[str]:
-        """The stored columns a row's digest reads, in content order (``shown_counts.content_columns``):
-        those that tell rows apart, without the columns the upload made up. Counted once per layer."""
-        if self._digest_columns is None:
-            columns = list(self.raw.columns)
-            with self._con_lock:
-                profile = self.con.con.execute(column_profile_sql(columns, f'"{self._raw_table_name}"')).fetchall()
-            self._digest_columns = content_columns(columns, list(profile[0]), synthesized_columns(self.config))
-        return self._digest_columns
-
-    def row_fingerprint(self) -> str:
-        """Row count and SHA-256 over the rows' sorted digests, once per layer: the key of the log
-        of shown counts (``shown_counts.fingerprint_sql``). The same rows give the same value
-        whatever the upload, row order, column order or names."""
-        if self._fingerprint is None:
-            if self._raw_table_name is None:
-                raise CohortStepError("Rows of this dataset have no stored position.")
-            with self._con_lock:
-                # fetchall: the result is read to the end, so no unfinished result is left on the
-                # connection for the next query on it.
-                ((rows, digest),) = self.con.con.execute(
-                    fingerprint_sql(self._content_columns(), f'"{self._raw_table_name}"')
-                ).fetchall()
-            self._fingerprint = f"{int(rows)}:{digest}"
-        return self._fingerprint
-
-    def patient_of_row(self, key: str) -> np.ndarray:
-        """For each row position, the position of the first row with its ``key`` (-1: no key):
-        the patient, or another counted ID (an admission), as one row."""
-        cached = self._patient_of_row.get(key)
-        if cached is not None:
-            return cached
-        with self._con_lock:
-            view = self._positioned_view()
-            frame = view.select([ROW_POSITION, key]).to_polars()
-        rows = self.get_base_row_count()
-        keyed = frame.filter(pl.col(key).is_not_null()).with_columns(
-            pl.col(ROW_POSITION).min().over(key).alias("__first")
-        )
-        mapping = np.full(rows, -1, dtype=np.int64)
-        mapping[keyed.get_column(ROW_POSITION).to_numpy()] = keyed.get_column("__first").to_numpy()
-        self._patient_of_row[key] = mapping
-        return mapping
 
     def get_base_row_count(self) -> int:
         """Rows in the base view (the dataset row count the app shows), counted once per layer."""
@@ -2507,23 +2406,15 @@ class SemanticLayer:
         # Format based on intent
         # Phase 3.3: Pass chart_spec to formatting methods
         # Shares and grouped statistics are already the answer: format the SQL frame as it is.
-        # Shares count patients once rows are declared visits (_share_sql), so the filtered-out
-        # count is in patients too.
+        # Shares count patients once rows are declared visits (_share_sql).
         if query_plan.proportion_column:
-            formatted = _format_share_result(result_df_pl, query_plan, None, self._base_count(self.count_entity_key))
+            formatted = _format_share_result(result_df_pl, query_plan, None)
         elif query_plan.rate_column and query_plan.group_by:
-            share_base = self._base_count(self.count_entity_key)
-            formatted = _format_share_result(result_df_pl, query_plan, query_plan.group_by, share_base)
+            formatted = _format_share_result(result_df_pl, query_plan, query_plan.group_by)
         elif grouped_statistic(query_plan) is not None:
-            formatted = _format_grouped_statistic(result_df_pl, query_plan, self.get_base_row_count())
-            group_dtype = result_df_pl.schema[str(query_plan.group_by)]
-            formatted["groups"] = self._with_value_cells(formatted["groups"], query_plan, group_dtype)
+            formatted = _format_grouped_statistic(result_df_pl, query_plan)
         elif query_plan.intent == "COUNT":
             formatted = self._format_count_result(result_df_pl, query_plan, context)
-            # What the filters removed, in the unit the total is counted in: distinct entities
-            # for an entity count (60 visit rows of 55 patients: 55, not 60), rows otherwise.
-            entity_key = self._count_entity_key(query_plan) if not query_plan.group_by else None
-            formatted["n_filtered_out"] = self._base_count(entity_key) - formatted["total_count"]
         else:
             # The aggregated SQL frame is not renderer-shaped. Recompute from the
             # filtered base view the plan validated, not from get_cohort().
@@ -2545,13 +2436,6 @@ class SemanticLayer:
                 # The claim leads with the statistic the question asked for.
                 formatted["statistic"] = query_plan.statistic
             if not formatted.get("error"):  # a failed result is never presented
-                # Rows the question's filters removed: by the plan's view here, plus by compute
-                # (its legacy context.filters path). The app shows the dataset's row count, so
-                # this is a count the reader can work out; the presenter suppresses it like the
-                # other counts.
-                formatted["n_filtered_out"] = (
-                    self.get_base_row_count() - base_rows.height + formatted.get("n_filtered_out", 0)
-                )
                 entity = self.count_entity_key
                 if entity and formatted.get("value_counts") is not None and not formatted.get("is_numeric"):
                     formatted = self._entity_frequency(formatted, base_rows, entity)
@@ -2585,7 +2469,6 @@ class SemanticLayer:
             "value_counts": counts.head(10).to_dicts(),
             "row_count": patients,
             "unique_count": counts.height,
-            "n_filtered_out": self._base_count(entity) - patients,
         }
 
     def _format_count_result(self, result_df: pl.DataFrame, query_plan: "QueryPlan", context: Any) -> dict[str, Any]:
@@ -3093,57 +2976,6 @@ class SemanticLayer:
             raise TypeError("DuckDB aggregate did not return a table")
         return frame_out
 
-    def _with_value_cells(
-        self, groups: list[dict[str, Any]], plan: "QueryPlan", group_dtype: pl.DataType
-    ) -> list[dict[str, Any]]:
-        """``groups`` of a grouped statistic, each with ``table_min_cell``: the fewest patients in the
-        group holding one value of the metric when the metric behaves like categories
-        (``grouping.behaves_like_categories``) over every group, or when the group itself holds
-        at most two values, else ``NO_COUNT_TABLE``.
-
-        A mean of such a column is a share (died 0/1: a group's mean times its n is its deaths),
-        so the presenter withholds it as a share when a cell holds 1-10 patients. A group whose
-        own values are 0 and 1 is a share even when another group's values spread like a
-        measurement. (Only the two-value test is made per group: a group's integer ages are
-        decided with the pooled column, as a comparison's are.) Counted in DuckDB over the plan's
-        filtered rows, one GROUPING SETS scan, over the finite values the statistic uses;
-        patients are distinct keys once rows are visits, as the share SQL counts them (a row
-        with no key is still one patient, never none). The group values are cast to
-        ``group_dtype`` (the statistic frame's), so a group is found whatever type each path
-        returns; a group not found, or with no recorded value, gets no ``table_min_cell`` (the
-        presenter withholds a value without one).
-        """
-        metric, group = _quote_ident(str(plan.metric)), _quote_ident(str(plan.group_by))
-        entity = self.count_entity_key
-        patients = f"greatest(count(DISTINCT {_quote_ident(entity)}), 1)" if entity else "count(*)"
-        with self._cohort_views_dropped():
-            view = self._filtered_view(plan)
-            finite = f" AND isfinite({metric})" if view[str(plan.metric)].type().is_floating() else ""
-            sql = (
-                f"SELECT {group} AS g, {metric} AS v, GROUPING({group}) AS overall, {patients} AS n "
-                f"FROM _cohort_in WHERE {metric} IS NOT NULL{finite} "
-                f"GROUP BY GROUPING SETS (({group}, {metric}), ({metric}))"
-            )
-            cells = self._duck_aggregate(view, sql)
-        overall = cells.filter(pl.col("overall") == 1)
-        pooled = behaves_like_categories(
-            dict(zip(overall.get_column("v").to_list(), overall.get_column("n").to_list(), strict=True))
-        )
-        per_group: dict[Any, dict[Any, int]] = {}
-        grouped = cells.filter(pl.col("overall") == 0).with_columns(pl.col("g").cast(group_dtype, strict=False))
-        for g, v, n in grouped.select("g", "v", "n").iter_rows():
-            per_group.setdefault(g, {})[v] = int(n)
-        out = []
-        for g in groups:
-            sizes = per_group.get(g["group"])
-            if not sizes:
-                out.append(dict(g))
-            elif pooled or len(sizes) <= 2:
-                out.append({**g, "table_min_cell": min(sizes.values())})
-            else:
-                out.append({**g, "table_min_cell": NO_COUNT_TABLE})
-        return out
-
     def _share_sql(self, view: Any, column: str, value: Any, group: str | None) -> str:
         """Share of patients whose ``column`` equals ``value``, among those with it recorded.
 
@@ -3306,7 +3138,6 @@ class SemanticLayer:
         with self._con_lock:
             view = self.get_base_view()
             self._base_view = view.mutate(**{column: view[column].substitute(mapping)})
-            self._remaps.append((column, dict(mapping)))
             # The column's levels changed: its cached distinct count and value counts are stale.
             self._base_counts.pop(column, None)
             self._value_counts.pop(column, None)

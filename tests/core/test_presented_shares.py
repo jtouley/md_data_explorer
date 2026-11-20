@@ -18,7 +18,7 @@ from clinical_analytics.analysis.numeric_text import WHITESPACE, missing_token_e
 from clinical_analytics.core.analysis_types import AnalysisContext
 from clinical_analytics.core.query_plan import CohortStep, CohortStepError, QueryPlan
 from clinical_analytics.core.query_service import NO_MATCH_REASON, all_null_statistics_reason
-from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED, present_analysis
+from clinical_analytics.core.result_presentation import SOURCE_SUPPRESSED, present_analysis
 from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.core.word_accounting import unused_words
 
@@ -92,11 +92,11 @@ def test_proportion_cellSizes_suppressedOnlyWhenSmall(share_layer, value: str, h
     _execution, shown = _present(share_layer, plan)
 
     # Assert
-    assert (shown["table"]["rows"][0]["proportion"] == SECONDARY_SUPPRESSED) is hidden
+    assert (shown["table"]["rows"][0]["proportion"] == SOURCE_SUPPRESSED) is hidden
 
 
-def test_proportion_smallNumerator_hidesTheShare(make_semantic_layer) -> None:
-    # Arrange: 5 of 100 patients have the value, so share and n would reveal a cell of 5.
+def test_proportion_smallNumerator_showsTheShare(make_semantic_layer) -> None:
+    # Arrange: 5 of 100 patients have the value (shown on screen, ADR015)
     frame = _FRAME.with_columns(pl.Series("rare", ["x" if index < 5 else "y" for index in range(_SIZE)]))
     layer = make_semantic_layer(dataset_name="rare", data=frame)
     plan = QueryPlan(intent="COUNT", confidence=0.95, proportion_column="rare", proportion_value="x")
@@ -105,9 +105,8 @@ def test_proportion_smallNumerator_hidesTheShare(make_semantic_layer) -> None:
     _execution, shown = _present(layer, plan)
 
     # Assert
-    assert shown["table"]["rows"][0]["proportion"] == SECONDARY_SUPPRESSED
-    assert "0.05" not in shown["claim"] and "5.0%" not in shown["claim"]
-    assert "not shown" in shown["claim"]
+    assert shown["table"]["rows"][0] == {"proportion": 0.05, "n": 100}
+    assert shown["claim"].startswith("5.0% of patients had")
 
 
 def test_rate_groupedPlan_presentsRatePerGroup(share_layer) -> None:
@@ -144,7 +143,7 @@ def test_proportion_groupedPlan_presentsShareForEachGroup_neverOverall(share_lay
     assert len(shown["table"]["rows"]) == 2
 
 
-def test_rate_smallCellInGroup_hidesThatRate(make_semantic_layer) -> None:
+def test_rate_smallCellInGroup_showsThatRate(make_semantic_layer) -> None:
     # Arrange: South has 3 events of 40; North has 30 of 60.
     frame = _FRAME.with_columns(
         pl.Series("event", ["e" if index < 30 or 60 <= index < 63 else "n" for index in range(_SIZE)])
@@ -157,8 +156,8 @@ def test_rate_smallCellInGroup_hidesThatRate(make_semantic_layer) -> None:
 
     # Assert
     rates = {row["site"]: row["rate"] for row in shown["table"]["rows"]}
-    assert rates == {"North": 0.5, "South": SECONDARY_SUPPRESSED}
-    assert "0.075" not in shown["claim"] and "7.5%" not in shown["claim"]
+    assert rates == {"North": 0.5, "South": 0.075}
+    assert "South 7.5%" in shown["claim"]
 
 
 def _cohort_with_missing(missing: int, size: int = 200, events: int = 50, missing_south: int = 0) -> pl.DataFrame:
@@ -176,9 +175,8 @@ def _cohort_with_missing(missing: int, size: int = 200, events: int = 50, missin
     )
 
 
-def test_proportion_fewMissing_shareWithHiddenNNotShown(make_semantic_layer: Callable[..., SemanticLayer]) -> None:
-    """Repro: 200 patients, 3 missing diabetes, 50 of 197 "yes". The app showed 25.4% (n hidden)
-    and 0.2538 in the table; only n=197 with 50 events gives 0.2538, so 3 excluded was derivable."""
+def test_proportion_fewMissing_shareShownWithNAndExclusions(make_semantic_layer: Callable[..., SemanticLayer]) -> None:
+    """200 patients, 3 missing diabetes, 50 of 197 "yes": the share, n and the 3 excluded are shown."""
     # Arrange
     layer = make_semantic_layer(dataset_name="missing3", data=_cohort_with_missing(3))
     plan = QueryPlan(intent="COUNT", confidence=0.95, proportion_column="diabetes", proportion_value="yes")
@@ -188,21 +186,17 @@ def test_proportion_fewMissing_shareWithHiddenNNotShown(make_semantic_layer: Cal
 
     # Assert
     row = execution["result"].row(0, named=True)
-    assert (row["events"], row["n"], row["n_rows"]) == (50, 197, 200)  # the hidden-n case
-    assert shown["table"]["rows"] == [{"proportion": SECONDARY_SUPPRESSED, "n": SECONDARY_SUPPRESSED}]
-    assert shown["claim"] == "The share with diabetes = yes is not shown because n is hidden (n hidden)."
+    assert (row["events"], row["n"], row["n_rows"]) == (50, 197, 200)
+    assert shown["table"]["rows"] == [{"proportion": round(50 / 197, 4), "n": 197}]
+    assert "n=197" in shown["claim"] and "3 excluded for missing data" in shown["claim"]
 
 
 @pytest.mark.parametrize(
-    ("missing", "shown_share"),
-    [
-        pytest.param(1, None, id="1_missing_withheld"),
-        pytest.param(10, None, id="10_missing_withheld"),
-        pytest.param(11, round(50 / 189, 4), id="11_missing_shown"),
-    ],
+    "missing",
+    [pytest.param(1, id="1_missing"), pytest.param(10, id="10_missing"), pytest.param(11, id="11_missing")],
 )
-def test_proportion_missingWindowBoundaries_shareShownOnlyWithN(
-    make_semantic_layer: Callable[..., SemanticLayer], missing: int, shown_share: float | None
+def test_proportion_missingBoundaries_shareAlwaysShownWithN(
+    make_semantic_layer: Callable[..., SemanticLayer], missing: int
 ) -> None:
     # Arrange
     layer = make_semantic_layer(dataset_name=f"missing{missing}", data=_cohort_with_missing(missing))
@@ -213,24 +207,15 @@ def test_proportion_missingWindowBoundaries_shareShownOnlyWithN(
 
     # Assert
     row = shown["table"]["rows"][0]
-    if shown_share is None:
-        assert row == {"proportion": SECONDARY_SUPPRESSED, "n": SECONDARY_SUPPRESSED}
-        assert "%" not in shown["claim"]
-    else:
-        assert row == {"proportion": shown_share, "n": 200 - missing}
-        assert f"{missing} excluded for missing data" in shown["claim"]
+    assert row == {"proportion": round(50 / (200 - missing), 4), "n": 200 - missing}
+    assert f"{missing} excluded for missing data" in shown["claim"]
 
 
 @pytest.mark.parametrize(
-    ("missing", "rates_shown"),
-    [
-        pytest.param(3, False, id="3_missing_withheld"),
-        pytest.param(11, True, id="11_missing_shown"),
-    ],
+    "missing",
+    [pytest.param(3, id="3_missing"), pytest.param(11, id="11_missing")],
 )
-def test_rate_fewMissing_everyRateWithheldWithN(
-    make_semantic_layer: Callable[..., SemanticLayer], missing: int, rates_shown: bool
-) -> None:
+def test_rate_fewMissing_everyRateShownWithN(make_semantic_layer: Callable[..., SemanticLayer], missing: int) -> None:
     # Arrange
     layer = make_semantic_layer(dataset_name=f"rate_missing{missing}", data=_cohort_with_missing(missing))
     plan = QueryPlan(intent="COUNT", confidence=0.95, group_by="site", rate_column="diabetes", rate_value="yes")
@@ -241,9 +226,8 @@ def test_rate_fewMissing_everyRateWithheldWithN(
     # Assert
     rows = shown["table"]["rows"]
     assert {row["site"] for row in rows} == {"North", "South"}
-    assert all((row["rate"] != SECONDARY_SUPPRESSED) is rates_shown for row in rows)
-    assert all((row["n"] != SECONDARY_SUPPRESSED) is rates_shown for row in rows)
-    assert ("%" in shown["claim"]) is rates_shown
+    by_site = {row["site"]: (row["rate"], row["n"]) for row in rows}
+    assert by_site == {"North": (round(50 / (100 - missing), 4), 100 - missing), "South": (0.0, 100)}
 
 
 def test_rate_withoutGroup_isRefusedWithReason(share_layer) -> None:
@@ -612,11 +596,10 @@ class TestGroupedShareIsARatePlan:
         assert "always 100% or 0%" in str(execution.get("failure_reason"))
 
 
-def test_rate_fewMissingInOneSite_thatSiteNeverShownBesideItsSize(
+def test_rate_fewMissingInOneSite_eachSiteShownWithItsN(
     make_semantic_layer: Callable[..., SemanticLayer],
 ) -> None:
-    """n is shown (5 North + 17 South = 22 excluded), but North's n of 95 beside its size from a
-    COUNT by site (100) would give back 5 missing in North."""
+    """5 missing in North and 17 in South: each site's rate is shown with its own n."""
     # Arrange
     frame = _cohort_with_missing(5, missing_south=17)
     layer = make_semantic_layer(dataset_name="site_missing", data=frame)
@@ -627,5 +610,4 @@ def test_rate_fewMissingInOneSite_thatSiteNeverShownBesideItsSize(
 
     # Assert
     assert "n=178; 22 excluded" in shown["claim"]
-    assert all(row["n"] == SECONDARY_SUPPRESSED for row in shown["table"]["rows"])
-    assert all(row["rate"] == SECONDARY_SUPPRESSED for row in shown["table"]["rows"])
+    assert {row["site"]: row["n"] for row in shown["table"]["rows"]} == {"North": 95, "South": 83}

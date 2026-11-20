@@ -15,9 +15,8 @@ from clinical_analytics.contracts.declarations import (
     MemoryDeclarationStore,
     PopulationEstimatesDeclaration,
 )
-from clinical_analytics.core.query_plan import QueryPlan
 from clinical_analytics.core.query_service import QueryService
-from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED, present_analysis
+from clinical_analytics.core.result_presentation import SOURCE_SUPPRESSED, present_analysis
 
 DATASET = "estimates"
 VERSION = "v1"
@@ -241,63 +240,6 @@ class TestTrustTheSourceChatPath:
 
         # Assert
         rows = {row["State"]: row["Deaths"] for row in _answer_rows(result)}
-        assert rows["Alabama"] == SECONDARY_SUPPRESSED
+        assert rows["Alabama"] == SOURCE_SUPPRESSED
         assert rows["Alaska"] == 121
         assert "Suppressed" in (result.analysis or {}).get("claim", "")
-
-
-class TestShownCountLog:
-    """Declared public estimates are shown as published (ADR014 section 7): the log of shown
-    counts neither withholds nor records them (ADR013 section 12)."""
-
-    @staticmethod
-    def _count(service: QueryService, plan: QueryPlan):
-        from types import SimpleNamespace
-
-        intent = SimpleNamespace(
-            confidence=0.99,
-            intent_type=plan.intent,
-            primary_variable=plan.metric,
-            grouping_variable=plan.group_by,
-            predictor_variables=[],
-            time_variable=None,
-            event_variable=None,
-            filters=[],
-        )
-        service.nl_engine.parse_query = lambda *args, **kwargs: intent  # type: ignore[method-assign]
-        service.nl_engine._intent_to_plan = lambda *args: plan  # type: ignore[method-assign]
-        service._accounting_hold_reason = lambda *args: None  # type: ignore[method-assign]
-        return service.ask("q", dataset_id=DATASET, dataset_version=VERSION)
-
-    @pytest.mark.parametrize(("declared", "logged"), [(True, False), (False, True)])
-    def test_ask_countOnEstimateTable_loggedOnlyWhenNotDeclared(self, estimate_service, declared, logged):
-        # Arrange
-        from clinical_analytics.core.shown_counts import MemoryShownCountLog
-
-        service = estimate_service(declared=declared)
-        plan = QueryPlan(intent="COUNT", confidence=0.99)
-
-        # Act
-        result = self._count(service, plan)
-
-        # Assert
-        assert isinstance(service.shown_log, MemoryShownCountLog)
-        assert bool(service.shown_log._states) is logged
-        assert result.failure_reason is None or not result.failure_reason.startswith("This answer is not shown")
-
-    def test_publishedEstimatesLog_admitsAndRecordsNothing(self):
-        # Arrange
-        import numpy as np
-
-        from clinical_analytics.core.shown_counts import PUBLISHED_ESTIMATES_LOG, ROWS_UNIT, ShownSet, Universe
-
-        universe = Universe(rows=20, fingerprint="20:x")
-
-        # Act: two sets overlapping in 5 rows, and their union
-        verdicts = [
-            PUBLISHED_ESTIMATES_LOG.admit("d", "v", universe, [ShownSet(ROWS_UNIT, np.arange(a, b))])
-            for a, b in ((0, 12), (7, 20), (0, 20))
-        ]
-
-        # Assert
-        assert all(v.shown and v.added == 0 for v in verdicts)

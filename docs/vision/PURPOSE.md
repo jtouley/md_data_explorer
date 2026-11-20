@@ -8,7 +8,7 @@ This is a local data analyst for anyone in medicine who has a dataset and a ques
 
 - **Any question.** They ask in their own words, about anything a capable data tool such as TextQL could answer.
 - **Right answer, method shown.** They get the right answer and see the method, from a local model (Ollama).
-- **Privacy.** Data never leaves the machine. No answer shows a count of 1–10 patients, or a count that can be worked out from that answer and its filters in any combination. See [What privacy does not cover yet](#what-privacy-does-not-cover-yet). Declared public estimate tables (GBD, CDC WONDER, AtlasPlus and similar) are the exception, by the owner's decision of 2026-11-19 ("trust the source"): they are shown as published, counts included, and only the source's own suppressed cells stay hidden. A file with patient-level structure can never be declared into this exception ([ADR014 §7](../implementation/ADR/ADR014.md#7-the-declaration-flow-approved-privacy-decision)).
+- **Privacy.** Data never leaves the machine. On screen every answer shows its true numbers, small counts included: the user already holds the rows. Anything that leaves the machine as a file or packet has counts of 1–10 written as `<11`, per cell, with a visible note ([ADR015](../implementation/ADR/ADR015.md), owner's decision of 2026-11-20). Declared public estimate tables (GBD, CDC WONDER, AtlasPlus and similar) are shown as published ("trust the source", 2026-11-19), and only the source's own suppressed cells stay hidden ([ADR014 §7](../implementation/ADR/ADR014.md#7-the-declaration-flow-approved-privacy-decision)).
 - **Any data.** Public datasets, registry exports, and hospital extracts with their dictionaries.
 
 Use cases such as the ID-fellow research guide are examples, not the scope. The product is not narrowed to one specialty, one workflow or a fixed list of question types.
@@ -20,7 +20,7 @@ Right answers on real public datasets, through the real upload API, with the loc
 The acceptance table reports two rates and never adds them together:
 
 - **Answered right:** questions that expect an answer and got the right one. This is the usefulness number.
-- **Correctly held:** questions that must be refused (a patient listing, for example) and were. This is a safety number, with WRONG and LEAK.
+- **Correctly held:** questions that must be refused (a patient listing, for example) and were. This is a safety number, with WRONG and LEAK (LEAK: a count of 1–10 left as a number in an answer as exported, ADR015).
 
 ## Steel thread, in order
 
@@ -38,14 +38,14 @@ The first unfinished step is the one being worked on. Work that does not move it
    - **A confirmation re-runs the stored plan.** It never asks the model again, so a confirmed plan can't change under the user. It runs only if the dataset and its contract are unchanged since the hold, and the plan passes the checks again; otherwise the user is asked to ask again ([ADR013 §6.3](../implementation/ADR/ADR013.md#63-editing-and-re-running)).
    - **The harness** reports answered right and correctly held separately, and an answer that needed one column choice separately from both. It gets a permanent held-out question set: paraphrases written by someone who has not read the code, graded by the same oracles. Hand-written vocabulary rules are capped (see [ADR013 §5.1](../implementation/ADR/ADR013.md#51-using-answer_checks-on-sql)).
    - **Merge order:** #102, then corpus formats and ZIP upload, then the held-out questions scored on `main` with and without the model (the baseline "rises" is measured against), then #107, then a re-run of `make accept` with and without the model. This list is the one place the order is kept.
-4. **A governed SQL path for one table.** The model writes SQL and it is checked against the contract. Small cells are suppressed in the output, and the SQL is shown.
+4. **A governed SQL path for one table.** The model writes SQL and it is checked against the contract. Every value is shown as computed, and the SQL is shown.
    - **Done when** model-written SQL answers the questions that the word-accounting gate would hold, on one table. #106 (user-typed SQL) is the validator and sandbox it runs in.
-   - **Every combination of filters is checked within each answer, in each group, on both the question path and the SQL path.** An answer's filters (its `WHERE`, `FILTER` and `count_if` terms, or the plan's filters) split each group into cells, one for each combination of filters a patient meets. If a cell holds 1–10 patients, that group's numbers are hidden. So dropping any set of filters, subtracting two filtered counts inside one answer, or a filter that removes few patients in one group can't reveal a small count. #106 checks only its whole `WHERE`, and each aggregate against its unfiltered group; this check goes further ([ADR013 §4.5](../implementation/ADR/ADR013.md#45-per-answer-filter-check-and-step-by-step-count-step-4-both-paths)).
-   - **Every answer shows the step-by-step patient count:** "1,141 patients → 612 women → 341 with RRMS". A count is hidden when it would reveal a hidden cell, and complementary suppression hides others until no hidden cell is the difference of two shown counts. Hiding only a small step would fail, because the counts on either side give it away.
+   - **Every answer shows the step-by-step patient count:** "1,141 patients → 612 women → 341 with RRMS".
+   - The per-answer filter check (2^k cells) that step 4 once planned is withdrawn by [ADR015](../implementation/ADR/ADR015.md).
    - The design for this step is cut down to what #106 built. See [ADR013](../implementation/ADR/ADR013.md).
 5. **Statistics as tools.** The model picks the test, and the existing core computes it.
 6. **MVP.** Widen to the corpus: Sepsis 2019, the MIMIC demos, population sets with ranges, and patient-level sets across specialties. Compare local Ollama with a hosted stand-in. The bar is 0 WRONG and 0 LEAK.
-   - **A dataset-version log of shown counts** lands here. It refuses a count that differs from one already shown by a single changed filter.
+   - The dataset-version log of shown counts that was planned here was built (#143) and removed by [ADR015](../implementation/ADR/ADR015.md).
 
 The design reference is [ADR013](../implementation/ADR/ADR013.md). Take from it only what the current step needs.
 
@@ -58,13 +58,9 @@ These don't move the acceptance table, so they wait until a step needs them:
 - charts;
 - encryption at rest (full-disk encryption covers it; see [local data security](../security/LOCAL_DATA_SECURITY.md)).
 
-## What privacy does not cover yet
+## Privacy boundary
 
-**Within one answer, the check is designed but not built yet.** Today the question path checks the patients its filters remove together, not each combination. #106's SQL path, off by default, does not compare two filtered counts in one answer: on its branch, `count(*) FILTER (WHERE a = 1) - count(*) FILTER (WHERE a = 1 AND b = 1 AND c = 1)` shows 5 patients. The check lands on the SQL path before that path can be on by default, and on the question path with step 4.
-
-**Across answers,** the check reads no earlier answers. It still covers two answers when one answer's filters include all of the other's and the groupings match, or the one with fewer filters is not grouped: every count the answer with fewer filters shows is a sum of cells the other answer checked. Other pairs can still be subtracted: for example, "patients over 65" and later "patients over 66", or the same filter grouped two different ways. Until the dataset-version log lands in step 6, the app does not detect this. After it lands, the log refuses a count one filter change away from a count already shown, and notes other overlaps; it cannot catch every combination of earlier questions.
-
-Mature systems have the same limit. [DataSHIELD](https://github.com/datashield/dsBase) answers it with a warning, a session log and sanctions from a data custodian. This app has no custodian, so it promises only what its code enforces.
+The boundary is the machine ([ADR015](../implementation/ADR/ADR015.md)). On screen nothing is withheld for small-cell or derivability reasons. What leaves the machine as a file or packet goes through one function, `core/export_boundary.py`, which masks each count of 1–10 as `<11`. That masking is per cell: it does not stop a masked count being worked out from the other cells of the same exported answer.
 
 ## Merge gate
 
@@ -89,7 +85,7 @@ We adopt none of these; each needs a server, a database, a licence or a workflow
 | [jamovi](https://github.com/jamovi/jamovi) and [JASP](https://github.com/jasp-stats/jasp-desktop) | Assumption checks, and a rank-based alternative next to each parametric test. | Step 5 |
 | [ACRO](https://github.com/AI-SDC/ACRO) | A residual degrees-of-freedom floor for regressions, and dominance checks on sums and means. | Steps 4–5 |
 
-**Nearest competitor:** [Domino Clinical Data Explorer](https://github.com/dominodatalab/clinical-data-explorer) (Apache-2.0). A chat agent calls aggregate data tools, can run on a local Ollama, and never shows the model a hidden result. It has **no small-cell suppression**, and it is built to run on the Domino platform. This app's edge is small-cell control, grain, units and statistical refusals, not "local" alone. Re-check it at MVP.
+**Nearest competitor:** [Domino Clinical Data Explorer](https://github.com/dominodatalab/clinical-data-explorer) (Apache-2.0). A chat agent calls aggregate data tools, can run on a local Ollama, and never shows the model a hidden result. It is built to run on the Domino platform. This app's edge is grain, units, statistical refusals and a masked export boundary, not "local" alone. Re-check it at MVP.
 
 ## Real data
 

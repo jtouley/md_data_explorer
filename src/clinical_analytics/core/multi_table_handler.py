@@ -32,7 +32,6 @@ import duckdb
 import polars as pl
 import structlog
 
-from clinical_analytics.core.nl_query_config import SMALL_CELL_THRESHOLD
 from clinical_analytics.core.schema import DataQualityError, NoCohortAnchorError
 
 try:
@@ -100,8 +99,8 @@ NO_ANCHOR_MESSAGE: Final = (
 
 
 def describe_count(n: int) -> str:
-    """Return ``n`` as text, or "some" when it is below the small-cell threshold."""
-    return str(n) if n >= SMALL_CELL_THRESHOLD else "some"
+    """``n`` as text, as it is (ADR015: small counts are shown on screen)."""
+    return str(n)
 
 
 def duplicate_key_error(table_name: str, key: str, n_duplicates: int, context: str) -> DataQualityError:
@@ -228,8 +227,8 @@ class CohortBuildResult:
         grain_key: Column that identifies one cohort row
         excluded_tables: Source tables not in the cohort, with the reason
         null_key_rows: Anchor rows with no ``grain_key``; they are excluded from the cohort
-        null_key_note: User-facing sentence about those rows (count shown as "some" below the
-            small-cell threshold), or None when there are none
+        null_key_note: User-facing sentence about those rows, with their count, or None when
+            there are none
         omitted_features: Table name -> why its ``{col}_last`` features were not created
     """
 

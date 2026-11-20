@@ -28,7 +28,7 @@ on what a clinician has to do with the screen.
 | Chat squeezed by panels | 48 px of chat at 1280×820 under a 454 px preview and a 215 px enrichment block (ConardLi, Kowalski); ~115 px (MengTo); ~40 px (Owl) | Dataset preview, metadata suggestions and change history move to a dataset panel that opens from the sidebar. The chat owns the main column |
 | Message states look alike | Answer, hold, refusal and crash rendered with the same box (Owl, ConardLi, Kowalski) | Each state has its own shape, a word and an icon, not colour alone |
 | Plan line is the smallest text on the card | 12.8 px mono (Owl, ConardLi) | Plan shown as a 16 px labelled list in the body face |
-| Mono, left-aligned table; literal "suppressed" reads as data | All four | Body face with tabular figures, numbers right-aligned, hidden cells muted with a footnote |
+| Mono, left-aligned table; literal "suppressed" reads as data | All four | Body face with tabular figures, numbers right-aligned, source-suppressed cells muted with a footnote |
 | Emoji and glyph icons, generic copy | 📊, ◉, ⟳, →, ✕, ✓/✗; "Claim:" prefix; "Group comparison" twice (all four) | One small inline stroke-icon set; claim is the headline; the intent label shown once as a caption |
 | Centred column, docked composer | 720–760 px (all four) | 760 px column, composer docked and pinned |
 | Sessions titled by first question | Every session read "Dataset: ds_cohort" (Owl, ConardLi, MengTo) | See "Session titles" below for what is possible today |
@@ -93,54 +93,22 @@ Owl proposed "Answered ✓ / Needs your OK / Not answered / Error" pills on ever
 An answer is shown by its claim; a pill saying "Answered" on every turn is noise (MengTo's
 restraint criterion). Answers get the analysis type ("Group comparison") as a caption.
 
-### Hidden cells: "—", "hidden", or "<11"?
+### Hidden cells: only what a public source suppressed
 
-MengTo proposed "—" with a footnote "fewer than 11 patients"; ConardLi "<11" with †; Owl a muted
-italic "hidden". **Decision: muted italic "hidden" with a † and one footnote; cells that the API
-already sends as "<11" keep that text, muted, with the same †.**
-Evidence: the API marks *both* primary small cells (1–10) *and* secondary cells (hidden so a small
-cell cannot be worked out from a total) with the same word, deliberately, so the two cannot be
-told apart (`result_presentation.py`, `_mask`). Rendering every hidden cell as "fewer than 11"
-would be false for secondary cells; rendering "—" reads as "missing" or "zero" in clinical
-tables. The footnote says what is true for both: "Hidden to protect privacy: counts from 1 to 10
-are not shown, and some other cells are hidden so those counts can't be worked out from totals."
-Within one answer the API uses one marker: when the table hides a count, the claim does not write
-"<11" for it either. It says "n hidden" (n, the exclusions and any rows a filter removed add up to
-the dataset's row count, and n plus the exclusions is the filtered cohort a COUNT shows, so n is
-hidden when any of them is small, together with every group size; with n hidden the clause never
-mentions exclusions, even when their count is large enough to show: "n hidden; 50 excluded" would
-tell a small n apart from a small exclusion count, and "n=377; some excluded" would give the
-exclusions away to a second COUNT), "count hidden", or "Total count hidden." for a filtered count.
-The semantic layer sends the rows the filters removed (`n_filtered_out`, counted where compute
-filtered them, in the unit of the total: patients for a distinct-patient count), so the presenter
-never works it out per analysis type.
-A statistic that can be one patient's value (a mean, a median, min and max, a group's mean or
-median) is shown only when the count beside it is present, is a whole number and is not hidden.
-If the count is missing or is text or a decimal, the statistic is hidden as well, and the claim
-says "Statistics for ldl are not shown because n is missing." or "Median time to death (days) is
-not shown because n is missing." A table cell that should be a count but is not a whole number is
-hidden like a small count.
-"<11" appears only when it is the answer's sole hidden count, e.g. "Total count: <11."
-We never write "<5"; the threshold is 11.
-Only the API's exact tokens mean hidden: the lowercase `suppressed` and `<11` (built from the
-threshold). Any other text, such as an age band "<65" or a category spelled "Suppressed", is a
-label and is shown as written, with no † and no footnote.
+**Superseded in part by [ADR015](../implementation/ADR/ADR015.md) (2026-11-20).** The app no
+longer hides any count on screen: every answer, the data check and the upload notes show their
+true numbers, small counts included. A count of 1-10 becomes "<11" only when an answer leaves the
+machine (`core/export_boundary.py`).
 
-**Data check (cohort details) uses one label only.** Its report (`contracts/quality.py`) shows
-every suppressed count the same way, as "some … ; count hidden to protect privacy", never "<11":
-with a visible row total, two labels would tell a reader that the non-"<11" hidden counts are 11
-or more, and a column's missing + bad + valid counts would then pin a small one. A hidden count
-there only means "at least 1" (zero is shown as 0). A check whose count is hidden always has the
-status "review", whatever the value (a pass/warning would say which side of a threshold it is on:
-1 of 20 missing "passed" at 5% meant exactly 1), so the summary and "N things to review" depend
-only on shown numbers. When any count in a column is 1–10, all of that column's non-zero counts
-are hidden together (hiding only some would let a reader work out which was smaller). A column
-gets one problem-value check at most: a coded column whose name looks like "age" or "BMI" gets
-its codebook check, not a range (codes are not measurements). The row count is always shown, as
-in the meta line and the first-rows overview; tables of 1–12 rows show it but hide every column
-count, zeros included, with the line "{N} rows: too few rows to report counts". Its footnote: "Hidden to protect privacy:
-counts from 1 to 10 are not shown, and some larger counts are hidden too so those can't be
-worked out from the totals. A hidden count is never zero."
+The one hidden cell left on screen is a value a public source suppressed itself in a declared
+estimate table (ADR014): the API sends the lowercase token `suppressed`. It is rendered muted and
+italic with a † and one footnote: "Suppressed by the source: the published table withholds this
+value, so it is never shown as a number or read as zero." A cell that reads `<11` (an answer stored
+by an older server) gets the same treatment. Any other text, such as an age band "<65" or a
+category spelled "Suppressed", is a label and is shown as written, with no † and no footnote.
+
+The data check lists the report's lines as they are, each with its count, under the line
+"Checks of the uploaded file against its data contract, with each count as found."
 
 ### Session titles
 
@@ -334,9 +302,9 @@ say "patients" where it has counted patients), no internal ids on screen.
 | Hint (none) | Select a dataset to start asking questions | Choose a cohort to begin. |
 | Working | Processing… / Stage: planning | Reading your question… / Running the analysis… |
 | Claim | Claim: {claim} + title twice | {headline} / {stats line} / {caveats}; title once as caption |
-| Hidden cell | suppressed | hidden† / <11† + footnote |
+| Source-suppressed cell | suppressed | suppressed† + footnote (ADR015: the app hides nothing of its own) |
 | Upload ready + data check | ✓ x uploaded | "The cohort “{name}” is ready." + "Data check found N things to review in cohort details." and an "Open cohort details" button / "Data check found nothing to flag." / "Data check could not run." |
-| Cohort details: data check | (none) | Section "Data check": the API's lines as a list (suppressed counts read "some …; count hidden to protect privacy"), the data-check footnote; on failure "Data check could not run: {reason}. You can still ask questions." |
+| Cohort details: data check | (none) | Section "Data check": the API's lines as a list, each with its count, the data-check footnote; on failure "Data check could not run: {reason}. You can still ask questions." |
 | Hold heading | (none) | Check this plan before it runs |
 | Confirm / Reject | Confirm / Reject | Run this analysis / Not what I meant |
 | Rejected | Query rejected — not executed. | Not run. Rephrase your question below. |

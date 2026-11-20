@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Run a natural-language question against a golden dataset CSV without the UI.
 
-Dev and test use only: results carry raw rows with no small-cell suppression, so this
-module must never be exposed through the production API.
+Dev and test use only: results carry raw rows (the execution frame), so this module must never
+be exposed through the production API.
 """
 
 from __future__ import annotations
@@ -14,12 +14,10 @@ from typing import Any, Literal, TypeAlias
 
 import polars as pl
 
-from clinical_analytics.analysis.grouping import FOLD_LABELS, behaves_like_categories
 from clinical_analytics.analysis.variable_types import display_level
 from clinical_analytics.core.query_service import QueryService
-from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED, present_analysis, term_label
+from clinical_analytics.core.result_presentation import SOURCE_SUPPRESSED, present_analysis
 from clinical_analytics.core.semantic import SemanticLayer
-from clinical_analytics.core.shown_counts import ShownCountLog, Universe, _State
 from clinical_analytics.eval.catalog import DATASET_FILES, load_dataset_frame
 
 _LAYERS: dict[str, SemanticLayer] = {}
@@ -163,27 +161,10 @@ def actual_value(kind: str, stat: str | None, group_by: str | None, payload: dic
     return None
 
 
-class _EachQuestionAlone(ShownCountLog):
-    """The log of shown counts for graders that ask every suite question as if it were the first
-    one shown on its rows: each answer is checked against the totals the app shows and nothing
-    else, and nothing is kept. The suites grade one question at a time (and the concurrency suite
-    compares threaded answers with each asked alone), so a log shared across hundreds of unrelated
-    suite questions, and across tests, would make each grade depend on what ran before it. The log
-    across questions is tested in tests/core/test_shown_counts_*.py, tests/sql/test_shown_counts_sql.py
-    and the acceptance runs through the API. Never used by the app."""
-
-    def _load(self, universe: Universe) -> _State | None:
-        return None
-
-    def _save(self, universe: Universe, state: _State) -> None:
-        return None
-
-
 def service_for(dataset_id: str, workspace: Path | None = None) -> QueryService:
-    """Reuse one query service so pattern config and embeddings load once per dataset; each
-    question it answers is checked by the log of shown counts as if asked first (``_EachQuestionAlone``)."""
+    """Reuse one query service so pattern config and embeddings load once per dataset."""
     if dataset_id not in _SERVICES:
-        _SERVICES[dataset_id] = QueryService(layer_for(dataset_id, workspace), shown_log=_EachQuestionAlone())
+        _SERVICES[dataset_id] = QueryService(layer_for(dataset_id, workspace))
     return _SERVICES[dataset_id]
 
 
@@ -238,8 +219,7 @@ def ask(dataset_id: str, query: str, workspace: Path | None = None, confirm: boo
         "metric": plan.metric if plan else None,
         "group_by": plan.group_by if plan else None,
         "predictors": list(getattr(result.context, "predictor_variables", None) or []),
-        # The patient key when the question counted patients over visit rows: leak checks count
-        # levels by it, as compute does.
+        # The patient key when the question counted patients over visit rows (as compute counts).
         "entity_key": service.semantic_layer.count_entity_key,
         "limits": plan_limits(plan),
         "proportion": (plan.proportion_column, plan.proportion_value) if plan and plan.proportion_column else None,
@@ -300,7 +280,7 @@ def presented_answer(presentation: dict[str, Any] | None) -> Any:
 
     A count: the number in "Total count: N.". A one-row statistics table: its statistics by
     name. A table with one row per group: {group label: value}. A proportion or correlation:
-    that number. HIDDEN when the app withheld the value to protect small cells.
+    that number. HIDDEN for a cell the public source suppressed itself (declared estimates).
     """
     if not presentation:
         return None
@@ -320,137 +300,16 @@ def presented_answer(presentation: dict[str, Any] | None) -> Any:
     value_column = next((c for c in columns[1:] if c == "rate" or c == "count" or c.split(" ")[0] in _STAT_NAMES), None)
     if value_column is None:
         return _crosstab(columns, rows)
-    # The folded "Other" row stands for small groups, never for one group: it is hidden.
-    return {
-        str(row[columns[0]]): HIDDEN if row[columns[0]] in FOLD_LABELS else _shown(row[value_column]) for row in rows
-    }
-
-
-def shown_labels(presentation: dict[str, Any] | None) -> set[str]:
-    """Every group or level label a reader sees: table headers past the first, and row labels."""
-    table = (presentation or {}).get("table") or {}
-    columns = list(table.get("columns") or [])
-    if not columns:
-        return set()
-    return {str(c) for c in columns[1:]} | {str(row.get(columns[0])) for row in table.get("rows") or []}
-
-
-def _patients(frame: pl.DataFrame, by: list[str], entity_key: str | None) -> pl.DataFrame:
-    """Patients per combination of ``by`` (as ``__n``): rows, or with ``entity_key`` (rows are
-    visits) distinct patient keys, never fewer than 1 (a row with no key is still someone; the
-    rule compute counts by). Rows with a null in ``by`` hold no level."""
-    rows = frame.drop_nulls(by)
-    if entity_key is None or entity_key not in frame.columns:
-        return rows.group_by(by).agg(pl.len().alias("__n"))
-    return rows.group_by(by).agg(pl.col(entity_key).drop_nulls().n_unique().clip(lower_bound=1).alias("__n"))
-
-
-def _small_values(frame: pl.DataFrame, column: str, threshold: int, entity_key: str | None = None) -> list[Any]:
-    """Values of ``column`` held by 1..threshold-1 patients of ``frame`` (rows when it has no
-    ``entity_key``)."""
-    counts = _patients(frame, [column], entity_key)
-    return counts.filter((pl.col("__n") > 0) & (pl.col("__n") < threshold)).get_column(column).to_list()
-
-
-def small_level_labels(
-    frame: pl.DataFrame, columns: list[str], threshold: int, entity_key: str | None = None
-) -> set[str]:
-    """Labels the app would give levels of ``columns`` held by 1..threshold-1 patients."""
-    labels: set[str] = set()
-    for column in columns:
-        if column in frame.columns:
-            labels |= {display_level(column, value) for value in _small_values(frame, column, threshold, entity_key)}
-    return labels
-
-
-def _code_text(value: Any) -> str:
-    """A level's code as an indicator term spells it: 2.0 -> "2"."""
-    return str(int(value) if isinstance(value, float) and value.is_integer() else value)
-
-
-def _small_cell_levels(
-    frame: pl.DataFrame, column: str, outcome: str, threshold: int, entity_key: str | None = None
-) -> list[Any]:
-    """Values of ``column`` held by 1..threshold-1 patients of ``frame`` with one value of ``outcome``."""
-    cells = _patients(frame, [column, outcome], entity_key)
-    return cells.filter((pl.col("__n") > 0) & (pl.col("__n") < threshold)).get_column(column).unique().to_list()
-
-
-def predictor_label_leaks(
-    presentation: dict[str, Any] | None,
-    frame: pl.DataFrame,
-    predictors: list[str],
-    outcome: str | None,
-    threshold: int,
-    entity_key: str | None = None,
-) -> set[str]:
-    """Labels of small levels and small level-by-outcome cells that a predictor answer shows.
-
-    Levels are counted on the complete cases (rows with the outcome and every predictor), the
-    rows the model is fitted on: a level of 12 rows of which 3 lack age rests on 9. A regression
-    names a level as its indicator term ("site_West", or "DEXA: Osteopenia" for a coded header),
-    as the column itself for a 0/1 or boolean predictor or a numeric one that behaves like
-    categories (``grouping.behaves_like_categories``: a dose of 0, 0.5 or 1), and the outcome's event
-    value in the claim ("status = Yes"). Each is looked for as a whole word in the claim and in
-    the table's labels.
-
-    A level held by 1..threshold-1 rows with one outcome value is a leak too, however large the
-    level: its odds ratio and CI, with totals shown elsewhere, give that cell back. It is flagged
-    by its own term, or by every term of its column when it is the reference (the first code in
-    text order, the level each indicator is compared with).
-
-    Every level and cell counts patients: with ``entity_key`` (rows are visits) its distinct
-    patient keys, as compute counts them; otherwise rows.
-    """
-    shown = [str((presentation or {}).get("claim") or ""), *shown_labels(presentation)]
-    columns = [column for column in [*predictors, *([outcome] if outcome else [])] if column in frame.columns]
-    keyed = entity_key is not None and entity_key in frame.columns and entity_key not in columns
-    complete = frame.select([*columns, *([entity_key] if keyed else [])]).drop_nulls(columns)
-    key = entity_key if keyed else None
-    # Compute fits on finite values only: NaN or inf in a float column is not a level.
-    floats = [column for column, dtype in complete.schema.items() if column in columns and dtype.is_float()]
-    if floats:
-        complete = complete.filter(pl.all_horizontal(pl.col(floats).is_finite()))
-    labels: set[str] = set()
-
-    def terms(column: str, values: list[Any]) -> set[str]:
-        """How a regression can name ``values`` of predictor ``column``."""
-        named: set[str] = set()
-        for value in values:
-            term = f"{column}_{_code_text(value)}"
-            named |= {term, term_label(term)}
-        sizes = dict(_patients(complete, [column], key).iter_rows())
-        single_term = complete.schema[column] == pl.Boolean or set(sizes) <= {0, 1} or behaves_like_categories(sizes)
-        return named | ({column} if single_term and values else set())
-
-    for column in columns:
-        small = _small_values(complete, column, threshold, key)
-        labels |= {display_level(column, value) for value in small}
-        if column == outcome:
-            continue
-        labels |= terms(column, small)
-        if outcome is None or outcome not in complete.columns:
-            continue
-        cell_levels = _small_cell_levels(complete, column, outcome, threshold, key)
-        present = complete.get_column(column).unique().to_list()
-        reference = min(present, key=_code_text, default=None)
-        labels |= terms(column, present if reference in cell_levels else cell_levels)
-    return {label for label in labels if any(re.search(rf"(?<!\w){re.escape(label)}(?!\w)", text) for text in shown)}
+    return {str(row[columns[0]]): _shown(row[value_column]) for row in rows}
 
 
 def _shown(value: Any) -> Any:
-    return HIDDEN if value == SECONDARY_SUPPRESSED or (isinstance(value, str) and value.startswith("<")) else value
+    return HIDDEN if value == SOURCE_SUPPRESSED else value
 
 
 def _crosstab(columns: list[str], rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """A contingency table (first column the level, one column per group) as {group: {level: n}}."""
-    return {
-        group: {
-            str(row[columns[0]]): HIDDEN if {group, row[columns[0]]} & FOLD_LABELS else _shown(row[group])
-            for row in rows
-        }
-        for group in columns[1:]
-    }
+    return {group: {str(row[columns[0]]): _shown(row[group]) for row in rows} for group in columns[1:]}
 
 
 def _is_hidden(value: Any) -> bool:
@@ -489,8 +348,9 @@ PresentedOutcome = Literal["answered", "held", "refused", "hidden", "wrong"]
 def classify_presented(
     kind: str, stat: str | None, group_by: str | None, expected: Any, result: dict[str, Any]
 ) -> PresentedOutcome:
-    """Grade what the app shows. "hidden": the value was withheld for small cells, which is
-    neither an answer nor an error. "wrong": the app shows no value, or a different one."""
+    """Grade what the app shows. "hidden": the source suppressed the value (declared public
+    estimates), which is neither an answer nor an error. "wrong": the app shows no value, or a
+    different one."""
     if not result["success"]:
         return "held" if result.get("held") else "refused"
     shown = presented_answer(result.get("presentation"))

@@ -14,7 +14,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import Final, Literal, TypeAlias
 
 from clinical_analytics.core.config_loader import load_nl_query_config
 
@@ -33,8 +33,13 @@ CLARIFYING_QUESTIONS_THRESHOLD: float = _config["clarifying_questions_threshold"
 # because semantic match is the minimum confidence for auto-execution
 AUTO_EXECUTE_CONFIDENCE_THRESHOLD: float = _config["auto_execute_confidence_threshold"]
 
-# Small-cell suppression for displayed patient counts
+# Export boundary only (core/export_boundary.py, ADR015): a count of 1 to (this - 1) in anything
+# that leaves the machine as a file or packet is written as "<this". On screen every count is shown.
 SMALL_CELL_THRESHOLD: int = int(_config["small_cell_threshold"])
+
+# DuckDB session time zone: timestamps with a time zone read in UTC on every connection (the
+# question box and the SQL sandbox), so an answer never depends on the machine's time zone.
+SESSION_TIME_ZONE: Final = "UTC"
 
 # A numeric column with more distinct values than this is a measurement, never a grouping:
 # one group per exact value (289 LDL levels) identifies patients and answers nothing.

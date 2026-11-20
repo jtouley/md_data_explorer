@@ -61,11 +61,7 @@ def test_compute_analysis_withFilter_equalsAnalysisOfPrefilteredCohort(request, 
     # Act
     actual = compute_analysis_by_type(filter_cohort, context)
 
-    # Assert: the same analysis; only the count of rows the filter removed differs
-    assert (actual.pop("n_filtered_out"), expected.pop("n_filtered_out")) == (
-        filter_cohort.height - prefiltered.height,
-        0,
-    )
+    # Assert: the same analysis
     assert _stable(actual) == _stable(expected)
 
 

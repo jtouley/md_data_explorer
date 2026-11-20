@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import polars as pl
 import pytest
 
-from clinical_analytics.analysis.grouping import MAX_GROUP_LEVELS, SMALL_CELL_TEST_REFUSAL, is_small_level
+from clinical_analytics.analysis.grouping import MAX_GROUP_LEVELS
 from clinical_analytics.api.services.query_service import AsyncQueryService
 from clinical_analytics.core.result_presentation import to_json_safe
 
@@ -627,13 +627,14 @@ def _numbers_in(value: Any) -> Iterator[float]:
 
 
 class TestQueryResultSmallCells:
-    """GET /api/queries/{id} returns the presented answer only, never the raw counts."""
+    """GET /api/queries/{id} returns the presented answer, small counts included (ADR015), and
+    never the raw execution rows or analysis internals."""
 
     @pytest.mark.asyncio
-    async def test_get_query_result_sparseFisher_bodyHasNoRecoverableSmallCount(
+    async def test_get_query_result_sparseFisher_showsTestAndTrueCells(
         self, new_lease, async_query_service, mock_core_query_service
     ):
-        # Arrange: sparse 2x2 (A: 15 alive / 1 dead, B: 1 alive / 3 dead); every cell is hidden
+        # Arrange: sparse 2x2 (A: 15 alive / 1 dead, B: 1 alive / 3 dead)
         from fastapi.testclient import TestClient
 
         from clinical_analytics.api.main import app
@@ -654,7 +655,6 @@ class TestQueryResultSmallCells:
             "group_proportions": proportions,
             "odds_ratio": 45.0,
             "p_value": 0.0198,
-            "table_min_cell": 1,  # a payload that skipped compute's check still shows no test
             "n_used": 20,
             "n_excluded": 0,
             "summary": [{"timeline": 3.0, "at_risk": 4, "observed": 1}],
@@ -670,10 +670,6 @@ class TestQueryResultSmallCells:
             analysis=analysis,
         )
         stored = await async_query_service.execute_query(lease=new_lease(), query="death by arm?", dataset_id="ds")
-        # cell counts, group sizes, proportions (and their complements), the odds ratio and the
-        # p-value (with the margins and direction it gives the cells back)
-        forbidden = {15.0, 1.0, 3.0, 16.0, 4.0, 45.0, 0.0198, 0.02}
-        forbidden |= {round(v, 4) for p in proportions.values() for v in (p, 1 - p, 100 * p, 100 * (1 - p))}
 
         async def found(_query_id: str) -> tuple[Any, Any]:
             return async_query_service, stored
@@ -682,10 +678,12 @@ class TestQueryResultSmallCells:
         with patch("clinical_analytics.api.routes.queries.find_query_result", side_effect=found):
             body = TestClient(app).get(f"/api/queries/{stored.query_id}").json()
 
-        # Assert: walk the whole body (confidence 0.9 is allowed)
-        assert body["result_data"]["claim"] == SMALL_CELL_TEST_REFUSAL
-        leaked = sorted({n for n in _numbers_in(body) if n in forbidden or round(n, 4) in forbidden})
-        assert leaked == [], f"GET body {body} shows {leaked}"
+        # Assert: the test and every cell as they are; no raw rows or Kaplan-Meier steps
+        result_data = body["result_data"]
+        assert "Fisher's exact test p=0.020" in result_data["claim"]
+        assert "6% in A and 75% in B" in result_data["claim"]
+        assert [list(row.values())[1:] for row in result_data["table"]["rows"]] == [[15, 1], [1, 3]]
+        assert "at_risk" not in json.dumps(body)
 
     @pytest.mark.parametrize(
         ("groups", "small"),
@@ -695,7 +693,7 @@ class TestQueryResultSmallCells:
         ],
     )
     @pytest.mark.asyncio
-    async def test_get_query_result_crosstabOfSmallLevels_payloadCarriesNoSmallLabel(
+    async def test_get_query_result_crosstabOfSmallLevels_smallLevelShownTooManyLevelsRefused(
         self, new_lease, async_query_service, mock_core_query_service, groups, small
     ):
         # Arrange: on main "compare treatment between ldl groups" stored one column per exact LDL
@@ -743,10 +741,14 @@ class TestQueryResultSmallCells:
         # Assert: the payload itself, not only the claim; the stored result is the same object
         events = [to_json_safe(getattr(e, "data", e)) for e in async_query_service._events.get(stored.query_id, [])]
         text = json.dumps(body) + json.dumps(to_json_safe(stored.result)) + json.dumps(events, default=str)
-        forbidden = [g for g in groups if is_small_level(groups[g])] if small else ["ldl=80.0", "ldl=80.1"]
-        assert not any(f'"{label}"' in text for label in forbidden), text[:500]
         table = (body.get("result_data") or {}).get("table")
-        assert table is None or len(table["columns"]) <= MAX_GROUP_LEVELS + 1
+        if small is None:
+            # 289 exact values are a measurement, not groups: no table (MAX_GROUP_LEVELS)
+            assert table is None
+            assert '"ldl=80.0"' not in text
+        else:
+            assert table is not None and len(table["columns"]) <= MAX_GROUP_LEVELS + 1
+            assert small in table["columns"]
 
     @pytest.mark.asyncio
     async def test_get_query_result_heldQuery_bodyHasNoRawResult(

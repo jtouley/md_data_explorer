@@ -4,16 +4,16 @@
 Two modes, graded by the same oracles and the same ``score.score`` as the app's own answers:
 
 - ``raw``: the model has a plain SQL tool over the same file, in DuckDB, with no governance: no
-  grain check, no small-cell suppression, no unit check, no hold. It stands in for "a general
+  grain check, no unit check, no hold. It stands in for "a general
   assistant plus a database connector", the bar the app must beat.
 - ``governed``: the same model and prompt, but every statement goes through the app's governed SQL
   path (``POST /api/queries/sql`` on a fresh app with ``ENABLE_SQL_QUERIES`` on: checked against
-  the data contract, run in the sandbox, small cells suppressed, refusals in plain language).
+  the data contract, run in the sandbox, refusals in plain language).
 
 With ``app`` too (the default), one command gives three columns per scenario: the app as it
 answers questions today, the model plus governed SQL, and the model plus raw SQL. The question
 it answers: how many held answers does the governed path turn into right ones, at what WRONG and
-LEAK cost compared with raw SQL.
+LEAK cost (LEAK: a count of 1-10 left in the answer as exported, ADR015) compared with raw SQL.
 
 Never run in CI on pull requests: it needs a model server and is slow. Run it on demand::
 
@@ -243,7 +243,7 @@ def _rows_text(columns: list[str], rows: list[list[Any]], extra: int = 0) -> str
 class GovernedSqlTool:
     """Governed mode: each statement goes to ``POST /api/queries/sql`` on a fresh app (its own
     data home, ``ENABLE_SQL_QUERIES`` on, no model) holding the uploaded table, so the model gets
-    exactly what a user typing that SQL would: the checked answer with small cells suppressed, or
+    exactly what a user typing that SQL would: the checked answer, or
     the plain-language refusal. One-row-per-patient confirmations are never sent: that is the
     data owner's statement to make, not the model's.
 

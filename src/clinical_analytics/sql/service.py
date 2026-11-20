@@ -18,7 +18,6 @@ each row one patient?" at upload (``core.patient_rows``), so either answer serve
 
 from __future__ import annotations
 
-import dataclasses
 from pathlib import Path
 from typing import Any
 
@@ -33,15 +32,9 @@ from clinical_analytics.contracts.declarations import (
 from clinical_analytics.contracts.errors import ContractError, ContractStoreError
 from clinical_analytics.contracts.service import read_saved_contract
 from clinical_analytics.contracts.store import contract_path
-from clinical_analytics.core.shown_counts import (
-    PUBLISHED_ESTIMATES_LOG,
-    FileShownCountLog,
-    ShownCountLog,
-    synthesized_columns,
-)
+from clinical_analytics.sql.answer import PatientRowsUnconfirmedError, SqlAnswer, answer_query
 from clinical_analytics.sql.catalog import SqlCatalog
 from clinical_analytics.sql.errors import SqlRefusedError
-from clinical_analytics.sql.privacy import PatientRowsUnconfirmedError, ShownLogTarget, SqlAnswer, answer_query
 from clinical_analytics.sql.sandbox import SandboxConnection
 from clinical_analytics.sql.validate import validate_sql
 
@@ -67,15 +60,12 @@ def run_governed_sql(
     data_dir: Path,
     declarations: DeclarationStore,
     confirm_one_row_per_patient: str | None = None,
-    shown_log: ShownCountLog | None = None,
 ) -> SqlAnswer:
     """Validate ``sql`` against the contract of the layer's dataset version and answer it.
 
     ``confirm_one_row_per_patient``: the confirmation token from an earlier refusal; the user
     confirms that each row is one patient. Stored (and used) only when the IDs can't show it, the
     query is valid and the token matches this dataset version, ID column and row count.
-    ``shown_log``: the log of shown counts (default: the data directory's, shared with the
-    question box); the answer is refused when it, with counts already shown, reveals a small one.
 
     Raises:
         PatientRowsUnconfirmedError: rows can't be shown to be patients and are not confirmed.
@@ -102,20 +92,10 @@ def run_governed_sql(
         log.warning("governed_sql_declarations_unreadable", error_type=type(e).__name__)
         raise SqlRefusedError(DECLARATIONS_UNREADABLE) from e
     catalog = SqlCatalog.from_contract(contract, Path(source), declared.levels)
-    made_up = synthesized_columns(getattr(layer, "config", None))
-    if made_up:
-        catalog = dataclasses.replace(catalog, synthesized=made_up)
     query = validate_sql(sql, catalog)
-    # Declared public estimates are shown as published (ADR014 section 7): the log neither
-    # withholds nor records them (ADR013 section 12).
-    if declared.population_estimates_for(version) is not None:
-        shown_log = PUBLISHED_ESTIMATES_LOG
-    target = ShownLogTarget(shown_log or FileShownCountLog(data_dir), dataset_id, version)
     with SandboxConnection(catalog) as sandbox:
         try:
-            return answer_query(
-                query, sandbox, catalog, shown_log=target, confirmed_patient_rows=_confirmed_rows(declared, catalog)
-            )
+            return answer_query(query, sandbox, catalog, confirmed_patient_rows=_confirmed_rows(declared, catalog))
         except PatientRowsUnconfirmedError as e:
             token = confirmation_token(version, e.key, e.rows)
             if confirm_one_row_per_patient is None:
@@ -130,7 +110,7 @@ def run_governed_sql(
                 log.warning("governed_sql_declarations_unsaved", error_type=type(store_error).__name__)
                 raise SqlRefusedError(DECLARATIONS_UNREADABLE) from store_error
             log.info("governed_sql_patient_grain_confirmed", dataset_version=version)
-            return answer_query(query, sandbox, catalog, shown_log=target, confirmed_patient_rows=e.rows)
+            return answer_query(query, sandbox, catalog, confirmed_patient_rows=e.rows)
 
 
 def _confirmed_rows(declared: Declarations, catalog: SqlCatalog) -> int | None:

@@ -13,7 +13,7 @@ import pytest
 from clinical_analytics.contracts import config
 from clinical_analytics.core import estimates
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
-from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED
+from clinical_analytics.core.result_presentation import SOURCE_SUPPRESSED
 
 
 def _detect(frame: pl.DataFrame) -> estimates.EstimateTable | None:
@@ -277,7 +277,7 @@ class TestEstimateAnswer:
             pytest.param(0.0, False, 0.0, id="zero"),
             pytest.param(1.0, False, 1.0, id="one_published"),
             pytest.param(10.0, False, 10.0, id="ten_published"),
-            pytest.param(None, True, SECONDARY_SUPPRESSED, id="source_suppressed"),
+            pytest.param(None, True, SOURCE_SUPPRESSED, id="source_suppressed"),
         ],
     )
     def test_estimateAnswer_countColumn_shownAsPublishedSourceSuppressionKept(self, value, suppressed, shown):

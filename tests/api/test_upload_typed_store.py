@@ -42,10 +42,8 @@ def test_uploadDataset_mixedDateFormats_readyThenQueryable(test_client: TestClie
     dependencies.invalidate_semantic_layer_cache(body["upload_id"])
 
 
-def test_uploadDataset_censoredLabValue_typeNoteNamesColumnWithoutSmallCount(
-    test_client: TestClient, isolated_data_home
-):
-    # Arrange: one "<5" in creat; the count (1) must not be shown
+def test_uploadDataset_censoredLabValue_typeNoteNamesColumnAndCount(test_client: TestClient, isolated_data_home):
+    # Arrange: one "<5" in creat; the count is shown as it is (ADR015)
     rows = [f"P{i:03d},{40 + i % 30},{80 + i % 9}" for i in range(199)] + ["P199,50,<5"]
     data = ("\n".join(["patient_id,age,creat", *rows]) + "\n").encode()
 
@@ -59,8 +57,7 @@ def test_uploadDataset_censoredLabValue_typeNoteNamesColumnWithoutSmallCount(
     notes = response.json()["type_notes"]
     assert len(notes) == 1
     assert notes[0].startswith("creat: kept as text")
-    assert "fewer than 11" in notes[0]
-    assert " 1 " not in notes[0]
+    assert "1 values are not plain numbers" in notes[0]
 
 
 def _xlsx_bytes(sheets: dict[str, list[list[object]]]) -> bytes:
