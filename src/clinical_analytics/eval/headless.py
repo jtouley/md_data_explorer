@@ -269,9 +269,24 @@ def classify(question: dict[str, Any], expected: Any, result: dict[str, Any]) ->
 
 HIDDEN = "hidden"
 _PRESENTED_TOLERANCE = 1e-4  # table cells are rounded to 4 decimals
-# "Total count: N[ patients| visits| rows]." -- group 1 the shown number, group 2 the unit (or
-# None). "rows": a dataset with no patient ID counts rows and says so (identifier_rules).
-TOTAL_COUNT = re.compile(r"^Total count: (\S+?)(?: (patients|visits|rows))?\.(?: |$)")
+# "Total count: N[ <unit>]." -- group 1 the shown number, group 2 the unit as written (or None):
+# patients, rows (a dataset with no patient ID counts rows and says so, identifier_rules),
+# visits, or the encounter noun the question counted ("admissions", "tests"). Any unit word is
+# read, so the number (and the small-count check on it) never depends on the noun.
+TOTAL_COUNT = re.compile(r"^Total count: (\S+?)(?: ([a-z]+))?\.(?: |$)")
+# Encounter nouns a count may be written in: each is a count of encounters, the "visits" grain.
+ENCOUNTER_UNIT_WORDS = frozenset(
+    {
+        "visits", "admissions", "tests", "encounters", "stays", "hospitalizations", "hospitalisations",
+    }
+)  # fmt: skip
+
+
+def count_grain(unit: str | None) -> str | None:
+    """The grain a count's unit word claims: "visits" for any encounter noun, else the word."""
+    return "visits" if unit in ENCOUNTER_UNIT_WORDS else unit
+
+
 _STAT_NAMES = ("mean", "median", "std", "min", "max")
 
 

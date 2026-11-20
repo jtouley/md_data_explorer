@@ -59,7 +59,6 @@ class TestPresentAnalysisClaims:
                     "group_col": "arm",
                     "p_value": 0.4,
                     "contingency": [{"died": "yes", "a": 30, "b": 40}],
-                    "table_min_cell": 30,
                 },
                 "The distribution of died did not differ significantly by arm (chi-square p=0.400). Unadjusted.",
             ),

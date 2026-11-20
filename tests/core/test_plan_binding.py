@@ -58,7 +58,8 @@ def _changed(value: Any) -> Any:
     raise TypeError(f"no change rule for {value!r}")
 
 
-_SCOPE_CHANGE = {"scope": "all", "intent": "DESCRIBE"}
+# Fields whose values are checked when the plan is built: changed to another valid value.
+_SCOPE_CHANGE = {"scope": "all", "intent": "DESCRIBE", "rollup": "any"}
 
 
 @pytest.mark.parametrize("name", [field.name for field in dataclasses.fields(QueryPlan)])

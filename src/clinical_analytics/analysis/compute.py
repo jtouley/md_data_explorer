@@ -225,8 +225,7 @@ def compute_descriptive_analysis(
 
     If context.primary_variable is set to a specific column, focus on that column.
     If set to "all" or None, describe all columns. ``entity_key``: the patient key when rows are
-    visits, so the patients behind each value of a focused numeric column are counted
-    (``table_min_cell``).
+    visits (accepted for the common analysis signature).
 
     Returns serializable dict (no Polars objects).
     """
