@@ -1069,7 +1069,7 @@ class QueryService:
             noun = "patient" if key == grain.key else counting_unit.singular(unit.words.noun)
             varying = answer_checks.limits_varying(layer, key, plan)
             if plan.proportion_column or plan.rate_column:
-                findings.refusal = answer_checks.share_refusal(layer, key, plan, noun, encounter=key != grain.key)
+                findings.refusal = answer_checks.share_refusal(layer, key, plan, noun)
                 if findings.refusal and unit.words.ordered:
                     findings.refusal = counting_unit.ordered_rollup_reason(unit.words.ordered)
                 if findings.refusal is None and varying:
@@ -1130,7 +1130,13 @@ class QueryService:
         words = counting_unit.read_units(question)
         columns = list(layer.get_base_view().columns)
         candidates = counting_unit.encounter_key_candidates(columns, grain.key)
-        offered = candidates[0] if len(candidates) == 1 else None
+        # The encounter ID the grain hold can offer: only one that belongs to one patient each, so
+        # the route it offers is answered (a per-patient visit_number is not an encounter ID).
+        offered = (
+            candidates[0]
+            if len(candidates) == 1 and not counting_unit.encounter_spans_patients(layer, candidates[0], grain.key)
+            else None
+        )
         if words.both_rollups:
             return _CountingUnit(plan=plan, words=words, refusal=counting_unit.both_rollups_reason())
         if words.rollup == "all" and not share:
@@ -1144,7 +1150,7 @@ class QueryService:
             if chosen is None:
                 # No column identifies these encounters (or more than one could): counting
                 # patients or rows instead would answer another question.
-                fits = [c for c in candidates if counting_unit.pick_encounter_key([c], words.noun)]
+                fits = counting_unit.encounter_key_ties(candidates, words.noun)
                 reason = (
                     counting_unit.ambiguous_encounter_reason(words.noun, fits)
                     if len(fits) > 1
@@ -1154,8 +1160,6 @@ class QueryService:
             if counting_unit.encounter_spans_patients(layer, chosen, grain.key):
                 reason = counting_unit.encounter_spans_reason(chosen, grain.key, words.noun)
                 return _CountingUnit(plan=plan, words=words, refusal=reason)
-            if rollup == "all":
-                return _CountingUnit(plan=plan, words=words, refusal=counting_unit.ENCOUNTER_ALL_REASON)
             counted = dataclasses.replace(plan, entity_key=chosen, rollup=rollup)
             return _CountingUnit(plan=counted, words=words, named=True, encounter_key=chosen, candidate=chosen)
         return _CountingUnit(plan=dataclasses.replace(plan, rollup=rollup), words=words, candidate=offered)

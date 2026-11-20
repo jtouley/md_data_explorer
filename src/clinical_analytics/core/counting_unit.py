@@ -53,6 +53,9 @@ _ANY_PHRASES = (
     r"\bat least once\b",
     rf"\b(?:on|at|in|from) any (?:of (?:their|his|her) )?{_OCCASION}\b",
 )
+# "at least one positive test": "at least one", a value word, then an occasion noun. A bare "at
+# least one admission" names the population, so a value word is required between them.
+_AT_LEAST_ONE = re.compile(rf"\bat least one (?:[a-z][a-z0-9-]* ){{1,3}}?(?P<occasion>{_OCCASION})\b")
 _ALL_PHRASES = (
     r"\balways\b",
     rf"\b(?:on|at|in) (?:every|all(?: of)?(?: (?:their|his|her))?) {_OCCASION}\b",
@@ -65,6 +68,12 @@ _ORDER_PHRASE = re.compile(
 _ID_WORDS = frozenset({"id", "key", "no", "num", "number", "nbr"})
 _ENCOUNTER_NAME_WORDS = frozenset(
     {"encounter", "enc", "admission", "admit", "adm", "hadm", "visit", "stay", "episode", "csn", "test", "accession"}
+)
+
+
+# Name words of a code column: an encounter attribute, never the encounter's own ID.
+_CODE_WORDS = frozenset(
+    {"type", "source", "code", "status", "disposition", "class", "category", "kind", "reason", "priority", "location"}
 )
 
 
@@ -97,6 +106,12 @@ def read_units(question: str) -> UnitWords:
     nouns_text = text
     for phrase in (*any_found, *all_found):
         nouns_text = nouns_text.replace(phrase, " " * len(phrase))
+    # "at least one positive test": the value word stays for word accounting (the plan must use
+    # it); "at least one" and the occasion noun are the roll-up.
+    for match in _AT_LEAST_ONE.finditer(text):
+        any_found += ["at least one", match.group("occasion")]
+        start, end = match.span()
+        nouns_text = nouns_text[:start] + " " * (end - start) + nouns_text[end:]
     head = _HEAD.search(nouns_text)
     words = [(m.start(), m.group(0)) for m in _WORD.finditer(nouns_text)]
     after = [w for at, w in words if head is not None and at >= head.end()]
@@ -135,13 +150,17 @@ def accounted_question(question: str, words: UnitWords, encounter_counted: bool)
 
 def encounter_key_candidates(columns: list[str], patient_key: str | None) -> list[str]:
     """Columns named as an encounter ID (``encounter_id``, ``hadm_id``, ``visit_id``, ``test_id``),
-    in column order, never the patient key."""
+    in column order, never the patient key. The ID word must follow the encounter word, and a
+    column that names a code (``admission_type_id``, ``admission_source_id``, ``*_code``) is never
+    one: its values are shared by many encounters."""
     found = []
     for column in columns:
         if column == patient_key:
             continue
         parts = [p for p in re.split(r"[^a-z0-9]+", column.lower()) if p]
-        if len(parts) >= 2 and parts[-1] in _ID_WORDS and _ENCOUNTER_NAME_WORDS & set(parts[:-1]):
+        if _CODE_WORDS & set(parts):
+            continue  # admission_type_id, admission_source_id, visit_code: a code, not an ID
+        if len(parts) >= 2 and parts[-1] in _ID_WORDS and parts[-2] in _ENCOUNTER_NAME_WORDS:
             found.append(column)
         elif len(parts) == 1 and parts[0] in {"hadmid", "encounterid", "visitid", "admissionid", "csn"}:
             found.append(column)
@@ -165,7 +184,8 @@ def no_encounter_key_reason(noun: str) -> str:
 
 
 def ambiguous_encounter_reason(noun: str, candidates: list[str]) -> str:
-    names = " and ".join(f"'{c}'" for c in candidates[:2])
+    quoted = [f"'{c}'" for c in candidates]
+    names = ", ".join(quoted[:-1]) + f" and {quoted[-1]}" if len(quoted) > 1 else "".join(quoted)
     return (
         f"More than one column could identify the {noun} ({names}), so I can't tell which to count; "
         f"ask for one by name."
@@ -179,16 +199,10 @@ def encounter_spans_reason(encounter: str, patient: str, noun: str) -> str:
     )
 
 
-def rollup_choice(column: str, unit: str, every: bool = True) -> str:
+def rollup_choice(column: str, unit: str) -> str:
     """The one plain choice for a share whose value differs between rows of one unit. Each
-    wording it suggests reads back as that roll-up (``read_units``). ``every``: offer "always"
-    (not for encounters, where it is not supported)."""
+    wording it suggests reads back as that roll-up (``read_units``)."""
     name = short_name(column)
-    if not every:
-        return (
-            f"{name} differs between rows of the same {unit}. Say 'ever' to count each {unit} with it on at "
-            f"least one row."
-        )
     return (
         f"{name} differs between rows of the same {unit}. Say which {unit}s to count: those with it on at "
         f"least one row ('ever'), or on every row ('always')."
@@ -235,11 +249,6 @@ ALL_ROLLUP_COUNT_REASON = (
 )
 
 
-ENCOUNTER_ALL_REASON = (
-    "A share of admissions or tests with a value on every row isn't supported; ask for those with it on at "
-    "least one row ('on any'), or count patients instead."
-)
-
 # Name words of a column that identifies any kind of encounter.
 _GENERIC_ENCOUNTER_WORDS = frozenset({"encounter", "enc", "csn"})
 # The name words that identify each encounter noun's column.
@@ -268,6 +277,14 @@ def pick_encounter_key(candidates: list[str], noun: str) -> str | None:
     an encounter in general (encounter_id, csn); a column named for another kind never does (a
     share of tests counted by hadm_id would be a share of admissions). A column named for the
     kind wins over a general one."""
+    fitting = encounter_key_ties(candidates, noun)
+    return fitting[0] if len(fitting) == 1 else None
+
+
+def encounter_key_ties(candidates: list[str], noun: str) -> list[str]:
+    """The columns that fit ``noun`` best (``pick_encounter_key``): those named for the kind, else
+    the general encounter IDs. More than one means the question is ambiguous; these are the
+    columns that tie."""
     kind = singular(noun)
     words = _NOUN_COLUMN_WORDS.get(kind, frozenset())
 
@@ -275,9 +292,7 @@ def pick_encounter_key(candidates: list[str], noun: str) -> str | None:
         return set(re.split(r"[^a-z0-9]+", column.lower()))
 
     named = [c for c in candidates if words & parts(c)]
-    if not named:
-        named = [c for c in candidates if _GENERIC_ENCOUNTER_WORDS & parts(c)]
-    return named[0] if len(named) == 1 else None
+    return named or [c for c in candidates if _GENERIC_ENCOUNTER_WORDS & parts(c)]
 
 
 def nouns_for(column: str) -> tuple[str, ...]:

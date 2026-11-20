@@ -372,15 +372,19 @@ def _overlap_sentence(analysis: Mapping[str, Any], group_col: str, total: Any) -
 
 
 _ROLLUP_SENTENCES: Final = {
-    "any": "{a} {one} counts as having {event} when at least one of its rows has it.",
-    "all": "{a} {one} counts as having {event} only when all of its rows that record it have it.",
+    "any": "{a} {one} counts as having {event} when at least one of its rows{scope} has it.",
+    "all": "{a} {one} counts as having {event} only when all of its rows{scope} that record it have it.",
 }
 
 
-def _rollup_sentence(analysis: Mapping[str, Any], event: str) -> str | None:
-    """How a share rolled each unit up over its rows ("ever" / "always"), or None."""
+def _rollup_sentence(analysis: Mapping[str, Any], event: str, group_col: str | None = None) -> str | None:
+    """How a share rolled each unit up over its rows ("ever" / "always"), or None. Grouped, a unit
+    is rolled up over its rows in each group (``SemanticLayer._unit_share_sql``), and says so."""
     template = _ROLLUP_SENTENCES.get(str(analysis.get("rollup")))
-    return template.format(a=_article(_one(analysis)), one=_one(analysis), event=event) if template else None
+    if not template:
+        return None
+    scope = f" in that {group_col}" if group_col else ""
+    return template.format(a=_article(_one(analysis)), one=_one(analysis), event=event, scope=scope)
 
 
 def _counted(value: Any, analysis: Mapping[str, Any]) -> str:
@@ -1431,11 +1435,13 @@ def _present_rate(analysis: Mapping[str, Any]) -> Presentation:
             f" A rate is not shown when its n is hidden, or one of its counts is fewer than {_limit(None)} "
             "patients or was not recorded."
         )
-    rollup = _rollup_sentence(analysis, event)
+    rollup = _rollup_sentence(analysis, event, group_col)
     if rollup:
         claim += f" {rollup}"
     if analysis.get("overlapping"):
-        claim += f" {_overlap_sentence(analysis, group_col, 'n')}"
+        n_used = analysis.get("n_used")
+        total = n_used if N_USED not in hidden and _is_count(n_used) else "the total"
+        claim += f" {_overlap_sentence(analysis, group_col, total)}"
     fold = {_group_label(group_col, g.get("group")) for g in groups if str(g.get("group")) in small_groups}
     return {"claim": claim, "table": _fold_rows(_table(rows), fold, small_groups.label), "shown": counts_shown}
 

@@ -401,9 +401,7 @@ def limits_varying(layer: Any, key: str, plan: QueryPlan) -> list[str]:
     return [c for c in limited if varies_within_patient(layer, key, c, nulls_are_values=True)]
 
 
-def share_refusal(
-    layer: Any, key: str, plan: QueryPlan, unit: str = "patient", *, encounter: bool = False
-) -> str | None:
+def share_refusal(layer: Any, key: str, plan: QueryPlan, unit: str = "patient") -> str | None:
     """At visit grain a share counts units (distinct ``key``: patients, or the encounters the
     question asked for), each rolled up over its rows. When the outcome differs between a unit's
     rows, the roll-up must come from the question ("ever", "always": ``plan.rollup``); without
@@ -421,7 +419,7 @@ def share_refusal(
         and outcome in columns
         and varies_within_patient(layer, key, outcome, nulls_are_values=False)
     ):
-        return rollup_choice(outcome, unit, every=not encounter)
+        return rollup_choice(outcome, unit)
     return None
 
 

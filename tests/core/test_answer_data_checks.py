@@ -562,7 +562,8 @@ class TestGroupedShareAtVisitGrain:
 
         # Assert: answered (never refused), and the reader is told why the groups overlap
         assert present_analysis(result.analysis)["table"] is not None
-        assert "is counted in each, so the sex counts add up to more than n" in _shown(result)
+        n_used = result.analysis["n_used"]
+        assert f"is counted in each, so the sex counts add up to more than {n_used}." in _shown(result)
 
     def test_ask_groupedShare_groupOnePerPatient_answersPerGroupInPatients(self, make_semantic_layer: Any) -> None:
         # Arrange: no patient's sex differs, so the per-group share is a patient share

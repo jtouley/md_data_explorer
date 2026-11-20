@@ -21,7 +21,9 @@ from clinical_analytics.analysis.variable_types import display_level
 from clinical_analytics.core.cohort_constraints import peel_cohort
 from clinical_analytics.core.counting_unit import (
     accounted_question,
+    ambiguous_encounter_reason,
     encounter_key_candidates,
+    encounter_key_ties,
     pick_encounter_key,
     read_units,
 )
@@ -233,7 +235,10 @@ class TestRollups:
             assert value == pytest.approx(rate, abs=5e-5)
             matched += 1
         assert matched >= 1
-        assert "when at least one of its rows has it" in result.claim or "all of its rows" in result.claim
+        assert (
+            "when at least one of its rows in that region has it" in result.claim
+            or "only when all of its rows in that region that record it have it" in result.claim
+        )
 
     def test_ask_noRollupWord_refusedWithAPlainChoice(self, make_semantic_layer: Any) -> None:
         # Arrange
@@ -367,6 +372,13 @@ class TestReadUnits:
             pytest.param("share always screened", None, None, "all", id="always"),
             pytest.param("how many tested positive?", None, None, None, id="none"),
             pytest.param("how many tested positive on any visit?", None, None, "any", id="occasion_noun_not_unit"),
+            pytest.param(
+                "what share of patients had at least one positive test?",
+                "patients",
+                "patients",
+                "any",
+                id="at_least_one",
+            ),
             pytest.param("", None, None, None, id="empty"),
         ],
     )
@@ -399,6 +411,14 @@ class TestReadUnits:
             pytest.param(["patient_id", "visit_id", "stay_id"], "encounters", None, id="no_fit"),
             pytest.param(["patient_id", "hadm_id", "admission_id"], "admissions", None, id="two_fit_ambiguous"),
             pytest.param(["patient_id", "age"], "admissions", None, id="none"),
+            pytest.param(
+                ["patient_id", "encounter_id", "admission_type_id", "admission_source_id"],
+                "admissions",
+                "encounter_id",
+                id="code_columns_never_ids",
+            ),
+            pytest.param(["patient_id", "admission_type_id"], "admissions", None, id="only_a_code_column"),
+            pytest.param(["patient_id", "visit_code", "visit_status_id"], "visits", None, id="code_and_status"),
         ],
     )
     def test_pickEncounterKey_columns_onlyWhenUnambiguous(self, columns: list[str], noun: str, expected: Any) -> None:
@@ -410,6 +430,16 @@ class TestReadUnits:
 
         # Assert
         assert chosen == expected
+
+    def test_ambiguousEncounterReason_ties_namesOnlyTheColumnsThatTie(self) -> None:
+        # Arrange: hadm_id and admission_id both name admissions; encounter_id is only general
+        candidates = encounter_key_candidates(["patient_id", "encounter_id", "hadm_id", "admission_id"], "patient_id")
+
+        # Act
+        reason = ambiguous_encounter_reason("admissions", encounter_key_ties(candidates, "admissions"))
+
+        # Assert
+        assert "('hadm_id' and 'admission_id')" in reason
 
 
 class TestShareGrouping:
@@ -676,3 +706,118 @@ class TestSameVisitSemantics:
         # Assert: only the grain is asked, never guessed
         assert result.claim is None and result.requires_confirmation
         assert "Confirm that rows are visits to count each patient once" in result.failure_reason
+
+
+# --------------------------------------------------------------------------- review of #149: regressions
+
+
+def _diabetes_130_like(with_source: bool = True) -> pl.DataFrame:
+    """One row per encounter: 100 patients with 1-3 encounters each (199 encounters), and code
+    columns whose values are shared by many encounters and patients."""
+    rows: list[dict[str, Any]] = []
+    number = 0
+    for i in range(100):
+        for j in range(1 + i % 3):
+            row = {"patient_id": f"P{i:03d}", "encounter_id": f"E{number:05d}", "admission_type_id": 1 + (i + j) % 3}
+            if with_source:
+                row["admission_source_id"] = 7 if j == 0 else 1
+            rows.append(row)
+            number += 1
+    return pl.DataFrame(rows)
+
+
+class TestReviewRegressions:
+    @pytest.mark.parametrize("with_source", [pytest.param(True, id="type_and_source"), pytest.param(False, id="type")])
+    def test_ask_admissionsBesideCodeColumns_countsTheEncounterId(
+        self, make_semantic_layer: Any, with_source: bool
+    ) -> None:
+        # Arrange
+        frame = _diabetes_130_like(with_source)
+        expected = frame.get_column("encounter_id").n_unique()
+        service = QueryService(make_semantic_layer(data=frame))
+
+        # Act
+        result = _ask(service, "how many admissions?", QueryPlan(intent="COUNT", confidence=0.99))
+
+        # Assert
+        assert expected == 199
+        assert result.claim == f"Total count: {expected} admissions."
+
+    def test_ask_perPatientVisitNumber_grainHoldDoesNotOfferIt(self, make_semantic_layer: Any) -> None:
+        # Arrange: visit_number restarts at 1 for each patient, so it is no encounter ID
+        frame = pl.DataFrame(
+            [
+                {"patient_id": f"P{i:03d}", "visit_number": j + 1, "flag": "yes" if j == 0 else "no"}
+                for i in range(60)
+                for j in range(1 + i % 3)
+            ]
+        )
+        service = QueryService(make_semantic_layer(data=frame))
+        plan = QueryPlan(intent="COUNT", cohort_steps=[CohortStep("eq", "flag", "yes")], confidence=0.99)
+
+        # Act
+        result = _ask(service, "how many were flagged?", plan)
+
+        # Assert: held for the grain, with no route that would then be refused
+        assert result.requires_confirmation
+        assert "Confirm that rows are visits to count each patient once." in result.failure_reason
+        assert "visit_number" not in result.failure_reason
+
+    def test_ask_atLeastOnePositiveTest_readAsEver(self, make_semantic_layer: Any) -> None:
+        # Arrange: 84 patients with two tests; 60 positive on at least one
+        rows: list[dict[str, Any]] = []
+        for i in range(84):
+            first = "pos" if i < 40 else "neg"
+            second = "pos" if 20 <= i < 60 else "neg"
+            rows += [{"patient_id": f"P{i:03d}", "result": first}, {"patient_id": f"P{i:03d}", "result": second}]
+        frame = pl.DataFrame(rows)
+        ever = frame.group_by("patient_id").agg((pl.col("result") == "pos").any().alias("e")).get_column("e")
+        service = QueryService(make_semantic_layer(data=frame))
+        plan = QueryPlan(intent="COUNT", proportion_column="result", proportion_value="pos", confidence=0.99)
+
+        # Act
+        result = _ask(service, "what share of patients had at least one positive test?", plan)
+
+        # Assert: 60 of 84
+        assert (ever.sum(), ever.len()) == (60, 84)
+        assert result.claim.startswith(f"{100 * ever.mean():.1f}% of patients had result = pos")
+
+    def test_ask_admissionsAlwaysShare_rolledUpPerAdmission(self, make_semantic_layer: Any) -> None:
+        # Arrange: admissions with one or two pathogen rows
+        frame = _admissions_frame()
+        always = (
+            frame.group_by("encounter_id")
+            .agg((pl.col("pathogen") == "S. pneumoniae").all().alias("a"))
+            .get_column("a")
+            .mean()
+        )
+        service = QueryService(make_semantic_layer(data=frame))
+        plan = QueryPlan(
+            intent="COUNT", proportion_column="pathogen", proportion_value="S. pneumoniae", confidence=0.99
+        )
+
+        # Act
+        result = _ask(service, "what share of admissions always had S. pneumoniae?", plan)
+
+        # Assert
+        assert result.failure_reason is None
+        assert result.claim.startswith(f"{100 * always:.1f}% of admissions had pathogen = S. pneumoniae")
+
+    def test_ask_groupedAlwaysShare_sentenceSaysRowsInThatGroup(self, make_semantic_layer: Any) -> None:
+        # Arrange: positive in 2021; in 2022 positive for half
+        rows: list[dict[str, Any]] = []
+        for i in range(60):
+            rows.append({"patient_id": f"P{i:03d}", "year": 2021, "result": "positive"})
+            rows.append({"patient_id": f"P{i:03d}", "year": 2022, "result": "positive" if i % 2 else "negative"})
+        service = QueryService(make_semantic_layer(data=pl.DataFrame(rows)))
+        plan = QueryPlan(
+            intent="COUNT", proportion_column="result", proportion_value="positive", group_by="year", confidence=0.99
+        )
+
+        # Act
+        result = _ask(service, "what share of patients were always positive each year?", plan)
+
+        # Assert: per group, not over the whole record; the overlap sentence names the total
+        assert _table(result) == {display_level("year", 2021): 1.0, display_level("year", 2022): 0.5}
+        assert "only when all of its rows in that year that record it have it" in result.claim
+        assert "so the year counts add up to more than 60." in result.claim
