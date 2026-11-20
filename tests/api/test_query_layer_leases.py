@@ -497,7 +497,8 @@ async def test_confirmation_finishesOnRetiredLayerAfterReupload_currentVersionSt
         layers[version] = layer
     current = {"version": "v1"}
     fresh_layer_cache._build = lambda _id: layers[current["version"]]
-    question = QueryRequest(session_id="sess", dataset_id=dataset_id, query_text="how many patients")
+    # A question that names no unit, so the grain is asked about ("how many patients" is not).
+    question = QueryRequest(session_id="sess", dataset_id=dataset_id, query_text="how many are there")
     held_v1 = await _answered(question)
     # The v1 confirmation leases v1's layer and is held in its (unlocked) parse.
     real_parse = NLQueryEngine.parse_query

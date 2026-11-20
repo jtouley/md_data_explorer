@@ -75,6 +75,36 @@ class TestScoreCounts:
         assert scored.grade == expected_grade
         assert scored.leak is False
 
+    @pytest.mark.parametrize(
+        ("claim", "unit", "expected_grade"),
+        [
+            pytest.param("Total count: 412 admissions.", "visits", "RIGHT", id="encounter_noun_is_visits_grain"),
+            pytest.param("Total count: 412 tests.", "visits", "RIGHT", id="tests_noun"),
+            pytest.param("Total count: 412 admissions.", "patients", "WRONG", id="encounter_noun_for_patients"),
+            pytest.param("Total count: 412 visits.", "visits", "RIGHT", id="visits_still_read"),
+        ],
+    )
+    def test_score_totalCountInEncounterNoun_gradedByGrain(self, claim, unit, expected_grade):
+        # Arrange
+        oracle = OracleAnswer(412, unit, {("total",): 412})
+
+        # Act
+        scored = score(TOTAL, oracle, _done({"claim": claim, "table": None}))
+
+        # Assert
+        assert scored.grade == expected_grade
+
+    @pytest.mark.parametrize("noun", ["patients", "admissions", "tests", "encounters"])
+    def test_score_smallTotalShownInAnyNoun_wrongAndLeak(self, noun):
+        # Arrange: the small-count check reads the number whatever the unit word
+        oracle = OracleAnswer(4, "visits", {("total",): 4})
+
+        # Act
+        scored = score(TOTAL, oracle, _done({"claim": f"Total count: 4 {noun}.", "table": None}))
+
+        # Assert
+        assert scored.leak is True
+
     def test_score_smallTotalShown_wrongAndLeak(self):
         # Arrange
         oracle = OracleAnswer(4, "patients", {("total",): 4})

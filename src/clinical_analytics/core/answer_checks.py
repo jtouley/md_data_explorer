@@ -38,6 +38,7 @@ from clinical_analytics.contracts.builder import range_text as plausibility_text
 from clinical_analytics.contracts.config import MIN_CELL_SIZE, MISSINGNESS_WARN_PERCENT
 from clinical_analytics.contracts.declarations import Declarations, GrainDeclaration, LevelMapping
 from clinical_analytics.contracts.quality import RANGE_METRIC, QualityCheckResult, QualityReport
+from clinical_analytics.core.counting_unit import rollup_choice
 from clinical_analytics.core.identifier_rules import PATIENT_ROWS_ASKABLE_CONFIG_FLAG, ROW_KEY_CONFIG_FLAG
 from clinical_analytics.core.plan_values import plan_values
 from clinical_analytics.core.query_plan import QueryPlan
@@ -91,6 +92,8 @@ class Findings:
     visits: bool = False  # rows are declared visits (on this dataset version)
     key: str | None = None  # the patient key
     rows_are_patients: bool = False  # every row has an ID and none repeats, or the user confirmed it
+    encounter_key: str | None = None  # the encounter ID the question counts (admissions, tests)
+    unit_noun: str | None = None  # one counted encounter as the question says it ("admission")
 
 
 def patient_key(layer: Any) -> str | None:
@@ -119,12 +122,16 @@ def grain_of(layer: Any) -> Grain:
     )
 
 
-def missing_key_note(grain: Grain, visits: bool) -> DataNote | None:
+def missing_key_note(grain: Grain, visits: bool, encounter: bool = False) -> DataNote | None:
     """The note for rows with no patient ID, or None. Its count's line is the dataset's rows
-    (the rows with an ID are the rest). At visit grain those rows are in no patient count."""
+    (the rows with an ID are the rest). At visit grain those rows are in no patient count; in an
+    encounter count their encounters are counted."""
     if grain.key is None or grain.missing_keys == 0:
         return None
-    counted = "; those rows are not counted as patients" if visits else ""
+    if encounter:
+        counted = "; their encounters are counted"
+    else:
+        counted = "; those rows are not counted as patients" if visits else ""
     key = grain.key.replace(AMOUNT, "")
     return counted_note(
         f"Data check: {key} is missing on {AMOUNT} rows{counted}.",
@@ -159,10 +166,30 @@ def declared_patient_rows(layer: Any, grain: Grain, declarations: Declarations, 
     )
 
 
-def grain_hold_reason(key: str) -> str:
+def grain_hold_reason(key: str, encounter: str | None = None, nouns: tuple[str, ...] = ()) -> str:
+    """The hold for repeated patient IDs; with an encounter ID it also offers the encounter count,
+    naming only the nouns that column can count (``counting_unit.nouns_for``)."""
+    asked = " or ".join(nouns)
+    choice = f", or ask for {asked} to count each {encounter} once" if encounter is not None and nouns else ""
     return (
         f"Some IDs in {key} appear on more than one row, so a row may be a visit rather than a patient. "
-        f"Confirm that rows are visits to count each patient once."
+        f"Confirm that rows are visits to count each patient once{choice}."
+    )
+
+
+def missing_encounter_note(layer: Any, encounter: str) -> DataNote | None:
+    """The note for rows with no encounter ID when encounters are counted: they are not counted.
+    Its count's line is the dataset's rows."""
+    missing = int(layer.base_missing_count(encounter))
+    if missing == 0:
+        return None
+    rows = int(layer._base_count(None))
+    name = encounter.replace(AMOUNT, "")
+    return counted_note(
+        f"Data check: {name} is missing on {AMOUNT} rows; those rows are not counted.",
+        missing,
+        rows,
+        rows=[Condition("isnull", encounter)],
     )
 
 
@@ -363,23 +390,36 @@ def varies_refusal(column: str, counted: str) -> str:
     )
 
 
-def grouped_count_refusal(layer: Any, key: str, group: str) -> str | None:
-    """At visit grain, patients are counted once per group only if each has one group value."""
-    if group not in layer.get_base_view().columns:
-        return None
-    return varies_refusal(group, "group") if varies_within_patient(layer, key, group, nulls_are_values=True) else None
+def limits_varying(layer: Any, key: str, plan: QueryPlan) -> list[str]:
+    """The plan's limit columns (filters and cohort steps) whose value differs between rows of
+    one unit (distinct ``key``), in plan order: a limit on them picks rows, not units."""
+    columns = set(layer.get_base_view().columns)
+    limited: list[str] = []
+    for column in [*(f.column for f in plan.filters), *(s.column for s in plan.cohort_steps)]:
+        if column in columns and column != key and column not in limited:
+            limited.append(column)
+    return [c for c in limited if varies_within_patient(layer, key, c, nulls_are_values=True)]
 
 
-def share_refusal(layer: Any, key: str, plan: QueryPlan) -> str | None:
-    """At visit grain a share counts patients (distinct key per level), which is right only when
-    the outcome (and a rate's group) is one value per patient: died is a patient-level event, so
-    "25% of visits died" is never an answer."""
+def share_refusal(layer: Any, key: str, plan: QueryPlan, unit: str = "patient") -> str | None:
+    """At visit grain a share counts units (distinct ``key``: patients, or the encounters the
+    question asked for), each rolled up over its rows. When the outcome differs between a unit's
+    rows, the roll-up must come from the question ("ever", "always": ``plan.rollup``); without
+    one the question is refused with that plain choice, never guessed: "25% of visits died" and
+    "25% of patients ever screened" are different answers.
+
+    A grouping that differs between a unit's rows is answered: the unit is counted in each
+    group it has rows in, and the presentation says so (``result_presentation._overlap_sentence``).
+    """
     columns = set(layer.get_base_view().columns)
     outcome = plan.proportion_column or plan.rate_column
-    if outcome and outcome in columns and varies_within_patient(layer, key, outcome, nulls_are_values=False):
-        return varies_refusal(outcome, "value")
-    if plan.rate_column and plan.group_by and plan.group_by in columns:
-        return grouped_count_refusal(layer, key, plan.group_by)
+    if (
+        plan.rollup is None
+        and outcome
+        and outcome in columns
+        and varies_within_patient(layer, key, outcome, nulls_are_values=False)
+    ):
+        return rollup_choice(outcome, unit)
     return None
 
 

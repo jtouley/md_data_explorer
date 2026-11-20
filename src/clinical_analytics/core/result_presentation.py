@@ -341,9 +341,55 @@ def _unit(analysis: Mapping[str, Any]) -> str | None:
     return unit if unit in ("patients", "visits", "rows") else None
 
 
+def _units_word(analysis: Mapping[str, Any]) -> str | None:
+    """What n counts in words: the encounter noun the question used ("admissions", "tests"),
+    else ``_unit``."""
+    noun = analysis.get("unit_noun")
+    return f"{noun}s" if isinstance(noun, str) and noun else _unit(analysis)
+
+
+def _one(analysis: Mapping[str, Any]) -> str:
+    """One counted unit, in words: the encounter noun the question used ("admission"), else
+    patient or visit by the grain."""
+    noun = analysis.get("unit_noun")
+    if isinstance(noun, str) and noun:
+        return noun
+    return {"patients": "patient", "visits": "visit"}.get(_unit(analysis) or "", "unit")
+
+
+def _article(word: str) -> str:
+    return "An" if word[:1].lower() in "aeiou" else "A"
+
+
+def _overlap_sentence(analysis: Mapping[str, Any], group_col: str, total: Any) -> str:
+    """Why groups of distinct units add up to more than their total: a unit with rows in two
+    groups is counted in each (``SemanticLayer._grouped_count_sql``, ``_unit_share_sql``)."""
+    one = _one(analysis)
+    return (
+        f"{_article(one)} {one} with rows in more than one {group_col} is counted in each, so the {group_col} "
+        f"counts add up to more than {total}."
+    )
+
+
+_ROLLUP_SENTENCES: Final = {
+    "any": "{a} {one} counts as having {event} when at least one of its rows{scope} has it.",
+    "all": "{a} {one} counts as having {event} only when all of its rows{scope} that record it have it.",
+}
+
+
+def _rollup_sentence(analysis: Mapping[str, Any], event: str, group_col: str | None = None) -> str | None:
+    """How a share rolled each unit up over its rows ("ever" / "always"), or None. Grouped, a unit
+    is rolled up over its rows in each group (``SemanticLayer._unit_share_sql``), and says so."""
+    template = _ROLLUP_SENTENCES.get(str(analysis.get("rollup")))
+    if not template:
+        return None
+    scope = f" in that {group_col}" if group_col else ""
+    return template.format(a=_article(_one(analysis)), one=_one(analysis), event=event, scope=scope)
+
+
 def _counted(value: Any, analysis: Mapping[str, Any]) -> str:
-    """'n=377' or 'n=377 patients'."""
-    unit = _unit(analysis)
+    """'n=377', 'n=377 patients' or 'n=377 admissions'."""
+    unit = _units_word(analysis)
     return f"n={value} {unit}" if unit else f"n={value}"
 
 
@@ -1181,8 +1227,10 @@ def _present_count(analysis: Mapping[str, Any]) -> Presentation:
             # groups are not listed.
             return {"claim": _hidden_total_claim(analysis, total), "table": None, "shown": []}
         noun = "group" if len(rows) == 1 else "groups"
-        counted = f"{total} {_unit(analysis)}" if _unit(analysis) else f"{total} total"
+        counted = f"{total} {_units_word(analysis)}" if _units_word(analysis) else f"{total} total"
         claim = f"{counted} across {len(rows)} {group_col} {noun}." if total is not None else None
+        if claim is not None and analysis.get("overlapping"):
+            claim = f"{claim} {_overlap_sentence(analysis, str(group_col), total)}"
         # Folded by true size, before suppression: only groups of 1-10 patients, unless that pins one.
         counts = [row.get("count") for row in rows]
         masked = suppress_counts(counts)
@@ -1196,7 +1244,8 @@ def _present_count(analysis: Mapping[str, Any]) -> Presentation:
         return {"claim": claim, "table": table, "shown": counts_shown}
     if _total_hidden(analysis, total):
         return {"claim": _hidden_total_claim(analysis, total), "table": None, "shown": []}
-    unit = f" {_unit(analysis)}" if _unit(analysis) else ""
+    # What was counted, in the question's own noun for encounters ("admissions"), else the grain.
+    unit = f" {_units_word(analysis)}" if _units_word(analysis) else ""
     claim = f"Total count: {total}{unit}." if total is not None else None
     return {"claim": claim, "table": None, "shown": _count(total) if claim is not None else []}
 
@@ -1322,16 +1371,20 @@ def _present_proportion(analysis: Mapping[str, Any]) -> Presentation:
             [n_clause],
         )
     else:
-        noun = _unit(analysis) or "patients"
+        noun = _units_word(analysis) or "patients"
         population = f"{noun} who matched the limits" if analysis.get("limited") else noun
         claim = _with_details(f"{_percent(share)} of {population} had {event}", [n_clause])
+        rollup = _rollup_sentence(analysis, event)
+        if rollup:
+            claim += f". {rollup.removesuffix('.')}"
     row = {
         "proportion": SECONDARY_SUPPRESSED if withheld else share,
         "n": SECONDARY_SUPPRESSED if N_USED in hidden_n else n_used,
     }
     recorded = Condition("recorded", column)
     counts_shown = _n_counts(analysis, hidden_n, [recorded])
-    if not withheld:
+    if not withheld and analysis.get("rollup") != "all":
+        # Units with the value on every row ("always") are no set of rows meeting conditions.
         counts_shown += _count(analysis.get("events"), [Condition("event", column, analysis.get("value")), recorded])
     return {"claim": claim + ".", "table": _table([row]), "shown": counts_shown}
 
@@ -1362,7 +1415,7 @@ def _present_rate(analysis: Mapping[str, Any]) -> Presentation:
         if key not in hidden and key not in small_groups:
             cell = Condition("eq", group_col, g.get("group"))
             counts_shown += _count(n, [cell, recorded])
-            if not rate_hidden:
+            if not rate_hidden and analysis.get("rollup") != "all":
                 counts_shown += _count(events, [cell, Condition("event", column, analysis.get("value")), recorded])
         rows.append(
             {
@@ -1382,6 +1435,13 @@ def _present_rate(analysis: Mapping[str, Any]) -> Presentation:
             f" A rate is not shown when its n is hidden, or one of its counts is fewer than {_limit(None)} "
             "patients or was not recorded."
         )
+    rollup = _rollup_sentence(analysis, event, group_col)
+    if rollup:
+        claim += f" {rollup}"
+    if analysis.get("overlapping"):
+        n_used = analysis.get("n_used")
+        total = n_used if N_USED not in hidden and _is_count(n_used) else "the total"
+        claim += f" {_overlap_sentence(analysis, group_col, total)}"
     fold = {_group_label(group_col, g.get("group")) for g in groups if str(g.get("group")) in small_groups}
     return {"claim": claim, "table": _fold_rows(_table(rows), fold, small_groups.label), "shown": counts_shown}
 
@@ -1455,7 +1515,7 @@ def _hidden_total_claim(analysis: Mapping[str, Any], total: Any) -> str:
     # covers "total small" and "filtered-out rows small", so the claim does not say which.
     if _filtered_out(analysis) != 0:
         return "Total count hidden."
-    unit = f" {_unit(analysis)}" if _unit(analysis) else ""
+    unit = f" {_units_word(analysis)}" if _units_word(analysis) else ""
     return f"Total count: {suppress_count(total)}{unit}."
 
 

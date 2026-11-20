@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from clinical_analytics.core.column_parser import parse_column_name
+from clinical_analytics.core.counting_unit import read_units, singular
 from clinical_analytics.core.query_plan import STATISTIC_WORDS, CohortStep, Statistic
 from clinical_analytics.core.question_vocabulary import (
     DERIVED_ADJECTIVE_SUFFIXES,
@@ -66,6 +67,9 @@ _COMPARE_SPLIT = re.compile(
 _BY_GROUP = re.compile(r"\bby\s+(?P<group>[a-z0-9 :]+?)\s*[?.]?$", re.IGNORECASE)
 # "in each site", "per site": the same grouping as "by site".
 _EACH_GROUP = re.compile(r"\b(?:each|per)\s+(?P<group>[a-z0-9 :]+?)\s*[?.]?$", re.IGNORECASE)
+# A share's grouping: "by <group>", "each <group>", "per <group>" up to the end of a clause
+# ("what share were positive each year?", "what share had a vaccine, by pathogen? keep ...").
+_SHARE_GROUP = re.compile(r"\b(?:by|each|per)\s+(?P<group>[a-z0-9_ :]+?)\s*(?:[?.,;]|$)", re.IGNORECASE)
 # Words that end the measure named after a statistic word and start a limit or a grouping.
 _METRIC_END = re.compile(
     r"\b(?:in|for|who|with|on|among|by|within|of|from|at|over|under|above|below|aged|older|younger|between|"
@@ -350,6 +354,8 @@ def peel_cohort(
         bound_columns.add(column)
     if len(numerators) == 1:
         proportion_column, proportion_value = numerators[0]
+    limited = {step.column for _phase, step in steps} | ({proportion_column} if proportion_column else set())
+    share_group = _share_group(lowered, columns, limited) if proportion_column else None
 
     locked_metric = None
     locked_group = None
@@ -375,6 +381,10 @@ def peel_cohort(
         if group:
             locked_group = group
         force_intent = "COMPARE_GROUPS"
+    elif share_group is not None:
+        # A share asked by a group is a rate per group (QueryPlan.__post_init__); dropping the
+        # grouping would answer one overall share for a question about each group.
+        locked_group = share_group
     elif _EACH_GROUP.search(lowered) and not rating:
         each = _EACH_GROUP.search(lowered)
         locked_group = _best_column(columns, _tokens(each.group("group"))) if each else None
@@ -497,7 +507,7 @@ def unapplied_constraints(
     if _MEDIAN_CUT.search(text) and not any(step.op == "gt_median" for step in steps):
         gaps.append("median cutoff")
 
-    tokens = _tokens(text)
+    tokens = _tokens(text) - _counting_words(text, plan)
     if columns and not comparing:
         # Sex is applied by grouping on it or by counting a share/rate of it, not only by a step.
         grouped = any(
@@ -536,11 +546,27 @@ def unapplied_constraints(
     return gaps
 
 
+def _counting_words(text: str, plan: Any) -> set[str]:
+    """Words the plan uses to say what it counts (``core.counting_unit``): the unit noun when it
+    counts a key the question named ("admissions": distinct encounter_id), and the roll-up
+    phrase when it carries one ("ever"). They limit nothing, so they are no gap."""
+    if plan is None or not (getattr(plan, "entity_key", None) or getattr(plan, "rollup", None)):
+        return set()
+    words = read_units(text)
+    found: set[str] = set()
+    if getattr(plan, "entity_key", None) and words.noun:
+        found |= {words.noun, singular(words.noun)}
+    if getattr(plan, "rollup", None):
+        for phrase in words.rollup_phrases:
+            found |= _tokens(phrase)
+    return found
+
+
 def _plan_columns(plan: Any, steps: list[CohortStep]) -> set[str]:
     used = {step.column for step in steps}
     if plan is None:
         return used
-    for attr in ("metric", "group_by", "proportion_column", "rate_column"):
+    for attr in ("metric", "group_by", "proportion_column", "rate_column", "entity_key"):
         current = getattr(plan, attr, None)
         if current:
             used.add(str(current))
@@ -930,6 +956,22 @@ def _ranked(columns: list[str], tokens: set[str]) -> list[tuple[str, int]]:
     scored = [(column, _score(column, tokens)) for column in columns]
     scored.sort(key=lambda item: -item[1])
     return scored
+
+
+def _share_group(lowered: str, columns: list[str], bound: set[str]) -> str | None:
+    """The column a share is asked by (the last "by/each/per <words>" whose every word names one
+    column that is not a limit or the share's own column), or None."""
+    for match in reversed(list(_SHARE_GROUP.finditer(lowered))):
+        phrase = match.group("group")
+        if re.search(r"\d", phrase):
+            continue  # "by day 30" is a time, not a grouping
+        words = _tokens(phrase)
+        group = _best_column([c for c in columns if c not in bound], words)
+        # Every word of the phrase names the column ("region of birth" -> birth_region), so a
+        # phrase that only shares a word with one ("by day" -> day_of_week) is never a grouping.
+        if group is not None and words <= _tokens(group):
+            return group
+    return None
 
 
 def _best_column(columns: list[str], tokens: set[str]) -> str | None:
