@@ -34,6 +34,7 @@ publisher already suppressed below its own threshold.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias
 
@@ -152,17 +153,30 @@ def find_leaks(question: dict[str, Any], oracle: OracleAnswer, presentation: dic
     return leaks
 
 
+def _missing_rows(missing: list[str], shown: Mapping[str, object]) -> str:
+    """Every expected row the table lacks, in sorted order, with what it shows instead."""
+    named = f"row '{missing[0]}'" if len(missing) == 1 else f"rows {missing}"
+    return f"{named} missing (shown {sorted(shown)[:6]})"
+
+
 def _grade_grouped(question: dict[str, Any], oracle: OracleAnswer, shown: Any) -> tuple[Grade, str]:
     if not isinstance(shown, dict):
         return "WRONG", f"expected a table by {question.get('group_by')}, got {_kind_of(shown)}"
     kind, group_by = question["kind"], question.get("group_by")
     expected = {_label(group_by, key): (key, value) for key, value in oracle.value.items()}
+    # Sorted, and every missing row named: an oracle's group_by order changes from run to run, so
+    # "the first missing row" would name a different group each run for the same answer.
+    missing = sorted(
+        label
+        for label, (key, value) in expected.items()
+        if label not in shown and not (value is None or _small_group(oracle, key, kind))
+    )  # a row with no value to show, or folded into "Other", may be absent
+    if missing:
+        return "WRONG", _missing_rows(missing, shown)
     matched = 0
-    for label, (key, value) in expected.items():
+    for label, (key, value) in sorted(expected.items()):
         if label not in shown:
-            if value is None or _small_group(oracle, key, kind):
-                continue  # no value to show, or folded into "Other"
-            return "WRONG", f"row '{label}' missing"
+            continue
         if shown[label] == HIDDEN:
             continue  # hidden: required for a small cell, allowed as a secondary suppression
         if value is None:
@@ -282,12 +296,13 @@ def _grade_population(
     percent_ok = oracle.unit == "proportion"
     group_by = question.get("group_by")
     expected = {_label(group_by, key): value for key, value in oracle.value.items()}
+    missing = sorted(label for label, value in expected.items() if label not in rows and value is not None)
+    if missing:
+        return "WRONG", _missing_rows(missing, rows)
     matched = 0
-    for label, value in expected.items():
+    for label, value in sorted(expected.items()):
         if label not in rows:
-            if value is None:
-                continue
-            return "WRONG", f"row '{label}' missing"
+            continue
         shown = rows[label]
         if value is None:
             if shown:

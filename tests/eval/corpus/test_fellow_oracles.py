@@ -6,11 +6,13 @@ Hand-written synthetic extracts, small enough to check every expected value by h
 from __future__ import annotations
 
 import math
+import random
 
 import pytest
 
 from clinical_analytics.eval.corpus.run import load_oracles, load_questions, load_scenario
 from clinical_analytics.eval.corpus.scenario import split
+from clinical_analytics.eval.corpus.score import ApiOutcome, score
 from clinical_analytics.eval.corpus.synthetic_hospital import EXTRACTS, generate
 
 CDIFF = "patient_id,encounter_id,test_date,test_year,age_years,sex,cdiff_result,outpatient_abx_90d,ppi_use"
@@ -240,6 +242,75 @@ class TestMeasles:
         # Assert
         assert "AU/mL" in (answers["fellow_measles-no-immunity-by-group-04"].oracle_error or "")
         assert answers["fellow_measles-checked-by-group-01"].oracle_error is None
+
+
+# Four risk groups of 12 patients (above the small-cell bound), one IgG each in mIU/mL:
+# 100 + 200 * group + 10 * patient, so the medians are 155, 355, 555 and 755.
+MEASLES_FOUR_GROUPS = [
+    f"P{g}_{v},M{g}_{v},2024-01-{v + 1:02d},{group},30,0,{100 + 200 * g + 10 * v},mIU/mL"
+    for g, group in enumerate(("Childcare worker", "Healthcare worker", "International traveler", "Pregnant"))
+    for v in range(12)
+]
+MEDIAN_IGG_QUESTION = {
+    "id": "fellow_measles-median-igg-by-group-03",
+    "kind": "median_by",
+    "group_by": "risk_group",
+    "expect": "answer",
+}
+UNGROUPED_MEDIAN_ANSWER = ApiOutcome(
+    "completed",
+    presentation={
+        "claim": "Median measles_igg was 916.00 (n=477 visits).",
+        "table": {
+            "columns": ["variable", "n", "mean", "median", "std", "min", "max"],
+            "rows": [
+                {
+                    "variable": "measles_igg",
+                    "n": 477,
+                    "mean": 987.97,
+                    "median": 916.0,
+                    "std": 770.49,
+                    "min": 6.0,
+                    "max": 2470.0,
+                }
+            ],
+        },
+    },
+)
+
+
+class TestMeaslesMedianGrading:
+    def test_medianIggUngroupedAnswer_shuffledRows_sameWrongReasonEveryRun(self, write_extract, fellow_oracles):
+        # Arrange: the same extract in many row orders; each oracle run may return groups in any order.
+        paths = []
+        for seed in range(12):
+            rows = MEASLES_FOUR_GROUPS.copy()
+            random.Random(seed).shuffle(rows)
+            paths.append(write_extract(MEASLES, rows))
+
+        # Act
+        answers = [fellow_oracles.answers(p, "fellow_measles")["fellow_measles-median-igg-by-group-03"] for p in paths]
+        scored = [score(MEDIAN_IGG_QUESTION, answer, UNGROUPED_MEDIAN_ANSWER) for answer in answers]
+
+        # Assert
+        assert {answer.oracle_error for answer in answers} == {None}
+        assert all(
+            answer.value
+            == {
+                "Childcare worker": 155.0,
+                "Healthcare worker": 355.0,
+                "International traveler": 555.0,
+                "Pregnant": 755.0,
+            }
+            for answer in answers
+        )
+        assert {(s.grade, s.reason) for s in scored} == {
+            (
+                "WRONG",
+                "rows ['Childcare worker', 'Healthcare worker', 'International traveler', 'Pregnant'] missing"
+                " (shown ['max', 'mean', 'median', 'min', 'std'])",
+            )
+        }
 
 
 @pytest.mark.slow

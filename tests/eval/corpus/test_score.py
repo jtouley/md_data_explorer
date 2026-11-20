@@ -5,6 +5,7 @@ Synthetic answers only; the numbers below are made up.
 
 from __future__ import annotations
 
+import itertools
 from typing import Any
 
 import pytest
@@ -158,6 +159,95 @@ class TestScoreRates:
         # Assert
         assert scored.grade == expected_grade
         assert scored.leak is expected_leak
+
+
+GROUPS = ("Childcare worker", "Healthcare worker", "International traveler", "Pregnant")
+MEDIAN_BY_GROUP = {"id": "q-median", "kind": "median_by", "group_by": "risk_group", "expect": "answer"}
+VALUE_BY_GROUP = {"id": "q-value", "kind": "value_by", "group_by": "risk_group", "expect": "answer"}
+# The ungrouped answer the app gave the measles median question: one overall row, no groups.
+UNGROUPED_MEDIAN = {
+    "claim": "Median measles_igg was 916.00 (n=477 visits).",
+    "table": {
+        "columns": ["variable", "n", "mean", "median", "std", "min", "max"],
+        "rows": [
+            {
+                "variable": "measles_igg",
+                "n": 477,
+                "mean": 987.97,
+                "median": 916.0,
+                "std": 770.49,
+                "min": 6.0,
+                "max": 2470.0,
+            }
+        ],
+    },
+}
+
+
+def _oracle_in_order(order: tuple[str, ...], unit: str) -> OracleAnswer:
+    """The same oracle answer with its groups inserted in ``order`` (group_by output order varies)."""
+    values = {
+        "Childcare worker": 410.0,
+        "Healthcare worker": 980.0,
+        "International traveler": 620.0,
+        "Pregnant": 1150.0,
+    }
+    return OracleAnswer({g: values[g] for g in order}, unit, {(g,): 100 for g in order})
+
+
+class TestScoreGroupOrder:
+    @pytest.mark.parametrize(
+        ("question", "unit", "shown"),
+        [
+            pytest.param(
+                MEDIAN_BY_GROUP, "median measles_igg", "['max', 'mean', 'median', 'min', 'std']", id="median_by"
+            ),
+            pytest.param(VALUE_BY_GROUP, "mIU/mL", "['measles_igg']", id="value_by"),
+        ],
+    )
+    def test_score_ungroupedAnswerAnyOracleOrder_sameReasonNamingEveryGroup(self, question, unit, shown):
+        # Arrange: every order a group_by can return the four groups in.
+        oracles = [_oracle_in_order(order, unit) for order in itertools.permutations(GROUPS)]
+
+        # Act
+        reasons = {score(question, oracle, _done(UNGROUPED_MEDIAN)).reason for oracle in oracles}
+        grades = {score(question, oracle, _done(UNGROUPED_MEDIAN)).grade for oracle in oracles}
+
+        # Assert
+        assert grades == {"WRONG"}
+        assert reasons == {f"rows {list(GROUPS)} missing (shown {shown})"}
+
+    def test_score_oneGroupMissingAnyOracleOrder_namesThatGroup(self, make_count_table):
+        # Arrange
+        presentation = make_count_table(
+            "risk_group", [("Childcare worker", 410.0), ("Healthcare worker", 980.0), ("Pregnant", 1150.0)], "median"
+        )
+        oracles = [_oracle_in_order(order, "median measles_igg") for order in itertools.permutations(GROUPS)]
+
+        # Act
+        reasons = {score(MEDIAN_BY_GROUP, oracle, _done(presentation)).reason for oracle in oracles}
+
+        # Assert
+        assert reasons == {
+            "row 'International traveler' missing (shown ['Childcare worker', 'Healthcare worker', 'Pregnant'])"
+        }
+
+    def test_score_twoValuesDifferAnyOracleOrder_sameFirstDifferenceReported(self, make_count_table):
+        # Arrange
+        rows = [
+            ("Childcare worker", 1.0),
+            ("Healthcare worker", 980.0),
+            ("International traveler", 620.0),
+            ("Pregnant", 2.0),
+        ]
+        presentation = make_count_table("risk_group", rows, "median")
+        oracles = [_oracle_in_order(order, "median measles_igg") for order in itertools.permutations(GROUPS)]
+
+        # Act
+        reasons = {score(MEDIAN_BY_GROUP, oracle, _done(presentation)).reason for oracle in oracles}
+
+        # Assert
+        assert reasons == {"'Childcare worker': shown 1.0, expected 410.0"}
 
 
 class TestScoreStatistics:
