@@ -275,7 +275,10 @@ class _CountingUnit:
     """What the question counts, read from its words (``core.counting_unit``).
 
     ``plan``: the plan with ``entity_key`` (the patient or encounter key the question names) and
-    ``rollup`` set; ``named``: the question named its unit, so the grain is not asked about;
+    ``rollup`` set; ``named``: the question named an encounter it counts by its own ID, so the
+    patient grain is not asked about. "patients" is never ``named``: a patient ID on more than one
+    row may be visits of one patient or rows of different people sharing an ID (a data error), and
+    only the doctor can say which, so the grain hold stays until rows are declared visits;
     ``refusal``: the words ask for something that cannot be counted right on this data;
     ``candidate``: the encounter ID a held question can offer to count instead.
     """
@@ -1082,13 +1085,6 @@ class QueryService:
                     findings.notes.append(_plain_note(counting_unit.same_row_note(varying, noun)))
             if findings.refusal:
                 return findings
-            if unit.named and plan.entity_key == grain.key:
-                findings.notes.append(
-                    _plain_note(
-                        f"Data check: some IDs in {grain.key} appear on more than one row; "
-                        f"each {grain.key} is counted once."
-                    )
-                )
         if unit.encounter_key:
             encounter_note = answer_checks.missing_encounter_note(layer, unit.encounter_key)
             if encounter_note:
@@ -1144,7 +1140,7 @@ class QueryService:
         rollup = words.rollup if share or words.rollup == "any" else None
         if words.unit == "patients":
             named = dataclasses.replace(plan, entity_key=grain.key, rollup=rollup)
-            return _CountingUnit(plan=named, words=words, named=True, candidate=offered)
+            return _CountingUnit(plan=named, words=words, candidate=offered)
         if words.unit == "encounters" and words.noun is not None:
             chosen = counting_unit.pick_encounter_key(candidates, words.noun)
             if chosen is None:

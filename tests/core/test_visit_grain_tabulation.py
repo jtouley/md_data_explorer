@@ -98,9 +98,12 @@ def _admissions_frame(legionella_patients: int = 3) -> pl.DataFrame:
     return pl.DataFrame(rows, schema={c: pl.String for c in ("patient_id", "encounter_id", "pathogen")})
 
 
-def _ask(service: QueryService, question: str, plan: QueryPlan) -> Any:
+def _ask(service: QueryService, question: str, plan: QueryPlan, confirm_grain: bool = True) -> Any:
     """Ask ``question`` with the parse fixed to ``plan`` (the parser is not under test here) and
-    word accounting passed; the counted unit is still read from the question's own words."""
+    word accounting passed; the counted unit is still read from the question's own words.
+
+    ``confirm_grain``: a question held only for the patient grain ("Confirm that rows are
+    visits") is confirmed once, as the doctor would, so rows are declared visits."""
     intent = SimpleNamespace(
         confidence=0.99,
         intent_type=plan.intent,
@@ -114,7 +117,11 @@ def _ask(service: QueryService, question: str, plan: QueryPlan) -> Any:
     service.nl_engine.parse_query = lambda *args, **kwargs: intent  # type: ignore[method-assign]
     service.nl_engine._intent_to_plan = lambda *args: plan  # type: ignore[method-assign]
     service._accounting_hold_reason = lambda *args: None  # type: ignore[method-assign]
-    return service.ask(question, dataset_id="visits")
+    result = service.ask(question, dataset_id="visits")
+    grain_hold = "Confirm that rows are visits to count each patient once"
+    if confirm_grain and result.requires_confirmation and grain_hold in (result.failure_reason or ""):
+        result = service.ask(question, dataset_id="visits", confirmed=True, confirm_plan_hash=result.plan_hash)
+    return result
 
 
 def _table(result: Any) -> dict[str, Any]:
@@ -177,7 +184,10 @@ class TestPatientsPerGroup:
 
         # Act: "how many were there" says neither patients nor tests
         result = _ask(
-            service, "how many were there each year?", QueryPlan(intent="COUNT", group_by="test_year", confidence=0.99)
+            service,
+            "how many were there each year?",
+            QueryPlan(intent="COUNT", group_by="test_year", confidence=0.99),
+            confirm_grain=False,
         )
 
         # Assert: asked once, offering both readings, never guessed
@@ -701,7 +711,7 @@ class TestSameVisitSemantics:
         service = QueryService(make_semantic_layer(data=_tests_frame()))
 
         # Act
-        result = _ask(service, "how many tested positive each year?", _positive_by_year())
+        result = _ask(service, "how many tested positive each year?", _positive_by_year(), confirm_grain=False)
 
         # Assert: only the grain is asked, never guessed
         assert result.claim is None and result.requires_confirmation
@@ -756,7 +766,7 @@ class TestReviewRegressions:
         plan = QueryPlan(intent="COUNT", cohort_steps=[CohortStep("eq", "flag", "yes")], confidence=0.99)
 
         # Act
-        result = _ask(service, "how many were flagged?", plan)
+        result = _ask(service, "how many were flagged?", plan, confirm_grain=False)
 
         # Assert: held for the grain, with no route that would then be refused
         assert result.requires_confirmation
@@ -821,3 +831,27 @@ class TestReviewRegressions:
         assert _table(result) == {display_level("year", 2021): 1.0, display_level("year", 2022): 0.5}
         assert "only when all of its rows in that year that record it have it" in result.claim
         assert "so the year counts add up to more than 60." in result.claim
+
+    @pytest.mark.parametrize(
+        "question",
+        [
+            pytest.param("how many patients are there?", id="count"),
+            pytest.param("how many patients ever tested positive each year?", id="grouped"),
+        ],
+    )
+    def test_ask_patientsNamedOnRepeatedIds_heldUntilRowsAreDeclaredVisits(
+        self, make_semantic_layer: Any, question: str
+    ) -> None:
+        # Arrange: a repeated ID may be visits of one patient or different people sharing an ID;
+        # only the doctor can say which
+        frame = _tests_frame()
+        service = QueryService(make_semantic_layer(data=frame))
+
+        # Act
+        held = _ask(service, question, _positive_by_year(), confirm_grain=False)
+        confirmed = _ask(service, question, _positive_by_year())
+
+        # Assert: held first, then answered in distinct patients once confirmed
+        assert held.requires_confirmation and held.claim is None
+        assert "Confirm that rows are visits to count each patient once" in held.failure_reason
+        assert confirmed.claim.startswith("45 patients across 2 test_year groups.")
