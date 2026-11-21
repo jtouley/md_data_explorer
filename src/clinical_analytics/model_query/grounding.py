@@ -39,7 +39,9 @@ from sqlglot.errors import SqlglotError
 from clinical_analytics.model_query.context import ColumnInfo, DatasetContext
 from clinical_analytics.sql.render import render
 
-DoubtKind = Literal["limit", "no_group", "missing_group", "dropped", "unlinked", "uncovered", "ambiguous"]
+DoubtKind = Literal[
+    "limit", "no_group", "missing_group", "dropped", "unlinked", "uncovered", "ambiguous", "share_as_count"
+]
 
 # The words a choice adds to the question it re-asks (matched case-insensitively).
 NO_LIMIT_PHRASE: Final = "Do not limit it by {column}."

@@ -336,3 +336,27 @@ def test_check_initialAndNameNamingTheTable_isNotALimit(make_query_table, questi
 def test_head_noun_nounAfterAPreposition_isNotTheCountedUnit(question):
     # Act / Assert: "on record", "at each visit" say where, not what is counted
     assert head_noun(question) is None
+
+
+def test_answer_question_shareAskedButCountedWhereAFlagHolds_isFedBackThenAsked(ask_clinic):
+    # Arrange: "what share had shots, by year" answered twice as counts of visits with shots
+    reply = _plan("count", where="shots = 'yes'", group_by="visit_year")
+
+    # Act
+    answer, prompts = ask_clinic("What share of patients had shots, by year?", reply, reply)
+
+    # Assert
+    assert "The question asks for a share" in prompts[1]
+    assert answer.status == "clarify"
+    assert [label for label, _q in answer.choices] == ["The share with shots = 'yes'", "Counts, not a share"]
+
+
+def test_answer_question_countsChosen_areAnswered(ask_clinic):
+    # Act
+    answer, _prompts = ask_clinic(
+        "What share of patients had shots, by year? Give counts, not a share.",
+        _plan("count", where="shots = 'yes'", group_by="visit_year"),
+    )
+
+    # Assert
+    assert answer.status == "answered", answer.reason

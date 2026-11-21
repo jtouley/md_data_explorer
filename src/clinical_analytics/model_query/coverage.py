@@ -52,7 +52,7 @@ _CHOICE_WORDS = re.compile(
     r"do not limit it by [\w ,]+\.|give one overall number\.|break it down by \w+\.|only where [^.]*\.|"
     r"count a missing value as (?:not )?meeting it\.|leave out rows with a missing value\.|"
     r"count one (?:when|only when) it was (?:ever|always) true[^.]*\.|use one value per patient[^.]*\.|"
-    r"count every visit\.|use \w+\.",
+    r"count every visit\.|use \w+\.|give counts, not a share\.|count [^.]* as the share's numerator\.",
     re.IGNORECASE,
 )
 

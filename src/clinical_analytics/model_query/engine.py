@@ -14,6 +14,7 @@ reached, or when no attempt produced a query that runs.
 from __future__ import annotations
 
 import dataclasses
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal
@@ -58,6 +59,7 @@ from clinical_analytics.model_query.plan import (
     parse_reply,
     reply_schema,
     unused_mentions,
+    yes_no_of,
 )
 from clinical_analytics.model_query.prompt import system_prompt, user_prompt
 from clinical_analytics.model_query.units import UnitError
@@ -234,6 +236,38 @@ def _measure_doubt(question: str, compiled: Compiled | TestCall, context: Datase
     return None
 
 
+_SHARE_WORDS: Final = re.compile(r"\b(?:share|proportion|percent|percentage|fraction|rate)\b|%", re.IGNORECASE)
+_COUNTS_CHOSEN: Final = re.compile(r"\bgive counts, not a share\b", re.IGNORECASE)
+
+
+def _share_as_count(question: str, compiled: Compiled | TestCall, context: DatasetContext) -> Doubt | None:
+    """A question that asks for a share answered as a count whose where tests a yes/no column:
+    the yes/no condition was most likely the share's numerator."""
+    if not isinstance(compiled, Compiled) or compiled.kind != "count" or _COUNTS_CHOSEN.search(question):
+        return None
+    if not _SHARE_WORDS.search(question):
+        return None
+    for term in compiled.conditions:
+        names = {c.name for c in term.find_all(exp.Column)}
+        flags = [c for name in names if (c := context.column(name)) is not None and yes_no_of(c)]
+        if flags:
+            plain = " ".join(term.sql(dialect="duckdb").replace('"', "").split())
+            return Doubt(
+                "share_as_count",
+                feedback=(
+                    f"The question asks for a share, but the reply counts rows where {plain}. If the question asks "
+                    f"what share has {plain}, answer share with numerator {plain} and keep only the population "
+                    "in where."
+                ),
+                reason=f"The question asks for a share, but I read it as counts where {plain}. Which did you mean?",
+                choices=(
+                    (f"The share with {plain}", f"Count {plain} as the share's numerator."),
+                    ("Counts, not a share", "Give counts, not a share."),
+                ),
+            )
+    return None
+
+
 def _doubts(
     question: str,
     compiled: Compiled | TestCall,
@@ -243,10 +277,13 @@ def _doubts(
 ) -> list[Doubt]:
     _excluded, one_number = user_choices(question)
     dropped = dropped_number(question, compiled.sql)
+    share_count = _share_as_count(question, compiled, context)
+    extra = [d for d in (dropped, share_count) if d is not None]
+
     covered = _coverage_doubts(question, compiled, context, reply)
     if isinstance(compiled, TestCall):
         found = find_doubts(question, context, conditions=compiled.conditions, group_column=None, tabulation=False)
-        return found + ([dropped] if dropped is not None else []) + covered
+        return found + extra + covered
     found = find_doubts(
         question,
         context,
@@ -256,7 +293,7 @@ def _doubts(
         tabulation=not one_number,
         kept_group=kept_group,
     )
-    return found + ([dropped] if dropped is not None else []) + covered
+    return found + extra + covered
 
 
 # What the user is asked about first when several doubts remain: a concept the plan does not

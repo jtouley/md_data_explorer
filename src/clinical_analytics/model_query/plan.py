@@ -228,7 +228,7 @@ _LABEL_WORDS: Final = {
 }  # fmt: skip
 
 
-def _yes_no_of(column: ColumnInfo) -> dict[bool, Any]:
+def yes_no_of(column: ColumnInfo) -> dict[bool, Any]:
     """{True: the stored yes value, False: the stored no value}, from the values or, for a coded
     column (0/1, 1/2), from the dictionary's labels."""
     if column.values is None:
@@ -274,7 +274,7 @@ def _fixed_literal(column: ColumnInfo, literal: exp.Expr) -> exp.Expr:
         coded = column.code_for(wanted) if wanted else None
         if coded is not None:
             return _value_literal(coded)
-    yes_no = _yes_no_of(column)
+    yes_no = yes_no_of(column)
     if yes_no and text.casefold() in _YES | _NO:
         return _value_literal(yes_no[text.casefold() in _YES])
     # An abbreviation of exactly one value ('M' for 'male', 'F' for 'female').
@@ -317,7 +317,7 @@ def fix_literals(tree: exp.Expr, context: DatasetContext) -> exp.Expr:
         elif isinstance(node, exp.Column) and isinstance(node.parent, exp.And | exp.Or | exp.Not | exp.Where):
             # A bare yes/no column used as a condition (WHERE diabetic): compare it with its yes.
             column = spec(node)
-            yes_no = _yes_no_of(column) if column is not None else {}
+            yes_no = yes_no_of(column) if column is not None else {}
             if yes_no:
                 return exp.EQ(this=node.copy(), expression=_value_literal(yes_no[True]))
         return node
@@ -334,7 +334,7 @@ def _is_predicate(tree: exp.Expr) -> bool:
 
 def _yes_condition(column: ColumnInfo | None) -> exp.Expr | None:
     """``column = <its yes value>`` for a yes/no column, else None."""
-    yes_no = _yes_no_of(column) if column is not None else {}
+    yes_no = yes_no_of(column) if column is not None else {}
     if not yes_no or column is None:
         return None
     return exp.EQ(this=exp.column(column.name, quoted=True), expression=_value_literal(yes_no[True]))
