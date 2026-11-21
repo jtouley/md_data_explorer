@@ -46,7 +46,7 @@ class _LocalServer:
     recorder: _Recorder
 
 
-def _serve(handler_body: bytes, status: int) -> Iterator[_LocalServer]:
+def _serve(handler_body: bytes, status: int, location: str | None = None) -> Iterator[_LocalServer]:
     recorder = _Recorder()
 
     class Handler(BaseHTTPRequestHandler):
@@ -57,6 +57,8 @@ def _serve(handler_body: bytes, status: int) -> Iterator[_LocalServer]:
                 self.rfile.read(length)
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
+            if location is not None:
+                self.send_header("Location", location)
             self.send_header("Content-Length", str(len(handler_body)))
             self.end_headers()
             self.wfile.write(handler_body)
@@ -153,17 +155,32 @@ class TestModelCallsIgnoreProxy:
         assert recording_proxy.recorder.lines == []
         assert len(fake_ollama.recorder.lines) == 2
 
-    def test_model_http_session_redirect_isNotFollowed(self, recording_proxy):
+    @pytest.mark.parametrize("allow_redirects", [False, True])
+    def test_model_http_session_redirect_raisesAndIsNotFollowed(self, recording_proxy, allow_redirects):
         # Arrange: a "model server" that redirects; the redirect target must never be contacted
-        redirect_body = b"{}"
-        for redirecting in _serve(redirect_body, 307):
+        import requests
+
+        for target in _serve(b"{}", 200):
+            for redirecting in _serve(b"{}", 307, location=f"{target.url}/elsewhere"):
+                # Act / Assert: a 3xx is an error (a RequestException every caller handles)
+                with model_http_session() as session, pytest.raises(requests.TooManyRedirects):
+                    session.get(f"{redirecting.url}/api/tags", timeout=5.0, allow_redirects=allow_redirects)
+                assert redirecting.recorder.lines == ["GET /api/tags HTTP/1.1"]
+                assert target.recorder.lines == []
+                assert recording_proxy.recorder.lines == []
+
+    def test_ollama_client_generate_redirectingServer_returnsNone(self, recording_proxy):
+        # Arrange
+        from clinical_analytics.core.llm_client import OllamaClient
+
+        for redirecting in _serve(b"{}", 307, location="http://127.0.0.1:9/elsewhere"):
+            client = OllamaClient(model=FAKE_MODEL, base_url=redirecting.url, timeout=5.0)
+
             # Act
-            with model_http_session() as session:
-                response = session.get(f"{redirecting.url}/api/tags", timeout=5.0, allow_redirects=False)
+            reply = client.generate("synthetic question")
 
             # Assert
-            assert response.status_code == 307
-            assert redirecting.recorder.lines == ["GET /api/tags HTTP/1.1"]
+            assert reply is None
             assert recording_proxy.recorder.lines == []
 
     def test_model_http_session_trustEnv_isOff(self):
@@ -173,6 +190,7 @@ class TestModelCallsIgnoreProxy:
         # Assert: trust_env=False also turns off the OS proxy settings requests reads on Windows/macOS
         assert session.trust_env is False
         assert session.proxies == {}
+        assert session.max_redirects == 0
 
 
 class TestIsLoopbackUrl:
@@ -215,6 +233,18 @@ class TestIsLoopbackUrl:
             "http://[::]:11434",
             "http://127.0.0.1:notaport",
             "http://[::1",
+            # parser differentials (urllib vs urllib3 read different hosts): refused outright
+            "http://127.0.0.1:11434\\@evil.example.test/",
+            "http://127.0.0.1#@evil.example.test",
+            "http://127.0.0.1?@evil.example.test",
+            "http://user@127.0.0.1:11434",
+            "http://localhost%2e:11434",
+            " http://127.0.0.1:11434",
+            "http://127.0.0.1:11434\n",
+            "http://127.0.0.1\t:11434",
+            "http://127.0.0.1.:11434",
+            "http://2130706433:11434",
+            "http://0x7f.1:11434",
         ],
     )
     def test_is_loopback_url_remoteOrMalformed_returnsFalse(self, url):
@@ -231,6 +261,15 @@ class TestIsLoopbackUrl:
         # Act / Assert
         with pytest.raises(NonLoopbackURLError, match="ollama_allow_remote_host"):
             require_loopback_url(url, allow_remote=False)
+
+    @pytest.mark.parametrize("opt_in", ["true", 1, "yes", object()])
+    def test_require_loopback_url_truthyNonBoolOptIn_stillRefused(self, opt_in):
+        # Arrange
+        url = "http://10.0.0.5:11434"
+
+        # Act / Assert
+        with pytest.raises(NonLoopbackURLError):
+            require_loopback_url(url, allow_remote=opt_in)  # type: ignore[arg-type]
 
     def test_require_loopback_url_remoteWithOptIn_returnsUrl(self):
         # Arrange

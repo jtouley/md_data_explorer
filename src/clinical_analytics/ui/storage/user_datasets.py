@@ -28,6 +28,7 @@ import functools
 import hashlib
 import io
 import json
+import os
 import threading
 import uuid
 import zipfile
@@ -99,6 +100,7 @@ COHORT_BUILD_KEY: Final = "cohort_build"  # multi-table: tables left out of the 
 LEGACY_UNTYPED_KEY: Final = "legacy_tables_untyped"  # legacy tables kept as old Parquet (no CSV)
 BASE_ACTIVE_VERSION_KEY: Final = "_base_active_version"  # active version when a save started
 PARQUET_DIRNAME: Final = "parquet"
+DATA_FILE_MODE: Final = 0o600  # typed Parquet holds patient rows: owner read/write only
 COHORT_FILE_STEM: Final = "_cohort"  # {upload_id}__cohort_{version}: no sanitized table name starts with "_"
 PARQUET_COMPRESSION: Final = "zstd"
 
@@ -115,6 +117,10 @@ class SecurityError(Exception):
     """Security-related error (path traversal, symlinks, etc.)."""
 
     pass
+
+
+class StoredPathError(SecurityError):
+    """A file path read from upload metadata points outside the data directory; it is not opened."""
 
 
 class UploadError(Exception):
@@ -1272,10 +1278,40 @@ def _parquet_dir(storage: "UserDatasetStorage") -> Path:
     return storage.upload_dir.parent / PARQUET_DIRNAME
 
 
+def checked_upload_id(upload_id: str) -> str:
+    """``upload_id`` if it is a plain identifier (``DATASET_ID_PATTERN``), the only form that may
+    name a file: every metadata, raw and Parquet path is built from an id checked here.
+
+    Raises:
+        InvalidDatasetIdError: ``../x``, ``a/b``, an empty id or any other non-identifier.
+    """
+    from clinical_analytics.storage.dataset_deletion import validate_dataset_id
+
+    return validate_dataset_id(upload_id)
+
+
+def stored_path(storage: "UserDatasetStorage", value: object) -> Path:
+    """A data file path read from metadata, refused unless it resolves inside the data directory.
+
+    Metadata stores absolute paths (``cohort_parquet``, ``parquet_paths``); a tampered or stale
+    entry must never make the app read, or report the existence of, a file elsewhere.
+
+    Raises:
+        StoredPathError: the path is empty or resolves outside ``storage``'s data directory.
+    """
+    root = storage.upload_dir.parent.resolve()
+    path = Path(str(value)) if value else None
+    if path is None or not path.is_absolute() or not path.resolve().is_relative_to(root):
+        logger.error("stored_path_outside_data_dir", file=path.name if path else None)
+        raise StoredPathError("A stored data file of this dataset is outside the data folder; it was not read.")
+    return path
+
+
 def table_parquet_path(storage: "UserDatasetStorage", upload_id: str, table_name: str, dataset_version: str) -> Path:
     """Typed Parquet of one table of one version (the name DataStore used, so deletes still find it)."""
     from clinical_analytics.storage.datastore import _sanitize_table_name
 
+    upload_id = checked_upload_id(upload_id)
     return _parquet_dir(storage) / f"{upload_id}_{_sanitize_table_name(table_name)}_{dataset_version}.parquet"
 
 
@@ -1299,7 +1335,7 @@ def cohort_parquet_path(
 ) -> Path:
     """Typed Parquet of a multi-table upload's unified cohort (named by ``cohort_file_key``)."""
     key = cohort_file_key(dataset_version, relationships)
-    return _parquet_dir(storage) / f"{upload_id}_{COHORT_FILE_STEM}_{key}.parquet"
+    return _parquet_dir(storage) / f"{checked_upload_id(upload_id)}_{COHORT_FILE_STEM}_{key}.parquet"
 
 
 def _write_parquet(df: pl.DataFrame, path: Path) -> bool:
@@ -1311,9 +1347,12 @@ def _write_parquet(df: pl.DataFrame, path: Path) -> bool:
     Raises:
         UploadError: an existing file under this name holds other data.
     """
-    wrote = atomic.atomic_write(
-        path, lambda part: df.write_parquet(part, compression=PARQUET_COMPRESSION), exclusive=True
-    )
+
+    def write(part: Path) -> None:
+        df.write_parquet(part, compression=PARQUET_COMPRESSION)
+        os.chmod(part, DATA_FILE_MODE)  # owner-only, whatever the umask (patient rows)
+
+    wrote = atomic.atomic_write(path, write, exclusive=True)
     if not wrote:
         same_schema = pl.read_parquet_schema(path) == dict(df.schema)
         same_rows = same_schema and pl.scan_parquet(path).select(pl.len()).collect().item() == df.height
@@ -1357,10 +1396,10 @@ def _discard_uncommitted(storage: "UserDatasetStorage", upload_id: str, created:
     log = logger.bind(upload_id=upload_id, files=len(created))
     for path in created:
         path.unlink(missing_ok=True)
-    landing_dir = storage.raw_dir / upload_id
+    landing_dir = storage.raw_dir / checked_upload_id(upload_id)
     if landing_dir.is_dir() and not any(landing_dir.iterdir()):
         landing_dir.rmdir()
-    if not (storage.metadata_dir / f"{upload_id}.json").exists():
+    if not storage._metadata_path(upload_id).exists():
         for dirname in (CONTRACTS_DIRNAME, DQ_DIRNAME):
             shutil.rmtree(storage.upload_dir.parent / dirname / upload_id, ignore_errors=True)
     log.info("uncommitted_files_removed")
@@ -1568,7 +1607,7 @@ def save_table_list(
         raw_landing: Path | None = None
         if raw_bytes is not None:
             ext = Path(str(metadata.get("original_filename", ""))).suffix.lower() or ".bin"
-            raw_landing = storage.raw_dir / upload_id / f"{dataset_version}{ext}"
+            raw_landing = storage.raw_dir / checked_upload_id(upload_id) / f"{dataset_version}{ext}"
             if atomic.atomic_write_bytes(raw_landing, raw_bytes, exclusive=True):
                 created.append(raw_landing)
 
@@ -1747,7 +1786,7 @@ def save_table_list(
             current.update(merged)
             return True
 
-        _update_metadata(storage.metadata_dir / f"{upload_id}.json", commit, missing_ok=True)
+        _update_metadata(storage._metadata_path(upload_id), commit, missing_ok=True)
         committed = True
         log.info("dataset_version_committed", rows=stored_df.height, columns=stored_df.width)
         return True, f"Saved {len(tables)} tables"
@@ -1815,11 +1854,16 @@ class StoredDataset:
 
 
 def _legacy_source_path(storage: "UserDatasetStorage", upload_id: str, metadata: dict[str, Any]) -> Path | None:
-    """The unified cohort file of an upload made before typed storage."""
-    candidates = [storage.raw_dir / f"{upload_id}.csv"]
+    """The unified cohort file of an upload made before typed storage.
+
+    Raises:
+        InvalidDatasetIdError: ``upload_id`` is not a plain identifier.
+        StoredPathError: a file name in metadata climbs out of the data directory.
+    """
+    candidates = [storage.raw_dir / f"{checked_upload_id(upload_id)}.csv"]
     for key in ("stored_relpath", "stored_filename"):
         if metadata.get(key):
-            candidates.append(storage.raw_dir / str(metadata[key]))
+            candidates.append(stored_path(storage, storage.raw_dir / str(metadata[key])))
     return next((p for p in candidates if p.is_file()), None)
 
 
@@ -1854,8 +1898,12 @@ def _convert_legacy_upload(storage: "UserDatasetStorage", upload_id: str, metada
 
     from clinical_analytics.storage.versioning import compute_dataset_version
 
-    tables_dir = storage.raw_dir / f"{upload_id}_tables"
-    old_parquet = {name: Path(p) for name, p in (metadata.get("parquet_paths") or {}).items() if Path(p).is_file()}
+    tables_dir = storage.raw_dir / f"{checked_upload_id(upload_id)}_tables"
+    old_parquet = {
+        name: path
+        for name, path in ((n, stored_path(storage, p)) for n, p in (metadata.get("parquet_paths") or {}).items())
+        if path.is_file()
+    }
     table_frames: dict[str, pl.DataFrame] = {}
     untyped: dict[str, Path] = {}
     for name in metadata.get("tables") or []:
@@ -1890,7 +1938,7 @@ def _convert_legacy_upload(storage: "UserDatasetStorage", upload_id: str, metada
             current["legacy_converted_at"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
             return True
 
-        updated = _update_metadata(storage.metadata_dir / f"{upload_id}.json", mutate)
+        updated = _update_metadata(storage._metadata_path(upload_id), mutate)
     except (OSError, RuntimeError, UploadError) as e:
         log.warning("legacy_upload_fallback", reason=type(e).__name__, source=source.suffix)
         return StoredDataset(
@@ -1943,6 +1991,15 @@ class UserDatasetStorage:
         # Ensure directories exist
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.metadata_dir.mkdir(parents=True, exist_ok=True)
+
+    def _metadata_path(self, upload_id: str) -> Path:
+        """The metadata file of ``upload_id``; the id is checked first, so it never names a file
+        outside ``metadata_dir``.
+
+        Raises:
+            InvalidDatasetIdError: ``upload_id`` is not a plain identifier.
+        """
+        return self.metadata_dir / f"{checked_upload_id(upload_id)}.json"
 
     def generate_upload_id(self, filename: str) -> str:
         """
@@ -2468,7 +2525,7 @@ class UserDatasetStorage:
             OSError, StagingError, polars.exceptions.PolarsError: stored data exists but is unreadable.
         """
         if metadata.get(STORAGE_LAYOUT_KEY) == STORAGE_LAYOUT:
-            schema = pl.read_parquet_schema(metadata[COHORT_PARQUET_KEY])
+            schema = pl.read_parquet_schema(stored_path(self, metadata[COHORT_PARQUET_KEY]))
         else:
             source = _legacy_source_path(self, upload_id, metadata)
             if source is None:
@@ -2529,10 +2586,10 @@ class UserDatasetStorage:
                 if current.get(STORAGE_LAYOUT_KEY) != STORAGE_LAYOUT:
                     return _convert_legacy_upload(self, upload_id, current)
                 metadata = current
-        cohort_path = Path(metadata[COHORT_PARQUET_KEY])
+        cohort_path = stored_path(self, metadata[COHORT_PARQUET_KEY])
         if not cohort_path.is_file():
             raise FileNotFoundError(f"Stored data missing for upload {upload_id}")
-        table_paths = {name: Path(p) for name, p in (metadata.get("parquet_paths") or {}).items()}
+        table_paths = {name: stored_path(self, p) for name, p in (metadata.get("parquet_paths") or {}).items()}
         return StoredDataset(metadata=metadata, cohort_path=cohort_path, table_paths=table_paths)
 
     def get_active_version(self, upload_id: str) -> dict[str, Any] | None:
@@ -2589,7 +2646,7 @@ class UserDatasetStorage:
         Returns:
             Metadata dictionary or None if not found
         """
-        metadata_path = self.metadata_dir / f"{upload_id}.json"
+        metadata_path = self._metadata_path(upload_id)
 
         if not metadata_path.exists():
             return None
@@ -2676,7 +2733,7 @@ class UserDatasetStorage:
         Returns:
             Tuple of (success, message)
         """
-        metadata_path = self.metadata_dir / f"{upload_id}.json"
+        metadata_path = self._metadata_path(upload_id)
 
         if not metadata_path.exists():
             return False, f"Upload {upload_id} not found"
@@ -2711,7 +2768,7 @@ class UserDatasetStorage:
         Returns:
             Tuple of (success, message)
         """
-        metadata_path = self.metadata_dir / f"{upload_id}.json"
+        metadata_path = self._metadata_path(upload_id)
 
         if not metadata_path.exists():
             return False, f"Upload {upload_id} not found"

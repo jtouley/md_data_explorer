@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from decimal import Decimal
 from typing import Any
 
 import numpy as np
@@ -193,3 +194,69 @@ def test_exportAnswer_notAMapping_raisesTypeError(presentation: Any) -> None:
     # Act / Assert
     with pytest.raises(TypeError, match="presentation mapping"):
         export_answer(presentation)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        pytest.param(Decimal("4"), EXPORT_MARKER, id="whole_decimal"),
+        pytest.param(Decimal("10.00"), EXPORT_MARKER, id="whole_decimal_with_scale"),
+        pytest.param(Decimal("1"), EXPORT_MARKER, id="lower_edge"),
+        pytest.param(Decimal("11"), Decimal("11"), id="above_threshold"),
+        pytest.param(Decimal("0"), Decimal("0"), id="zero"),
+        pytest.param(Decimal("4.5"), Decimal("4.5"), id="fraction"),
+        pytest.param(Decimal("-3"), Decimal("-3"), id="negative"),
+        pytest.param(Decimal("NaN"), Decimal("NaN"), id="nan"),
+        pytest.param(Decimal("Infinity"), Decimal("Infinity"), id="infinity"),
+    ],
+)
+def test_exportAnswer_decimalCell_wholeSmallCountMasked(value: Decimal, expected: Any) -> None:
+    # Arrange: DuckDB returns SUMs (and some counts) as Decimal
+    table = {"columns": ["group", "total"], "rows": [{"group": "a", "total": value}]}
+
+    # Act
+    exported = export_answer({"claim": None, "table": table})
+
+    # Assert
+    assert exported["table"] is not None
+    cell = exported["table"]["rows"][0]["total"]
+    assert str(cell) == str(expected)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("05", EXPORT_MARKER),
+        ("007", EXPORT_MARKER),
+        ("n=05 patients", f"n={EXPORT_MARKER} patients"),
+        ("010", EXPORT_MARKER),
+        ("(03)", f"({EXPORT_MARKER})"),
+        ("00", "00"),
+        ("011", "011"),
+        ("0100", "0100"),
+        ("2024-01-05", "2024-01-05"),
+        ("05/2024", f"{EXPORT_MARKER}/2024"),
+        ("v05", "v05"),
+    ],
+)
+def test_exportText_zeroPaddedNumber_maskedUnlessDatePart(text: str, expected: str) -> None:
+    # Arrange: a zero-padded count, as a cell string or in a sentence (parametrized)
+
+    # Act
+    exported = export_text(text)
+
+    # Assert
+    assert exported == expected
+
+
+def test_exportAnswer_zeroPaddedStringCell_masked() -> None:
+    # Arrange: a count column read as text keeps its leading zeros
+    table = {"columns": ["ward", "n"], "rows": [{"ward": "ICU", "n": "04"}, {"ward": "ED", "n": "012"}]}
+
+    # Act
+    exported = export_answer({"claim": None, "table": table})
+
+    # Assert
+    assert exported["table"] is not None
+    assert [row["n"] for row in exported["table"]["rows"]] == [EXPORT_MARKER, "012"]
+    assert exported["masked"] == 1

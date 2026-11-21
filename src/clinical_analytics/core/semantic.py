@@ -1675,9 +1675,11 @@ class SemanticLayer:
         Returns:
             Path to metadata JSON file
         """
-        # Metadata stored in data/uploads/metadata/{upload_id}.json
+        from clinical_analytics.storage.dataset_deletion import validate_dataset_id
+
+        # Metadata stored in data/uploads/metadata/{upload_id}.json (id checked: never a path out)
         metadata_dir = self.workspace_root / "data" / "uploads" / "metadata"
-        return metadata_dir / f"{upload_id}.json"
+        return metadata_dir / f"{validate_dataset_id(upload_id)}.json"
 
     def _load_metadata(self, upload_id: str) -> dict[str, Any] | None:
         """

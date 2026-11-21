@@ -18,6 +18,7 @@ send the prompt to another host.
 from __future__ import annotations
 
 import ipaddress
+import re
 from typing import Final
 from urllib.parse import urlsplit
 
@@ -25,6 +26,9 @@ import requests  # type: ignore[import-untyped]
 
 LOOPBACK_HOSTNAMES: Final = frozenset({"localhost"})
 ALLOWED_SCHEMES: Final = frozenset({"http", "https"})
+# Characters on which URL parsers disagree about the host (urllib vs urllib3): a URL that holds
+# any of them is refused outright rather than trusting one parser's reading.
+_AMBIGUOUS: Final = re.compile(r"[\s\\@#?%\x00-\x1f\x7f]")
 # Setting that lets the model server live on another host (config key and environment variable).
 ALLOW_REMOTE_SETTING: Final = "ollama_allow_remote_host"
 ALLOW_REMOTE_ENV: Final = "OLLAMA_ALLOW_REMOTE_HOST"
@@ -39,7 +43,11 @@ def is_loopback_url(url: str) -> bool:
 
     Anything that cannot be parsed, or that only looks local (``localhost.example.com``,
     ``127.0.0.1.nip.io``, ``user@localhost@evil``, IPv4-mapped or scoped IPv6), is not loopback.
+    So is any URL with userinfo, a query, a fragment, a backslash, a percent-escape or
+    whitespace: parsers read the host of such URLs differently, so none of them is trusted.
     """
+    if not isinstance(url, str) or _AMBIGUOUS.search(url):
+        return False
     try:
         parts = urlsplit(url)
         hostname = parts.hostname  # lower-cased, brackets and userinfo stripped
@@ -67,7 +75,7 @@ def require_loopback_url(url: str, *, allow_remote: bool, setting: str = "ollama
     """
     if is_loopback_url(url):
         return url
-    if allow_remote:
+    if allow_remote is True:  # only an explicit True opts in, never a truthy string or object
         return url
     raise NonLoopbackURLError(
         f"{setting} must point at this machine (localhost, 127.0.0.1 or ::1), got {url!r}. "
@@ -77,7 +85,13 @@ def require_loopback_url(url: str, *, allow_remote: bool, setting: str = "ollama
 
 
 def model_http_session() -> requests.Session:
-    """A requests session for the model server that never uses proxy or netrc settings."""
+    """A requests session for the model server that never uses proxy or netrc settings.
+
+    Redirects are never followed: with ``max_redirects = 0`` any 3xx reply raises
+    ``requests.TooManyRedirects`` (a ``RequestException``), with or without the callers'
+    ``allow_redirects=False``, so a model server cannot send a prompt to another host.
+    """
     session = requests.Session()
     session.trust_env = False
+    session.max_redirects = 0
     return session

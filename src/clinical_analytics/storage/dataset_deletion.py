@@ -89,10 +89,22 @@ class DeletionReport:
         return bool(self.removed_paths or self.dropped_tables)
 
 
+# Windows device names: "CON.json" or "nul_x" opens a device, not a file, whatever the folder.
+_WINDOWS_DEVICE_NAMES = frozenset(
+    {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(10)), *(f"lpt{i}" for i in range(10))}
+)
+
+
 def validate_dataset_id(dataset_id: str) -> str:
-    """Return the id if it is a plain identifier, else raise InvalidDatasetIdError."""
-    if not DATASET_ID_PATTERN.fullmatch(dataset_id):
+    """Return the id if it is a plain identifier, else raise InvalidDatasetIdError.
+
+    A plain identifier matches ``DATASET_ID_PATTERN`` (no ``/``, ``\\``, ``..`` or leading dot)
+    and is not a Windows device name, so it can only ever name a file in the folder it is joined to.
+    """
+    if not isinstance(dataset_id, str) or not DATASET_ID_PATTERN.fullmatch(dataset_id):
         raise InvalidDatasetIdError(f"Invalid dataset id: {dataset_id!r}")
+    if dataset_id.lower() in _WINDOWS_DEVICE_NAMES:
+        raise InvalidDatasetIdError(f"Invalid dataset id: {dataset_id!r} is a reserved device name")
     return dataset_id
 
 

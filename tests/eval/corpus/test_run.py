@@ -13,7 +13,7 @@ from typing import Any
 import polars as pl
 import pytest
 
-from clinical_analytics.eval.corpus.run import AcceptanceError, answer_patient_rows, ask_all
+from clinical_analytics.eval.corpus.run import AcceptanceError, answer_patient_rows, ask_all, zip_rejected_note
 from clinical_analytics.eval.corpus.score import OracleAnswer
 
 TIMEOUT_S = 10.0
@@ -169,3 +169,24 @@ class TestAnswerPatientRows:
         # Act / Assert
         with pytest.raises(AcceptanceError, match="rows_are_patients does not run"):
             answer_patient_rows(_AnswerApi(), "d1", uploaded, SimpleNamespace(rows_are_patients=broken), tmp_path)
+
+
+class TestZipRejectedNote:
+    @pytest.mark.parametrize(
+        ("message", "expected"),
+        [
+            ("-> 400: 3 rows have no patient id", "csv only; ZIP rejected: -> 400: <11 rows have no patient id"),
+            ("-> 400: 1 of 2 tables unreadable", "csv only; ZIP rejected: -> 400: <11 of <11 tables unreadable"),
+            ("-> 400: 120 rows", "csv only; ZIP rejected: -> 400: 120 rows"),
+            ("", "csv only; ZIP rejected: "),
+        ],
+    )
+    def test_zip_rejected_note_apiMessageWithSmallCount_maskedForResultsFile(self, message, expected):
+        # Arrange
+        error = AcceptanceError(message)
+
+        # Act
+        note = zip_rejected_note(error)
+
+        # Assert
+        assert note == expected
