@@ -1,0 +1,270 @@
+# Golden samples for the model-written query path (src/clinical_analytics/model_query).
+#
+# Each sample replays a recorded reply of the local model (llama3.2:3b, the shape it gave for the
+# acceptance question named in `covers`, with the columns of a synthetic table from
+# tests/model_query/tables.py) through the real compile-and-execute layer: no model runs here.
+# Checked: the plain reading, the shape of the SQL, and the value on the synthetic data.
+#
+# Fields:
+#   table:    patients | visits (tests/model_query/tables.py)
+#   replies:  the model's replies in order; more than one means the first was fed back with an error
+#   reading:  the exact one-sentence reading shown with the answer
+#   sql:      fragments the shown SQL must contain
+#   expect:   claim (exact start of the claim) and/or groups ({label: value} of the first value
+#             column), or status refused | clarify; `oracle` names a Polars oracle in the test
+#             module that recomputes the groups independently
+samples:
+  - id: patients-total
+    covers: covid_ms-total-001
+    table: patients
+    question: How many patients are in this file?
+    replies:
+      - {thought: "Count all patients.", answer: count, where: null, group_by: null, numerator: null, number: null, outcome: null}
+    reading: "Counted patients."
+    sql: ["COUNT(*) AS count", "FROM unified"]
+    expect: {claim: "Total count: 12 patients."}
+  - id: patients-by-sex
+    covers: covid_ms-sex-002
+    table: patients
+    question: How many patients are men and how many are women?
+    replies:
+      - {thought: "Count patients for each value of sex.", answer: count, where: null, group_by: sex, numerator: null, number: null, outcome: null}
+    reading: "Counted patients, by sex."
+    sql: ['"sex" AS "sex"', "GROUP BY 1"]
+    expect: {groups: {female: 7, male: 5}}
+  - id: patients-distribution-from-share
+    covers: covid_ms-mstype-003
+    table: patients
+    question: What share of patients have each diagnosis?
+    replies:
+      - {thought: "Share of patients with each dx", answer: share, where: null, group_by: null, numerator: dx, number: null, outcome: null}
+    reading: "Counted patients, by dx."
+    sql: ['"dx" AS "dx"', "COUNT(*) AS count"]
+    expect: {groups: {other: 2, progressive: 2, relapsing: 8}}
+  - id: patients-every-value-listed-is-a-breakdown
+    covers: covid_ms-hosp-004
+    table: patients
+    question: How many patients were admitted versus not admitted?
+    replies:
+      - {thought: "Count admitted yes and no.", answer: count, where: "admitted = 'yes' OR admitted = 'no'", group_by: null, numerator: null, number: null, outcome: null}
+    reading: "Counted patients, by admitted."
+    sql: ['"admitted" AS "admitted"', "GROUP BY 1"]
+    expect: {groups: {"No": 10, "Yes": 2}}
+  - id: patients-filter-count-repairs-value-case
+    covers: covid_ms-filter-006
+    table: patients
+    question: How many women with relapsing disease had a confirmed infection?
+    replies:
+      - {thought: "Count women with relapsing dx and confirmed yes.", answer: count, where: null, group_by: null, numerator: "confirmed = 'yes'", number: "dx = 'relapsing' AND confirmed = 'yes' AND sex = 'Female'", outcome: null}
+    reading: "Counted patients where confirmed = 'Yes' AND dx = 'relapsing' AND sex = 'female'."
+    sql: ["WHERE", "\"sex\" = 'female'", "\"confirmed\" = 'Yes'"]
+    expect: {claim: "Total count: 3 patients."}
+  - id: patients-mean-by-group
+    covers: covid_ms-mean-007
+    table: patients
+    question: What is the mean onset year by diagnosis?
+    replies:
+      - {thought: "Mean of onset_year per dx.", answer: mean, where: null, group_by: dx, numerator: null, number: onset_year, outcome: null}
+    reading: "Mean of onset_year, by dx."
+    sql: ['AVG("onset_year")']
+    expect: {groups: {other: 2016.5, progressive: 1997.0, relapsing: 2007.125}}
+  - id: patients-median-compared-drops-the-all-values-filter
+    covers: covid_ms-median-008
+    table: patients
+    question: What is the median onset year in men compared with women?
+    replies:
+      - {thought: "Median of onset_year per sex.", answer: median, where: "sex = 'M' OR sex = 'F'", group_by: sex, numerator: null, number: onset_year, outcome: null}
+    reading: "Median of onset_year, by sex."
+    sql: ['MEDIAN("onset_year")']
+    expect: {groups: {female: 2008.0, male: 2007.0}}
+  - id: patients-rate-by-group
+    covers: covid_ms-agerate-009
+    table: patients
+    question: What percentage of patients in each age category had a confirmed infection?
+    replies:
+      - {thought: "Share of patients with confirmed Yes, per age_cat.", answer: share, where: null, group_by: age_cat, numerator: "confirmed = 'yes'", number: null, outcome: null}
+    reading: "Share of patients with confirmed = 'Yes', by age_cat, among those with it recorded."
+    sql: ["AS rate", "FILTER"]
+    expect: {groups: {"age_cat=1": 0.2857, "age_cat=2": 0.4}}
+  - id: patients-test-on-a-condition
+    covers: covid_ms-chisq-011
+    table: patients
+    question: Is a confirmed infection more common in women than in men? Use a chi-square test.
+    replies:
+      - {thought: "Test of confirmed between the groups of sex", answer: compare_groups, where: "sex = 'female' OR sex = 'male'", group_by: sex, numerator: "confirmed = 'yes'", number: null, outcome: confirmed}
+    reading: "Compared confirmed = 'Yes' between the groups of sex."
+    sql: ["CASE WHEN", '"sex"']
+    # 12 patients: an expected count is under 5, so the statistics code uses Fisher's exact test.
+    expect: {claim: "confirmed_Yes = yes was 43% in female and 20% in male", analysis_type: comparison}
+  - id: patients-listing-refused
+    covers: covid_ms-listing-015
+    table: patients
+    question: List the patient IDs of everyone who was admitted.
+    replies: []  # refused from the question's own words, before any model call
+    expect: {status: refused, reason: "This would list individual patients."}
+  - id: visits-patients-by-year
+    covers: fellow_cdiff-cases-by-year-01
+    table: visits
+    question: How many patients 65 and older tested positive each year?
+    replies:
+      - {thought: "Count patients with result positive and age_years at least 65, per visit_year.", answer: count, where: "age_years >= 65 AND result = 'positive'", group_by: visit_year, numerator: null, number: null, outcome: null}
+    reading: "Counted distinct patients (patient_id) where age_years >= 65 AND result = 'positive', by visit_year."
+    sql: ['COUNT(DISTINCT "patient_id")']
+    expect: {oracle: positive_patients_65_by_year}
+  - id: visits-share-of-tests-from-column-and-value
+    covers: fellow_cdiff-positivity-by-year-02
+    table: visits
+    question: What share of tests in patients 65 and older were positive each year?
+    replies:
+      - {thought: "Share of result positive with age_years at least 65, per visit_year.", answer: share, where: "age_years >= 65", group_by: visit_year, numerator: positive, number: result, outcome: null}
+    reading: "Share of distinct tests (encounter_id) with result = 'positive' where age_years >= 65, by visit_year, among those with it recorded. One test counts when at least one of its rows meets it."
+    sql: ['"encounter_id"', "BOOL_OR", "AS rate"]
+    expect: {oracle: positive_share_of_tests_65_by_year}
+  - id: visits-odds-ratio
+    covers: fellow_cdiff-abx-odds-ratio-03
+    table: visits
+    question: In patients 65 and older, what is the odds ratio for a positive test with antibiotics before, with a 95% CI?
+    replies:
+      - {thought: "Odds ratio of result for abx among age_years at least 65.", answer: odds_ratio, where: "age_years >= 65", group_by: abx, numerator: null, number: null, outcome: result}
+    reading: "Odds ratio of result for abx (logistic regression, unadjusted) where age_years >= 65."
+    sql: ["SELECT DISTINCT *", '"age_years" >= 65']
+    expect: {oracle: odds_ratio_positive_abx_65, analysis_type: predictor}
+  - id: visits-concept-with-no-column-is-asked-not-answered
+    covers: fellow_pneumonia-admissions-70-01
+    table: visits
+    question: How many flu tests did we run in patients 65 and older?
+    replies:
+      - {thought: "Count tests with result flu and age_years at least 65.", answer: count, where: "age_years >= 65", group_by: null, numerator: null, number: "result = 'flu'", outcome: null}
+      - {thought: "Count tests with age_years at least 65.", answer: count, where: "age_years >= 65", group_by: null, numerator: null, number: null, outcome: null}
+      - {thought: "Count tests with age_years at least 65.", answer: count, where: "age_years >= 65", group_by: null, numerator: null, number: null, outcome: null}
+    # The table has no column for "flu": never answered as all tests (coverage check).
+    expect: {status: clarify, reason: "I could not find 'flu' in this data", choices: 1}
+  - id: visits-ever-screened-count
+    covers: fellow_hepb-ever-screened-02
+    table: visits
+    question: How many of our patients have ever been screened?
+    replies:
+      - {thought: "Count patients with screened yes on any visit.", answer: count, where: null, group_by: null, numerator: "screened = 'yes'", number: screened, outcome: null}
+    reading: "Counted distinct patients (patient_id) where screened = 'yes'."
+    sql: ['COUNT(DISTINCT "patient_id")']
+    expect: {claim: "Total count: 60 patients."}
+  - id: visits-ever-screened-share-by-region
+    covers: fellow_hepb-screened-by-birthplace-04
+    table: visits
+    question: What share of patients have ever been screened, by region?
+    replies:
+      - {thought: "Share of patients with screened yes on any visit, per region.", answer: share, where: null, group_by: region, numerator: "screened = 'yes'", number: null, outcome: null}
+    reading: "Share of distinct patients (patient_id) with screened = 'yes', by region, among those with it recorded. One patient counts when at least one of its rows meets it."
+    sql: ["BOOL_OR", "per_patient"]
+    expect: {groups: {East: 0.4, North: 0.4, South: 0.4}}
+  - id: visits-share-without-ever-or-always-asks
+    covers: fellow_measles-no-immunity-by-group-04
+    table: visits
+    question: What share of patients were screened, by region?
+    replies:
+      - {thought: "Share of patients with screened yes, per region.", answer: share, where: null, group_by: region, numerator: "screened = 'yes'", number: null, outcome: null}
+    expect: {status: clarify, reason: "differs between their rows", choices: 2}
+  - id: visits-model-says-listing
+    covers: fellow_hepb-reactive-listing-06
+    table: visits
+    question: Can I get the ones with a positive result, to check on them?
+    replies:
+      - {thought: "This asks to identify individual patients.", answer: listing, where: "result = 'positive'", group_by: null, numerator: null, number: null, outcome: null}
+    expect: {status: refused, reason: "This would list individual patients."}
+  - id: visits-mixed-units-fed-back
+    covers: fellow_measles-median-igg-by-group-03
+    table: visits
+    question: What is the median titer in each region, counting every result, in mIU/mL?
+    replies:
+      - {thought: "Median of titer per region.", answer: median, where: null, group_by: region, numerator: null, number: titer, outcome: null}
+      - {thought: "Median of titer in mIU/mL per region.", answer: median, where: null, group_by: region, numerator: null, number: "CASE WHEN titer_unit = 'IU/mL' THEN titer * 1000 ELSE titer END", outcome: null}
+    reading: "Median of CASE WHEN titer_unit = 'IU/mL' THEN titer * 1000 ELSE titer END, by region, over visits (rows), not one value per patient."
+    sql: ["SELECT DISTINCT *", "MEDIAN(CASE WHEN"]
+    expect: {oracle: median_titer_miu_by_region}
+  - id: visits-mixed-units-never-converted-is-refused
+    covers: fellow_measles-median-igg-by-group-03
+    table: visits
+    question: What is the median titer in each region?
+    replies:
+      - {thought: "Median of titer per region.", answer: median, where: null, group_by: region, numerator: null, number: titer, outcome: null}
+      - {thought: "Median of titer per region.", answer: median, where: null, group_by: region, numerator: null, number: titer, outcome: null}
+      - {thought: "Median of titer per region.", answer: median, where: null, group_by: region, numerator: null, number: titer, outcome: null}
+    expect: {status: refused, reason: "titer is recorded in different units"}
+  # ---- The checks that run on every plan (recorded llama3.1:8b replies on the made-up clinic table)
+  - id: clinic-women-through-dictionary-codes
+    covers: check E (coded sex, blind error kind 2)
+    table: clinic
+    question: How many women are in the clinic?
+    replies:
+      - {thought: "Count women in the clinic.", mapping: [{phrase: women, role: filter, column: gender}], answer: count, where: "gender = 2", group_by: null, numerator: null, number: null, outcome: null}
+    reading: "Counted distinct patients (pt_id) where gender = 2."
+    sql: ['"gender" = 2', 'COUNT(DISTINCT "pt_id")']
+    expect: {claim: "Total count: 3 patients."}
+  - id: clinic-share-of-visits-counts-visits
+    covers: check A (counting unit from the head noun, blind error kind 1)
+    table: clinic
+    question: What percentage of visits had allergy shots?
+    replies:
+      - {thought: "What percentage of visits had allergy shots?", mapping: [{phrase: allergy shots, role: measure, column: shots}], answer: share, where: null, group_by: null, numerator: "shots = 'yes'", number: null, outcome: null}
+    reading: "Share of visits with shots = 'yes', among those with it recorded."
+    sql: ["AS rate"]
+    expect: {analysis: {proportion: 0.4615384615}}
+  - id: clinic-visits-in-a-year
+    covers: check A
+    table: clinic
+    question: How many clinic visits were there in 2024?
+    replies:
+      - {thought: "Count visits in 2024.", mapping: [{phrase: "2024", role: filter, column: visit_year}], answer: count, where: "visit_year = 2024", group_by: null, numerator: null, number: null, outcome: null}
+    reading: "Counted visits where visit_year = 2024."
+    sql: ["COUNT(*)"]
+    expect: {analysis: {total_count: 6}}
+  - id: clinic-measure-at-two-times-is-asked
+    covers: check D (baseline and follow-up columns, blind error kind 4)
+    table: clinic
+    question: What is the average eosinophil count?
+    replies:
+      - {thought: "Average eosinophil count.", mapping: [{phrase: eosinophil count, role: measure, column: eos_baseline}], answer: mean, where: null, group_by: null, numerator: null, number: eos_baseline, outcome: null}
+    expect: {status: clarify, reason: "More than one column holds this measure", choices: 2}
+  - id: clinic-per-patient-mean-of-a-constant
+    covers: check D (per-patient statistic on visit rows, blind error kind 4)
+    table: clinic
+    question: What is the average height of our patients?
+    replies:
+      - {thought: "Mean of height_cm.", mapping: [{phrase: height of, role: measure, column: height_cm}], answer: mean, where: null, group_by: null, numerator: null, number: height_cm, outcome: null}
+    reading: "Mean of height_cm, one value per patient."
+    sql: ["per_patient"]
+    expect: {analysis: {mean: 166.6666667}}
+  - id: clinic-per-patient-mean-that-varies-is-asked
+    covers: check D
+    table: clinic
+    question: What is the mean IgE of our patients?
+    replies:
+      - {thought: "Mean of ige.", mapping: [{phrase: IgE, role: measure, column: ige}], answer: mean, where: null, group_by: null, numerator: null, number: ige, outcome: null}
+    expect: {status: clarify, reason: "have more than one ige", choices: 2}
+  - id: clinic-concept-with-no-column-is-held
+    covers: check C (no substitution, blind error kind 3)
+    table: clinic
+    question: How many smokers are in the clinic?
+    replies:
+      - {thought: "Count patients with shots yes.", mapping: [{phrase: smokers, role: measure, column: shots}], answer: count, where: "shots = 'yes'", group_by: null, numerator: null, number: null, outcome: null}
+      - {thought: "How many smokers are in the clinic?", mapping: [{phrase: smokers, role: measure, column: null}], answer: count, where: null, group_by: null, numerator: null, number: null, outcome: null}
+    expect: {status: clarify, reason: "I could not find 'smokers' in this data", choices: 1}
+  - id: clinic-breakdown-in-other-words
+    covers: check B/C (breakdown described in other words, blind error kind 2)
+    table: clinic
+    question: Break down the patients by sex.
+    replies:
+      - {thought: "Count patients for each value of gender.", mapping: [{phrase: sex, role: group, column: gender}], answer: count, where: null, group_by: gender, numerator: null, number: null, outcome: null}
+    reading: "Counted distinct patients (pt_id), by gender."
+    sql: ['"gender" AS "gender"']
+    expect: {groups: {male: 3, female: 3}}
+  - id: visits-share-population-limit-is-not-the-event
+    covers: fellow_pneumonia-pneumococcal-vaccine-03 (shape)
+    table: visits
+    question: In patients 65 and older, what share have ever been screened, by region?
+    replies:
+      - {thought: "Share screened among 65+.", answer: share, where: "age_years >= 65 AND screened = 'yes'", group_by: region, numerator: null, number: null, outcome: null}
+      - {thought: "Share screened among 65+.", answer: share, where: "age_years >= 65", group_by: region, numerator: "screened = 'yes'", number: null, outcome: null}
+    reading: "Share of distinct patients (patient_id) with screened = 'yes' where age_years >= 65, by region, among those with it recorded. One patient counts when at least one of its rows meets it."
+    sql: ['"age_years" >= 65', "BOOL_OR"]
+    expect: {analysis_type: rate}
