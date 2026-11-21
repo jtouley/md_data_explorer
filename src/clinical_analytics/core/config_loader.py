@@ -189,7 +189,7 @@ class NLQueryConfigDefaults:
     # Format of the model's reply: "plan" (a small JSON plan compiled to SQL) or "sql" (raw SQL).
     enable_model_queries: bool = True
     model_query_format: str = "plan"
-    model_query_timeout_s: float = 120.0
+    model_query_timeout_s: float = 300.0
     model_query_max_attempts: int = 3
     # Open semantic layers (datasets) the API keeps, and the DuckDB memory they share: a
     # percentage of RAM or a size ("60%", "8GB"), split evenly, so each layer gets

@@ -24,7 +24,11 @@ from clinical_analytics.sql.sandbox import SandboxConnection
 from tests.model_query import tables
 
 GOLDEN = yaml.safe_load((Path(__file__).parent / "model_query_golden.yaml").read_text(encoding="utf-8"))["samples"]
-TABLES = {"patients": (tables.patients, None), "visits": (tables.visits, tables.VISITS_DICTIONARY)}
+TABLES = {
+    "patients": (tables.patients, None, "patient_id"),
+    "visits": (tables.visits, tables.VISITS_DICTIONARY, "patient_id"),
+    "clinic": (tables.clinic_visits, tables.CLINIC_DICTIONARY, "pt_id"),
+}
 Z_95 = 1.959963984540054
 
 
@@ -83,8 +87,8 @@ def _shown_groups(table: dict[str, Any]) -> dict[str, Any]:
 @pytest.mark.parametrize("sample", GOLDEN, ids=[s["id"] for s in GOLDEN])
 def test_model_query_golden_recordedReply_givesExpectedReadingSqlAndValue(sample, make_query_table):
     # Arrange: the synthetic table, and the recorded replies in the order the model gave them
-    build, dictionary = TABLES[sample["table"]]
-    catalog, context = make_query_table(build(), doc_context=dictionary)
+    build, dictionary, id_column = TABLES[sample["table"]]
+    catalog, context = make_query_table(build(), doc_context=dictionary, id_column=id_column)
     replies = iter(sample["replies"])
     expect = sample["expect"]
 
@@ -115,6 +119,8 @@ def test_model_query_golden_recordedReply_givesExpectedReadingSqlAndValue(sample
         assert answer.analysis is not None and answer.analysis["type"] == expect["analysis_type"]
     if "claim" in expect:
         assert (presented["claim"] or "").startswith(expect["claim"])
+    for name, value in expect.get("analysis", {}).items():
+        assert answer.analysis is not None and answer.analysis[name] == pytest.approx(value, abs=5e-5), name
     wanted = ORACLES[expect["oracle"]]() if "oracle" in expect else expect.get("groups")
     if wanted is not None:
         assert presented["table"] is not None
