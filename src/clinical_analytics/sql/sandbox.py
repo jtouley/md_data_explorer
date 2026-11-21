@@ -50,6 +50,15 @@ class SqlBusyError(SqlRefusedError):
     """Every sandbox slot stayed taken for the wait limit: try again (HTTP 503)."""
 
 
+class SqlRunError(SqlRefusedError):
+    """A model-written statement failed in the engine. ``engine_message`` is DuckDB's own text:
+    feedback for the local model only, never logged or shown (it can quote a cell value)."""
+
+    def __init__(self, reason: str, engine_message: str) -> None:
+        super().__init__(reason)
+        self.engine_message = engine_message
+
+
 _COULD_NOT_RUN = {
     duckdb.ConversionException: (
         "A value could not be converted to the type the query needs (TRY_CAST returns NULL instead)."
@@ -148,7 +157,29 @@ class SandboxConnection:
         Raises:
             SqlRefusedError: not one SELECT, timed out, or failed (the reason never quotes a value).
         """
-        statements = duckdb.extract_statements(sql)
+        return self._run(sql, keep_engine_message=False)
+
+    def run_model_sql(self, sql: str) -> pl.DataFrame:
+        """Run one SELECT written (or compiled from a plan written) by the local model.
+
+        The sandbox is the guard: read-only, one Parquet file, no external access. A failure
+        raises ``SqlRunError`` carrying the engine's own message, which goes back to the local
+        model as feedback for its next attempt and nowhere else (it can quote a cell value, so it
+        is never logged or shown).
+
+        Raises:
+            SqlRunError: the statement failed in the engine (``engine_message`` says how).
+            SqlRefusedError: not one SELECT, or timed out.
+        """
+        return self._run(sql, keep_engine_message=True)
+
+    def _run(self, sql: str, *, keep_engine_message: bool) -> pl.DataFrame:
+        try:
+            statements = duckdb.extract_statements(sql)
+        except duckdb.Error as e:
+            if keep_engine_message:
+                raise SqlRunError("The query is not valid SQL.", str(e)) from e
+            raise SqlRefusedError("The query is not valid SQL.") from e
         if len(statements) != 1 or statements[0].type != duckdb.StatementType.SELECT:
             raise SqlRefusedError("Only SELECT queries can run: the data is read-only.")
         remaining = self._deadline - _clock()
@@ -166,7 +197,10 @@ class SandboxConnection:
             # The message can quote a cell value ("Could not convert 'x' to INT"): type only.
             logger.info("governed_sql_failed", error_type=type(e).__name__)
             reason = next((text for kind, text in _COULD_NOT_RUN.items() if isinstance(e, kind)), None)
-            raise SqlRefusedError(reason or "The query could not run on this dataset.") from e
+            reason = reason or "The query could not run on this dataset."
+            if keep_engine_message:
+                raise SqlRunError(reason, str(e)) from e
+            raise SqlRefusedError(reason) from e
         finally:
             timer.cancel()
 

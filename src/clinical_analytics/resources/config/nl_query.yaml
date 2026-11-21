@@ -91,6 +91,17 @@ enable_result_interpretation: true
 # Governed SQL (POST /api/queries/sql): user-typed SQL over one dataset. Off by default.
 enable_sql_queries: false
 
+# Model-writes-the-query: the default question path. The local model reads the table's columns,
+# descriptions, values and grain plus similar worked examples, and writes the query; the app runs
+# it in the SQL sandbox and shows the SQL and a plain reading. The keyword matcher only answers
+# first when it reads the whole question; it never holds a question the model can answer.
+# model_query_format: "plan" (a small JSON plan the app compiles to SQL) or "sql" (the model
+# writes the SQL itself). The timeout is per model call; attempts include error-feedback retries.
+enable_model_queries: true
+model_query_format: "plan"
+model_query_timeout_s: 120.0
+model_query_max_attempts: 3
+
 # ADR004: Feature Flags for Surgical Rollback
 # Enable/disable each phase independently for operational safety
 adr004_enable_doc_extraction: true  # Phase 1: PDF/MD/TXT extraction from ZIP uploads

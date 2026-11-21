@@ -108,6 +108,8 @@ class OllamaClient:
         prompt: str,
         system_prompt: str | None = None,
         json_mode: bool = True,
+        response_schema: dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
     ) -> str | None:
         """
         Generate response with JSON mode.
@@ -116,6 +118,8 @@ class OllamaClient:
             prompt: User prompt
             system_prompt: Optional system prompt
             json_mode: Enable JSON mode (default: True)
+            response_schema: JSON schema the server holds the reply to (overrides json_mode)
+            options: Ollama sampling/context options (temperature, seed, num_ctx, ...)
 
         Returns:
             Generated text, or None on error/timeout
@@ -134,8 +138,12 @@ class OllamaClient:
             if system_prompt:
                 payload["system"] = system_prompt
 
-            if json_mode:
+            if response_schema is not None:
+                payload["format"] = response_schema
+            elif json_mode:
                 payload["format"] = "json"
+            if options:
+                payload["options"] = options
 
             response = requests.post(
                 f"{self.base_url}/api/generate",

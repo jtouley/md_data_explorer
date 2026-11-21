@@ -1,0 +1,154 @@
+# Worked examples for the model-writes-the-query path (model_query/examples.py).
+#
+# The few most similar questions are put in the model's prompt as question -> reply pairs. They are
+# written on made-up tables (below), never on a user's data and never copied from the acceptance
+# question sets (tests/eval/corpus/questions): they teach how a kind of question becomes a plan,
+# not the answer to a particular one. Each example carries both reply formats: "plan" (the fields
+# the app compiles to SQL) and "sql" (the SELECT the model would write itself).
+#
+# tests/eval/model_query_golden.yaml checks every plan here compiles and runs on a synthetic table.
+tables:
+  stroke: >-
+    one row per patient: patient_id, sex ('F', 'M'), age, stroke_type ('TIA', 'hemorrhagic',
+    'ischemic'), diabetes ('No', 'Yes'), smoker ('current', 'former', 'never'), nihss (number),
+    thrombolysis ('No', 'Yes'), died_30d ('No', 'Yes'), onset_year
+  dialysis: >-
+    one row per session, patients repeat: patient_id (patient ID), session_id (ID of one visit),
+    session_year, age_years, sex ('female', 'male'), access_type ('catheter', 'fistula', 'graft'),
+    infection ('no', 'yes'), hospitalized ('no', 'yes'), kt_v (number)
+  emergency: >-
+    one row per emergency visit, patients repeat: patient_id (patient ID), encounter_id (ID of one
+    visit), arrival_year, age_years, triage_level (1 to 5), admitted ('no', 'yes'), sepsis_flag
+    ('no', 'yes'), lactate (number), lactate_unit ('mg/dL', 'mmol/L')
+  vaccine: >-
+    one row per person: person_id, age_group (0, 1, 2), region ('East', 'North', 'South'), doses
+    (0 to 3), antibody_titer (number), pregnant ('no', 'yes')
+examples:
+  - table: stroke
+    question: "How many patients are in the registry?"
+    plan: {thought: "Count all patients.", answer: "count", where: null, group_by: null, numerator: null, number: null, outcome: null}
+    sql: "SELECT COUNT(*) AS count FROM unified"
+  - table: stroke
+    question: "How many of the patients are men and how many are women?"
+    plan: {thought: "Count patients for each value of sex.", answer: "count", where: null, group_by: "sex", numerator: null, number: null, outcome: null}
+    sql: "SELECT sex, COUNT(*) AS count FROM unified GROUP BY sex"
+  - table: stroke
+    question: "What fraction of patients falls into each smoking category?"
+    plan: {thought: "The distribution of smoker: count patients per smoker category.", answer: "count", where: null, group_by: "smoker", numerator: null, number: null, outcome: null}
+    sql: "SELECT smoker, COUNT(*) AS count FROM unified GROUP BY smoker"
+  - table: stroke
+    question: "How many patients got thrombolysis and how many did not?"
+    plan: {thought: "Count patients for each value of thrombolysis.", answer: "count", where: null, group_by: "thrombolysis", numerator: null, number: null, outcome: null}
+    sql: "SELECT thrombolysis, COUNT(*) AS count FROM unified GROUP BY thrombolysis"
+  - table: stroke
+    question: "How many diabetic women had a hemorrhagic stroke?"
+    plan: {thought: "Count patients with sex F, diabetes Yes and stroke_type hemorrhagic.", answer: "count", where: "sex = 'F' AND diabetes = 'Yes' AND stroke_type = 'hemorrhagic'", group_by: null, numerator: null, number: null, outcome: null}
+    sql: "SELECT COUNT(*) AS count FROM unified WHERE sex = 'F' AND diabetes = 'Yes' AND stroke_type = 'hemorrhagic'"
+  - table: stroke
+    question: "How many current smokers died within 30 days, for each type of stroke?"
+    plan: {thought: "Count patients with smoker current and died_30d Yes, per stroke_type.", answer: "count", where: "smoker = 'current' AND died_30d = 'Yes'", group_by: "stroke_type", numerator: null, number: null, outcome: null}
+    sql: "SELECT stroke_type, COUNT(*) AS count FROM unified WHERE smoker = 'current' AND died_30d = 'Yes' GROUP BY stroke_type"
+  - table: stroke
+    question: "What is the average NIHSS score by stroke type?"
+    plan: {thought: "Mean of nihss per stroke_type.", answer: "mean", where: null, group_by: "stroke_type", numerator: null, number: "nihss", outcome: null}
+    sql: "SELECT stroke_type, AVG(nihss) AS mean FROM unified GROUP BY stroke_type"
+  - table: stroke
+    question: "What is the median age at stroke in diabetics compared with non-diabetics?"
+    plan: {thought: "Median of age for each value of diabetes.", answer: "median", where: null, group_by: "diabetes", numerator: null, number: "age", outcome: null}
+    sql: "SELECT diabetes, MEDIAN(age) AS median FROM unified GROUP BY diabetes"
+  - table: stroke
+    question: "What percentage of patients with each stroke type died within 30 days?"
+    plan: {thought: "Share of patients with died_30d Yes, per stroke_type.", answer: "share", where: null, group_by: "stroke_type", numerator: "died_30d = 'Yes'", number: null, outcome: null}
+    sql: "SELECT stroke_type, AVG(CASE WHEN died_30d = 'Yes' THEN 1.0 ELSE 0.0 END) AS rate FROM unified GROUP BY stroke_type"
+  - table: stroke
+    question: "What proportion of patients received thrombolysis, split by sex?"
+    plan: {thought: "Share of patients with thrombolysis Yes, per sex.", answer: "share", where: null, group_by: "sex", numerator: "thrombolysis = 'Yes'", number: null, outcome: null}
+    sql: "SELECT sex, AVG(CASE WHEN thrombolysis = 'Yes' THEN 1.0 ELSE 0.0 END) AS rate FROM unified GROUP BY sex"
+  - table: stroke
+    question: "What percent of patients over 80 have diabetes?"
+    plan: {thought: "Share with diabetes Yes among patients with age above 80.", answer: "share", where: "age > 80", group_by: null, numerator: "diabetes = 'Yes'", number: null, outcome: null}
+    sql: "SELECT AVG(CASE WHEN diabetes = 'Yes' THEN 1.0 ELSE 0.0 END) AS rate FROM unified WHERE age > 80"
+  - table: stroke
+    question: "Is death within 30 days more frequent in diabetics than in non-diabetics? Please use a chi-square test."
+    plan: {thought: "Test of outcome died_30d between the groups of diabetes.", answer: "compare_groups", where: null, group_by: "diabetes", numerator: null, number: null, outcome: "died_30d"}
+    sql: null
+  - table: stroke
+    question: "Does the NIHSS score differ between men and women?"
+    plan: {thought: "Test of nihss between the groups of sex.", answer: "compare_groups", where: null, group_by: "sex", numerator: null, number: null, outcome: "nihss"}
+    sql: null
+  - table: stroke
+    question: "What is the odds ratio of dying within 30 days for patients who got thrombolysis versus those who did not, with a 95% confidence interval?"
+    plan: {thought: "Odds ratio of outcome died_30d for exposure thrombolysis.", answer: "odds_ratio", where: null, group_by: "thrombolysis", numerator: null, number: null, outcome: "died_30d"}
+    sql: null
+  - table: stroke
+    question: "Give me the IDs of the patients who died so I can pull their charts."
+    plan: {thought: "This asks for individual patients.", answer: "listing", where: null, group_by: null, numerator: null, number: null, outcome: null}
+    sql: null
+  - table: dialysis
+    question: "How many patients had an infection in each year?"
+    plan: {thought: "Count patients with infection yes, per session_year.", answer: "count", where: "infection = 'yes'", group_by: "session_year", numerator: null, number: null, outcome: null}
+    sql: "SELECT session_year, COUNT(DISTINCT patient_id) AS count FROM unified WHERE infection = 'yes' GROUP BY session_year"
+  - table: dialysis
+    question: "How many dialysis sessions did we run for patients 75 and older?"
+    plan: {thought: "Count sessions with age_years at least 75. Dialysis is the whole table, not a filter.", answer: "count", where: "age_years >= 75", group_by: null, numerator: null, number: null, outcome: null}
+    sql: "SELECT COUNT(DISTINCT session_id) AS count FROM unified WHERE age_years >= 75"
+  - table: dialysis
+    question: "How many of our patients have ever had an access infection?"
+    plan: {thought: "Count patients with infection yes on any session.", answer: "count", where: "infection = 'yes'", group_by: null, numerator: null, number: null, outcome: null}
+    sql: "SELECT COUNT(DISTINCT patient_id) AS count FROM unified WHERE infection = 'yes'"
+  - table: dialysis
+    question: "In women under 60, what share of sessions ended in a hospital stay, by type of access?"
+    plan: {thought: "Share of sessions with hospitalized yes among sex female and age_years below 60, per access_type.", answer: "share", where: "sex = 'female' AND age_years < 60", group_by: "access_type", numerator: "hospitalized = 'yes'", number: null, outcome: null}
+    sql: "SELECT access_type, COUNT(DISTINCT session_id) FILTER (WHERE hospitalized = 'yes') * 1.0 / COUNT(DISTINCT session_id) AS rate FROM unified WHERE sex = 'female' AND age_years < 60 GROUP BY access_type"
+  - table: dialysis
+    question: "What share of patients has ever been hospitalized, by sex?"
+    plan: {thought: "Share of patients with hospitalized yes on any session, per sex.", answer: "share", where: null, group_by: "sex", numerator: "hospitalized = 'yes'", number: null, outcome: null}
+    sql: "SELECT sex, COUNT(DISTINCT patient_id) FILTER (WHERE hospitalized = 'yes') * 1.0 / COUNT(DISTINCT patient_id) AS rate FROM unified GROUP BY sex"
+  - table: dialysis
+    question: "How many sessions used each kind of access in 2024, and how many used a catheter?"
+    plan: {thought: "Count sessions in session_year 2024 per access_type; catheter is one of its values, so it is a group, not a filter.", answer: "count", where: "session_year = 2024", group_by: "access_type", numerator: null, number: null, outcome: null}
+    sql: "SELECT access_type, COUNT(DISTINCT session_id) AS count FROM unified WHERE session_year = 2024 GROUP BY access_type"
+  - table: dialysis
+    question: "What is the mean Kt/V for each access type, counting every session?"
+    plan: {thought: "Mean of kt_v per access_type over all sessions.", answer: "mean", where: null, group_by: "access_type", numerator: null, number: "kt_v", outcome: null}
+    sql: "SELECT access_type, AVG(kt_v) AS mean FROM unified GROUP BY access_type"
+  - table: emergency
+    question: "How many emergency visits were triage level 1 or 2 in 2024?"
+    plan: {thought: "Count visits with triage_level 1 or 2 and arrival_year 2024.", answer: "count", where: "triage_level IN (1, 2) AND arrival_year = 2024", group_by: null, numerator: null, number: null, outcome: null}
+    sql: "SELECT COUNT(DISTINCT encounter_id) AS count FROM unified WHERE triage_level IN (1, 2) AND arrival_year = 2024"
+  - table: emergency
+    question: "In patients 65 and older, what is the odds ratio for admission when sepsis was flagged, with a 95% CI?"
+    plan: {thought: "Odds ratio of outcome admitted for exposure sepsis_flag among age_years at least 65.", answer: "odds_ratio", where: "age_years >= 65", group_by: "sepsis_flag", numerator: null, number: null, outcome: "admitted"}
+    sql: null
+  - table: emergency
+    question: "What is the median lactate in mmol/L for each triage level?"
+    plan: {thought: "Median of lactate per triage_level; lactate_unit differs, so convert mg/dL to mmol/L (divide by 9.01).", answer: "median", where: null, group_by: "triage_level", numerator: null, number: "CASE WHEN lactate_unit = 'mg/dL' THEN lactate / 9.01 ELSE lactate END", outcome: null}
+    sql: "SELECT triage_level, MEDIAN(CASE WHEN lactate_unit = 'mg/dL' THEN lactate / 9.01 ELSE lactate END) AS median FROM unified GROUP BY triage_level"
+  - table: emergency
+    question: "Which patients came back more than three times? I want to call them."
+    plan: {thought: "This asks to identify individual patients.", answer: "listing", where: null, group_by: null, numerator: null, number: null, outcome: null}
+    sql: null
+  - table: emergency
+    question: "What share of visits with a lactate of at least 4 mmol/L were admitted, per year?"
+    plan: {thought: "Share of visits with admitted yes among lactate at least 4 in mmol/L, per arrival_year.", answer: "share", where: "(CASE WHEN lactate_unit = 'mg/dL' THEN lactate / 9.01 ELSE lactate END) >= 4", group_by: "arrival_year", numerator: "admitted = 'yes'", number: null, outcome: null}
+    sql: "SELECT arrival_year, COUNT(DISTINCT encounter_id) FILTER (WHERE admitted = 'yes') * 1.0 / COUNT(DISTINCT encounter_id) AS rate FROM unified WHERE (CASE WHEN lactate_unit = 'mg/dL' THEN lactate / 9.01 ELSE lactate END) >= 4 GROUP BY arrival_year"
+  - table: vaccine
+    question: "How many people in each region have had fewer than two doses?"
+    plan: {thought: "Count people with doses below 2, per region.", answer: "count", where: "doses < 2", group_by: "region", numerator: null, number: null, outcome: null}
+    sql: "SELECT region, COUNT(*) AS count FROM unified WHERE doses < 2 GROUP BY region"
+  - table: vaccine
+    question: "What is the mean antibody titer among pregnant people?"
+    plan: {thought: "Mean of antibody_titer among pregnant yes.", answer: "mean", where: "pregnant = 'yes'", group_by: null, numerator: null, number: "antibody_titer", outcome: null}
+    sql: "SELECT AVG(antibody_titer) AS mean FROM unified WHERE pregnant = 'yes'"
+  - table: vaccine
+    question: "What percentage of each age group is fully vaccinated with three doses?"
+    plan: {thought: "Share of people with doses equal to 3, per age_group.", answer: "share", where: null, group_by: "age_group", numerator: "doses = 3", number: null, outcome: null}
+    sql: "SELECT age_group, AVG(CASE WHEN doses = 3 THEN 1.0 ELSE 0.0 END) AS rate FROM unified GROUP BY age_group"
+  - table: vaccine
+    question: "What share of each region had no documented dose and a titer below 10?"
+    plan: {thought: "Share of people with doses 0 and antibody_titer below 10, per region.", answer: "share", where: null, group_by: "region", numerator: "doses = 0 AND antibody_titer < 10", number: null, outcome: null}
+    sql: "SELECT region, AVG(CASE WHEN doses = 0 AND antibody_titer < 10 THEN 1.0 ELSE 0.0 END) AS rate FROM unified GROUP BY region"
+  - table: vaccine
+    question: "Is the antibody titer related to the number of doses?"
+    plan: {thought: "Correlation between antibody_titer and doses.", answer: "correlation", where: null, group_by: "doses", numerator: null, number: null, outcome: "antibody_titer"}
+    sql: null

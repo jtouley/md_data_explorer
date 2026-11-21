@@ -211,12 +211,21 @@ ENABLE_SQL_QUERIES: bool = _config["enable_sql_queries"]
 # together they stay within it; each sandbox gets SQL_SANDBOX_MEMORY_LIMIT, one such share. When
 # the path is off it takes no share (None), so the setting can't stop the app from starting.
 SQL_SANDBOX_SLOTS: int = 1
+# Model-writes-the-query (model_query/): the default question path. Its queries run in the same
+# sandbox, so the sandbox takes its share of the budget when either path is on.
+ENABLE_MODEL_QUERIES: bool = _config["enable_model_queries"]
+MODEL_QUERY_FORMAT: str = str(_config["model_query_format"]).strip().lower()
+if MODEL_QUERY_FORMAT not in ("plan", "sql"):
+    raise ValueError(f"model_query_format must be 'plan' or 'sql', got {MODEL_QUERY_FORMAT!r}")
+MODEL_QUERY_TIMEOUT_S: float = _config["model_query_timeout_s"]
+MODEL_QUERY_MAX_ATTEMPTS: int = max(1, int(_config["model_query_max_attempts"]))
+_SANDBOX_IN_USE: bool = ENABLE_SQL_QUERIES or ENABLE_MODEL_QUERIES
 CACHED_LAYER_MEMORY_LIMIT: DuckdbMemoryLimit = per_layer_memory_limit(
-    DUCKDB_MEMORY_BUDGET, SEMANTIC_LAYER_CACHE_SIZE, SQL_SANDBOX_SLOTS if ENABLE_SQL_QUERIES else 0
+    DUCKDB_MEMORY_BUDGET, SEMANTIC_LAYER_CACHE_SIZE, SQL_SANDBOX_SLOTS if _SANDBOX_IN_USE else 0
 )
 SQL_SANDBOX_MEMORY_LIMIT: DuckdbMemoryLimit | None = (
     per_layer_memory_limit(DUCKDB_MEMORY_BUDGET, SEMANTIC_LAYER_CACHE_SIZE, SQL_SANDBOX_SLOTS)
-    if ENABLE_SQL_QUERIES
+    if _SANDBOX_IN_USE
     else None
 )
 # Every other layer (an upload's probe, the Streamlit app, the CLI, evals) keeps the standalone
