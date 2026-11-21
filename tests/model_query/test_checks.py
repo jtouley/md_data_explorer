@@ -327,3 +327,12 @@ def test_check_initialAndNameNamingTheTable_isNotALimit(make_query_table, questi
 
     # Assert
     assert found.uncovered == uncovered
+
+
+@pytest.mark.parametrize(
+    "question",
+    ["What share of each group has two doses on record?", "What share had shots at each visit?"],
+)
+def test_head_noun_nounAfterAPreposition_isNotTheCountedUnit(question):
+    # Act / Assert: "on record", "at each visit" say where, not what is counted
+    assert head_noun(question) is None

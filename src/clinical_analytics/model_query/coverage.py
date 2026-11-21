@@ -91,6 +91,8 @@ STRUCTURAL: Final = frozenset(
     run ran runs perform performed performing conduct conducted done saw
     above below beyond exceeding exceed exceeds least through thru equal equals exactly approximately about
     unique distinct separate individual
+    keep kept keeping own include includes including included exclude excluding excluded report separately
+    check checked checking meaning means mean
     """.split()
 )  # fmt: skip
 # Words too empty to name a column even when its description uses them.

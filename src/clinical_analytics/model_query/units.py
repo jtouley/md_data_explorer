@@ -51,6 +51,8 @@ _HEAD: Final = re.compile(
     re.IGNORECASE,
 )
 _WORD: Final = re.compile(r"[a-z][a-z0-9]*")
+_PREPOSITIONS: Final = frozenset({"on", "at", "in", "per", "during", "from", "across", "over"})
+_DETERMINERS: Final = frozenset({"each", "every", "any", "all", "their", "a", "the"})
 # Words between the counting words and the noun that do not end the search ("how many unique
 # patients", "number of clinic visits", "% of all ED visits").
 _HEAD_WINDOW: Final = 5
@@ -104,13 +106,23 @@ def head_noun(question: str) -> tuple[HeadKind, str] | None:
             return "events"
         return None
 
+    def placed(i: int) -> bool:
+        """The noun at ``i`` says when or where ("on record", "at each visit", "per visit")."""
+        prev1 = words[i - 1][1] if i >= 1 else ""
+        prev2 = words[i - 2][1] if i >= 2 else ""
+        return prev1 in _PREPOSITIONS or (prev1 in _DETERMINERS and prev2 in _PREPOSITIONS)
+
     for head in _HEAD.finditer(text):
-        after = [w for at, w in words if at >= head.end()][:_HEAD_WINDOW]
-        for word in after:
-            found = kind(word)
-            if found is not None:
-                return found, word
-    for _at, word in words:
+        after = [i for i, (at, _w) in enumerate(words) if at >= head.end()][:_HEAD_WINDOW]
+        for i in after:
+            found = kind(words[i][1])
+            if found is not None and not placed(i):
+                return found, words[i][1]
+    # Elsewhere in the question a noun after a preposition says when or where ("on record", "at
+    # each visit", "in 2024 admissions"), not what is counted; "record" there never counts.
+    for i, (_at, word) in enumerate(words):
+        if placed(i) or singular(word) in ("record", "row", "entry"):
+            continue
         found = kind(word)
         if found is not None:
             return found, word
