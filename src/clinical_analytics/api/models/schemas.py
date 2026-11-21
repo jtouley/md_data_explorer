@@ -8,15 +8,18 @@ Reference: docs/architecture/LIGHTWEIGHT_UI_ARCHITECTURE.md
 """
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 from clinical_analytics.sql import config as sql_config
-from clinical_analytics.storage.dataset_deletion import DATASET_ID_PATTERN
+from clinical_analytics.storage.dataset_deletion import DATASET_ID_PATTERN, validate_dataset_id
 
-# A dataset id names files under the data home; anything else (``../``, ``/``) is a 422 here.
+# A dataset id names files under the data home; anything else (``../``, ``/``, a Windows device
+# name such as ``CON``) is a 422 here. The pattern shows in the OpenAPI schema; the validator adds
+# the checks a pattern cannot express.
 DATASET_ID_FIELD_PATTERN = DATASET_ID_PATTERN.pattern
+DatasetIdField = Annotated[str, AfterValidator(validate_dataset_id)]
 
 # ============================================================================
 # Session Management Schemas
@@ -28,7 +31,9 @@ class SessionCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    dataset_id: str = Field(..., pattern=DATASET_ID_FIELD_PATTERN, description="Dataset ID to use for this session")
+    dataset_id: DatasetIdField = Field(
+        ..., pattern=DATASET_ID_FIELD_PATTERN, description="Dataset ID to use for this session"
+    )
     metadata: dict[str, Any] | None = Field(None, description="Optional client metadata (e.g., user_agent, theme)")
 
 
@@ -64,7 +69,7 @@ class QueryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     session_id: str = Field(..., description="Session ID for conversation context")
-    dataset_id: str = Field(..., pattern=DATASET_ID_FIELD_PATTERN, description="Dataset to query")
+    dataset_id: DatasetIdField = Field(..., pattern=DATASET_ID_FIELD_PATTERN, description="Dataset to query")
     query_text: str = Field(..., min_length=1, description="Natural language query")
     confirmed: bool = Field(
         False,

@@ -182,11 +182,27 @@ async def _send_json(
     await send({"type": "http.response.body", "body": body})
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow a redirect: a 3xx is returned as an HTTPError instead."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]  # noqa: ANN001
+        return None
+
+
+def local_opener() -> urllib.request.OpenerDirector:
+    """An opener for this machine's own API: no proxies (env or OS settings), no redirects."""
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+
+
 def verify_health(base_url: str, token: str, timeout_s: float = 5.0) -> tuple[bool, str]:
-    """Check that the server at ``base_url`` knows ``token`` (used by scripts/run_app.sh)."""
+    """Check that the server at ``base_url`` knows ``token`` (used by scripts/run_app.sh).
+
+    The request never goes through a proxy and never follows a redirect, so the nonce and the
+    token proof only travel between this script and the local server.
+    """
     nonce = secrets.token_urlsafe(24)
     try:
-        with urllib.request.urlopen(f"{base_url}/health?nonce={nonce}", timeout=timeout_s) as response:  # noqa: S310
+        with local_opener().open(f"{base_url}/health?nonce={nonce}", timeout=timeout_s) as response:
             body = json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, OSError, ValueError) as e:
         return False, f"health check failed ({type(e).__name__})"

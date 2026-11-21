@@ -325,16 +325,63 @@ class TestConfigRefusesRemoteModelServer:
         assert config["ollama_allow_remote_host"] is True
         assert "SECURITY WARNING" in caplog.text
 
-    @pytest.mark.parametrize("opt_in", ["false", "no", "", "maybe"])
-    def test_load_nl_query_config_optInNotTrue_staysRefused(self, tmp_path, monkeypatch, opt_in):
+    def test_load_nl_query_config_envOptInFalse_staysRefused(self, tmp_path, monkeypatch):
         # Arrange
         monkeypatch.setenv("OLLAMA_BASE_URL", "http://10.0.0.5:11434")
-        monkeypatch.setenv("OLLAMA_ALLOW_REMOTE_HOST", opt_in)
+        monkeypatch.setenv("OLLAMA_ALLOW_REMOTE_HOST", "false")
         path = self._write(tmp_path, "")
 
         # Act / Assert
         with pytest.raises(NonLoopbackURLError):
             load_nl_query_config(path)
+
+    @pytest.mark.parametrize("opt_in", ["no", "", "maybe", "True", "TRUE", "1", "yes", " true"])
+    def test_load_nl_query_config_envOptInNotExact_raises(self, tmp_path, monkeypatch, opt_in):
+        # Arrange: a loopback URL, so only the malformed opt-in can fail
+        monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+        monkeypatch.setenv("OLLAMA_ALLOW_REMOTE_HOST", opt_in)
+        path = self._write(tmp_path, "")
+
+        # Act / Assert
+        with pytest.raises(ValueError, match="OLLAMA_ALLOW_REMOTE_HOST must be true or false"):
+            load_nl_query_config(path)
+
+    @pytest.mark.parametrize("yaml_value", ["[false]", "{a: 1}", "2", "1", '"True"', '"yes"', "null", '""'])
+    def test_load_nl_query_config_yamlOptInNotABool_raises(self, tmp_path, monkeypatch, yaml_value):
+        # Arrange: values the generic coercion would have turned into True (or quietly False)
+        monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+        monkeypatch.delenv("OLLAMA_ALLOW_REMOTE_HOST", raising=False)
+        path = self._write(tmp_path, f"ollama_allow_remote_host: {yaml_value}\n")
+
+        # Act / Assert
+        with pytest.raises(ValueError, match="ollama_allow_remote_host in nl_query.yaml must be true or false"):
+            load_nl_query_config(path)
+
+    @pytest.mark.parametrize(("yaml_value", "expected"), [("true", True), ("false", False), ('"false"', False)])
+    def test_load_nl_query_config_yamlOptInExact_parsed(self, tmp_path, monkeypatch, yaml_value, expected):
+        # Arrange
+        monkeypatch.setenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+        monkeypatch.delenv("OLLAMA_ALLOW_REMOTE_HOST", raising=False)
+        path = self._write(tmp_path, f"ollama_allow_remote_host: {yaml_value}\n")
+
+        # Act
+        config = load_nl_query_config(path)
+
+        # Assert
+        assert config["ollama_allow_remote_host"] is expected
+
+    def test_load_nl_query_config_defaults_useLoopbackIp(self, tmp_path, monkeypatch):
+        # Arrange
+        monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+        monkeypatch.delenv("OLLAMA_ALLOW_REMOTE_HOST", raising=False)
+        path = tmp_path / "missing.yaml"
+
+        # Act
+        config = load_nl_query_config(path)
+
+        # Assert
+        assert config["ollama_base_url"] == "http://127.0.0.1:11434"
+        assert config["ollama_allow_remote_host"] is False
 
     def test_load_nl_query_config_loopbackUrl_loads(self, tmp_path, monkeypatch):
         # Arrange

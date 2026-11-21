@@ -23,7 +23,10 @@ from clinical_analytics.ui.storage.user_datasets import (
     STORAGE_LAYOUT_KEY,
     StoredPathError,
     UserDatasetStorage,
+    checked_table_name,
     cohort_parquet_path,
+    compute_stored_content_hash,
+    stored_path,
     table_parquet_path,
 )
 
@@ -186,3 +189,116 @@ class TestLegacyConversionOutput:
         if os.name != "nt":  # Windows has no POSIX mode bits; the data home's ACLs apply
             assert stat.S_IMODE(stored.cohort_path.stat().st_mode) == 0o600
         plt.assert_frame_equal(stored.scan_cohort().collect(), sample_upload_df, check_dtypes=False)
+
+    @pytest.mark.parametrize(
+        "table_name",
+        ["../../../../../outside/secret", "a/b", "a\\b", "..", ".hidden", "", "  ", "x\x00y"],
+    )
+    def test_stored_dataset_legacyTableNameEscaping_refusedAndNothingCopied(
+        self, nested_storage, tmp_path, sample_upload_df, sample_upload_metadata, table_name
+    ):
+        # Arrange: a legacy upload whose table name points at a CSV outside the data directory
+        secret_dir = tmp_path / "outside"
+        secret_dir.mkdir()
+        pl.DataFrame({"patient_id": ["S1"], "secret": [1]}).write_csv(secret_dir / "secret.csv")
+        (nested_storage.raw_dir / "legacy_tbl_tables").mkdir()
+        _write_legacy_upload(
+            nested_storage, "legacy_tbl", sample_upload_df, {**sample_upload_metadata, "tables": [table_name]}
+        )
+        parquet_dir = nested_storage.upload_dir.parent / "parquet"
+
+        # Act / Assert
+        with pytest.raises(StoredPathError):
+            nested_storage.stored_dataset("legacy_tbl")
+        assert not parquet_dir.exists() or list(parquet_dir.iterdir()) == []
+
+    @pytest.mark.parametrize("name", ["visits", "Lab Results", "table-2", "a.b"])
+    def test_checked_table_name_plainName_returned(self, name):
+        # Arrange / Act
+        result = checked_table_name(name)
+
+        # Assert
+        assert result == name
+
+    def test_stored_dataset_legacyRawCsvSymlinkOutside_refused(
+        self, nested_storage, tmp_path, sample_upload_df, sample_upload_metadata
+    ):
+        # Arrange: raw/{id}.csv is a link to a CSV outside the data directory
+        outside = tmp_path / "outside.csv"
+        sample_upload_df.write_csv(outside)
+        try:
+            (nested_storage.raw_dir / "legacy_link.csv").symlink_to(outside)
+        except OSError:
+            pytest.skip("symlinks not available on this file system")
+        meta = {**sample_upload_metadata, "upload_id": "legacy_link"}
+        (nested_storage.metadata_dir / "legacy_link.json").write_text(json.dumps(meta))
+
+        # Act / Assert
+        with pytest.raises(StoredPathError):
+            nested_storage.stored_dataset("legacy_link")
+
+
+class TestMetadataFileContainment:
+    def test_get_upload_metadata_metadataSymlinkOutside_refused(self, nested_storage, tmp_path):
+        # Arrange: metadata/{id}.json is a link to a JSON file outside the data directory
+        outside = tmp_path / "outside.json"
+        outside.write_text(json.dumps({"upload_id": "linked_meta", "upload_timestamp": "2024-01-01T00:00:00"}))
+        try:
+            (nested_storage.metadata_dir / "linked_meta.json").symlink_to(outside)
+        except OSError:
+            pytest.skip("symlinks not available on this file system")
+
+        # Act / Assert
+        with pytest.raises(StoredPathError):
+            nested_storage.get_upload_metadata("linked_meta")
+        assert nested_storage.list_uploads() == []
+
+
+class TestContentHashPaths:
+    def test_compute_stored_content_hash_parquetOutside_refused(self, nested_storage, tmp_path, sample_upload_df):
+        # Arrange
+        outside = tmp_path / "outside.parquet"
+        sample_upload_df.write_parquet(outside)
+        metadata = {"tables": ["t"], "parquet_paths": {"t": str(outside)}}
+
+        # Act / Assert
+        with pytest.raises(StoredPathError):
+            compute_stored_content_hash(nested_storage, metadata)
+
+    def test_find_datasets_by_content_hash_parquetOutside_skippedNotRead(
+        self, nested_storage, tmp_path, sample_upload_df
+    ):
+        # Arrange: a stored dataset needing a content-hash backfill whose Parquet is outside
+        outside = tmp_path / "outside.parquet"
+        sample_upload_df.write_parquet(outside)
+        metadata = {"upload_id": "hash_out", "tables": ["t"], "parquet_paths": {"t": str(outside)}}
+        (nested_storage.metadata_dir / "hash_out.json").write_text(json.dumps(metadata))
+
+        # Act
+        matches = nested_storage.find_datasets_by_content_hash("0" * 16)
+
+        # Assert: refused (logged), never hashed or matched
+        assert matches == []
+        assert "content_hash" not in json.loads((nested_storage.metadata_dir / "hash_out.json").read_text())
+
+
+class TestStoredPathPrefix:
+    @pytest.mark.parametrize("sibling", ["data2", "data_backup", "dat"])
+    def test_stored_path_siblingWithSharedPrefix_refused(self, nested_storage, sibling):
+        # Arrange: <home>/data2/x shares the string prefix "<home>/data" but is outside it
+        data_dir = nested_storage.upload_dir.parent
+        path = data_dir.parent / sibling / "x.parquet"
+
+        # Act / Assert
+        with pytest.raises(StoredPathError):
+            stored_path(nested_storage, str(path))
+
+    def test_stored_path_insideDataDir_returned(self, nested_storage):
+        # Arrange
+        path = nested_storage.upload_dir.parent / "parquet" / "x.parquet"
+
+        # Act
+        result = stored_path(nested_storage, str(path))
+
+        # Assert
+        assert result == path

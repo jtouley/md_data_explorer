@@ -18,8 +18,11 @@ What counts as a count:
   "count" (Polars ``describe()``);
 * in a sentence, every whole number written on its own, since a sentence cannot say which of its
   numbers are counts ("n=7", "on 3 rows", "Type 2"). A label digit is masked too: over-masking a
-  label is the safe direction at this boundary. Leading zeros do not hide a count ("05", "007"),
-  except after "-", "/" or ":" (a date or time part). Decimals ("0.71"), percents ("5%"), numbers
+  label is the safe direction at this boundary. Leading zeros do not hide a count ("05",
+  "ID 007", "visit 08"), except in a date or time: a zero-padded number right after "-", "/" or
+  ":", or right before one of them followed by a digit, is left as written ("09:05",
+  "01/05/2024", "07-03-2024"). Unpadded date and time parts are still masked ("9:05" is written
+  "<11:05", "1/5/2024" is written "<11/<11/2024"). Decimals ("0.71"), percents ("5%"), numbers
   inside words or codes ("A1c", "2024-01-05") and numbers of two or more digits besides 10 are
   left as written. Text is NFKC-normalised first, so a full-width "５" is read as 5.
 
@@ -58,10 +61,15 @@ EXPORT_NOTE: Final = (
 
 # A whole number from SMALL_MIN to SMALL_MAX standing on its own (also written 5.0 or 05): not part
 # of a word, a code, a decimal, a percent or a thousands-grouped number. A sentence's full stop
-# after it does not protect it. Leading zeros count, except after "-", "/" or ":", so the parts of
-# "2024-01-05" or "09:05" are left as written.
+# after it does not protect it. A zero-padded one counts too, unless it is a date or time part:
+# right after "-", "/" or ":", or right before one of them followed by a digit ("09:05",
+# "01/05/2024", "2024-01-05").
 _ALTERNATIVES: Final = "|".join(str(n) for n in range(SMALL_MAX, SMALL_MIN - 1, -1))
-_SMALL_NUMBER: Final = re.compile(rf"(?<![\w.,])(?:(?<![-/:])0+)?(?:{_ALTERNATIVES})(?:\.0+)?(?![\w%]|[.,]\d)")
+_SMALL_NUMBER: Final = re.compile(
+    rf"(?<![\w.,])"
+    rf"(?:(?<![-/:])0+(?:{_ALTERNATIVES})(?:\.0+)?(?![-/:]\d)|(?:{_ALTERNATIVES})(?:\.0+)?)"
+    rf"(?![\w%]|[.,]\d)"
+)
 
 
 class ExportedAnswer(TypedDict):

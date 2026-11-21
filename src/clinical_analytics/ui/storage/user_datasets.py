@@ -1207,11 +1207,12 @@ def apply_schema_drift_policy(
         return False, message, warnings
 
 
-def compute_stored_content_hash(metadata: dict[str, Any]) -> str:
+def compute_stored_content_hash(storage: "UserDatasetStorage", metadata: dict[str, Any]) -> str:
     """
     Content hash of a dataset from its own stored Parquet files, in ``metadata["tables"]`` order.
 
     Args:
+        storage: The storage the dataset belongs to (each Parquet path must be inside its data directory)
         metadata: Dataset metadata with ``tables`` and ``parquet_paths``
 
     Returns:
@@ -1219,6 +1220,7 @@ def compute_stored_content_hash(metadata: dict[str, Any]) -> str:
 
     Raises:
         ValueError: If a table has no stored Parquet path
+        StoredPathError: If a Parquet path resolves outside the data directory
         OSError, polars.exceptions.PolarsError: If a Parquet file is missing or unreadable
     """
     from clinical_analytics.storage.versioning import compute_dataset_version
@@ -1228,7 +1230,8 @@ def compute_stored_content_hash(metadata: dict[str, Any]) -> str:
     missing = [name for name in table_names if name not in parquet_paths]
     if not table_names or missing:
         raise ValueError(f"No stored Parquet for tables {missing or '(none listed)'}")
-    return compute_dataset_version([pl.scan_parquet(parquet_paths[name]).collect() for name in table_names])
+    paths = [stored_path(storage, parquet_paths[name]) for name in table_names]
+    return compute_dataset_version([pl.scan_parquet(path).collect() for path in paths])
 
 
 def assert_metadata_invariants(metadata: dict[str, Any]) -> None:
@@ -1290,6 +1293,22 @@ def checked_upload_id(upload_id: str) -> str:
     return validate_dataset_id(upload_id)
 
 
+def contained_path(storage: "UserDatasetStorage", path: Path) -> Path:
+    """``path`` (built by the app from a data folder) if it resolves inside the data directory.
+
+    Resolving follows symlinks, so ``metadata/{id}.json`` or ``raw/{id}.csv`` that is a link to a
+    file elsewhere is refused like a path that climbs out with ``..``.
+
+    Raises:
+        StoredPathError: ``path`` resolves outside ``storage``'s data directory.
+    """
+    root = storage.upload_dir.parent.resolve()
+    if not Path(path).resolve().is_relative_to(root):
+        logger.error("stored_path_outside_data_dir", file=Path(path).name)
+        raise StoredPathError("A stored data file of this dataset is outside the data folder; it was not read.")
+    return Path(path)
+
+
 def stored_path(storage: "UserDatasetStorage", value: object) -> Path:
     """A data file path read from metadata, refused unless it resolves inside the data directory.
 
@@ -1297,14 +1316,31 @@ def stored_path(storage: "UserDatasetStorage", value: object) -> Path:
     entry must never make the app read, or report the existence of, a file elsewhere.
 
     Raises:
-        StoredPathError: the path is empty or resolves outside ``storage``'s data directory.
+        StoredPathError: the path is empty, relative or resolves outside ``storage``'s data directory.
     """
-    root = storage.upload_dir.parent.resolve()
     path = Path(str(value)) if value else None
-    if path is None or not path.is_absolute() or not path.resolve().is_relative_to(root):
-        logger.error("stored_path_outside_data_dir", file=path.name if path else None)
+    if path is None or not path.is_absolute():
+        logger.error("stored_path_not_absolute", file=path.name if path else None)
         raise StoredPathError("A stored data file of this dataset is outside the data folder; it was not read.")
-    return path
+    return contained_path(storage, path)
+
+
+def checked_table_name(name: object) -> str:
+    """A legacy table name from metadata, usable as one file name (``{name}.csv``) in its folder.
+
+    Raises:
+        StoredPathError: not a non-empty string, or it holds a path separator, ``..`` or a NUL.
+    """
+    if (
+        not isinstance(name, str)
+        or not name.strip()
+        or any(sep in name for sep in ("/", "\\", "\x00"))
+        or ".." in name
+        or name.startswith(".")
+    ):
+        logger.error("legacy_table_name_refused")
+        raise StoredPathError("A table name in this dataset's metadata is not a plain name; it was not read.")
+    return name
 
 
 def table_parquet_path(storage: "UserDatasetStorage", upload_id: str, table_name: str, dataset_version: str) -> Path:
@@ -1860,7 +1896,7 @@ def _legacy_source_path(storage: "UserDatasetStorage", upload_id: str, metadata:
         InvalidDatasetIdError: ``upload_id`` is not a plain identifier.
         StoredPathError: a file name in metadata climbs out of the data directory.
     """
-    candidates = [storage.raw_dir / f"{checked_upload_id(upload_id)}.csv"]
+    candidates = [contained_path(storage, storage.raw_dir / f"{checked_upload_id(upload_id)}.csv")]
     for key in ("stored_relpath", "stored_filename"):
         if metadata.get(key):
             candidates.append(stored_path(storage, storage.raw_dir / str(metadata[key])))
@@ -1907,7 +1943,7 @@ def _convert_legacy_upload(storage: "UserDatasetStorage", upload_id: str, metada
     table_frames: dict[str, pl.DataFrame] = {}
     untyped: dict[str, Path] = {}
     for name in metadata.get("tables") or []:
-        csv_path = tables_dir / f"{name}.csv"
+        csv_path = contained_path(storage, tables_dir / f"{checked_table_name(name)}.csv")
         if csv_path.is_file():
             table_frames[name] = _stage_legacy_file(csv_path)
         elif name in old_parquet:
@@ -1998,8 +2034,20 @@ class UserDatasetStorage:
 
         Raises:
             InvalidDatasetIdError: ``upload_id`` is not a plain identifier.
+            StoredPathError: the file is a link to somewhere outside the data directory.
         """
-        return self.metadata_dir / f"{checked_upload_id(upload_id)}.json"
+        return contained_path(self, self.metadata_dir / f"{checked_upload_id(upload_id)}.json")
+
+    def _metadata_files(self) -> list[Path]:
+        """Every ``metadata/*.json`` that resolves inside the data directory; a link that leads
+        elsewhere is skipped and logged, never read."""
+        files: list[Path] = []
+        for metadata_file in sorted(self.metadata_dir.glob("*.json")):
+            try:
+                files.append(contained_path(self, metadata_file))
+            except StoredPathError:
+                continue
+        return files
 
     def generate_upload_id(self, filename: str) -> str:
         """
@@ -2037,7 +2085,7 @@ class UserDatasetStorage:
         """
         matching_datasets = []
 
-        for metadata_file in self.metadata_dir.glob("*.json"):
+        for metadata_file in self._metadata_files():
             try:
                 with open(metadata_file) as f:
                     metadata = json.load(f)
@@ -2083,8 +2131,8 @@ class UserDatasetStorage:
             return metadata
 
         try:
-            content_hash = compute_stored_content_hash(metadata)
-        except (OSError, ValueError, pl.exceptions.PolarsError) as e:
+            content_hash = compute_stored_content_hash(self, metadata)
+        except (OSError, ValueError, pl.exceptions.PolarsError, StoredPathError) as e:
             logger.warning(
                 "content_hash backfill skipped for upload %s: stored data unreadable (%s)",
                 upload_id,
@@ -2683,7 +2731,7 @@ class UserDatasetStorage:
         """
         uploads = []
 
-        for metadata_file in self.metadata_dir.glob("*.json"):
+        for metadata_file in self._metadata_files():
             with open(metadata_file) as f:
                 metadata = json.load(f)
                 uploads.append(metadata)

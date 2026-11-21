@@ -235,8 +235,20 @@ def test_exportAnswer_decimalCell_wholeSmallCountMasked(value: Decimal, expected
         ("011", "011"),
         ("0100", "0100"),
         ("2024-01-05", "2024-01-05"),
-        ("05/2024", f"{EXPORT_MARKER}/2024"),
+        ("ID 007", f"ID {EXPORT_MARKER}"),
+        ("visit 08", f"visit {EXPORT_MARKER}"),
+        ("visit 08.", f"visit {EXPORT_MARKER}."),
+        ("09:05", "09:05"),
+        ("at 09:05 today", "at 09:05 today"),
+        ("01/05/2024", "01/05/2024"),
+        (" 07-03-2024", " 07-03-2024"),
+        ("05/2024", "05/2024"),
+        ("007-1234", "007-1234"),
+        ("05-", f"{EXPORT_MARKER}-"),
         ("v05", "v05"),
+        # unpadded date and time parts are still masked (over-masking is the safe direction)
+        ("9:05", f"{EXPORT_MARKER}:05"),
+        ("1/5/2024", f"{EXPORT_MARKER}/{EXPORT_MARKER}/2024"),
     ],
 )
 def test_exportText_zeroPaddedNumber_maskedUnlessDatePart(text: str, expected: str) -> None:

@@ -32,7 +32,7 @@ class OllamaClient:
     def __init__(
         self,
         model: str = "llama3.1:8b",
-        base_url: str = "http://localhost:11434",
+        base_url: str = "http://127.0.0.1:11434",
         timeout: float = 30.0,
     ):
         """
@@ -40,7 +40,7 @@ class OllamaClient:
 
         Args:
             model: Model name (default: llama3.1:8b)
-            base_url: Ollama service URL (default: http://localhost:11434)
+            base_url: Ollama service URL (default: http://127.0.0.1:11434)
             timeout: Request timeout in seconds (default: 30.0)
 
         Raises:

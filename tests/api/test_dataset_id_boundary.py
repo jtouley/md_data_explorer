@@ -18,6 +18,10 @@ BAD_IDS = [
     "id with space",
     "x" * 200,
     "ok\n",
+    "CON",
+    "nul",
+    "Com1",
+    "lpt9",
 ]
 
 
