@@ -74,3 +74,18 @@ screened      yes if screened at this visit.
 titer         Antibody titer; empty when not drawn. The unit is in titer_unit.
 titer_unit    mIU/mL or IU/mL (1 IU/mL = 1000 mIU/mL).
 """
+
+
+def screening() -> pl.DataFrame:
+    """One row per worker: doses on record and an antibody level, the level missing for some.
+
+    "Fewer than two doses and a level under 120": true for W01 and W03, unknown for W05 and W06
+    (level missing), false for the rest (W07's two doses decide it without the level).
+    """
+    return pl.DataFrame(
+        {
+            "patient_id": [f"W{i:02d}" for i in range(1, 9)],
+            "doses": [0, 2, 1, 1, 0, 1, 2, 0],
+            "igg": [50.0, 30.0, 90.0, 300.0, None, None, None, 150.0],
+        }
+    )

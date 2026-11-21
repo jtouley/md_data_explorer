@@ -328,3 +328,126 @@ def test_ollama_model_localServer_sendsSchemaAndDeterministicOptions(monkeypatch
     assert sent["payload"]["system"] == "system text"
     assert sent["payload"]["options"]["temperature"] == 0
     assert sent["payload"]["options"]["num_ctx"] == llm.NUM_CTX
+
+
+def test_answer_question_inventedLimit_isFedBackAndTheCleanRetryAnswers(ask):
+    # Arrange: the first reply adds a cut-off the question never states
+    model = Recorded(
+        _plan("count", where="admitted = 'yes' AND onset_year > 2005"), _plan("count", where="admitted = 'yes'")
+    )
+
+    # Act
+    answer = ask("How many patients were admitted?", model)
+
+    # Assert: never run with the guess; the retry was told which condition is not in the question
+    assert (answer.status, answer.attempts) == ("answered", 2)
+    assert answer.reading == "Counted patients where admitted = 'Yes'."
+    assert "onset_year > 2005" in model.prompts[1][1] and "does not state" in model.prompts[1][1]
+
+
+def test_answer_question_inventedLimitKept_asksWhichReadingIsMeant(ask):
+    # Arrange: the model keeps the cut-off after the feedback
+    reply = _plan("count", where="admitted = 'yes' AND onset_year > 2005")
+    model = Recorded(reply, reply)
+
+    # Act
+    answer = ask("How many patients were admitted?", model)
+
+    # Assert: a question back with both readings, never a silent pick
+    assert answer.status == "clarify" and answer.analysis is None
+    assert answer.choices == (
+        ("Only where onset_year > 2005", "How many patients were admitted? Only where onset_year > 2005."),
+        ("Without that limit", "How many patients were admitted? Do not limit it by onset_year."),
+    )
+
+
+@pytest.mark.parametrize(
+    ("choice", "reading"),
+    [
+        ("Only where onset_year > 2005.", "Counted patients where admitted = 'Yes' AND onset_year > 2005."),
+        ("Do not limit it by onset_year.", "Counted patients where admitted = 'Yes'."),
+    ],
+)
+def test_answer_question_choiceReAsked_isAnsweredAsChosen(ask, choice, reading):
+    # Arrange: the model writes the same reply for the re-asked question
+    model = Recorded(_plan("count", where="admitted = 'yes' AND onset_year > 2005"))
+
+    # Act
+    answer = ask(f"How many patients were admitted? {choice}", model)
+
+    # Assert: the user's choice holds whatever the model wrote
+    assert (answer.status, answer.reading) == ("answered", reading)
+
+
+def test_answer_question_versusOneSideKept_offersTheBreakdownOrTheOneGroup(ask):
+    # Arrange: "admitted versus not" answered twice as the admitted ones only
+    reply = _plan("count", where="admitted = 'yes'")
+    model = Recorded(reply, reply)
+
+    # Act
+    answer = ask("How many patients were admitted versus not admitted?", model)
+
+    # Assert
+    assert answer.status == "clarify"
+    assert [label for label, _question in answer.choices] == [
+        "Each value of admitted",
+        "Only where admitted = 'Yes'",
+    ]
+
+
+def test_answer_question_oneNumberChosen_dropsTheBreakdown(ask):
+    # Arrange
+    model = Recorded(_plan("count", where="admitted = 'yes'", group_by="sex"))
+
+    # Act
+    answer = ask("How many patients were admitted? Give one overall number.", model)
+
+    # Assert
+    assert (answer.status, answer.reading) == ("answered", "Counted patients where admitted = 'Yes'.")
+
+
+def test_answer_question_compoundShareWithMissingValues_asksHowTheyCount(make_query_table):
+    # Arrange: W05 and W06 have fewer than 2 doses and no level, so the condition is unknown for them
+    catalog, context = make_query_table(tables.screening())
+    model = Recorded(_plan("share", numerator="doses < 2 AND igg < 120"))
+
+    # Act
+    answer = answer_question(
+        "What share lack two doses and an IgG of 120?",
+        context,
+        model=model,
+        open_sandbox=lambda: SandboxConnection(catalog),
+        examples=[],
+    )
+
+    # Assert: never a share that silently drops them
+    assert answer.status == "clarify" and answer.analysis is None
+    assert (answer.reason or "").startswith("For 2 ")
+    assert [label for label, _question in answer.choices] == ["As meeting it", "As not meeting it", "Leave them out"]
+
+
+@pytest.mark.parametrize(
+    ("words", "rate"),
+    [
+        ("Count a missing value as meeting it.", 4 / 8),
+        ("Count a missing value as not meeting it.", 2 / 8),
+        ("Leave out rows with a missing value.", 2 / 6),
+    ],
+)
+def test_answer_question_missingValueChoice_isAnsweredAsChosen(make_query_table, words, rate):
+    # Arrange
+    catalog, context = make_query_table(tables.screening())
+    model = Recorded(_plan("share", numerator="doses < 2 AND igg < 120"))
+
+    # Act
+    answer = answer_question(
+        f"What share lack two doses and an IgG of 120? {words}",
+        context,
+        model=model,
+        open_sandbox=lambda: SandboxConnection(catalog),
+        examples=[],
+    )
+
+    # Assert
+    assert answer.status == "answered" and answer.analysis is not None
+    assert answer.analysis["proportion"] == pytest.approx(rate)

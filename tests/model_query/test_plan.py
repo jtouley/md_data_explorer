@@ -330,3 +330,29 @@ def test_compile_plan_shareWithTheEventWrittenAsTheLimit_countsItAmongEveryone(p
     # Assert
     assert compiled.kind == "share"
     assert compiled.reading == "Share of patients with confirmed = 'Yes', by sex, among those with it recorded."
+
+
+@pytest.mark.parametrize(
+    "fields", [{"where": "sex = 'female' OR sex = 'male'"}, {"numerator": "sex IN ('female', 'male')"}]
+)
+def test_compile_plan_shareNamingEveryValue_isTheDistribution(patients, fields):
+    # Act: "what share are women or men" names every value of sex
+    compiled = compile_plan(_reply("share", **fields), "What share of patients are women or men?", patients)
+
+    # Assert: a count per value (the app adds the percentages), not a share that is always 100%
+    assert (compiled.kind, compiled.group_column) == ("count", "sex")
+
+
+def test_compile_plan_rangeOnTheGroupColumn_isALimitNotAnError(visits):
+    # Act: "each year since 2022" limits the years shown, it does not pin one
+    compiled = compile_plan(
+        _reply("count", where="visit_year >= 2022", group_by="visit_year"),
+        "How many visits each year since 2022?",
+        visits,
+    )
+
+    # Assert
+    assert (compiled.group_column, [_flat(c.sql()) for c in compiled.conditions]) == (
+        "visit_year",
+        ['"visit_year" >= 2022'],
+    )

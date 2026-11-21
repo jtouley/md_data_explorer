@@ -13,6 +13,7 @@ from typing import Any
 
 import polars as pl
 import structlog
+from patsy import PatsyError  # type: ignore[import-untyped]
 
 from clinical_analytics.analysis.compute import compute_analysis_by_type
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
@@ -155,7 +156,7 @@ def run_test(call: TestCall, rows: pl.DataFrame, question: str) -> dict[str, Any
         context.time_to_event = True
     try:
         return compute_analysis_by_type(rows, context, call.entity_key)
-    except (pl.exceptions.PolarsError, ValueError, KeyError) as e:
+    except (pl.exceptions.PolarsError, ValueError, KeyError, PatsyError) as e:
         # The statistics code could not read these columns as the test needs them: said plainly,
         # and fed back to the model as a reason to choose other variables.
         logger.info("model_query_test_failed", test=call.test, error_type=type(e).__name__)

@@ -28,6 +28,7 @@ from sqlglot.errors import SqlglotError
 
 from clinical_analytics.core import counting_unit
 from clinical_analytics.model_query.context import ColumnInfo, DatasetContext
+from clinical_analytics.model_query.grounding import missing_choice
 from clinical_analytics.sql.render import render
 
 ReplyFormat: TypeAlias = Literal["plan", "sql"]
@@ -428,8 +429,10 @@ def _split_where(
             if {str(v).casefold() for v in column.values} <= named:
                 spelled = spelled or column.name
                 continue
-        if group_column is not None and _columns_of(term) == {group_column}:
-            # A limit on the very column the answer is broken down by removes groups from it.
+        if group_column is not None and _columns_of(term) == {group_column} and listed is not None:
+            # Pinning the very column the answer is broken down by to some of its values leaves
+            # those groups only. (A range or a presence test on it, "each year since 2020", is a
+            # limit like any other, checked against the question by ``grounding``.)
             raise PlanError(
                 f"where limits {group_column}, but group_by {group_column} asks for each of its values. "
                 f"Remove {group_column} from where to show every group; keep it only if the question "
@@ -491,6 +494,12 @@ class Compiled:
     # all (then "ever" and "always" give different shares, and the question must say which).
     varies_sql: str | None = None
     rollup: str | None = None  # any | all, for such a share
+    # A share whose condition reads two or more columns: how many units have it unknown (a value
+    # missing), when the question did not say what a missing value means.
+    missing_sql: str | None = None
+    # The limits it applies (where's AND terms, and a share's event), for the grounding check.
+    conditions: tuple[exp.Expr, ...] = dataclasses.field(default=(), compare=False)
+    group_expression: bool = False  # broken down by an expression rather than one column
 
 
 @dataclass(frozen=True)
@@ -506,6 +515,7 @@ class TestCall:
     entity_key: str | None = None
     where_text: str | None = None
     columns: frozenset[str] = frozenset()  # every table column the call reads
+    conditions: tuple[exp.Expr, ...] = dataclasses.field(default=(), compare=False)  # where's AND terms
 
 
 def _base_table(context: DatasetContext, *, dedupe: bool) -> exp.Expr:
@@ -715,6 +725,19 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
             # that only repeats the numerator is the numerator, not a limit.
             counted = {render(term) for term in _terms(event)}
             where = _where_all(*[term for term in _terms(where) if render(term) not in counted])
+        listed = _listed_values(event) if event is not None else None
+        every = context.column(listed[0]) if listed else None
+        if (
+            listed is not None
+            and every is not None
+            and every.values is not None
+            and {str(v).casefold() for v in every.values} <= {v.casefold() for v in listed[1]}
+            and group_column in (None, every.name)
+        ):
+            # "What share is A, B or C" naming every value of one column: its distribution (the
+            # count per value, with percentages), not one share that is always 100%.
+            answer, event = "count", None
+            group, group_name, group_column = _group(f'"{every.name}"', context)
     elif answer == "count":
         where = _where_all(where, *_count_conditions(reply, group_column, context))
     where, spelled = _split_where(where, group_column, context)
@@ -753,6 +776,8 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
             group_column=group_column,
             limited=where is not None,
             total_sql=render(total) if total is not None else None,
+            conditions=tuple(_terms(where)),
+            group_expression=group is not None and group_column is None,
         )
 
     if answer == "share":
@@ -760,6 +785,22 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
         words = counting_unit.read_units(question)
         rollup = words.rollup or "any"
         base = _base_table(context, dedupe=unit.key is None)
+        # A condition on two or more columns is unknown (NULL) where one of them is missing, and
+        # "among those with it recorded" would then drop those rows silently: what a missing value
+        # means is the asker's call, unless the question already said it.
+        missing = missing_choice(question)
+        missing_sql: str | None = None
+        recorded_note = ", among those with it recorded"
+        if missing in ("meets", "fails"):
+            event = exp.func("COALESCE", exp.paren(event.copy()), exp.true() if missing == "meets" else exp.false())
+            recorded_note = (
+                ", a missing value counted as meeting it" if missing == "meets" else ", a missing value counted as not"
+            )
+        elif missing is None and len(_columns_of(event)) >= 2:
+            unknown = exp.Is(this=exp.paren(event.copy()), expression=exp.null())
+            missing_sql = render(
+                _select([exp.alias_(_count(unit), "count")], base, _where_all(full_where, unknown), None)
+            )
         select = _share_select(unit, event, base, full_where, group, group_name, rollup)
         rolled = ""
         if unit.key is not None:
@@ -773,8 +814,7 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
             kind="share",
             sql=render(select, pretty=True),
             reading=(
-                f"Share of {_unit_phrase(unit)} with {_plain(event)}{_where_phrase(where)}{by}, "
-                f"among those with it recorded.{rolled}"
+                f"Share of {_unit_phrase(unit)} with {_plain(event)}{_where_phrase(where)}{by}{recorded_note}.{rolled}"
             ),
             unit=unit,
             group=group_name,
@@ -787,6 +827,9 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
                 else None
             ),
             rollup=rollup if unit.key is not None else None,
+            missing_sql=missing_sql,
+            conditions=(*_terms(where), *_terms(event)),
+            group_expression=group is not None and group_column is None,
         )
 
     assert number is not None
@@ -827,6 +870,8 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
         statistic=answer,
         value_text=label,
         limited=where is not None,
+        conditions=tuple(_terms(where)),
+        group_expression=group is not None and group_column is None,
     )
 
 
@@ -917,6 +962,7 @@ def compile_test(reply: ModelReply, context: DatasetContext) -> TestCall:
         entity_key=key,
         where_text=_plain(where) if where is not None else None,
         columns=_sql_columns(render(select), context),
+        conditions=tuple(_terms(where)),
     )
 
 
