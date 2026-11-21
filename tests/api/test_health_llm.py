@@ -5,6 +5,14 @@ from unittest.mock import MagicMock, patch
 import requests
 
 
+def _session_returning(**get_kwargs: object) -> MagicMock:
+    """A stand-in for model_http_session(): a context manager whose .get behaves as given."""
+    session = MagicMock()
+    session.__enter__.return_value = session
+    session.get = MagicMock(**get_kwargs)
+    return session
+
+
 class TestGetOllamaHealthSnapshot:
     """Unit tests for clinical_analytics.api.health_llm.get_ollama_health_snapshot."""
 
@@ -12,7 +20,11 @@ class TestGetOllamaHealthSnapshot:
         """When Ollama HTTP probe fails, snapshot reports not reachable."""
         from clinical_analytics.api import health_llm
 
-        with patch.object(health_llm.requests, "get", side_effect=requests.RequestException("refused")):
+        with patch.object(
+            health_llm,
+            "model_http_session",
+            return_value=_session_returning(side_effect=requests.RequestException("refused")),
+        ):
             snap = health_llm.get_ollama_health_snapshot()
 
         assert snap["ollama_reachable"] is False
@@ -33,7 +45,7 @@ class TestGetOllamaHealthSnapshot:
         }
 
         with (
-            patch.object(health_llm.requests, "get", return_value=mock_resp),
+            patch.object(health_llm, "model_http_session", return_value=_session_returning(return_value=mock_resp)),
             patch.object(health_llm, "OLLAMA_DEFAULT_MODEL", "llama3.1:8b"),
         ):
             snap = health_llm.get_ollama_health_snapshot()
@@ -49,7 +61,7 @@ class TestGetOllamaHealthSnapshot:
         mock_resp = MagicMock()
         mock_resp.status_code = 503
 
-        with patch.object(health_llm.requests, "get", return_value=mock_resp):
+        with patch.object(health_llm, "model_http_session", return_value=_session_returning(return_value=mock_resp)):
             snap = health_llm.get_ollama_health_snapshot()
 
         assert snap["ollama_reachable"] is False

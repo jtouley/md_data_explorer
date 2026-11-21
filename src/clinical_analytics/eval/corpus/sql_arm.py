@@ -49,7 +49,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Final, Literal, Protocol, TypeAlias
-from urllib.parse import urlsplit
 
 import duckdb
 import polars as pl
@@ -57,6 +56,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from clinical_analytics.analysis.variable_types import display_level
+from clinical_analytics.core.loopback import is_loopback_url
 from clinical_analytics.eval.corpus.fetch import (
     CorpusFetchError,
     default_cache_dir,
@@ -105,7 +105,6 @@ MODE_TITLES: Final[dict[Mode, str]] = {
 MAX_RESULT_ROWS: Final = 50
 MAX_CELL_CHARS: Final = 80
 DEFAULT_MAX_STEPS: Final = 8
-LOOPBACK_HOSTS: Final = frozenset({"127.0.0.1", "localhost", "::1"})
 
 # (system prompt, prompt) -> the model's reply text.
 ModelFn: TypeAlias = Callable[[str, str], str]
@@ -305,8 +304,7 @@ def _loopback_opener(base_url: str) -> urllib.request.OpenerDirector:
     Raises:
         ArmError: ``base_url`` is not on this machine.
     """
-    parts = urlsplit(base_url)
-    if parts.scheme not in ("http", "https") or parts.hostname not in LOOPBACK_HOSTS:
+    if not is_loopback_url(base_url):
         raise ArmError(f"model URL {base_url!r} is not on this machine; use a loopback address such as 127.0.0.1")
     return urllib.request.build_opener(urllib.request.ProxyHandler({}))
 

@@ -21,6 +21,7 @@ from typing import Any
 
 import yaml  # type: ignore
 
+from clinical_analytics.core.loopback import is_loopback_url, require_loopback_url
 from clinical_analytics.core.resources import config_file
 
 logger = logging.getLogger(__name__)
@@ -166,6 +167,9 @@ class NLQueryConfigDefaults:
     ollama_timeout_seconds: float = 30.0
     ollama_max_retries: int = 3
     ollama_json_mode: bool = True
+    # Off: ollama_base_url must be on this machine (see core.loopback). On: prompts may go to
+    # another host, which sends column names and category values off the machine.
+    ollama_allow_remote_host: bool = False
     tier_3_min_confidence: float = 0.5
     tier_3_execution_threshold: float = 0.75
     llm_timeout_parse_s: float = 30.0
@@ -208,6 +212,7 @@ class NLQueryConfigDefaults:
             "ollama_timeout_seconds": self.ollama_timeout_seconds,
             "ollama_max_retries": self.ollama_max_retries,
             "ollama_json_mode": self.ollama_json_mode,
+            "ollama_allow_remote_host": self.ollama_allow_remote_host,
             "tier_3_min_confidence": self.tier_3_min_confidence,
             "tier_3_execution_threshold": self.tier_3_execution_threshold,
             "llm_timeout_parse_s": self.llm_timeout_parse_s,
@@ -270,6 +275,8 @@ def load_nl_query_config(config_path: Path | None = None) -> dict[str, Any]:
 
     Raises:
         ValueError: If YAML is invalid or schema validation fails
+        NonLoopbackURLError: ollama_base_url is not on this machine and ollama_allow_remote_host
+            is not set (a ValueError)
     """
     defaults = NLQueryConfigDefaults().to_dict()
 
@@ -329,6 +336,7 @@ def load_nl_query_config(config_path: Path | None = None) -> dict[str, Any]:
         "OLLAMA_TIMEOUT_SECONDS": "ollama_timeout_seconds",
         "OLLAMA_MAX_RETRIES": "ollama_max_retries",
         "OLLAMA_JSON_MODE": "ollama_json_mode",
+        "OLLAMA_ALLOW_REMOTE_HOST": "ollama_allow_remote_host",
         "LLM_TIMEOUT_PARSE_S": "llm_timeout_parse_s",
         "LLM_TIMEOUT_FOLLOWUPS_S": "llm_timeout_followups_s",
         "LLM_TIMEOUT_INTERPRETATION_S": "llm_timeout_interpretation_s",
@@ -347,8 +355,27 @@ def load_nl_query_config(config_path: Path | None = None) -> dict[str, Any]:
 
     # Apply environment variable overrides
     config = _apply_env_overrides(config, env_mapping)
+    _check_ollama_base_url(config)
 
     return config
+
+
+def _check_ollama_base_url(config: dict[str, Any]) -> None:
+    """Refuse a model server off this machine unless ``ollama_allow_remote_host`` is set.
+
+    Raises:
+        NonLoopbackURLError: ``ollama_base_url`` is not loopback and the opt-in is not set.
+    """
+    url = str(config["ollama_base_url"])
+    allow_remote = config.get("ollama_allow_remote_host") is True
+    require_loopback_url(url, allow_remote=allow_remote)
+    if not is_loopback_url(url):
+        logger.warning(
+            "SECURITY WARNING: ollama_allow_remote_host is set and ollama_base_url (%s) is not on this "
+            "machine. Every question, with column names and category values from your data, will be "
+            "sent to that host.",
+            url,
+        )
 
 
 @dataclass

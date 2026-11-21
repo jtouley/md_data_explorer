@@ -85,7 +85,8 @@ def test_ollama_client_connection_success():
     from clinical_analytics.core.llm_client import OllamaClient
 
     # Mock successful connection
-    with patch("clinical_analytics.core.llm_client.requests.get") as mock_get:
+    with patch("clinical_analytics.core.llm_client.ollama_session") as mock_session:
+        mock_get = mock_session.return_value.get
         mock_response = Mock()
         mock_response.status_code = 200
         mock_get.return_value = mock_response
@@ -99,7 +100,8 @@ def test_ollama_client_connection_failure_handles_gracefully():
     from clinical_analytics.core.llm_client import OllamaClient
 
     # Mock connection failure
-    with patch("clinical_analytics.core.llm_client.requests.get") as mock_get:
+    with patch("clinical_analytics.core.llm_client.ollama_session") as mock_session:
+        mock_get = mock_session.return_value.get
         mock_get.side_effect = ConnectionError("Connection refused")
 
         client = OllamaClient()
@@ -111,7 +113,8 @@ def test_ollama_client_model_available():
     from clinical_analytics.core.llm_client import OllamaClient
 
     # Mock successful model check
-    with patch("clinical_analytics.core.llm_client.requests.get") as mock_get:
+    with patch("clinical_analytics.core.llm_client.ollama_session") as mock_session:
+        mock_get = mock_session.return_value.get
         # Mock connection check
         mock_conn_response = Mock()
         mock_conn_response.status_code = 200
@@ -132,7 +135,8 @@ def test_ollama_client_model_not_available_handles_gracefully():
     from clinical_analytics.core.llm_client import OllamaClient
 
     # Mock model not found
-    with patch("clinical_analytics.core.llm_client.requests.get") as mock_get:
+    with patch("clinical_analytics.core.llm_client.ollama_session") as mock_session:
+        mock_get = mock_session.return_value.get
         # Mock connection check
         mock_conn_response = Mock()
         mock_conn_response.status_code = 200
@@ -243,7 +247,11 @@ def test_structured_json_extraction_timeout_handling(mock_ollama_client):
     from clinical_analytics.core.llm_client import OllamaClient
 
     # Mock timeout
-    with patch("clinical_analytics.core.llm_client.requests.post") as mock_post:
+    with (
+        patch("clinical_analytics.core.llm_client.ollama_session") as mock_session,
+        patch.object(OllamaClient, "is_available", return_value=True),
+    ):
+        mock_post = mock_session.return_value.post
         import requests
 
         mock_post.side_effect = requests.Timeout("Request timed out")
