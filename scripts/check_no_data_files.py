@@ -98,8 +98,16 @@ SYNTHETIC_KIT = frozenset(
     }
 )
 KIT_DIRS = ("src/clinical_analytics/resources/demo/", "tests/fixtures/synthetic/")
-# Hand-written golden sets: questions and expected intents, no rows and no aggregates.
-GOLDEN_ALLOWLIST = frozenset({"tests/eval/golden_questions.yaml", "src/clinical_analytics/resources/config/golden_examples.yaml"})
+# Hand-written golden sets: questions and expected intents, no rows and no aggregates; and the
+# model-query samples, recorded replies whose expected values are computed on the synthetic
+# tables of tests/model_query/tables.py (never on real data).
+GOLDEN_ALLOWLIST = frozenset(
+    {
+        "tests/eval/golden_questions.yaml",
+        "src/clinical_analytics/resources/config/golden_examples.yaml",
+        "tests/eval/model_query_golden.yaml",
+    }
+)
 GOLDEN_DATA_SUFFIXES = (".yaml", ".yml", ".json", ".jsonl", ".csv", ".parquet")
 # Project-wide Claude Code permissions; personal overrides go in settings.local.json.
 SETTINGS_ALLOWLIST = frozenset({".claude/settings.json"})
