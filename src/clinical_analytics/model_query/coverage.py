@@ -195,6 +195,11 @@ def topic_words(context: DatasetContext) -> set[str]:
     limit = max(3.0, 0.2 * len(context.columns))
     found = {word for word, n in counts.items() if n >= limit}
     found.update(_stem(w) for w in _tokens(context.title or ""))
+    # The dictionary's opening sentence says what the table is ("A clinic registry: one row per
+    # visit"); its words name no column unless a column's own words include them.
+    opening = re.split(r"(?<=[.:;])\s|\n", (context.notes or "").strip(), maxsplit=1)[0][:160]
+    named = set().union(*(column_words(c) for c in context.columns)) if context.columns else set()
+    found.update(s for w in _tokens(opening) if (s := _stem(w)) not in named and not w.isdigit())
     return found
 
 
@@ -373,7 +378,7 @@ _TIME_SYNONYMS: Final = {
 
 
 def _name_parts(name: str) -> list[str]:
-    return [p for p in re.split(r"[^a-z0-9]+", name.casefold()) if p]
+    return re.findall(r"[a-z]+|\d+", name.casefold())
 
 
 def _measure_stem(name: str) -> tuple[str, ...]:

@@ -304,6 +304,10 @@ def limit_backed(term: exp.Expr, question: _Question, context: DatasetContext) -
     if not columns:
         return True
     literals = _compared_literals(term)
+    # A coded value ("gender = 2") is stated when its dictionary label is ("women" for "female").
+    labelled = [label for lit in literals for column in columns if (label := column.label_of(lit.name)) is not None]
+    if labelled and any(_value_said(question, label) for label in labelled):
+        return True
     texts = [lit.name for lit in literals if lit.is_string and lit.name.strip().casefold() not in _YES_NO]
     numbers = [lit for lit in literals if not lit.is_string and lit.name.strip() not in ("0", "1")]
     if texts:

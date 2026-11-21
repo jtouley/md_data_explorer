@@ -259,6 +259,15 @@ def _doubts(
     return found + ([dropped] if dropped is not None else []) + covered
 
 
+# What the user is asked about first when several doubts remain: a concept the plan does not
+# reach, then a stated-value limit the question does not state, then a column it does not reach.
+_DOUBT_ORDER: Final = ("uncovered", "limit", "unlinked", "dropped", "missing_group", "no_group")
+
+
+def _first(doubts: list[Doubt]) -> Doubt:
+    return min(doubts, key=lambda d: _DOUBT_ORDER.index(d.kind) if d.kind in _DOUBT_ORDER else len(_DOUBT_ORDER))
+
+
 def _asked_back(
     doubt: Doubt, question: str, compiled: Compiled | TestCall, reply: dict[str, Any] | None, attempt: int
 ) -> ModelAnswer:
@@ -356,9 +365,9 @@ def answer_question(
                 return _asked_back(measure, question, compiled, failed_reply, attempt)
             doubts = _doubts(asked_so_far, compiled, context, reply, kept_group)
             if doubts and (doubted is not None or attempt == max_attempts):
-                return _asked_back(doubts[0], question, compiled, failed_reply, attempt)
+                return _asked_back(_first(doubts), question, compiled, failed_reply, attempt)
             if doubts:
-                doubted = (doubts[0], compiled, failed_reply)
+                doubted = (_first(doubts), compiled, failed_reply)
                 # Every doubt goes back at once: one more look should fix them all.
                 problem = " ".join(dict.fromkeys(d.feedback for d in doubts if d.feedback))
                 problems.append(f"doubt: {problem}")
