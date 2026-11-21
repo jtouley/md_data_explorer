@@ -64,6 +64,7 @@ from clinical_analytics.model_query.plan import (
 from clinical_analytics.model_query.prompt import system_prompt, user_prompt
 from clinical_analytics.model_query.units import UnitError
 from clinical_analytics.sql.errors import SqlRefusedError
+from clinical_analytics.sql.render import render
 from clinical_analytics.sql.sandbox import SandboxConnection, SqlRunError
 
 logger = structlog.get_logger()
@@ -251,7 +252,7 @@ def _share_as_count(question: str, compiled: Compiled | TestCall, context: Datas
         names = {c.name for c in term.find_all(exp.Column)}
         flags = [c for name in names if (c := context.column(name)) is not None and yes_no_of(c)]
         if flags:
-            plain = " ".join(term.sql(dialect="duckdb").replace('"', "").split())
+            plain = " ".join(render(term).replace('"', "").split())
             return Doubt(
                 "share_as_count",
                 feedback=(
