@@ -157,7 +157,8 @@ def resolve_semantic_layer_cache_size(value: object) -> int:
 
 def per_layer_memory_limit(budget: DuckdbMemoryLimit, cache_size: int, sql_sandboxes: int = 0) -> DuckdbMemoryLimit:
     """Each open layer's DuckDB memory_limit: the total budget shared evenly by ``cache_size``
-    layers and ``sql_sandboxes`` governed SQL sandboxes, so together they use at most the budget.
+    layers and ``sql_sandboxes`` SQL sandboxes (model-written or governed SQL), so together they
+    use at most the budget.
 
     Raises:
         ValueError: the share is too small to answer questions (under 64 MiB, or under 1% of RAM).
@@ -172,7 +173,7 @@ def per_layer_memory_limit(budget: DuckdbMemoryLimit, cache_size: int, sql_sandb
     if too_small:
         raise ValueError(
             f"duckdb_memory_budget {budget.sql} shared by {cache_size} open datasets"
-            + (f" and {sql_sandboxes} SQL sandbox(es) (enable_sql_queries)" if sql_sandboxes else "")
+            + (f" and {sql_sandboxes} SQL sandbox(es) (enable_model_queries / enable_sql_queries)" if sql_sandboxes else "")
             + f" leaves {limit.sql} each, too little to answer questions: raise the budget or lower "
             "semantic_layer_cache_size"
         )
@@ -200,7 +201,8 @@ if os.environ.get("DUCKDB_MEMORY_LIMIT") is not None or "duckdb_memory_limit" in
 SEMANTIC_LAYER_CACHE_SIZE: int = resolve_semantic_layer_cache_size(_setting("semantic_layer_cache_size"))
 # DuckDB memory for ALL the layers the API's cache keeps open together. Each layer is its own
 # in-memory DuckDB, so each cached layer gets CACHED_LAYER_MEMORY_LIMIT = budget / cache size
-# (budget / (cache size + SQL_SANDBOX_SLOTS) when governed SQL is on, below)
+# (budget / (cache size + SQL_SANDBOX_SLOTS) when the model-written query path or governed SQL
+# is on, below; the first is on by default)
 # (set by the API when its cache builds the layer). Threads are per layer. Validated here, at
 # import, so a bad setting stops the process at startup instead of failing the first question.
 DUCKDB_MEMORY_BUDGET: DuckdbMemoryLimit = parse_duckdb_memory_limit(_setting("duckdb_memory_budget"))

@@ -571,7 +571,8 @@ class QueryService:
         # Read by the acceptance harness (eval/corpus/run.py): the model step was asked.
         logger.info("parse_outcome", tier="model_query", llm_called=True)
         answer = answer_question(
-            self.conversation_manager.normalize_query(question) or question,
+            # Whitespace collapsed, case kept: the choices it offers re-ask the user's own words.
+            " ".join(question.split()) or question,
             path.context,
             model=self._model,
             open_sandbox=lambda: SandboxConnection(path.catalog),

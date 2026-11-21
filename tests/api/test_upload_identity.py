@@ -136,7 +136,7 @@ def test_question_keylessUpload_countsRowsNeverPatients(
         pytest.param(
             [f"P{i % 150:03d}" for i in range(200)],
             ["patient_id_no_duplicates"],
-            "confirm that rows are visits",
+            "read as visits of one patient",
             id="repeated_ids",
         ),
         pytest.param(

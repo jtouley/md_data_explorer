@@ -620,7 +620,8 @@ ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".tsv", ".txt", ".xlsx", ".xls", ".sav", ".
 # What to do next when an error-level check fails, by rule id suffix (contracts.builder._id_rules).
 _NEXT_STEP_BY_RULE_SUFFIX: dict[str, str] = {
     "_no_duplicates": (
-        "Questions that count patients will first ask you to confirm that rows are visits. "
+        "Rows that share an ID are read as visits of one patient: patient counts count each ID once, "
+        "and each answer says what it counted. "
         "If each row should be one patient, fix the repeated IDs and upload the file again."
     ),
     "_not_null": ("Rows without an ID are not counted as patients. Fill in the missing IDs and upload the file again."),

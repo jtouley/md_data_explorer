@@ -165,4 +165,6 @@ def test_ask_statisticalTest_isRoutedToTheStatisticsCode(ask_uploaded):
     # Assert: a logistic regression from analysis.compute, not statistics written in SQL
     assert result.analysis is not None and result.analysis["type"] == "predictor"
     assert result.reading == "Odds ratio of result for abx (logistic regression, unadjusted) where age_years >= 65."
-    assert result.sql is not None and "AVG" not in result.sql and "SELECT DISTINCT *" in result.sql
+    assert result.sql is not None
+    flat_sql = " ".join(result.sql.split())
+    assert "AVG" not in flat_sql and "SELECT DISTINCT * FROM unified" in flat_sql

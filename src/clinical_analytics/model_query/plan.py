@@ -186,7 +186,8 @@ def _column_list(context: DatasetContext) -> str:
 def _other_side(column: exp.Column) -> exp.Expr | None:
     parent = column.parent
     if isinstance(parent, exp.EQ | exp.NEQ | exp.Is):
-        return parent.expression if parent.this is column else parent.this
+        side: exp.Expr = parent.expression if parent.this is column else parent.this
+        return side
     return None
 
 
@@ -658,6 +659,8 @@ def _share_select(
 
 
 def _varies_sql(unit: Unit, event: exp.Expr, base: exp.Expr, where: exp.Expr | None, group: exp.Expr | None) -> str:
+    if unit.key is None:
+        raise PlanError("A per-patient roll-up needs the patient key column.")
     key = exp.column(unit.key, quoted=True)
     by: list[exp.Expr] = [key.copy()] + ([group.copy()] if group is not None else [])
     having = exp.and_(exp.func("BOOL_OR", event.copy()), exp.Not(this=exp.func("BOOL_AND", event.copy())))
@@ -937,14 +940,14 @@ def compile_sql(reply: ModelReply, question: str, context: DatasetContext) -> Co
         raise PlanError("The sql is not valid DuckDB SQL.") from e
     if len(trees) != 1 or not isinstance(trees[0], exp.Select):
         raise PlanError("Write exactly one SELECT statement.")
-    tree = trees[0]
-    for node in tree.walk():
+    parsed: exp.Expr = trees[0]
+    for node in parsed.walk():
         node.comments = None
-    tables = {t.name.casefold() for t in tree.find_all(exp.Table)}
-    cte_names = {c.alias.casefold() for c in tree.find_all(exp.CTE)}
+    tables = {t.name.casefold() for t in parsed.find_all(exp.Table)}
+    cte_names = {c.alias.casefold() for c in parsed.find_all(exp.CTE)}
     if not tables or tables - cte_names - {context.table.casefold()}:
         raise PlanError(f"Read only the table {context.table}.")
-    aliases = {p.alias.casefold() for p in tree.find_all(exp.Alias)} | cte_names
+    aliases = {p.alias.casefold() for p in parsed.find_all(exp.Alias)} | cte_names
 
     def resolve(node: exp.Expr) -> exp.Expr:
         if isinstance(node, exp.Column) and not isinstance(node.this, exp.Star):
@@ -956,7 +959,7 @@ def compile_sql(reply: ModelReply, question: str, context: DatasetContext) -> Co
             return resolved
         return node
 
-    tree = fix_literals(tree.transform(resolve), context)
+    tree = fix_literals(parsed.transform(resolve), context)
     assert isinstance(tree, exp.Select)
     check_units([tree], context)
     projections = list(tree.expressions)
