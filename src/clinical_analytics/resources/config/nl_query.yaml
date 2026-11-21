@@ -57,12 +57,16 @@ tier_precedence:
 # Ollama LLM Configuration. The app reads these values from this file
 # (config_loader.load_nl_query_config); ollama.yaml next to it is reference only and is not read.
 # Environment variables take precedence over YAML config
-ollama_base_url: "http://localhost:11434"
+ollama_base_url: "http://127.0.0.1:11434"
 ollama_default_model: "llama3.1:8b"
 ollama_fallback_model: "llama3.2:3b"
 ollama_timeout_seconds: 30.0
 ollama_max_retries: 3
 ollama_json_mode: true
+# ollama_base_url must be on this machine (localhost, 127.0.0.0/8 or ::1): prompts carry column
+# names and category values from the data. Set this to true only to send them to another host;
+# startup then logs a security warning. Environment variable: OLLAMA_ALLOW_REMOTE_HOST.
+ollama_allow_remote_host: false
 
 # Tier 3 confidence thresholds (Phase 0 success vs Phase 3 execution gate)
 tier_3_min_confidence: 0.5

@@ -21,6 +21,7 @@ from typing import Any
 
 import yaml  # type: ignore
 
+from clinical_analytics.core.loopback import is_loopback_url, require_loopback_url
 from clinical_analytics.core.resources import config_file
 
 logger = logging.getLogger(__name__)
@@ -160,12 +161,15 @@ class NLQueryConfigDefaults:
     fuzzy_match_cutoff: float = 0.7
     enable_clarifying_questions: bool = True
     enable_progressive_feedback: bool = True
-    ollama_base_url: str = "http://localhost:11434"
+    ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_default_model: str = "llama3.1:8b"
     ollama_fallback_model: str = "llama3.2:3b"
     ollama_timeout_seconds: float = 30.0
     ollama_max_retries: int = 3
     ollama_json_mode: bool = True
+    # Off: ollama_base_url must be on this machine (see core.loopback). On: prompts may go to
+    # another host, which sends column names and category values off the machine.
+    ollama_allow_remote_host: bool = False
     tier_3_min_confidence: float = 0.5
     tier_3_execution_threshold: float = 0.75
     llm_timeout_parse_s: float = 30.0
@@ -208,6 +212,7 @@ class NLQueryConfigDefaults:
             "ollama_timeout_seconds": self.ollama_timeout_seconds,
             "ollama_max_retries": self.ollama_max_retries,
             "ollama_json_mode": self.ollama_json_mode,
+            "ollama_allow_remote_host": self.ollama_allow_remote_host,
             "tier_3_min_confidence": self.tier_3_min_confidence,
             "tier_3_execution_threshold": self.tier_3_execution_threshold,
             "llm_timeout_parse_s": self.llm_timeout_parse_s,
@@ -230,7 +235,32 @@ class NLQueryConfigDefaults:
 
 # Kept as written in the YAML, never coerced to the default's type: nl_query_config validates
 # them at import and stops startup on a bad value ("four" or 2.5 must not become 4 or 2).
-RAW_VALIDATED_KEYS: frozenset[str] = frozenset({"semantic_layer_cache_size", "duckdb_memory_budget", "duckdb_threads"})
+RAW_VALIDATED_KEYS: frozenset[str] = frozenset(
+    {"semantic_layer_cache_size", "duckdb_memory_budget", "duckdb_threads", "ollama_allow_remote_host"}
+)
+ALLOW_REMOTE_KEY = "ollama_allow_remote_host"
+ALLOW_REMOTE_ENV = "OLLAMA_ALLOW_REMOTE_HOST"
+
+
+def parse_allow_remote(value: object, source: str) -> bool:
+    """The remote-model opt-in, read strictly: a YAML bool, or exactly "true" / "false".
+
+    The generic coercion turns ``[false]``, ``{a: 1}``, ``2`` or ``"True"`` into True; for the
+    setting that lets prompts leave the machine, anything but an exact value is an error.
+
+    Raises:
+        ValueError: any other value (named with ``source``).
+    """
+    if type(value) is bool:
+        return value
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    raise ValueError(
+        f"{source} must be true or false (lower case, unquoted in YAML), got {value!r}. "
+        "It decides whether prompts may be sent to a model server on another host."
+    )
 
 
 def _is_critical_config(key: str) -> bool:
@@ -270,6 +300,9 @@ def load_nl_query_config(config_path: Path | None = None) -> dict[str, Any]:
 
     Raises:
         ValueError: If YAML is invalid or schema validation fails
+        NonLoopbackURLError: ollama_base_url is not on this machine and ollama_allow_remote_host
+            is not set (a ValueError)
+        ValueError: ollama_allow_remote_host / OLLAMA_ALLOW_REMOTE_HOST is not exactly true or false
     """
     defaults = NLQueryConfigDefaults().to_dict()
 
@@ -345,10 +378,37 @@ def load_nl_query_config(config_path: Path | None = None) -> dict[str, Any]:
         "ENABLE_SQL_QUERIES": "enable_sql_queries",
     }
 
+    # The remote opt-in is read strictly from its raw YAML value or env string, never coerced.
+    raw_allow_remote = config.get(ALLOW_REMOTE_KEY, False)
+
     # Apply environment variable overrides
     config = _apply_env_overrides(config, env_mapping)
+    env_allow_remote = _get_env_var(ALLOW_REMOTE_ENV)
+    if env_allow_remote is not None:
+        config[ALLOW_REMOTE_KEY] = parse_allow_remote(env_allow_remote, ALLOW_REMOTE_ENV)
+    else:
+        config[ALLOW_REMOTE_KEY] = parse_allow_remote(raw_allow_remote, f"{ALLOW_REMOTE_KEY} in {config_path.name}")
+    _check_ollama_base_url(config)
 
     return config
+
+
+def _check_ollama_base_url(config: dict[str, Any]) -> None:
+    """Refuse a model server off this machine unless ``ollama_allow_remote_host`` is set.
+
+    Raises:
+        NonLoopbackURLError: ``ollama_base_url`` is not loopback and the opt-in is not set.
+    """
+    url = str(config["ollama_base_url"])
+    allow_remote = config.get("ollama_allow_remote_host") is True
+    require_loopback_url(url, allow_remote=allow_remote)
+    if not is_loopback_url(url):
+        logger.warning(
+            "SECURITY WARNING: ollama_allow_remote_host is set and ollama_base_url (%s) is not on this "
+            "machine. Every question, with column names and category values from your data, will be "
+            "sent to that host.",
+            url,
+        )
 
 
 @dataclass

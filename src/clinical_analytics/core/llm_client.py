@@ -10,7 +10,15 @@ from typing import Any
 import requests  # type: ignore
 import structlog
 
+from clinical_analytics.core import nl_query_config
+from clinical_analytics.core.loopback import model_http_session, require_loopback_url
+
 logger = structlog.get_logger()
+
+
+def ollama_session() -> requests.Session:
+    """The HTTP session for Ollama calls: ignores proxy settings (see core.loopback)."""
+    return model_http_session()
 
 
 class OllamaClient:
@@ -24,7 +32,7 @@ class OllamaClient:
     def __init__(
         self,
         model: str = "llama3.1:8b",
-        base_url: str = "http://localhost:11434",
+        base_url: str = "http://127.0.0.1:11434",
         timeout: float = 30.0,
     ):
         """
@@ -32,11 +40,15 @@ class OllamaClient:
 
         Args:
             model: Model name (default: llama3.1:8b)
-            base_url: Ollama service URL (default: http://localhost:11434)
+            base_url: Ollama service URL (default: http://127.0.0.1:11434)
             timeout: Request timeout in seconds (default: 30.0)
+
+        Raises:
+            NonLoopbackURLError: base_url is not on this machine and remote hosts are not allowed.
         """
         self.model = model
-        self.base_url = base_url
+        self.base_url = require_loopback_url(base_url, allow_remote=nl_query_config.OLLAMA_ALLOW_REMOTE_HOST)
+        self._session = ollama_session()
         self.timeout = timeout
         self._connection_checked = False
         self._is_available = False
@@ -63,7 +75,7 @@ class OllamaClient:
             True if service is reachable, False otherwise
         """
         try:
-            response = requests.get(f"{self.base_url}/api/tags", timeout=self.timeout)
+            response = self._session.get(f"{self.base_url}/api/tags", timeout=self.timeout, allow_redirects=False)
             return bool(response.status_code == 200)
         except (requests.RequestException, ConnectionError) as e:
             logger.warning(
@@ -87,7 +99,7 @@ class OllamaClient:
             return False
 
         try:
-            response = requests.get(f"{self.base_url}/api/tags", timeout=self.timeout)
+            response = self._session.get(f"{self.base_url}/api/tags", timeout=self.timeout, allow_redirects=False)
             if response.status_code != 200:
                 return False
 
@@ -137,10 +149,11 @@ class OllamaClient:
             if json_mode:
                 payload["format"] = "json"
 
-            response = requests.post(
+            response = self._session.post(
                 f"{self.base_url}/api/generate",
                 json=payload,
                 timeout=self.timeout,
+                allow_redirects=False,
             )
 
             if response.status_code != 200:

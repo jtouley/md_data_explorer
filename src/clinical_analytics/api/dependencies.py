@@ -20,6 +20,7 @@ from clinical_analytics.api.layer_cache import LayerCache, LayerCacheError, Laye
 from clinical_analytics.core import nl_query_config
 from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.datasets.uploaded.definition import SemanticLayerBuildError, UploadedDatasetFactory
+from clinical_analytics.storage.dataset_deletion import InvalidDatasetIdError, validate_dataset_id
 from clinical_analytics.storage.datastore import STORE_BUSY_MESSAGE, StoreBusyError
 
 # ============================================================================
@@ -97,8 +98,13 @@ def lease_semantic_layer(dataset_id: str) -> LayerLease[SemanticLayer]:
     Blocking (a cold build reads the store): call it off the event loop.
 
     Raises:
-        HTTPException: as _build_semantic_layer; 503 if the dataset kept changing while it loaded.
+        HTTPException: 422 for an id that is not a plain identifier (checked before any file is
+            touched); as _build_semantic_layer; 503 if the dataset kept changing while it loaded.
     """
+    try:
+        validate_dataset_id(dataset_id)
+    except InvalidDatasetIdError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(e)) from e
     reject_if_deleting(dataset_id)
     try:
         return _layer_cache.lease(dataset_id)

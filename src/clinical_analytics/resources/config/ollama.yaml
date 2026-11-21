@@ -6,7 +6,7 @@
 
 ollama:
   # Base URL for Ollama API
-  base_url: "http://localhost:11434"
+  base_url: "http://127.0.0.1:11434"
 
   # Default model to use for query parsing
   default_model: "llama3.1:8b"

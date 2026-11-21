@@ -14,6 +14,7 @@ import {
   DEFAULT_PREFERRED_PORT,
   STORE_CHECK_FAILED_EXIT,
   BACKEND_CWD_NAME,
+  BACKEND_NO_PROXY,
   buildBackendArgs,
   buildBackendEnv,
   ensureBackendCwd,
@@ -327,6 +328,64 @@ describe('configuration', () => {
     expect(env).not.toHaveProperty('ELECTRON_RUN_AS_NODE');
     expect(env).not.toHaveProperty('PYTHONPATH'); // no import path from the user's shell
     expect(base.CLINICAL_ANALYTICS_DEV_NO_AUTH).toBe('1'); // input not mutated
+  });
+
+  test.each([
+    [
+      'upper case',
+      {
+        HTTP_PROXY: 'http://proxy.test:3128',
+        HTTPS_PROXY: 'http://proxy.test:3128',
+        ALL_PROXY: 'socks5://proxy.test:1080',
+        NO_PROXY: 'example.org',
+      },
+    ],
+    [
+      'lower case',
+      {
+        http_proxy: 'http://proxy.test:3128',
+        https_proxy: 'http://proxy.test:3128',
+        all_proxy: 'socks5://proxy.test:1080',
+        no_proxy: 'example.org',
+      },
+    ],
+    [
+      'mixed case',
+      {
+        Http_Proxy: 'http://proxy.test:3128',
+        hTTPS_pROXY: 'http://proxy.test:3128',
+        All_Proxy: 'socks5://proxy.test:1080',
+        No_Proxy: '',
+      },
+    ],
+  ])(
+    'backend env drops proxy variables (%s) and bypasses proxies for loopback',
+    (_label, proxyEnv) => {
+      // Arrange
+      const base = { PATH: '/usr/bin', ...proxyEnv };
+
+      // Act
+      const env = buildBackendEnv(base, TOKEN);
+
+      // Assert
+      const proxyKeys = Object.keys(env).filter((name) => /^(https?|all|no)_proxy$/i.test(name));
+      expect(proxyKeys).toEqual(['NO_PROXY']);
+      expect(env.NO_PROXY).toBe(BACKEND_NO_PROXY);
+      expect(BACKEND_NO_PROXY.split(',')).toEqual(['127.0.0.1', 'localhost', '::1']);
+      expect(env.PATH).toBe('/usr/bin');
+      expect(base).toEqual({ PATH: '/usr/bin', ...proxyEnv }); // input not mutated
+    }
+  );
+
+  test('backend env sets NO_PROXY when the user had no proxy settings', () => {
+    // Arrange
+    const base = { PATH: '/usr/bin' };
+
+    // Act
+    const env = buildBackendEnv(base, TOKEN);
+
+    // Assert
+    expect(env.NO_PROXY).toBe('127.0.0.1,localhost,::1');
   });
 });
 

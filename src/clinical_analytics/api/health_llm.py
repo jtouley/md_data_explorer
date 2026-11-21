@@ -6,6 +6,7 @@ from __future__ import annotations
 import requests  # type: ignore[import-untyped]
 
 from clinical_analytics.core import nl_query_config
+from clinical_analytics.core.loopback import model_http_session
 
 # Module-level copies so tests can patch `health_llm.OLLAMA_DEFAULT_MODEL`.
 OLLAMA_BASE_URL: str = nl_query_config.OLLAMA_BASE_URL
@@ -31,7 +32,8 @@ def get_ollama_health_snapshot() -> dict[str, object]:
         "ollama_models": [],
     }
     try:
-        response = requests.get(f"{base_url}/api/tags", timeout=_HEALTH_TIMEOUT_S)
+        with model_http_session() as session:  # no proxies: the probe stays on this machine
+            response = session.get(f"{base_url}/api/tags", timeout=_HEALTH_TIMEOUT_S, allow_redirects=False)
     except requests.RequestException:
         return snapshot
 
