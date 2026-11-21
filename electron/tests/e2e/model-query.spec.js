@@ -50,7 +50,8 @@ test.describe('Model-written query path (live API, mocked model)', () => {
       mimeType: 'text/csv',
       buffer: makeVisitsCsv(),
     });
-    await expect(page.locator('[data-testid="upload-status"]')).toContainText('is ready');
+    // Visit-level rows: the upload is kept and its repeated patient IDs are pointed out.
+    await expect(page.locator('[data-testid="upload-status"]')).toContainText('Uploaded');
     await expect(page.locator('#query-input')).toBeEnabled();
 
     // "folks", "came back": words that match no column or value. The question is still answered.
