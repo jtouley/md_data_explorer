@@ -173,7 +173,11 @@ def per_layer_memory_limit(budget: DuckdbMemoryLimit, cache_size: int, sql_sandb
     if too_small:
         raise ValueError(
             f"duckdb_memory_budget {budget.sql} shared by {cache_size} open datasets"
-            + (f" and {sql_sandboxes} SQL sandbox(es) (enable_model_queries / enable_sql_queries)" if sql_sandboxes else "")
+            + (
+                f" and {sql_sandboxes} SQL sandbox(es) (enable_model_queries / enable_sql_queries)"
+                if sql_sandboxes
+                else ""
+            )
             + f" leaves {limit.sql} each, too little to answer questions: raise the budget or lower "
             "semantic_layer_cache_size"
         )

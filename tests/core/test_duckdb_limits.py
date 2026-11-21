@@ -157,7 +157,9 @@ def test_resolveSemanticLayerCacheSize_badValue_raisesValueError(value: object) 
 def test_configImport_defaults_cachedLayerLimitIsBudgetOverCacheSize() -> None:
     # Arrange / Act: the model-written query path is on by default, and its SQL sandbox takes a share
     expected = per_layer_memory_limit(
-        nl_query_config.DUCKDB_MEMORY_BUDGET, nl_query_config.SEMANTIC_LAYER_CACHE_SIZE, nl_query_config.SQL_SANDBOX_SLOTS
+        nl_query_config.DUCKDB_MEMORY_BUDGET,
+        nl_query_config.SEMANTIC_LAYER_CACHE_SIZE,
+        nl_query_config.SQL_SANDBOX_SLOTS,
     )
 
     # Assert: the API's cached layers and the sandbox share the budget; every other layer keeps 20%.

@@ -2,8 +2,9 @@
 """The local model call of the question path: Ollama on this machine, reply held to a JSON schema.
 
 Patient data never leaves the machine: the prompt carries column names, category values and the
-data dictionary, so the server must be on a loopback address. Any other address is refused here,
-whatever the configuration says.
+data dictionary, so the server must be on a loopback address (``core.loopback``). Any other
+address is refused here, whatever the configuration says; the call goes through OllamaClient's
+proxy-free session.
 """
 
 from __future__ import annotations
@@ -11,17 +12,16 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from typing import Any, Final, TypeAlias
-from urllib.parse import urlsplit
 
 import structlog
 
 from clinical_analytics.core import nl_query_config
 from clinical_analytics.core.llm_client import OllamaClient
 from clinical_analytics.core.llm_json import parse_json_response
+from clinical_analytics.core.loopback import is_loopback_url
 
 logger = structlog.get_logger()
 
-LOOPBACK_HOSTS: Final = frozenset({"127.0.0.1", "localhost", "::1"})
 # Room for the table description, the examples and a retry's feedback; the server's default
 # (4096 tokens) silently cuts the start of a longer prompt, which is the table's columns.
 NUM_CTX: Final = 8192
@@ -32,15 +32,12 @@ AVAILABILITY_TIMEOUT_S: Final = 3.0
 ModelFn: TypeAlias = Callable[[str, str, dict[str, Any]], Any]
 
 
-def is_loopback(base_url: str) -> bool:
-    parts = urlsplit(base_url)
-    return parts.scheme in ("http", "https") and parts.hostname in LOOPBACK_HOSTS
-
-
 def _client() -> OllamaClient | None:
-    """The app's Ollama client at the configured address, or None when that is not this machine."""
+    """The app's Ollama client at the configured address, or None when that is not this machine.
+    The question path refuses another host even when ``ollama_allow_remote_host`` is set: its
+    prompt carries the table's columns, category values and data dictionary."""
     url = nl_query_config.OLLAMA_BASE_URL
-    if not is_loopback(url):
+    if not is_loopback_url(url):
         logger.warning("model_query_url_not_local")
         return None
     return OllamaClient(

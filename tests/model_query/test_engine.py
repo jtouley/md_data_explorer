@@ -280,25 +280,11 @@ def test_answer_question_noExamplesGiven_retrievesThemFromThePool(ask):
     assert "Examples on other tables" in model.prompts[0][1]
 
 
-@pytest.mark.parametrize(
-    ("url", "local"),
-    [
-        ("http://127.0.0.1:11434", True),
-        ("http://localhost:11434", True),
-        ("http://[::1]:11434", True),
-        ("https://models.example.com", False),
-        ("http://10.0.0.5:11434", False),
-        ("ftp://127.0.0.1", False),
-    ],
-)
-def test_is_loopback_url_onlyThisMachine(url, local):
-    # Act / Assert
-    assert llm.is_loopback(url) is local
-
-
-def test_ollama_model_remoteUrl_isNeverCalled(monkeypatch):
-    # Arrange: a configured address that is not this machine
+@pytest.mark.parametrize("allow_remote", [False, True])
+def test_ollama_model_remoteUrl_isNeverCalled(monkeypatch, allow_remote):
+    # Arrange: a configured address that is not this machine (even with the remote opt-in)
     monkeypatch.setattr(llm.nl_query_config, "OLLAMA_BASE_URL", "https://models.example.com")
+    monkeypatch.setattr(llm.nl_query_config, "OLLAMA_ALLOW_REMOTE_HOST", allow_remote)
 
     # Act
     reply = llm.ollama_model("system", "user", {})
@@ -318,13 +304,18 @@ def test_ollama_model_localServer_sendsSchemaAndDeterministicOptions(monkeypatch
         def json(self) -> dict[str, Any]:
             return {"response": '{"answer": "count"}'}
 
-    def post(url: str, json: dict[str, Any], timeout: float) -> Response:
-        sent.update(url=url, payload=json)
-        return Response()
+    class Session:
+        """The proxy-free session OllamaClient uses (core.loopback)."""
+
+        def post(self, url: str, json: dict[str, Any], timeout: float, allow_redirects: bool) -> Response:
+            sent.update(url=url, payload=json, allow_redirects=allow_redirects)
+            return Response()
+
+        def get(self, *args: Any, **kwargs: Any) -> Response:
+            return Response()
 
     monkeypatch.setattr(llm.nl_query_config, "OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-    monkeypatch.setattr("clinical_analytics.core.llm_client.requests.post", post)
-    monkeypatch.setattr("clinical_analytics.core.llm_client.requests.get", lambda *a, **k: Response())
+    monkeypatch.setattr("clinical_analytics.core.llm_client.ollama_session", Session)
     schema = {"type": "object"}
 
     # Act
@@ -332,7 +323,7 @@ def test_ollama_model_localServer_sendsSchemaAndDeterministicOptions(monkeypatch
 
     # Assert
     assert reply == {"answer": "count"}
-    assert sent["url"] == "http://127.0.0.1:11434/api/generate"
+    assert (sent["url"], sent["allow_redirects"]) == ("http://127.0.0.1:11434/api/generate", False)
     assert sent["payload"]["format"] == schema
     assert sent["payload"]["system"] == "system text"
     assert sent["payload"]["options"]["temperature"] == 0
