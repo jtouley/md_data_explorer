@@ -37,11 +37,11 @@ def _one_row_per_record(n: int = N) -> pl.DataFrame:
 
 
 def _visit_rows(n: int = N) -> pl.DataFrame:
-    """Visit-level: a unique visit code, and a person ID (not a patient-key name) that repeats."""
+    """Visit-level: a unique visit code, and a family ID (an ID, not a patient-key name) that repeats."""
     return pl.DataFrame(
         {
             "visit_code": [f"V{i:04d}" for i in range(n)],
-            "person_id": [f"P{i % (n // 2):04d}" for i in range(n)],
+            "family_id": [f"P{i % (n // 2):04d}" for i in range(n)],
             "sex": ["female" if (i % (n // 2)) % 2 else "male" for i in range(n)],
         }
     )
