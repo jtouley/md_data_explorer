@@ -427,11 +427,18 @@ def _split_where(
             if {str(v).casefold() for v in column.values} <= named:
                 spelled = spelled or column.name
                 continue
-            if group_column is not None and column.name == group_column and len(named) == 1:
-                raise PlanError(
-                    f"where limits {column.name} to one value, but group_by {column.name} asks for every value. "
-                    f"To compare the groups remove {column.name} from where."
-                )
+        if group_column is not None and _columns_of(term) == {group_column}:
+            # A limit on the very column the answer is broken down by removes groups from it.
+            raise PlanError(
+                f"where limits {group_column}, but group_by {group_column} asks for each of its values. "
+                f"Remove {group_column} from where to show every group; keep it only if the question "
+                "says to leave some out, and then do not group by it."
+            )
+        if isinstance(term, exp.Or) and any(isinstance(side, exp.And) for side in (term.this, term.expression)):
+            raise PlanError(
+                "where mixes AND and OR without parentheses, so it is not clear which rows it keeps. "
+                "Write it with parentheses, and keep only the limits the question states."
+            )
         kept.append(term)
     return (_where_all(*kept), spelled)
 
@@ -692,12 +699,19 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
             answer = "count"
             if group is None:
                 group, group_name, group_column = _group(f'"{numerator}"', context)
+        elif numerator is None and where is not None:
+            # The model wrote the counted condition as the limit: a share of it among everyone.
+            event, where = where, None
         elif numerator is None or (group is not None and _columns_of(numerator) <= _columns_of(group)):
             if group is None:
                 raise PlanError("A share needs numerator: the SQL condition that is counted, e.g. col = 'yes'.")
             answer = "count"
         else:
             event = numerator
+            # A population limited to those with the event would make every share 100%: a limit
+            # that only repeats the numerator is the numerator, not a limit.
+            counted = {render(term) for term in _terms(event)}
+            where = _where_all(*[term for term in _terms(where) if render(term) not in counted])
     elif answer == "count":
         where = _where_all(where, *_count_conditions(reply, group_column, context))
     where, spelled = _split_where(where, group_column, context)
@@ -1020,23 +1034,22 @@ def _mentions(question: str, phrase: str) -> bool:
 
 
 def unused_mentions(question: str, used: frozenset[str], context: DatasetContext) -> list[tuple[str, str]]:
-    """(the words of the question, the column) for each value of a column the question names
-    while the query reads that column nowhere: "women" with a sex column the query does not use.
+    """(the word of the question, the column) when the question says "women" or "men" while the
+    query reads the table's sex column nowhere: the limit a small model most often drops.
 
-    A hint for the model's next attempt, never a reason to hold the question: the model may
-    answer that the mention limits nothing, and that answer stands.
+    Only these words are read: they name one thing, whatever the table. (Any other category value
+    found in a question is as often an ordinary word, "patients" or "confirmed", and a hint about
+    it makes the model add a limit that was never asked for.) A hint for the model's next attempt,
+    never a reason to hold the question: the model may answer that it limits nothing.
     """
     found: list[tuple[str, str]] = []
     for column in context.columns:
         if column.values is None or not column.text or column.name in used:
             continue
-        sexes = {_SEX_VALUES.get(str(v).casefold()) for v in column.values}
+        if {_SEX_VALUES.get(str(v).casefold()) for v in column.values} != {"female", "male"}:
+            continue
         for value in column.values:
-            phrases = [str(value)]
-            if sexes == {"female", "male"}:
-                phrases = list(_SEX_WORDS[_SEX_VALUES[str(value).casefold()]])
-            elif str(value).casefold() in _YES | _NO or len(column.values) < 2:
-                continue  # "yes" or "no" in a question names no column
+            phrases = _SEX_WORDS[_SEX_VALUES[str(value).casefold()]]
             said = next((phrase for phrase in phrases if _mentions(question, phrase)), None)
             if said is not None:
                 found.append((said, column.name))

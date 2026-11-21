@@ -212,16 +212,16 @@ def test_answer_question_hintNotTaken_theFirstAnswerStands(ask, second):
     assert present_analysis(answer.analysis)["claim"] == "Total count: 4 patients."
 
 
-def test_unused_mentions_valuesInTheQuestion_areFoundOnlyForUnusedColumns(make_query_table):
+def test_unused_mentions_menOrWomenInTheQuestion_isFoundOnlyWhenSexIsUnused(make_query_table):
     # Arrange
     _catalog, context = make_query_table(tables.patients())
     question = "How many men with relapsing disease said yes?"
 
     # Act
-    unused = unused_mentions(question, frozenset({"dx"}), context)
-    none_unused = unused_mentions(question, frozenset({"dx", "sex"}), context)
+    unused = unused_mentions(question, frozenset({"comorbid"}), context)
+    none_unused = unused_mentions(question, frozenset({"sex"}), context)
 
-    # Assert: "yes" names no column; "relapsing" is used; "men" is not
+    # Assert: only the sex words are read; "relapsing" and "yes" are left to the model
     assert unused == [("men", "sex")]
     assert none_unused == []
 

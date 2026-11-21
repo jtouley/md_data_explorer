@@ -124,7 +124,7 @@ def test_compile_plan_whereListsEveryValue_becomesTheGrouping(patients):
 
 def test_compile_plan_wherePinsTheGroup_isFedBack(patients):
     # Act / Assert
-    with pytest.raises(PlanError, match="where limits sex to one value"):
+    with pytest.raises(PlanError, match="where limits sex, but group_by sex asks for each"):
         compile_plan(_reply("median", number="onset_year", where="sex = 'male'", group_by="sex"), "q", patients)
 
 
@@ -299,3 +299,34 @@ def test_reply_schema_format_listsItsAnswersAndFields(fmt, first, has_sql):
     assert ("sql" in schema["properties"]) is has_sql
     assert schema["required"] == list(schema["properties"])
     assert LISTING_REASON.startswith("This would list")
+
+
+def test_compile_plan_whereRepeatsTheNumerator_isNotALimit(patients):
+    # Arrange: the model wrote the event as a limit too, which would make every share 100%
+    reply = _reply("share", numerator="confirmed = 'yes'", where="age_cat = 2 AND confirmed = 'yes'", group_by="sex")
+
+    # Act
+    compiled = compile_plan(reply, "What share of the older ones had a confirmed infection, by sex?", patients)
+
+    # Assert
+    assert compiled.reading == (
+        "Share of patients with confirmed = 'Yes' where age_cat = 2, by sex, among those with it recorded."
+    )
+
+
+def test_compile_plan_whereMixesAndWithOr_isFedBack(patients):
+    # Act / Assert
+    with pytest.raises(PlanError, match="mixes AND and OR without parentheses"):
+        compile_plan(_reply("count", where="age_cat = 2 AND dx = 'other' OR sex = 'male'"), "How many?", patients)
+
+
+def test_compile_plan_shareWithTheEventWrittenAsTheLimit_countsItAmongEveryone(patients):
+    # Arrange: no numerator; the counted condition is in where
+    reply = _reply("share", where="confirmed = 'yes'", group_by="sex")
+
+    # Act
+    compiled = compile_plan(reply, "What share of each sex had a confirmed infection?", patients)
+
+    # Assert
+    assert compiled.kind == "share"
+    assert compiled.reading == "Share of patients with confirmed = 'Yes', by sex, among those with it recorded."
