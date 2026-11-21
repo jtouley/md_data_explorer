@@ -43,6 +43,9 @@ def analysis_of(compiled: Compiled, frame: pl.DataFrame, total: int | None = Non
     """The analysis dict for a tabulation's rows (``total``: the ungrouped count of a grouped one)."""
     rows = frame.to_dicts()
     group = compiled.group
+    if compiled.group_labels and group is not None:
+        labels = dict(compiled.group_labels)
+        rows = [{**r, group: labels.get(str(r[group]), r[group])} for r in rows]
     base = _unit_fields(compiled)
     if compiled.kind == "count":
         if group is None:

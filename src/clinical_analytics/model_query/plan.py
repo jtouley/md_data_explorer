@@ -521,6 +521,8 @@ class Compiled:
     # A summary over one value per patient on visit rows: how many patients have more than one
     # value (then "each visit" and "each patient" differ, and the question must say which).
     per_patient_varies_sql: str | None = None
+    # The dictionary's labels of the group column's codes, shown instead of the codes.
+    group_labels: tuple[tuple[str, str], ...] = ()
     # The limits it applies (where's AND terms, and a share's event), for the grounding check.
     conditions: tuple[exp.Expr, ...] = dataclasses.field(default=(), compare=False)
     group_expression: bool = False  # broken down by an expression rather than one column
@@ -601,7 +603,7 @@ def _where_phrase(where: exp.Expr | None) -> str:
 
 def _unit_phrase(unit: Unit) -> str:
     if unit.key is None:
-        return unit.word
+        return unit.plural if unit.noun else unit.word
     return f"distinct {unit.plural} ({unit.key})"
 
 
@@ -712,7 +714,12 @@ def compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> C
         PlanError: the plan names a column or value the table does not have, or is incomplete.
     """
     compiled = _compile_plan(reply, question, context)
-    return dataclasses.replace(compiled, columns=_sql_columns(compiled.sql, context))
+    grouped = context.column(compiled.group_column) if compiled.group_column else None
+    return dataclasses.replace(
+        compiled,
+        columns=_sql_columns(compiled.sql, context),
+        group_labels=grouped.labels if grouped is not None else (),
+    )
 
 
 def _sql_columns(sql: str, context: DatasetContext) -> frozenset[str]:

@@ -273,3 +273,12 @@ def test_compile_plan_meanOverEventsNoun_isOverRows(clinic):
 
     # Assert
     assert compiled.per_patient_varies_sql is None and "over visits (rows)" in compiled.reading
+
+
+def test_answer_question_breakdownByACodedColumn_showsTheLabels(ask_clinic):
+    # Act
+    answer, _prompts = ask_clinic("How many patients of each gender?", _plan("count", group_by="gender"))
+
+    # Assert: the dictionary's words, not the codes
+    assert answer.analysis is not None
+    assert [row["gender"] for row in answer.analysis["group_counts"]] == ["male", "female"]
