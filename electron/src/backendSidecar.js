@@ -56,6 +56,15 @@ const STRIPPED_ENV = [
   'CLINICAL_ANALYTICS_OLLAMA_AUTOINIT',
   'PYTHONPATH',
 ];
+/**
+ * Proxy variables never reach the backend, in any letter case (Windows env names are
+ * case-insensitive; POSIX tools read both spellings). The backend talks only to itself and to the
+ * local model server, and a proxy would see every prompt (question, column names, category values)
+ * in cleartext. The backend's model client also ignores proxies itself (core/loopback.py).
+ */
+const PROXY_ENV = new Set(['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY']);
+/** Hosts the backend reaches directly, whatever proxy settings other tools in it might read. */
+export const BACKEND_NO_PROXY = '127.0.0.1,localhost,::1';
 /** Folder under the app's user-data directory that the backend runs in. */
 export const BACKEND_CWD_NAME = 'backend';
 
@@ -168,6 +177,10 @@ export function buildBackendEnv(baseEnv, token) {
   const env = { ...baseEnv, CLINICAL_ANALYTICS_API_TOKEN: token };
   for (const name of STRIPPED_ENV) delete env[name];
   delete env.ELECTRON_RUN_AS_NODE;
+  for (const name of Object.keys(env)) {
+    if (PROXY_ENV.has(name.toUpperCase())) delete env[name];
+  }
+  env.NO_PROXY = BACKEND_NO_PROXY;
   return env;
 }
 

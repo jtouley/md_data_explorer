@@ -307,6 +307,75 @@ def test_verifyHealth_squatterOnPort_refused(body: dict[str, object]) -> None:
     assert reason
 
 
+def _recording_server(status: int, location: str | None = None) -> tuple[str, list[str], object]:
+    """A local server that records each request line and answers ``status`` (with a Location)."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    seen: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - http.server API
+            seen.append(self.requestline)
+            self.send_response(status)
+            if location is not None:
+                self.send_header("location", location)
+            self.send_header("content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *_args: object) -> None:
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{server.server_address[1]}", seen, server
+
+
+def test_verifyHealth_proxyEnvSet_neverUsesProxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Arrange: a proxy configured in every spelling, and the local "API" that should answer
+    from clinical_analytics.api.security import verify_health
+
+    proxy_url, proxy_seen, proxy = _recording_server(200)
+    api_url, api_seen, api = _recording_server(200)
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    for name in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.setenv(name, proxy_url)
+
+    # Act
+    try:
+        ok, _reason = verify_health(api_url, TOKEN)
+    finally:
+        proxy.shutdown()  # type: ignore[attr-defined]
+        api.shutdown()  # type: ignore[attr-defined]
+
+    # Assert: the local server got the probe; the proxy got nothing
+    assert ok is False  # the stand-in API does not know the token
+    assert proxy_seen == []
+    assert len(api_seen) == 1 and api_seen[0].startswith("GET /health?nonce=")
+
+
+def test_verifyHealth_redirect_notFollowed() -> None:
+    # Arrange: the "API" redirects to another server, which must never be contacted
+    from clinical_analytics.api.security import verify_health
+
+    target_url, target_seen, target = _recording_server(200)
+    api_url, _api_seen, api = _recording_server(302, location=f"{target_url}/health")
+
+    # Act
+    try:
+        ok, reason = verify_health(api_url, TOKEN)
+    finally:
+        target.shutdown()  # type: ignore[attr-defined]
+        api.shutdown()  # type: ignore[attr-defined]
+
+    # Assert
+    assert ok is False
+    assert "HTTPError" in reason
+    assert target_seen == []
+
+
 def test_verifyHealth_realBackendWithSameToken_accepted(real_server: str, token_set: str) -> None:
     # Arrange
     from clinical_analytics.api.security import verify_health

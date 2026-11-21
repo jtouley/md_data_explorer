@@ -725,7 +725,7 @@ def run(
                 raise
             # Recorded, never silent: the API refused the ZIP, so the table goes up alone and
             # the app answers without the dictionary. (A multi-table set has no such fallback.)
-            report.settings["upload"] = f"csv only; ZIP rejected: {str(error)[:200]}"
+            report.settings["upload"] = zip_rejected_note(error)
             uploaded = api.upload_response(oracle_input, dataset, declared)
         dataset_id = required_field(uploaded, "upload_id", "POST /api/datasets/upload")
         report.settings["upload_s"] = round(time.monotonic() - upload_started, 1)
@@ -741,6 +741,12 @@ def run(
         else:
             shutil.rmtree(work, ignore_errors=True)
     return report
+
+
+def zip_rejected_note(error: Exception) -> str:
+    """The upload setting recorded when the API refused the ZIP. It is written to results.json (a
+    file) and the API's message can quote counts, so it passes the export boundary first."""
+    return f"csv only; ZIP rejected: {export_text(str(error)[:200])}"
 
 
 def _server_note(code: int | None) -> str:
