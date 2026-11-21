@@ -282,3 +282,28 @@ def test_answer_question_breakdownByACodedColumn_showsTheLabels(ask_clinic):
     # Assert: the dictionary's words, not the codes
     assert answer.analysis is not None
     assert [row["gender"] for row in answer.analysis["group_counts"]] == ["male", "female"]
+
+
+def test_build_context_wordValuesDescribedInTheDictionary_keepTheirStoredValues(make_query_table):
+    # Arrange: a yes/no column whose dictionary explains each value in a sentence
+    frame = tables.clinic_visits()
+    doc = tables.CLINIC_DICTIONARY.replace(
+        "shots         yes if allergy shots were given at the visit.",
+        "shots         yes - if shots were given at the visit, no - if they were not",
+    )
+    catalog, context = make_query_table(frame, doc_context=doc, id_column="pt_id")
+    model_reply = {"thought": "t", "mapping": [], "answer": "count", "where": None, "group_by": "shots"}
+    queue = [model_reply | {"numerator": None, "number": None, "outcome": None}]
+
+    # Act
+    answer = answer_question(
+        "How many patients by shots?",
+        context,
+        model=lambda *_args: queue.pop(0),
+        open_sandbox=lambda: SandboxConnection(catalog),
+        examples=[],
+    )
+
+    # Assert: the table shows "no" and "yes", not the dictionary's sentences
+    assert answer.analysis is not None
+    assert sorted(row["shots"] for row in answer.analysis["group_counts"]) == ["no", "yes"]

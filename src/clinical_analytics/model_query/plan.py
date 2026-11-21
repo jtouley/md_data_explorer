@@ -718,8 +718,16 @@ def compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> C
     return dataclasses.replace(
         compiled,
         columns=_sql_columns(compiled.sql, context),
-        group_labels=grouped.labels if grouped is not None else (),
+        # Only a code is replaced by its label (2 -> female, "F" -> female); a value that is already
+        # a word ("yes", "never_treated") stays as stored, whatever the dictionary says about it.
+        group_labels=tuple(
+            (code, label) for code, label in (grouped.labels if grouped is not None else ()) if _is_code(code)
+        ),
     )
+
+
+def _is_code(value: str) -> bool:
+    return bool(re.fullmatch(r"-?\d+(?:\.\d+)?|[A-Za-z]", value.strip()))
 
 
 def _sql_columns(sql: str, context: DatasetContext) -> frozenset[str]:
