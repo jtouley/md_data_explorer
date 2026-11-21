@@ -751,6 +751,14 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
             answer = "count"
             if group is None:
                 group, group_name, group_column = _group(f'"{numerator}"', context)
+        elif numerator is None and where is not None and len(_terms(where)) > 1:
+            # Several conditions and no numerator: which one is counted and which keep the
+            # population ("in patients over 50") is the model's to say, never guessed here.
+            raise PlanError(
+                "A share needs numerator: the condition that is counted (for example infection = 'yes'). Put in "
+                "where only the conditions that keep the population the share is taken among (an age limit, "
+                "a year, a sex)."
+            )
         elif numerator is None and where is not None:
             # The model wrote the counted condition as the limit: a share of it among everyone.
             event, where = where, None

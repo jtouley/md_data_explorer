@@ -366,3 +366,13 @@ def test_compile_plan_rangeOnTheGroupColumn_isALimitNotAnError(visits):
         "visit_year",
         ['"visit_year" >= 2022'],
     )
+
+
+def test_compile_plan_shareWithSeveralConditionsAndNoNumerator_isFedBack(visits):
+    # Act / Assert: "in patients 65+, what share were screened" written as one where of two terms
+    with pytest.raises(PlanError, match="A share needs numerator"):
+        compile_plan(
+            _reply("share", where="age_years >= 65 AND screened = 'yes'"),
+            "In patients 65+, what share screened?",
+            visits,
+        )
