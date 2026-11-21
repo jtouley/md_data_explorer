@@ -50,7 +50,7 @@ Uploads, the analytics database, chat sessions and NL prompt-learning files are 
 
 - `CLINICAL_ANALYTICS_DATA_HOME` moves the whole data home.
 - `DATABASE_URL` moves only the chat-session database (default SQLite at `<data home>/data/clinical_analytics.db`).
-- `OLLAMA_BASE_URL` (default `http://localhost:11434`) must stay a local address: LLM prompts can include column names, category labels and summary results.
+- `OLLAMA_BASE_URL` (default `http://localhost:11434`) must stay a local address (`localhost`, `127.0.0.0/8` or `::1`): LLM prompts can include column names, category labels and summary results. The app refuses any other host at startup unless `OLLAMA_ALLOW_REMOTE_HOST=true`, which logs a security warning, and it never sends these calls through a proxy.
 - The app does not encrypt data at rest. Use FileVault (macOS), BitLocker (Windows) or full-disk encryption (Linux).
 - Do not copy patient files into the repository; `make check-data` fails if git tracks data files.
 
