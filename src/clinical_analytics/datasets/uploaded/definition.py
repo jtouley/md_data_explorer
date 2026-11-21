@@ -163,12 +163,13 @@ class UploadedDataset(ClinicalDataset):
             STORAGE_LAYOUT,
             STORAGE_LAYOUT_KEY,
             _legacy_source_path,
+            stored_path,
         )
 
         if not self.metadata:
             return False
         if self.metadata.get(STORAGE_LAYOUT_KEY) == STORAGE_LAYOUT:
-            return Path(self.metadata[COHORT_PARQUET_KEY]).is_file()
+            return stored_path(self.storage, self.metadata[COHORT_PARQUET_KEY]).is_file()
         return _legacy_source_path(self.storage, self.upload_id, self.metadata) is not None
 
     def load(self) -> None:

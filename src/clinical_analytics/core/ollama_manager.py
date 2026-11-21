@@ -128,9 +128,10 @@ class OllamaManager:
             return self._available_models
 
         try:
-            import requests
+            from clinical_analytics.core.llm_client import ollama_session
 
-            response = requests.get(f"{self.base_url}/api/tags", timeout=self.timeout)
+            with ollama_session() as session:  # no proxies: the call stays on this machine
+                response = session.get(f"{self.base_url}/api/tags", timeout=self.timeout, allow_redirects=False)
             if response.status_code == 200:
                 models_data = response.json()
                 self._available_models = [m["name"] for m in models_data.get("models", [])]

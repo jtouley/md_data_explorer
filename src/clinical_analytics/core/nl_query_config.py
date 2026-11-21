@@ -256,6 +256,8 @@ OLLAMA_FALLBACK_MODEL: str = _config["ollama_fallback_model"]
 OLLAMA_TIMEOUT_SECONDS: float = _config["ollama_timeout_seconds"]
 OLLAMA_MAX_RETRIES: int = _config["ollama_max_retries"]
 OLLAMA_JSON_MODE: bool = _config["ollama_json_mode"]
+# Checked by load_nl_query_config: without it, OLLAMA_BASE_URL is always a loopback URL.
+OLLAMA_ALLOW_REMOTE_HOST: bool = _config["ollama_allow_remote_host"] is True
 
 # Tier 3 confidence thresholds (Phase 0 success vs Phase 3 execution gate)
 TIER_3_MIN_CONFIDENCE: float = _config["tier_3_min_confidence"]

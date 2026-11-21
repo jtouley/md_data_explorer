@@ -157,7 +157,7 @@ class TestConfigLoaderNLQuery:
         assert result["fuzzy_match_cutoff"] == 0.7
         assert result["enable_clarifying_questions"] is True
         assert result["enable_progressive_feedback"] is True
-        assert result["ollama_base_url"] == "http://localhost:11434"
+        assert result["ollama_base_url"] == "http://127.0.0.1:11434"
         assert result["ollama_default_model"] == "llama3.1:8b"
         assert result["ollama_fallback_model"] == "llama3.2:3b"
         assert result["ollama_timeout_seconds"] == 30.0

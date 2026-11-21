@@ -17,9 +17,10 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
 import structlog
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import JSONResponse
 
 from clinical_analytics.api import health_llm
 from clinical_analytics.api.db.database import create_tables
@@ -47,7 +48,7 @@ from clinical_analytics.core.data_home import uploads_dir
 from clinical_analytics.core.log_redaction import configure_logging
 from clinical_analytics.core.ollama_init import initialize_ollama
 from clinical_analytics.storage.atomic import sweep_stale_part_files
-from clinical_analytics.storage.dataset_deletion import finish_pending_compaction
+from clinical_analytics.storage.dataset_deletion import InvalidDatasetIdError, finish_pending_compaction
 from clinical_analytics.storage.store_format import StoreFormatError, prepare_store_for_engine
 
 # Redacting processor chain + INFO default (CLINICAL_ANALYTICS_LOG_LEVEL overrides).
@@ -152,6 +153,16 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(InvalidDatasetIdError)
+async def invalid_dataset_id_handler(_request: Request, exc: InvalidDatasetIdError) -> JSONResponse:
+    """A dataset id that is not a plain identifier reached storage: 422, never a file lookup.
+
+    Routes check ids first; this covers any path that did not, so it can't become a 500.
+    """
+    return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, content={"detail": str(exc)})
+
 
 # ============================================================================
 # CORS Middleware
