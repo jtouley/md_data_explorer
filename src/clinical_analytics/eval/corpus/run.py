@@ -518,7 +518,9 @@ def ask(api: Api, dataset_id: str, session_id: str, question: dict[str, Any], ti
     try:
         query_id = _submit(api, payload)
         result = _poll(api, query_id, deadline)
-        if result is not None and result["status"] == "awaiting_confirmation" and question.get("confirm"):
+        # A question back with choices (the model-written path) has no plan to confirm: it stays held.
+        held_with_plan = result is not None and result["status"] == "awaiting_confirmation" and result.get("plan_hash")
+        if held_with_plan and question.get("confirm"):
             confirmed = True
             payload |= {
                 "confirmed": True,

@@ -307,3 +307,23 @@ def test_build_context_wordValuesDescribedInTheDictionary_keepTheirStoredValues(
     # Assert: the table shows "no" and "yes", not the dictionary's sentences
     assert answer.analysis is not None
     assert sorted(row["shots"] for row in answer.analysis["group_counts"]) == ["no", "yes"]
+
+
+@pytest.mark.parametrize(
+    ("question", "uncovered"),
+    [
+        ("How many K. pneumo patients had shots?", ()),
+        ("How many patients had shots, e.g. women?", ("women",)),
+    ],
+)
+def test_check_initialAndNameNamingTheTable_isNotALimit(make_query_table, question, uncovered):
+    # Arrange: the upload is named for the organism ("kpneumo_clinic")
+    frame = tables.clinic_visits()
+    catalog, context = make_query_table(frame, doc_context=tables.CLINIC_DICTIONARY, id_column="pt_id")
+    context = context.__class__(**{**context.__dict__, "title": "kpneumo_clinic"})
+
+    # Act
+    found = coverage.check(question, context, used=["shots"], values=["yes"], links=[])
+
+    # Assert
+    assert found.uncovered == uncovered

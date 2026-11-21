@@ -144,8 +144,19 @@ def _stem(word: str) -> str:
     return word
 
 
+# "C. diff", "E. coli", "S. aureus": an initial and a word are one name ("cdiff").
+_INITIAL = re.compile(r"(?<![.\w])([a-z])\.\s*([a-z]{2,})\b")
+
+
+def _join_initials(text: str) -> str:
+    return _INITIAL.sub(r"\1\2", text.casefold())
+
+
 def _tokens(text: str) -> list[str]:
-    return re.findall(r"[a-z]+|\d+(?:\.\d+)?", text.casefold())
+    folded = text.casefold()
+    words = re.findall(r"[a-z]+|\d+(?:\.\d+)?", folded)
+    joined = [w for w in re.findall(r"[a-z]+", _join_initials(folded)) if w not in words]
+    return words + joined
 
 
 @dataclass(frozen=True)
@@ -209,7 +220,7 @@ def content_chunks(question: str, context: DatasetContext) -> list[tuple[str, ..
     of words in order. A run must reach the plan through at least one of its words. Structural
     words, unit nouns, numbers, words naming the whole table, and words the user chose to leave
     out break runs and are never part of one."""
-    text = _CHOICE_WORDS.sub(" , ", question)
+    text = _join_initials(_CHOICE_WORDS.sub(" , ", question))
     text = _MEANS.sub(" , ", text)
     text = _LEAVE_OUT.sub(" , ", text)
     left_out = {_stem(w) for found in _LEAVE_OUT.findall(question) for w in _tokens(found)}
