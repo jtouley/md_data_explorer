@@ -54,6 +54,20 @@ class ColumnInfo:
     description: str | None = None
     is_patient_id: bool = False
     is_encounter_id: bool = False
+    # What each stored code means, from the data dictionary ("1 = male"): (code, label) pairs,
+    # only for codes the column holds.
+    labels: tuple[tuple[str, str], ...] = ()
+
+    def label_of(self, value: Any) -> str | None:
+        return dict(self.labels).get(str(value))
+
+    def code_for(self, label: str) -> Any:
+        """The stored value whose dictionary label is ``label`` (case-insensitive), or None."""
+        wanted = label.strip().casefold()
+        codes = [code for code, text in self.labels if text.casefold() == wanted]
+        if len(codes) != 1 or self.values is None:
+            return None
+        return next((v for v in self.values if str(v) == codes[0]), None)
 
     @property
     def numeric(self) -> bool:
@@ -77,6 +91,7 @@ class DatasetContext:
     confirmed_patient_rows: bool = False  # the user confirmed one row per patient
     notes: str = ""  # the data dictionary's general notes (or the whole short dictionary)
     encounter_keys: tuple[str, ...] = field(default_factory=tuple)
+    title: str = ""  # the dataset's name as uploaded: what the whole table is about
 
     def column(self, name: str) -> ColumnInfo | None:
         folded = name.casefold()
@@ -111,6 +126,54 @@ def _literal(value: Any) -> str:
 def _clip(text: str, limit: int) -> str:
     text = " ".join(text.split())
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+# "1 = male", "2: female", "0=No; 1=Yes", "M - male": a code and its label in a dictionary entry.
+_CODE_LABEL = re.compile(
+    r"(?<![\w.])([A-Za-z0-9][\w.+-]{0,11})\s*(?:=|:|–|-(?=\s))\s*([A-Za-z][A-Za-z0-9 /'()+-]{0,40}?)"
+    r"\s*(?=[,;\n)]|$|\s+[A-Za-z0-9][\w.+-]{0,11}\s*(?:=|:))"
+)
+
+
+def value_labels(text: str | None, values: tuple[Any, ...] | None) -> tuple[tuple[str, str], ...]:
+    """(code, label) pairs a dictionary entry gives for codes the column actually holds."""
+    if not text or not values:
+        return ()
+    # A whole-number float is written as an integer in a dictionary ("1", not "1.0").
+    held = {(str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)): str(v) for v in values}
+    found: dict[str, str] = {}
+    for code, label in _CODE_LABEL.findall(text):
+        label = " ".join(label.split()).strip(" .")
+        if code in held and label and held[code] not in found and label.casefold() != code.casefold():
+            found[held[code]] = label
+    # Labels for only some codes are kept too; a code without one keeps its stored value.
+    return tuple(sorted(found.items()))
+
+
+def dictionary_entries(doc: str | None, columns: list[str]) -> dict[str, str]:
+    """{column: its whole dictionary entry text}, unclipped (code lists included)."""
+    if not doc:
+        return {}
+    known = {c.casefold(): c for c in columns}
+    described: dict[str, list[str]] = {}
+    current: str | None = None
+    blank_before = False
+    for raw in doc.splitlines():
+        line = raw.rstrip()
+        if not line.strip():
+            blank_before = True
+            continue
+        match = _ENTRY.match(line)
+        name = known.get(match.group(1).casefold()) if match else known.get(line.strip().strip(":").casefold())
+        if name is not None and name not in described:
+            current = name
+            described[name] = [match.group(2) or ""] if match else []
+        elif current is not None and (not blank_before or line[:1].isspace() or _CODE_LINE.match(line)):
+            described[current].append(line.strip())
+        else:
+            current = None
+        blank_before = False
+    return {name: "\n".join(parts).strip() for name, parts in described.items() if any(parts)}
 
 
 def dictionary_descriptions(doc: str | None, columns: list[str]) -> tuple[dict[str, str], str]:
@@ -153,6 +216,7 @@ def build_context(
     *,
     doc_context: str | None = None,
     confirmed_patient_rows: bool = False,
+    title: str = "",
 ) -> DatasetContext:
     """Profile the table in the sandbox (three aggregate statements) and attach the dictionary."""
     table = sql_config.TABLE_NAME
@@ -185,7 +249,10 @@ def build_context(
         found = sandbox.run_generated(render(query.order_by("v"))).get_column("v").to_list()
         values[col.name] = found
     whole = bool(doc_context) and len(doc_context or "") <= WHOLE_DICTIONARY_CHARS
-    descriptions, notes = ({}, (doc_context or "").strip()) if whole else dictionary_descriptions(doc_context, names)
+    descriptions, notes = dictionary_descriptions(doc_context, names)
+    if whole:
+        notes = (doc_context or "").strip()  # short enough to give whole: counting rules, codes
+    entries = dictionary_entries(doc_context, names)
     columns = []
     for i, col in enumerate(catalog.columns):
         columns.append(
@@ -201,6 +268,7 @@ def build_context(
                 description=descriptions.get(col.name),
                 is_patient_id=col.name == key,
                 is_encounter_id=col.name in encounter_keys,
+                labels=value_labels(entries.get(col.name), tuple(values[col.name]) if col.name in values else None),
             )
         )
     patients = next((c.distinct for c in columns if c.is_patient_id), None)
@@ -215,6 +283,7 @@ def build_context(
         confirmed_patient_rows=confirmed_patient_rows,
         notes=notes,
         encounter_keys=encounter_keys,
+        title=title,
     )
 
 
@@ -226,7 +295,10 @@ def _column_line(col: ColumnInfo, *, full: bool = False) -> str:
         nouns = counting_unit.nouns_for(col.name)
         parts.append(f"ID of one {counting_unit.singular(nouns[0]) if len(nouns) == 1 else 'encounter'}")
     if col.values is not None:
-        shown = ", ".join(_clip(_literal(v), MAX_VALUE_CHARS) for v in col.values)
+        shown = ", ".join(
+            _clip(_literal(v), MAX_VALUE_CHARS) + (f" ({label})" if (label := col.label_of(v)) else "")
+            for v in col.values
+        )
         parts.append(f"values: {shown}")
     elif col.low is not None and col.high is not None and not col.is_patient_id:
         parts.append(f"range {col.low} to {col.high}")
@@ -249,6 +321,7 @@ def column_search_texts(context: DatasetContext) -> dict[str, str]:
     for col in context.columns:
         words = col.name.replace("_", " ")
         values = ", ".join(str(v) for v in col.values) if col.values is not None and col.text else ""
+        values = ", ".join(part for part in (values, ", ".join(label for _code, label in col.labels)) if part)
         texts[col.name] = ". ".join(part for part in (words, col.description or "", values) if part)
     return texts
 

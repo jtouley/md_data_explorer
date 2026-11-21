@@ -29,6 +29,7 @@ from sqlglot.errors import SqlglotError
 from clinical_analytics.core import counting_unit
 from clinical_analytics.model_query.context import ColumnInfo, DatasetContext
 from clinical_analytics.model_query.grounding import missing_choice
+from clinical_analytics.model_query.units import Unit, head_noun, resolve_unit
 from clinical_analytics.sql.render import render
 
 ReplyFormat: TypeAlias = Literal["plan", "sql"]
@@ -44,7 +45,6 @@ LISTING_REASON: Final = (
     "This would list individual patients. The app answers with counts and summaries; "
     "ask how many there are, or for a breakdown by a group."
 )
-_ROW_WORDS = re.compile(r"\b(rows|records|lines|entries)\b", re.IGNORECASE)
 _PEOPLE = r"(?:patients?|people|persons?|individuals|women|men|children|workers|subjects|participants|everyone)"
 _RECORDS = r"(?:ids?|mrns?|names|charts?|record numbers?)"
 _LISTING_PATTERNS: Final = tuple(
@@ -101,16 +101,32 @@ class ModelReply(BaseModel):
     number: str | None = None  # mean, median, ...: the number column or expression
     outcome: str | None = None  # tests: the outcome column (or a yes/no condition)
     sql: str | None = None
+    # Each phrase of the question and what it became (``coverage``): {phrase, role, column}.
+    mapping: list[dict[str, Any]] | None = None
 
 
 _PLAN_FIELDS: Final = ("where", "group_by", "numerator", "number", "outcome")
+MAPPING_ROLES: Final = ("filter", "group", "measure", "unit", "ignored")
 
 
 def reply_schema(fmt: ReplyFormat) -> dict[str, Any]:
     """The JSON schema the model server holds the reply to (property order is generation order)."""
     text = {"type": ["string", "null"]}
     answers = [*TABULATIONS, *STAT_TESTS, LISTING] if fmt == "plan" else [SQL, *STAT_TESTS, LISTING]
-    properties: dict[str, Any] = {"thought": {"type": "string"}, "answer": {"type": "string", "enum": answers}}
+    link = {
+        "type": "object",
+        "properties": {
+            "phrase": {"type": "string"},
+            "role": {"type": "string", "enum": list(MAPPING_ROLES)},
+            "column": text,
+        },
+        "required": ["phrase", "role", "column"],
+    }
+    properties: dict[str, Any] = {
+        "thought": {"type": "string"},
+        "mapping": {"type": "array", "items": link},
+        "answer": {"type": "string", "enum": answers},
+    }
     if fmt == "sql":
         properties["sql"] = text
     properties |= dict.fromkeys(_PLAN_FIELDS, text)
@@ -132,34 +148,6 @@ def parse_reply(payload: Any) -> ModelReply:
 
 
 # ---------------------------------------------------------------------------- what is counted
-
-
-@dataclass(frozen=True)
-class Unit:
-    """What a count counts: the ID column counted distinct (None: rows), and its words."""
-
-    key: str | None
-    word: str  # patients | visits | rows
-    noun: str | None = None  # one encounter as the question says it ("admission")
-
-    @property
-    def plural(self) -> str:
-        return f"{self.noun}s" if self.noun else self.word
-
-
-def resolve_unit(question: str, context: DatasetContext) -> Unit:
-    """The counted unit, from the question's words and the grain: an encounter noun ("admissions",
-    "tests") counts its encounter ID; otherwise patients, by the patient ID when rows are visits."""
-    if context.rows_are_patients:
-        return Unit(None, "patients")
-    words = counting_unit.read_units(question)
-    if words.unit == "encounters" and words.noun:
-        chosen = counting_unit.pick_encounter_key(list(context.encounter_keys), words.noun)
-        if chosen is not None:
-            return Unit(chosen, "visits", counting_unit.singular(words.noun))
-    if context.patient_key is None or (words.unit is None and _ROW_WORDS.search(question)):
-        return Unit(None, "rows")
-    return Unit(context.patient_key, "patients")
 
 
 # ---------------------------------------------------------------------------- checked expressions
@@ -232,6 +220,26 @@ def _yes_no(values: tuple[Any, ...]) -> dict[bool, Any]:
     return found if len(found) == 2 else {}
 
 
+# Words a question or a model uses for a label a dictionary gives a code.
+_LABEL_WORDS: Final = {
+    "women": "female", "woman": "female", "females": "female", "f": "female", "girls": "female",
+    "men": "male", "man": "male", "males": "male", "m": "male", "boys": "male",
+    "y": "yes", "true": "yes", "n": "no", "false": "no",
+}  # fmt: skip
+
+
+def _yes_no_of(column: ColumnInfo) -> dict[bool, Any]:
+    """{True: the stored yes value, False: the stored no value}, from the values or, for a coded
+    column (0/1, 1/2), from the dictionary's labels."""
+    if column.values is None:
+        return {}
+    found = _yes_no(column.values)
+    if found:
+        return found
+    yes, no = column.code_for("yes"), column.code_for("no")
+    return {True: yes, False: no} if yes is not None and no is not None else {}
+
+
 def _fixed_literal(column: ColumnInfo, literal: exp.Expr) -> exp.Expr:
     """``literal`` as a value ``column`` holds: its stored spelling, a number for a number
     column, yes/no for true/false.
@@ -261,7 +269,12 @@ def _fixed_literal(column: ColumnInfo, literal: exp.Expr) -> exp.Expr:
                     return _value_literal(value)
             except ValueError:
                 break
-    yes_no = _yes_no(column.values)
+    # A dictionary label ("female" for code 2), or a word for one ("women").
+    for wanted in (text, _LABEL_WORDS.get(text.casefold(), "")):
+        coded = column.code_for(wanted) if wanted else None
+        if coded is not None:
+            return _value_literal(coded)
+    yes_no = _yes_no_of(column)
     if yes_no and text.casefold() in _YES | _NO:
         return _value_literal(yes_no[text.casefold() in _YES])
     # An abbreviation of exactly one value ('M' for 'male', 'F' for 'female').
@@ -304,7 +317,7 @@ def fix_literals(tree: exp.Expr, context: DatasetContext) -> exp.Expr:
         elif isinstance(node, exp.Column) and isinstance(node.parent, exp.And | exp.Or | exp.Not | exp.Where):
             # A bare yes/no column used as a condition (WHERE diabetic): compare it with its yes.
             column = spec(node)
-            yes_no = _yes_no(column.values) if column is not None and column.values is not None else {}
+            yes_no = _yes_no_of(column) if column is not None else {}
             if yes_no:
                 return exp.EQ(this=node.copy(), expression=_value_literal(yes_no[True]))
         return node
@@ -321,7 +334,7 @@ def _is_predicate(tree: exp.Expr) -> bool:
 
 def _yes_condition(column: ColumnInfo | None) -> exp.Expr | None:
     """``column = <its yes value>`` for a yes/no column, else None."""
-    yes_no = _yes_no(column.values) if column is not None and column.values is not None else {}
+    yes_no = _yes_no_of(column) if column is not None else {}
     if not yes_no or column is None:
         return None
     return exp.EQ(this=exp.column(column.name, quoted=True), expression=_value_literal(yes_no[True]))
@@ -505,6 +518,9 @@ class Compiled:
     # A share whose condition reads two or more columns: how many units have it unknown (a value
     # missing), when the question did not say what a missing value means.
     missing_sql: str | None = None
+    # A summary over one value per patient on visit rows: how many patients have more than one
+    # value (then "each visit" and "each patient" differ, and the question must say which).
+    per_patient_varies_sql: str | None = None
     # The limits it applies (where's AND terms, and a share's event), for the grounding check.
     conditions: tuple[exp.Expr, ...] = dataclasses.field(default=(), compare=False)
     group_expression: bool = False  # broken down by an expression rather than one column
@@ -855,22 +871,60 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
     base = _base_table(context, dedupe=True)
     double = exp.DataType.build("DOUBLE")
 
-    def stat(name: str) -> exp.Expr:
-        return exp.Cast(this=exp.func(STATISTICS[name], value.copy()), to=double.copy())
+    def summary(of: exp.Expr, grouped_by: exp.Expr | None, out_group: list[exp.Expr]) -> list[exp.Expr]:
+        def stat(name: str) -> exp.Expr:
+            return exp.Cast(this=exp.func(STATISTICS[name], of.copy()), to=double.copy())
 
-    n_values = exp.alias_(exp.Count(this=value.copy()), "n")
-    if group is not None:
-        projections = [*group_projection, exp.alias_(stat(answer), answer), n_values]
-    else:
+        n_values = exp.alias_(exp.Count(this=of.copy()), "n")
+        if grouped_by is not None:
+            return [*out_group, exp.alias_(stat(answer), answer), n_values]
         names = [answer, *(s for s in ("mean", "median", "min", "max") if s != answer)]
         projections = [exp.alias_(stat(s), s) for s in names]
-        projections += [exp.alias_(exp.Cast(this=exp.func("STDDEV_SAMP", value.copy()), to=double.copy()), "std")]
-        projections += [n_values, exp.alias_(exp.Count(this=exp.Star()), "rows")]
-    select = _select(projections, base, full_where, group)
-    over = "" if context.rows_are_patients else f", over {context.row_unit} (rows), not one value per patient"
+        projections += [exp.alias_(exp.Cast(this=exp.func("STDDEV_SAMP", of.copy()), to=double.copy()), "std")]
+        return [*projections, n_values, exp.alias_(exp.Count(this=exp.Star()), "rows")]
+
+    # Over what: each row, or one value per patient. On visit rows a question about patients
+    # ("average age of our patients") is about one value per patient; a question about events, or
+    # one that says "every visit", is about rows. When a patient's value differs between visits,
+    # the engine asks which (``per_patient_varies_sql``).
+    mode = statistic_mode(question, context)
+    varies_sql: str | None = None
+    if mode == "rows":
+        select = _select(summary(value, group, group_projection), base, full_where, group)
+        over = "" if context.rows_are_patients else f", over {context.row_unit} (rows), not one value per patient"
+    else:
+        key = exp.column(context.patient_key or "", quoted=True)
+        group_alias = group_name or "group"
+        inner_projections: list[exp.Expr] = [key.copy()]
+        inner_group: list[exp.Expr] = [key.copy()]
+        if group is not None:
+            inner_projections.append(exp.alias_(group.copy(), group_alias, quoted=True))
+            inner_group.append(group.copy())
+        inner_projections.append(exp.alias_(exp.func("AVG", value.copy()), "patient_value"))
+        inner = exp.select(*inner_projections).from_(base)
+        if full_where is not None:
+            inner = inner.where(full_where)
+        inner = inner.group_by(*inner_group)
+        out_group_expr = exp.column(group_alias, quoted=True) if group is not None else None
+        out_group = [exp.alias_(out_group_expr.copy(), group_alias, quoted=True)] if out_group_expr is not None else []
+        projections = summary(exp.column("patient_value"), out_group_expr, out_group)
+        select = _select(projections, inner.subquery("per_patient"), None, out_group_expr)
+        over = ", one value per patient (the patient's average over their rows)"
+        if mode == "patients_if_constant":
+            over = ", one value per patient"
+            patients = exp.select(key.copy()).from_(base)
+            if full_where is not None:
+                patients = patients.where(full_where)
+            patients = patients.group_by(key.copy()).having(
+                exp.GT(this=exp.Count(this=exp.Distinct(expressions=[value.copy()])), expression=exp.Literal.number(1))
+            )
+            varies_sql = render(
+                exp.select(exp.alias_(exp.Count(this=exp.Star()), "n")).from_(patients.subquery("varying"))
+            )
     return Compiled(
         kind="statistic",
         sql=render(select, pretty=True),
+        per_patient_varies_sql=varies_sql,
         reading=f"{answer.capitalize()} of {value_text}{_where_phrase(where)}{by}{over}.",
         unit=Unit(None, context.row_unit),
         group=group_name,
@@ -881,6 +935,29 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
         conditions=tuple(_terms(where)),
         group_expression=group is not None and group_column is None,
     )
+
+
+# The words that say a summary is over every row ("counting every result", "per visit").
+_EVERY_ROW = re.compile(
+    r"\b(?:per|each|every|all|across all)\s+(?:\w+\s+)?(?:visits?|results?|measurements?|tests?|admissions?|"
+    r"encounters?|rows?|records?|readings?|samples?|sessions?|stays?|episodes?|values?)\b|\bcount every visit\b",
+    re.IGNORECASE,
+)
+_PER_PATIENT = re.compile(r"\buse one value per patient\b", re.IGNORECASE)
+_ORDERED = re.compile(r"\b(?:first|last|latest|earliest|most recent|initial|final|baseline)\b", re.IGNORECASE)
+StatisticMode: TypeAlias = Literal["rows", "patients", "patients_if_constant"]
+
+
+def statistic_mode(question: str, context: DatasetContext) -> StatisticMode:
+    """Over what a mean, median, minimum or maximum is taken (see ``_compile_plan``)."""
+    if context.rows_are_patients or context.patient_key is None or _EVERY_ROW.search(question):
+        return "rows"
+    if _PER_PATIENT.search(question):
+        return "patients"
+    found = head_noun(question)
+    if (found is not None and found[0] == "events") or _ORDERED.search(question):
+        return "rows"
+    return "patients_if_constant"
 
 
 def _slug(text: str) -> str:

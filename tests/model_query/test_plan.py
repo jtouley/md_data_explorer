@@ -16,6 +16,7 @@ from clinical_analytics.model_query.plan import (
     reply_schema,
     resolve_unit,
 )
+from clinical_analytics.model_query.units import UnitError
 from tests.model_query import tables
 
 
@@ -58,10 +59,16 @@ def test_resolve_unit_visitRows_countsWhatTheQuestionNames(visits, question, key
 
 def test_resolve_unit_oneRowPerPatient_countsRowsAsPatients(patients):
     # Act
-    unit = resolve_unit("How many admissions were there?", patients)
+    unit = resolve_unit("How many patients were admitted?", patients)
 
     # Assert: every row is a patient, so nothing is counted distinct
     assert (unit.key, unit.word) == (None, "patients")
+
+
+def test_resolve_unit_eventsOnOneRowPerPatient_isAskedNotCountedAsPatients(patients):
+    # Act / Assert: admissions cannot be told apart on a table of one row per patient
+    with pytest.raises(UnitError, match="Each row of this table is one patient"):
+        resolve_unit("How many admissions were there?", patients)
 
 
 @pytest.mark.parametrize(
@@ -164,11 +171,14 @@ def test_compile_plan_shareOnVisitRows_rollsEachPatientUpAndChecksVariation(visi
 
 def test_compile_plan_statisticOnVisitRows_dropsDuplicateRowsAndSaysRows(visits):
     # Act
-    compiled = compile_plan(_reply("mean", number="age_years", group_by="region"), "Mean age by region?", visits)
+    compiled = compile_plan(
+        _reply("mean", number="age_years", group_by="region"), "Mean age at each visit, by region?", visits
+    )
 
     # Assert
     assert "SELECT DISTINCT *" in _flat(compiled.sql)
     assert compiled.reading == "Mean of age_years, by region, over visits (rows), not one value per patient."
+    assert compiled.per_patient_varies_sql is None
 
 
 @pytest.mark.parametrize(

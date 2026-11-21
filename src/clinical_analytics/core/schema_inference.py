@@ -81,6 +81,44 @@ _PATIENT_KEY_RANK: dict[str, int] = {
 }
 
 
+# A name made of a person word and an ID word, in any case and separator style ("pt_id", "PatNo",
+# "SUBJ-NUM", "member_key", "person.id"): a patient key after the exact specific names, before the
+# generic ones. "record" + an ID word ("record_no") ranks just above a bare "id": it can also be a
+# row number.
+_PERSON_WORDS: frozenset[str] = frozenset(
+    {"pt", "pat", "patient", "subj", "subject", "participant", "member", "person", "client", "resident",
+     "individual", "enrollee", "mrn"}
+)  # fmt: skip
+_ID_WORDS: frozenset[str] = frozenset({"id", "no", "nr", "num", "number", "nbr", "key", "code", "ident", "identifier"})
+_PERSON_ID_RANK = len(PATIENT_KEY_NAMES_SPECIFIC)
+_RECORD_ID_RANK = _PATIENT_KEY_RANK["id"] - 1
+# Run-together forms ("ptid", "PATNO", "subjnum").
+_JOINED_PERSON_ID = re.compile(r"^(?:pt|pat|subj|mbr|member|person|client)(?:id|no|nr|num|nbr|key)$")
+_CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+
+
+def _name_parts(column: str) -> list[str]:
+    return [p for p in re.split(r"[^a-z0-9]+", _CAMEL.sub("_", column).lower()) if p]
+
+
+def _patient_key_rank(column: str) -> float | None:
+    """The rank of a column name for the patient-ID role (lower is better), or None."""
+    exact = _PATIENT_KEY_RANK.get(re.sub(r"[^a-z0-9]", "", column.lower()))
+    if exact is not None:
+        return float(exact)
+    if _JOINED_PERSON_ID.match(re.sub(r"[^a-z0-9]", "", column.lower())):
+        return _PERSON_ID_RANK + 0.5
+    parts = _name_parts(column)
+    if "mrn" in parts:
+        return float(_PATIENT_KEY_RANK["mrn"])
+    if len(parts) >= 2 and parts[-1] in _ID_WORDS:
+        if _PERSON_WORDS & set(parts[:-1]):
+            return _PERSON_ID_RANK + 0.5
+        if parts[-2] == "record" and (len(parts) == 2 or parts[-3] in ("medical", "health", "patient", "chart")):
+            return _RECORD_ID_RANK + 0.5
+    return None
+
+
 def patient_key_by_name(columns: list[str], distinct: Callable[[str], int] | None = None) -> str | None:
     """The best-ranked column named for the patient-ID role (``PATIENT_KEY_NAMES_SPECIFIC`` before
     ``PATIENT_KEY_NAMES_GENERIC``; column order breaks ties), or None.
@@ -89,13 +127,7 @@ def patient_key_by_name(columns: list[str], distinct: Callable[[str], int] | Non
     (a trial's study_id on every row) is never the patient key, since counting it would say 1
     patient. Without it, names alone decide.
     """
-    ranked = sorted(
-        (
-            (_PATIENT_KEY_RANK[key], i, col)
-            for i, col in enumerate(columns)
-            if (key := re.sub(r"[^a-z0-9]", "", col.lower())) in _PATIENT_KEY_RANK
-        ),
-    )
+    ranked = sorted((rank, i, col) for i, col in enumerate(columns) if (rank := _patient_key_rank(col)) is not None)
     for _rank, _index, col in ranked:
         if distinct is None or distinct(col) > 1:
             return col

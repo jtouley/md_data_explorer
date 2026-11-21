@@ -89,3 +89,44 @@ def screening() -> pl.DataFrame:
             "igg": [50.0, 30.0, 90.0, 300.0, None, None, None, 150.0],
         }
     )
+
+
+def clinic_visits() -> pl.DataFrame:
+    """A made-up allergy clinic: one row per clinic visit, 6 patients with 2 or 3 visits each.
+
+    ``gender`` is coded (1 = male, 2 = female, per ``CLINIC_DICTIONARY``); ``height_cm`` is the
+    same on every visit of a patient, ``eos_baseline`` and ``eos_month6`` are one measure at two
+    times, and ``ige`` differs between a patient's visits.
+    """
+    rows = [
+        # pid, gender, height, eos0, eos6, ige, year, shots
+        ("A1", 1, 170.0, 300.0, 200.0, 100.0, 2022, "yes"),
+        ("A1", 1, 170.0, 300.0, 200.0, 140.0, 2023, "no"),
+        ("A2", 2, 160.0, 500.0, 250.0, 80.0, 2022, "yes"),
+        ("A2", 2, 160.0, 500.0, 250.0, 80.0, 2023, "yes"),
+        ("A2", 2, 160.0, 500.0, 250.0, 60.0, 2024, "no"),
+        ("A3", 2, 150.0, 200.0, 100.0, 300.0, 2023, "no"),
+        ("A3", 2, 150.0, 200.0, 100.0, 320.0, 2024, "no"),
+        ("A4", 1, 180.0, 400.0, 300.0, 50.0, 2022, "yes"),
+        ("A4", 1, 180.0, 400.0, 300.0, 70.0, 2024, "yes"),
+        ("A5", 2, 165.0, 100.0, 90.0, 210.0, 2024, "no"),
+        ("A5", 2, 165.0, 100.0, 90.0, 230.0, 2024, "yes"),
+        ("A6", 1, 175.0, 350.0, 150.0, 90.0, 2023, "no"),
+        ("A6", 1, 175.0, 350.0, 150.0, 95.0, 2024, "no"),
+    ]
+    columns = ["pt_id", "gender", "height_cm", "eos_baseline", "eos_month6", "ige", "visit_year", "shots"]
+    return pl.DataFrame(rows, schema=columns, orient="row")
+
+
+CLINIC_DICTIONARY = """\
+Made-up allergy clinic: one row per clinic visit.
+
+pt_id         Patient identifier.
+gender        Patient gender: 1 = male, 2 = female
+height_cm     Height in centimetres.
+eos_baseline  Blood eosinophil count at enrolment (cells/uL).
+eos_month6    Blood eosinophil count six months after enrolment (cells/uL).
+ige           Total IgE at the visit (kU/L).
+visit_year    Calendar year of the visit.
+shots         yes if allergy shots were given at the visit.
+"""

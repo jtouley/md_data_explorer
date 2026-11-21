@@ -1249,3 +1249,22 @@ class TestEntityFrequencyNeedsKey:
 
         # Assert: never a row count labelled as patients
         assert result.get("error") == ENTITY_KEY_MISSING_REASON
+
+
+@pytest.mark.parametrize(
+    ("columns", "expected"),
+    [
+        (["op_id", "pt_id", "age"], "pt_id"),
+        (["PatNo", "ward"], "PatNo"),
+        (["SUBJ-NUM", "dose"], "SUBJ-NUM"),
+        (["ptid", "site"], "ptid"),
+        (["person.id", "id"], "person.id"),
+        (["record_no", "id"], "record_no"),
+        (["hosp_mrn", "visit_no"], "hosp_mrn"),
+        (["admission_type_id", "ward"], None),
+        (["code", "value"], None),
+    ],
+)
+def test_patient_key_by_name_personIdNamesInAnyStyle_areFound(columns, expected):
+    # Act / Assert
+    assert patient_key_by_name(columns) == expected

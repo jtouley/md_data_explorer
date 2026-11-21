@@ -20,15 +20,19 @@ from typing import Any, Final, Literal
 
 import polars as pl
 import structlog
+from sqlglot import exp
 
-from clinical_analytics.model_query import present
+from clinical_analytics.model_query import coverage, present
 from clinical_analytics.model_query.context import DatasetContext, column_lines, column_search_texts
 from clinical_analytics.model_query.examples import Example, related_columns, similar_examples
 from clinical_analytics.model_query.grounding import (
     MISSING_FAILS_PHRASE,
     MISSING_MEETS_PHRASE,
     MISSING_OUT_PHRASE,
+    NO_LIMIT_PHRASE,
     Doubt,
+    asks_breakdown,
+    columns_with_stated_values,
     dropped_number,
     find_doubts,
     user_choices,
@@ -56,6 +60,7 @@ from clinical_analytics.model_query.plan import (
     unused_mentions,
 )
 from clinical_analytics.model_query.prompt import system_prompt, user_prompt
+from clinical_analytics.model_query.units import UnitError
 from clinical_analytics.sql.errors import SqlRefusedError
 from clinical_analytics.sql.sandbox import SandboxConnection, SqlRunError
 
@@ -79,6 +84,14 @@ MISSING_CHOICES: Final = (
     ("As meeting it", MISSING_MEETS_PHRASE),
     ("As not meeting it", MISSING_FAILS_PHRASE),
     ("Leave them out", MISSING_OUT_PHRASE),
+)
+PER_PATIENT_QUESTION: Final = (
+    "{n} patients have more than one {value} over their visits, so a summary over visits and one over "
+    "patients differ. Which do you mean?"
+)
+PER_PATIENT_CHOICES: Final = (
+    ("Every visit counts", "Count every visit."),
+    ("One value per patient (their average)", "Use one value per patient (their average)."),
 )
 ROLLUP_CHOICES: Final = (
     ("Ever: true on at least one row", "{question} Count one when it was ever true (at least once)."),
@@ -132,14 +145,108 @@ def _honour_choices(reply: ModelReply, question: str) -> ModelReply:
     return reply.model_copy(update=update) if update else reply
 
 
+def _coverage_doubts(
+    question: str, compiled: Compiled | TestCall, context: DatasetContext, reply: ModelReply
+) -> list[Doubt]:
+    """Doubts from the coverage and link checks (``coverage``): a content word of the question the
+    plan does not reach, or a plan column nothing in the question reaches."""
+    values = [
+        literal.name for term in compiled.conditions for literal in term.find_all(exp.Literal) if literal.is_string
+    ]
+    found = coverage.check(
+        question,
+        context,
+        used=compiled.columns,
+        values=values,
+        links=coverage.parse_mapping(reply.mapping),
+        stated=columns_with_stated_values(question, list(compiled.conditions), context),
+    )
+    doubts: list[Doubt] = []
+    for name in found.unlinked:
+        doubts.append(
+            Doubt(
+                "unlinked",
+                feedback=(
+                    f"The reply uses {name}, but nothing in the question refers to it. Remove it unless the question "
+                    "asks for it; never use a column in place of one the table does not have."
+                ),
+                reason=(
+                    f"Nothing in the question refers to {name}, so I did not use it to answer. "
+                    "Ask again saying what you mean, or choose:"
+                ),
+                choices=(
+                    (f"Use {name}", f"By '{name}' I mean {name}."),
+                    (f"Without {name}", NO_LIMIT_PHRASE.format(column=name)),
+                ),
+            )
+        )
+    if found.uncovered:
+        words = found.uncovered
+        said = ", ".join(f"'{w}'" for w in words)
+        candidates = coverage.closest_columns(words[0], context)
+        missing = " (mapped as having no column)" if found.ignored_missing else ""
+        doubts.append(
+            Doubt(
+                "uncovered",
+                feedback=(
+                    f"The question says {said}, but no part of the reply uses it{missing}. Add it as a filter, a group "
+                    f"or a measure on the column it means"
+                    + (f" (perhaps {', '.join(candidates)})" if candidates else "")
+                    + ", and list it in mapping. If the table has no column for it, keep mapping it as ignored."
+                ),
+                reason=(
+                    f"I could not find {said} in this data, so I did not answer. "
+                    + (
+                        "Did you mean one of these columns?"
+                        if candidates
+                        else "Ask again in other words, or leave it out."
+                    )
+                ),
+                choices=(
+                    *(
+                        (f"'{words[0]}' means {c}", coverage.MEANS_PHRASE.format(word=words[0], column=c))
+                        for c in candidates
+                    ),
+                    (f"Leave out '{words[0]}'", coverage.LEAVE_OUT_PHRASE.format(word=words[0])),
+                ),
+            )
+        )
+    return doubts
+
+
+def _measure_doubt(question: str, compiled: Compiled | TestCall, context: DatasetContext) -> Doubt | None:
+    """A measure whose column has siblings (the same measure at another time) the question does
+    not choose between: asked at once, never picked."""
+    if not isinstance(compiled, Compiled) or compiled.kind != "statistic":
+        return None
+    for name in sorted(compiled.columns):
+        column = context.column(name)
+        if column is None or not column.numeric:
+            continue
+        candidates = coverage.measure_choice_needed(question, column, context)
+        if candidates:
+            return Doubt(
+                "ambiguous",
+                feedback="",
+                reason=f"More than one column holds this measure ({', '.join(candidates)}). Which one?",
+                choices=tuple((name_, f"Use {name_}.") for name_ in candidates),
+            )
+    return None
+
+
 def _doubts(
-    question: str, compiled: Compiled | TestCall, context: DatasetContext, kept_group: str | None = None
+    question: str,
+    compiled: Compiled | TestCall,
+    context: DatasetContext,
+    reply: ModelReply,
+    kept_group: str | None = None,
 ) -> list[Doubt]:
     _excluded, one_number = user_choices(question)
     dropped = dropped_number(question, compiled.sql)
+    covered = _coverage_doubts(question, compiled, context, reply)
     if isinstance(compiled, TestCall):
         found = find_doubts(question, context, conditions=compiled.conditions, group_column=None, tabulation=False)
-        return found + ([dropped] if dropped is not None else [])
+        return found + ([dropped] if dropped is not None else []) + covered
     found = find_doubts(
         question,
         context,
@@ -149,7 +256,7 @@ def _doubts(
         tabulation=not one_number,
         kept_group=kept_group,
     )
-    return found + ([dropped] if dropped is not None else [])
+    return found + ([dropped] if dropped is not None else []) + covered
 
 
 def _asked_back(
@@ -218,7 +325,8 @@ def answer_question(
     # A follow-up ("now only the women") keeps what the earlier questions asked for.
     asked_so_far = " ".join([*(asked for asked, _reply in previous), question])
     # A refinement ("now only the women": no counting words of its own) keeps the last breakdown.
-    last_group = previous[-1][1].get("group_by") if previous and not asks_for_summary(question) else None
+    refinement = previous and not asks_for_summary(question) and not asks_breakdown(question)
+    last_group = previous[-1][1].get("group_by") if refinement else None
     kept_group = last_group if isinstance(last_group, str) else None
     for attempt in range(1, max_attempts + 1):
         user = user_prompt(
@@ -243,16 +351,34 @@ def answer_question(
                 logger.info("model_query_listing_refused", attempt=attempt)
                 return ModelAnswer("refused", reason=LISTING_REASON, reply=failed_reply, attempts=attempt)
             compiled = _compile(_honour_choices(reply, question), question, context, fmt)
-            doubts = _doubts(asked_so_far, compiled, context, kept_group)
+            measure = _measure_doubt(asked_so_far, compiled, context)
+            if measure is not None:
+                return _asked_back(measure, question, compiled, failed_reply, attempt)
+            doubts = _doubts(asked_so_far, compiled, context, reply, kept_group)
             if doubts and (doubted is not None or attempt == max_attempts):
                 return _asked_back(doubts[0], question, compiled, failed_reply, attempt)
             if doubts:
                 doubted = (doubts[0], compiled, failed_reply)
-                problem = doubts[0].feedback
+                # Every doubt goes back at once: one more look should fix them all.
+                problem = " ".join(dict.fromkeys(d.feedback for d in doubts if d.feedback))
                 problems.append(f"doubt: {problem}")
                 logger.info("model_query_doubted", attempt=attempt, kind=doubts[0].kind)
                 continue
             frame, total, varying, missing = _run(compiled, open_sandbox)
+            if isinstance(compiled, Compiled) and compiled.per_patient_varies_sql is not None:
+                with open_sandbox() as sandbox:
+                    per_patient_varies = int(sandbox.run_model_sql(compiled.per_patient_varies_sql).item() or 0)
+                if per_patient_varies:
+                    logger.info("model_query_per_patient_asked", attempt=attempt)
+                    return ModelAnswer(
+                        "clarify",
+                        reason=PER_PATIENT_QUESTION.format(n=per_patient_varies, value=compiled.value_text),
+                        choices=tuple((label, f"{question.rstrip()} {words}") for label, words in PER_PATIENT_CHOICES),
+                        sql=compiled.sql,
+                        reading=compiled.reading,
+                        reply=failed_reply,
+                        attempts=attempt,
+                    )
             if missing and isinstance(compiled, Compiled):
                 logger.info("model_query_missing_asked", attempt=attempt)
                 return ModelAnswer(
@@ -290,6 +416,11 @@ def answer_question(
                         "No rows match the conditions. Check each value against the column's listed values, "
                         "and drop any condition the question does not state."
                     )
+        except UnitError as e:
+            # What the question counts is not countable on this table as asked: the model cannot
+            # change that, so the user is told at once.
+            logger.info("model_query_unit_refused", attempt=attempt)
+            return ModelAnswer("refused", reason=str(e), reply=failed_reply, attempts=attempt)
         except PlanError as e:
             problem = str(e)
             if LISTING_REASON in problem:

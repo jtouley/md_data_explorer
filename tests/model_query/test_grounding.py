@@ -65,12 +65,6 @@ def test_find_doubts_backedQuery_hasNone(visits, question, fields):
             "How many patients had a visit?", {"where": "result = 'positive'"}, ["limit"], id="invented_value"
         ),
         pytest.param("How many older patients tested positive?", {"where": "age_years >= 65"}, ["limit"], id="older"),
-        pytest.param(
-            "What share of patients tested positive?",
-            {"answer": "share", "numerator": "result = 'positive'", "group_by": "region"},
-            ["group"],
-            id="group_not_named",
-        ),
         pytest.param("How many patients were screened?", {"group_by": "screened"}, ["no_group"], id="one_number_asked"),
         pytest.param(
             "How many patients were screened versus not screened?",

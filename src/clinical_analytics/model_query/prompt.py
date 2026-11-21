@@ -28,6 +28,9 @@ Rules:
 - When the question names several values of one column ("A, B or C", "X versus not X", "each type"), set "group_by" to that column instead of filtering on one value.
 - Never compute a number yourself."""
 
+_MAPPING_FIELD: Final = """\
+- "mapping": every phrase of the question that limits, groups, measures or names what is counted, as {"phrase": the question's own words, "role": "filter" | "group" | "measure" | "unit" | "ignored", "column": the column it became}. Words that only name what the whole table is about, or politeness, are "ignored" with column null. If a phrase has no column in the table, map it as "ignored" with column null: never use another column instead."""
+
 _COMMON_FIELDS: Final = """\
 - "where": an SQL condition keeping only the rows the question is about, for example "age_years >= 65 AND sex = 'female'"; null when it is about everyone.
 - "group_by": the column to break the answer down by; null for one overall answer.
@@ -47,6 +50,8 @@ Fields:
   "mean", "median", "min", "max", "sum" = that summary of "number". With "group_by": one per group ("in men compared with women" means group_by the sex column).
 """
     + _TESTS
+    + "\n"
+    + _MAPPING_FIELD
     + "\n"
     + _COMMON_FIELDS
     + "\n\n"

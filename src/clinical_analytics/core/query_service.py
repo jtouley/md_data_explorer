@@ -540,24 +540,26 @@ class QueryService:
                     context = build_context(
                         sandbox,
                         catalog,
-                        doc_context=self._doc_context(dataset_id),
+                        doc_context=self._upload_text(dataset_id, "doc_context"),
                         confirmed_patient_rows=grain is not None and grain.grain == "patient" and grain.key == key,
+                        title=self._upload_text(dataset_id, "dataset_name") or "",
                     )
             except SqlRefusedError:
                 return None
             cached = self._model_context = ((version, declared), context)
         return _ModelPath(catalog=catalog, context=cached[1])
 
-    def _doc_context(self, dataset_id: str) -> str | None:
-        """The upload's data dictionary text (its metadata's ``doc_context``), if it has one."""
+    def _upload_text(self, dataset_id: str, key: str) -> str | None:
+        """A text field of the upload's metadata: its data dictionary (``doc_context``) or the name
+        it was uploaded under (``dataset_name``), if it has one."""
         assert self.data_dir is not None
         path = self.data_dir / "uploads" / "metadata" / f"{dataset_id}.json"
         try:
             metadata = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None
-        doc = metadata.get("doc_context") if isinstance(metadata, dict) else None
-        return doc if isinstance(doc, str) and doc.strip() else None
+        text = metadata.get(key) if isinstance(metadata, dict) else None
+        return text if isinstance(text, str) and text.strip() else None
 
     def _ask_model(
         self, question: str, path: "_ModelPath", conversation_history: list[dict[str, Any]] | None

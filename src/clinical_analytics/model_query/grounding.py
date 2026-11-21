@@ -39,7 +39,7 @@ from sqlglot.errors import SqlglotError
 from clinical_analytics.model_query.context import ColumnInfo, DatasetContext
 from clinical_analytics.sql.render import render
 
-DoubtKind = Literal["limit", "group", "no_group", "missing_group", "dropped"]
+DoubtKind = Literal["limit", "no_group", "missing_group", "dropped", "unlinked", "uncovered", "ambiguous"]
 
 # The words a choice adds to the question it re-asks (matched case-insensitively).
 NO_LIMIT_PHRASE: Final = "Do not limit it by {column}."
@@ -388,17 +388,19 @@ def find_doubts(
     if not tabulation:
         return doubts
     column = context.column(group_column) if group_column else None
-    if column is not None and not column_named(asked, column, context):
+    kept = context.column(kept_group) if kept_group else None
+    if kept is not None and (column is None or column.name != kept.name) and not group_expression:
         doubts.append(
             Doubt(
-                "group",
+                "missing_group",
                 feedback=(
-                    f"group_by is {column.name}, but the question does not mention {column.name}. Set group_by to "
-                    "the column whose groups the question names, or to null for one overall answer."
+                    f"The previous answer was broken down by {kept.name}, and this follow-up does not ask for "
+                    f"another breakdown. Repeat the previous reply with only the change the follow-up asks for: "
+                    f"keep group_by {kept.name}."
                 ),
-                reason=f"I read this as broken down by {column.name}, which the question does not name.",
+                reason=f"The previous answer was broken down by {kept.name}; I read this follow-up differently.",
                 choices=(
-                    (f"Broken down by {column.name}", BREAK_DOWN_PHRASE.format(column=column.name)),
+                    (f"Broken down by {kept.name}", BREAK_DOWN_PHRASE.format(column=kept.name)),
                     ("One overall number", ONE_NUMBER_PHRASE),
                 ),
             )
@@ -415,22 +417,6 @@ def find_doubts(
                 reason=f"I read this as broken down by {name}, but the question asks for one number.",
                 choices=(
                     (f"Broken down by {name}", BREAK_DOWN_PHRASE.format(column=name)),
-                    ("One overall number", ONE_NUMBER_PHRASE),
-                ),
-            )
-        )
-    elif column is None and not group_expression and kept_group and (kept := context.column(kept_group)):
-        doubts.append(
-            Doubt(
-                "missing_group",
-                feedback=(
-                    f"The previous answer was broken down by {kept.name}, and this follow-up does not ask to drop "
-                    f"that. Repeat the previous reply with only the change the follow-up asks for: keep group_by "
-                    f"{kept.name}."
-                ),
-                reason=f"The previous answer was broken down by {kept.name}; I read this follow-up as one number.",
-                choices=(
-                    (f"Broken down by {kept.name}", BREAK_DOWN_PHRASE.format(column=kept.name)),
                     ("One overall number", ONE_NUMBER_PHRASE),
                 ),
             )
@@ -472,6 +458,11 @@ def _missing_group(word: str, conditions: list[exp.Expr], context: DatasetContex
     )
 
 
+def asks_breakdown(text: str) -> bool:
+    """Whether the words ask for a breakdown ("by", "each", "versus", "A, B or C")."""
+    return bool(_BREAKDOWN_WORDS.search(text) or _ENUMERATION.search(text))
+
+
 def user_choices(question: str) -> tuple[frozenset[str], bool]:
     """(the columns the question says not to limit by, whether it asks for one overall number):
     the words a choice added when it re-asked the question."""
@@ -504,3 +495,24 @@ def missing_choice(question: str) -> MissingChoice | None:
         if phrase.casefold() in folded:
             return choice  # type: ignore[return-value]
     return None
+
+
+def columns_with_stated_values(question: str, conditions: list[exp.Expr], context: DatasetContext) -> set[str]:
+    """Columns of conditions whose compared value the question states ("65 and up" for
+    ``age_years >= 65``, "positive" for ``result = 'positive'``): the value ties them to the question."""
+    asked = _Question.of(question)
+    found: set[str] = set()
+    for condition in conditions:
+        for term in _terms(condition):
+            literals = _compared_literals(term)
+            said = any(
+                _value_said(asked, lit.name) if lit.is_string else _number_said(asked, lit) for lit in literals
+            ) or any(
+                _value_said(asked, label)
+                for lit in literals
+                for column in [context.column(c.name) for c in term.find_all(exp.Column)]
+                if column is not None and (label := column.label_of(lit.name))
+            )
+            if said and literals:
+                found.update(c.name for c in term.find_all(exp.Column))
+    return found

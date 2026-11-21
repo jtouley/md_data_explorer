@@ -96,7 +96,10 @@ def _units_word(analysis: Mapping[str, Any]) -> str | None:
     """What n counts in words: the encounter noun the question used ("admissions", "tests"),
     else ``_unit``."""
     noun = analysis.get("unit_noun")
-    return f"{noun}s" if isinstance(noun, str) and noun else _unit(analysis)
+    if isinstance(noun, str) and noun:
+        consonant_y = noun.endswith("y") and noun[-2:-1] not in ("a", "e", "o", "u")
+        return noun[:-1] + "ies" if consonant_y else f"{noun}s"
+    return _unit(analysis)
 
 
 def _one(analysis: Mapping[str, Any]) -> str:

@@ -91,11 +91,15 @@ def test_answer_question_planError_isFedBackAndTheRetryAnswers(ask):
 def test_answer_question_engineError_feedsTheEngineMessageBackButNeverShowsIt(ask):
     # Arrange: SQL that parses but fails in DuckDB (text compared with a list)
     bad = {"thought": "t", "answer": "sql", "sql": "SELECT COUNT(*) AS count FROM unified WHERE onset_year = [1]"}
-    good = {"thought": "Count all.", "answer": "sql", "sql": "SELECT COUNT(*) AS count FROM unified"}
+    good = {
+        "thought": "Count all.",
+        "answer": "sql",
+        "sql": "SELECT COUNT(*) AS count FROM unified WHERE onset_year > 1",
+    }
     model = Recorded(bad, good)
 
     # Act
-    answer = ask("How many?", model, fmt="sql")
+    answer = ask("How many patients have an onset year above 1?", model, fmt="sql")
 
     # Assert: the model saw DuckDB's message; the recorded problem is the plain reason only
     assert (answer.status, answer.attempts) == ("answered", 2)
@@ -193,23 +197,26 @@ def test_answer_question_valueNamedButColumnUnused_hintsOnceAndTakesTheBetterRep
     # Act
     answer = ask("How many women had a confirmed infection?", model)
 
-    # Assert
-    assert "The question mentions 'women' (column sex)" in model.prompts[1][1]
+    # Assert: the dropped subgroup goes back to the model, naming the word
+    assert "The question says 'women', but no part of the reply uses it" in model.prompts[1][1]
     assert answer.reading == "Counted patients where confirmed = 'Yes' AND sex = 'female'."
     assert present_analysis(answer.analysis)["claim"] == "Total count: 3 patients."
 
 
-@pytest.mark.parametrize("second", [None, _plan("count", where="nope = 1"), _plan("count", where="confirmed = 'yes'")])
-def test_answer_question_hintNotTaken_theFirstAnswerStands(ask, second):
-    # Arrange: after the hint the model fails, errs, or repeats itself
-    model = Recorded(_plan("count", where="confirmed = 'yes'"), second)
+@pytest.mark.parametrize(
+    "second",
+    [None, _plan("count", where="nope = 1"), _plan("count", where="confirmed = 'yes'")],
+    ids=["no_answer", "bad_column", "same_again"],
+)
+def test_answer_question_subgroupDroppedAndNotRestored_isNeverAnswered(ask, second):
+    # Arrange: "how many women" counted without the sex filter, and the retry does not fix it
+    model = Recorded(_plan("count", where="confirmed = 'yes'"), second, second)
 
     # Act
     answer = ask("How many women had a confirmed infection?", model)
 
-    # Assert: a hint never holds the question
-    assert answer.status == "answered"
-    assert present_analysis(answer.analysis)["claim"] == "Total count: 4 patients."
+    # Assert: a count with no filter for a question that names a subgroup never passes
+    assert answer.status != "answered" and answer.analysis is None
 
 
 def test_unused_mentions_menOrWomenInTheQuestion_isFoundOnlyWhenSexIsUnused(make_query_table):
@@ -493,5 +500,5 @@ def test_answer_question_statedNumberDropped_isFedBackThenRefusedIfKept(ask):
     answer = ask("How many patients with onset after 2005 were admitted?", model)
 
     # Assert: never answered without the limit the number sets
-    assert answer.status == "refused" and answer.analysis is None
+    assert answer.status in ("refused", "clarify") and answer.analysis is None
     assert "2005" in model.prompts[1][1] and "uses it nowhere" in model.prompts[1][1]
