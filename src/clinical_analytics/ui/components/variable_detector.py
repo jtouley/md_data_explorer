@@ -406,7 +406,13 @@ class VariableTypeDetector:
         from clinical_analytics.core.schema_inference import patient_key_by_name
 
         eligible = [col for col in df.columns if not _is_measurement(df, col)]
-        named = patient_key_by_name(eligible, distinct=lambda col: df.get_column(col).drop_nulls().n_unique())
+
+        # A column empty on most rows identifies few of them: never the patient key.
+        def usable_distinct(col: str) -> int:
+            series = df.get_column(col)
+            return series.drop_nulls().n_unique() if series.null_count() * 2 <= series.len() else 0
+
+        named = patient_key_by_name(eligible, distinct=usable_distinct)
         if named is not None:
             logger.info("Found a column named as a patient ID; copied to patient_id")
             metadata["patient_id_source"] = "single_column"

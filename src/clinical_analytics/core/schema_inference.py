@@ -114,7 +114,11 @@ def _patient_key_rank(column: str) -> float | None:
     if len(parts) >= 2 and parts[-1] in _ID_WORDS:
         if _PERSON_WORDS & set(parts[:-1]):
             return _PERSON_ID_RANK + 0.5
-        if parts[-2] == "record" and (len(parts) == 2 or parts[-3] in ("medical", "health", "patient", "chart")):
+        if (
+            parts[-2] == "record"
+            and parts[-1] in ("id", "no", "nr", "num", "number", "nbr")
+            and (len(parts) == 2 or parts[-3] in ("medical", "health", "patient", "chart"))
+        ):
             return _RECORD_ID_RANK + 0.5
     return None
 
