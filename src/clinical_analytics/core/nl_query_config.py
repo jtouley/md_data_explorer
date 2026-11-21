@@ -157,7 +157,8 @@ def resolve_semantic_layer_cache_size(value: object) -> int:
 
 def per_layer_memory_limit(budget: DuckdbMemoryLimit, cache_size: int, sql_sandboxes: int = 0) -> DuckdbMemoryLimit:
     """Each open layer's DuckDB memory_limit: the total budget shared evenly by ``cache_size``
-    layers and ``sql_sandboxes`` governed SQL sandboxes, so together they use at most the budget.
+    layers and ``sql_sandboxes`` SQL sandboxes (model-written or governed SQL), so together they
+    use at most the budget.
 
     Raises:
         ValueError: the share is too small to answer questions (under 64 MiB, or under 1% of RAM).
@@ -172,7 +173,7 @@ def per_layer_memory_limit(budget: DuckdbMemoryLimit, cache_size: int, sql_sandb
     if too_small:
         raise ValueError(
             f"duckdb_memory_budget {budget.sql} shared by {cache_size} open datasets"
-            + (f" and {sql_sandboxes} SQL sandbox(es) (enable_sql_queries)" if sql_sandboxes else "")
+            + (f" and {sql_sandboxes} SQL sandbox(es) (enable_model_queries / enable_sql_queries)" if sql_sandboxes else "")
             + f" leaves {limit.sql} each, too little to answer questions: raise the budget or lower "
             "semantic_layer_cache_size"
         )
@@ -200,7 +201,8 @@ if os.environ.get("DUCKDB_MEMORY_LIMIT") is not None or "duckdb_memory_limit" in
 SEMANTIC_LAYER_CACHE_SIZE: int = resolve_semantic_layer_cache_size(_setting("semantic_layer_cache_size"))
 # DuckDB memory for ALL the layers the API's cache keeps open together. Each layer is its own
 # in-memory DuckDB, so each cached layer gets CACHED_LAYER_MEMORY_LIMIT = budget / cache size
-# (budget / (cache size + SQL_SANDBOX_SLOTS) when governed SQL is on, below)
+# (budget / (cache size + SQL_SANDBOX_SLOTS) when the model-written query path or governed SQL
+# is on, below; the first is on by default)
 # (set by the API when its cache builds the layer). Threads are per layer. Validated here, at
 # import, so a bad setting stops the process at startup instead of failing the first question.
 DUCKDB_MEMORY_BUDGET: DuckdbMemoryLimit = parse_duckdb_memory_limit(_setting("duckdb_memory_budget"))
@@ -211,12 +213,21 @@ ENABLE_SQL_QUERIES: bool = _config["enable_sql_queries"]
 # together they stay within it; each sandbox gets SQL_SANDBOX_MEMORY_LIMIT, one such share. When
 # the path is off it takes no share (None), so the setting can't stop the app from starting.
 SQL_SANDBOX_SLOTS: int = 1
+# Model-writes-the-query (model_query/): the default question path. Its queries run in the same
+# sandbox, so the sandbox takes its share of the budget when either path is on.
+ENABLE_MODEL_QUERIES: bool = _config["enable_model_queries"]
+MODEL_QUERY_FORMAT: str = str(_config["model_query_format"]).strip().lower()
+if MODEL_QUERY_FORMAT not in ("plan", "sql"):
+    raise ValueError(f"model_query_format must be 'plan' or 'sql', got {MODEL_QUERY_FORMAT!r}")
+MODEL_QUERY_TIMEOUT_S: float = _config["model_query_timeout_s"]
+MODEL_QUERY_MAX_ATTEMPTS: int = max(1, int(_config["model_query_max_attempts"]))
+_SANDBOX_IN_USE: bool = ENABLE_SQL_QUERIES or ENABLE_MODEL_QUERIES
 CACHED_LAYER_MEMORY_LIMIT: DuckdbMemoryLimit = per_layer_memory_limit(
-    DUCKDB_MEMORY_BUDGET, SEMANTIC_LAYER_CACHE_SIZE, SQL_SANDBOX_SLOTS if ENABLE_SQL_QUERIES else 0
+    DUCKDB_MEMORY_BUDGET, SEMANTIC_LAYER_CACHE_SIZE, SQL_SANDBOX_SLOTS if _SANDBOX_IN_USE else 0
 )
 SQL_SANDBOX_MEMORY_LIMIT: DuckdbMemoryLimit | None = (
     per_layer_memory_limit(DUCKDB_MEMORY_BUDGET, SEMANTIC_LAYER_CACHE_SIZE, SQL_SANDBOX_SLOTS)
-    if ENABLE_SQL_QUERIES
+    if _SANDBOX_IN_USE
     else None
 )
 # Every other layer (an upload's probe, the Streamlit app, the CLI, evals) keeps the standalone

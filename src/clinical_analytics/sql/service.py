@@ -72,26 +72,9 @@ def run_governed_sql(
         SqlRefusedError: the reason the query was not run or its result not shown.
     """
     log = logger.bind(dataset_id=dataset_id)
-    version = getattr(layer, "loaded_version", None)
-    source = ((getattr(layer, "config", None) or {}).get("init_params") or {}).get("source_path")
-    if not isinstance(version, str) or not version:
-        raise SqlRefusedError(NO_CONTRACT)
-    if not isinstance(source, str) or not source:
-        raise SqlRefusedError(NOT_STORED)
-    path = contract_path(data_dir, dataset_id, version)
-    if not path.is_file():
-        raise SqlRefusedError(NO_CONTRACT)
-    try:
-        contract = read_saved_contract(path)
-    except ContractError as e:
-        log.warning("governed_sql_contract_unreadable", error_type=type(e).__name__)
-        raise SqlRefusedError("This dataset's data contract can't be read, so SQL cannot be checked against it.") from e
-    try:
-        declared = declarations.load(dataset_id).for_version(version)
-    except ContractStoreError as e:
-        log.warning("governed_sql_declarations_unreadable", error_type=type(e).__name__)
-        raise SqlRefusedError(DECLARATIONS_UNREADABLE) from e
-    catalog = SqlCatalog.from_contract(contract, Path(source), declared.levels)
+    catalog, declared, version = catalog_for_layer(
+        layer, dataset_id=dataset_id, data_dir=data_dir, declarations=declarations
+    )
     query = validate_sql(sql, catalog)
     with SandboxConnection(catalog) as sandbox:
         try:
@@ -111,6 +94,38 @@ def run_governed_sql(
                 raise SqlRefusedError(DECLARATIONS_UNREADABLE) from store_error
             log.info("governed_sql_patient_grain_confirmed", dataset_version=version)
             return answer_query(query, sandbox, catalog, confirmed_patient_rows=e.rows)
+
+
+def catalog_for_layer(
+    layer: Any, *, dataset_id: str, data_dir: Path, declarations: DeclarationStore
+) -> tuple[SqlCatalog, Declarations, str]:
+    """The SQL catalog of the layer's dataset version (its contract's columns over its stored
+    Parquet, confirmed level merges applied), that version's declarations, and the version.
+
+    Raises:
+        SqlRefusedError: no version, no stored Parquet, or no readable contract or declarations.
+    """
+    log = logger.bind(dataset_id=dataset_id)
+    version = getattr(layer, "loaded_version", None)
+    source = ((getattr(layer, "config", None) or {}).get("init_params") or {}).get("source_path")
+    if not isinstance(version, str) or not version:
+        raise SqlRefusedError(NO_CONTRACT)
+    if not isinstance(source, str) or not source:
+        raise SqlRefusedError(NOT_STORED)
+    path = contract_path(data_dir, dataset_id, version)
+    if not path.is_file():
+        raise SqlRefusedError(NO_CONTRACT)
+    try:
+        contract = read_saved_contract(path)
+    except ContractError as e:
+        log.warning("governed_sql_contract_unreadable", error_type=type(e).__name__)
+        raise SqlRefusedError("This dataset's data contract can't be read, so SQL cannot be checked against it.") from e
+    try:
+        declared = declarations.load(dataset_id).for_version(version)
+    except ContractStoreError as e:
+        log.warning("governed_sql_declarations_unreadable", error_type=type(e).__name__)
+        raise SqlRefusedError(DECLARATIONS_UNREADABLE) from e
+    return SqlCatalog.from_contract(contract, Path(source), declared.levels), declared, version
 
 
 def _confirmed_rows(declared: Declarations, catalog: SqlCatalog) -> int | None:

@@ -652,6 +652,17 @@ function heldCardHandlers(message) {
       setCardButtonsDisabled(card, true);
       void handleConfirmPendingQuery(held, card, message.questionId);
     },
+    onChoose: (card, choice) => {
+      if (state.isProcessing) {
+        setCardNote(card, 'Wait for the current answer to finish, then choose.');
+        return;
+      }
+      setCardButtonsDisabled(card, true);
+      settleCard(card, `You chose: ${choice.label}. The answer is below.`);
+      // The choice is asked as its own question, so the transcript shows what was computed.
+      elements.queryInput.value = choice.question;
+      void handleQuerySubmit(new Event('submit'));
+    },
     onReject: (card) => {
       setCardButtonsDisabled(card, true);
       settleCard(card, 'Not run. Rephrase your question below.');

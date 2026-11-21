@@ -344,6 +344,7 @@ def server_env(
             "LLM_TIMEOUT_PARSE_S": seconds,
             "LLM_TIMEOUT_FILTER_EXTRACTION_S": seconds,
             "LLM_TIMEOUT_MAX_S": seconds,
+            "MODEL_QUERY_TIMEOUT_S": seconds,
         }
     for name in ("HOME", "XDG_DATA_HOME", "CLINICAL_ANALYTICS_DATA_HOME"):
         Path(env[name]).mkdir(parents=True, exist_ok=True)

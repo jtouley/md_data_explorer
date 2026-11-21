@@ -237,13 +237,23 @@ export function buildQueryCompletedPresentation(intentRaw, resultPreview, claimA
 
   const analysisType =
     typeof resultPreview?.analysis_type === 'string' ? resultPreview.analysis_type : null;
+  // The method of a model-written answer: the SQL that ran and its one-sentence reading.
+  const sql =
+    typeof resultPreview?.sql === 'string' && resultPreview.sql.trim() ? resultPreview.sql : null;
+  const reading =
+    typeof resultPreview?.reading === 'string' && resultPreview.reading.trim()
+      ? resultPreview.reading.trim()
+      : null;
   const result = {
     intentType,
     ...(analysisType ? { analysisType } : {}),
     title,
     summary,
     ...(claim ? { claim } : {}),
-    ...(planLine ? { planLine } : {}),
+    // The reading replaces the matcher's plan line: it says what was computed in a sentence.
+    ...(planLine && !reading ? { planLine } : {}),
+    ...(reading ? { reading } : {}),
+    ...(sql ? { sql } : {}),
   };
 
   if (extracted) {
@@ -279,6 +289,12 @@ export function buildConfirmationHoldPresentation(data, pendingQuery, binding = 
       ? data.failure_reason
       : 'Confirmation required before execution.';
   const confidence = typeof data?.confidence === 'number' ? data.confidence : null;
+  // A question back with concrete choices: asking a choice's question answers it.
+  const choices = Array.isArray(data?.choices)
+    ? data.choices
+        .filter((c) => typeof c?.label === 'string' && typeof c?.question === 'string')
+        .map((c) => ({ label: c.label, question: c.question }))
+    : [];
   // The plan line renders once, inside the card; the message text carries only the reason.
   return {
     content: failureReason,
@@ -289,6 +305,7 @@ export function buildConfirmationHoldPresentation(data, pendingQuery, binding = 
       failureReason,
       pendingQuery: pendingQuery || '',
       confidence,
+      ...(choices.length ? { choices } : {}),
       // The dataset and session the plan was held for; Confirm must not run it anywhere else.
       datasetId: binding.datasetId || null,
       sessionId: binding.sessionId || null,

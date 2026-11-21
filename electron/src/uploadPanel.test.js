@@ -275,7 +275,7 @@ describe('needs_review uploads', () => {
     upload_id: 'u_1',
     status: 'needs_review',
     message:
-      'Uploaded, but a data check failed: patient_id: 127 repeated values. Questions that count patients will first ask you to confirm that rows are visits.',
+      'Uploaded, but a data check failed: patient_id: 127 repeated values. Rows that share an ID are read as visits of one patient: patient counts count each ID once, and each answer says what it counted.',
   };
 
   test.each([
