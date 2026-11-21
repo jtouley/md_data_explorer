@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: MIT
+# ruff: noqa: E501  (the instructions are prose: one sentence per line reads better than wrapped)
 """The prompt: instructions and the table (the same for every question on a dataset, so the model
 server reuses its work on them), then the similar examples, the conversation and the question."""
 
@@ -88,10 +89,12 @@ def user_prompt(
     previous: Sequence[tuple[str, dict[str, Any]]] = (),
     failed_reply: dict[str, Any] | None = None,
     problem: str | None = None,
+    related: Sequence[str] = (),
 ) -> str:
     """Examples, then the conversation so far, the question, and a failed attempt's feedback.
 
     ``previous``: earlier (question, reply) turns of this conversation, oldest first.
+    ``related``: the description lines of the columns closest to the question (wide tables).
     """
     parts: list[str] = []
     if examples:
@@ -103,6 +106,9 @@ def user_prompt(
             '("now only the women", "and by year?"), repeat the last reply with that change.'
         )
         parts += [f"Question: {asked}\nReply: {json.dumps(reply)}" for asked, reply in previous]
+    if related:
+        parts.append("Columns of your table that look closest to the question (the rest are listed above):")
+        parts.append("\n".join(related))
     parts.append(f"Now your table.\nQuestion: {question}")
     if problem:
         if failed_reply is not None:

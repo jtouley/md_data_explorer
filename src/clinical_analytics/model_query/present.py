@@ -12,12 +12,16 @@ import math
 from typing import Any
 
 import polars as pl
+import structlog
 
 from clinical_analytics.analysis.compute import compute_analysis_by_type
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.model_query.plan import Compiled, TestCall
 
-NO_ROWS_REASON = "No rows matched the question's limits, so there is no value to report."
+TEST_FAILED_REASON = (
+    "The {test} could not be computed on these columns. Check that the outcome and the group are the right columns."
+)
+logger = structlog.get_logger()
 
 
 def _number(value: Any) -> float | None:
@@ -45,16 +49,18 @@ def analysis_of(compiled: Compiled, frame: pl.DataFrame, total: int | None = Non
         value_column = next(c for c in frame.columns if c != group)
         counts = [int(r[value_column] or 0) for r in rows]
         overall = total if total is not None else sum(counts)
-        group_counts = [
-            {group: r[group], "count": n, "percent": round(100.0 * n / overall, 1) if overall else None}
-            for r, n in zip(rows, counts, strict=True)
-        ]
+        overlapping = sum(counts) > overall
+        group_counts: list[dict[str, Any]] = [{group: r[group], "count": n} for r, n in zip(rows, counts, strict=True)]
+        if not overlapping and overall:
+            # Each group's share of the total (not shown when a unit can be in several groups).
+            for row in group_counts:
+                row["percent"] = round(100.0 * row["count"] / overall, 1)
         return {
             "type": "count",
             "total_count": overall,
             "grouped_by": group,
             "group_counts": group_counts,
-            "overlapping": sum(counts) > overall,
+            "overlapping": overlapping,
             **base,
         }
     if compiled.kind == "share":
@@ -96,15 +102,22 @@ def analysis_of(compiled: Compiled, frame: pl.DataFrame, total: int | None = Non
             }
         value_column = statistic if statistic in frame.columns else next(c for c in frame.columns if c != group)
         groups = [{"group": r[group], "value": _number(r[value_column]), "n": r.get("n")} for r in rows]
-        return {"type": "grouped_statistic", "statistic": statistic, "metric": metric, "group_col": group, "groups": groups}
+        return {
+            "type": "grouped_statistic",
+            "statistic": statistic,
+            "metric": metric,
+            "group_col": group,
+            "groups": groups,
+        }
     return {"type": "table", "claim": compiled.reading, "rows": rows}
 
 
 def has_value(analysis: dict[str, Any]) -> bool:
-    """Whether the analysis states at least one value (a grouped answer with no group does not)."""
+    """Whether the analysis states a value from at least one row (no group, or a count of zero,
+    does not: the model is asked once to check its conditions before a zero is reported)."""
     kind = analysis.get("type")
     if kind == "count":
-        return analysis.get("grouped_by") is None or bool(analysis.get("group_counts"))
+        return bool(analysis.get("group_counts") if analysis.get("grouped_by") else analysis.get("total_count"))
     if kind == "proportion":
         return analysis.get("proportion") is not None
     if kind in ("rate", "grouped_statistic"):
@@ -140,4 +153,10 @@ def run_test(call: TestCall, rows: pl.DataFrame, question: str) -> dict[str, Any
     else:
         context.time_variable, context.event_variable, context.grouping_variable = call.outcome, call.time, call.group
         context.time_to_event = True
-    return compute_analysis_by_type(rows, context, call.entity_key)
+    try:
+        return compute_analysis_by_type(rows, context, call.entity_key)
+    except (pl.exceptions.PolarsError, ValueError, KeyError) as e:
+        # The statistics code could not read these columns as the test needs them: said plainly,
+        # and fed back to the model as a reason to choose other variables.
+        logger.info("model_query_test_failed", test=call.test, error_type=type(e).__name__)
+        return {"type": "error", "error": TEST_FAILED_REASON.format(test=call.test.replace("_", " "))}

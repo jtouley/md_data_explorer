@@ -30,10 +30,13 @@ logger = structlog.get_logger()
 # A column with at most this many different values has them all listed for the model.
 MAX_LISTED_VALUES: Final = 12
 MAX_VALUE_CHARS: Final = 40
-MAX_DESCRIPTION_CHARS: Final = 220
+MAX_DESCRIPTION_CHARS: Final = 260
+# In the table listing every question gets, a description is cut to this; the columns closest
+# to a question are repeated in full right above it (``column_lines``).
+LISTED_DESCRIPTION_CHARS: Final = 90
 # A dictionary this short is given whole (it usually carries counting rules worth every word).
 WHOLE_DICTIONARY_CHARS: Final = 2500
-MAX_NOTES_CHARS: Final = 900
+MAX_NOTES_CHARS: Final = 600
 _ENTRY = re.compile(r"^\s{0,3}[\"'“]?([A-Za-z_][\w.]*)[\"'”]?\s*(?::|-|–|\s{2,}|\t)\s*(\S.*)?$")
 _CODE_LINE = re.compile(r"^\s*[\"'“]?[\w.<>=+-]{1,24}[\"'”]?\s*[:=]\s*\S")
 
@@ -153,7 +156,9 @@ def build_context(
 ) -> DatasetContext:
     """Profile the table in the sandbox (three aggregate statements) and attach the dictionary."""
     table = sql_config.TABLE_NAME
-    types = {str(r["column_name"]): str(r["column_type"]) for r in sandbox.run_generated(f"DESCRIBE {table}").to_dicts()}
+    types = {
+        str(r["column_name"]): str(r["column_type"]) for r in sandbox.run_generated(f"DESCRIBE {table}").to_dicts()
+    }
     select: list[exp.Expr] = [exp.alias_(exp.Count(this=exp.Star()), "n")]
     for i, col in enumerate(catalog.columns):
         ref = exp.column(col.name, quoted=True)
@@ -213,13 +218,13 @@ def build_context(
     )
 
 
-def _column_line(col: ColumnInfo) -> str:
+def _column_line(col: ColumnInfo, *, full: bool = False) -> str:
     parts = [f"- {col.name} ({col.sql_type})"]
     if col.is_patient_id:
         parts.append("patient ID")
     elif col.is_encounter_id:
         nouns = counting_unit.nouns_for(col.name)
-        parts.append(f"ID of one {counting_unit.singular(nouns[0]) if nouns else 'encounter'}")
+        parts.append(f"ID of one {counting_unit.singular(nouns[0]) if len(nouns) == 1 else 'encounter'}")
     if col.values is not None:
         shown = ", ".join(_clip(_literal(v), MAX_VALUE_CHARS) for v in col.values)
         parts.append(f"values: {shown}")
@@ -228,7 +233,24 @@ def _column_line(col: ColumnInfo) -> str:
     if col.nulls:
         parts.append("some rows empty (NULL)")
     line = "; ".join(parts)
-    return f"{line}. {col.description}" if col.description else line
+    if not col.description:
+        return line
+    return f"{line}. {col.description if full else _clip(col.description, LISTED_DESCRIPTION_CHARS)}"
+
+
+def column_lines(context: DatasetContext) -> dict[str, str]:
+    """Each column's line of the table description, by name."""
+    return {col.name: _column_line(col, full=True) for col in context.columns}
+
+
+def column_search_texts(context: DatasetContext) -> dict[str, str]:
+    """Each column in words, for finding the columns a question is about."""
+    texts = {}
+    for col in context.columns:
+        words = col.name.replace("_", " ")
+        values = ", ".join(str(v) for v in col.values) if col.values is not None and col.text else ""
+        texts[col.name] = ". ".join(part for part in (words, col.description or "", values) if part)
+    return texts
 
 
 def grain_text(context: DatasetContext, *, writes_sql: bool = True) -> str:

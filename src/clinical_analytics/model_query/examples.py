@@ -104,3 +104,26 @@ def similar_examples(question: str, top_k: int = DEFAULT_TOP_K) -> list[Example]
         return list(pool[:top_k])
     best = np.argsort(-scores, kind="stable")[:top_k]
     return [pool[int(i)] for i in reversed(best)]
+
+
+# A table with at most this many columns is short enough to read whole; a wider one gets its
+# columns closest to the question repeated right above the question.
+SHORTLIST_MIN_COLUMNS: Final = 15
+SHORTLIST_SIZE: Final = 6
+
+
+def related_columns(question: str, described: dict[str, str], top_k: int = SHORTLIST_SIZE) -> list[str]:
+    """The names of the columns whose description (``described``: name -> one line saying what it
+    holds) is closest to the question, best first; none for a narrow table or without the encoder."""
+    if len(described) <= SHORTLIST_MIN_COLUMNS:
+        return []
+    names = list(described)
+    texts = [described[name] for name in names]
+    try:
+        encoder = embeddings.get_encoder()
+        matrix = embeddings.encode_cached(encoder, embeddings.texts_key("model_query_columns", texts), texts)
+        scores = np.asarray(matrix) @ np.asarray(encoder.encode([question]))[0]
+    except embeddings.ENCODER_LOAD_ERRORS as e:
+        logger.warning("model_query_columns_unranked", error_type=type(e).__name__)
+        return []
+    return [names[int(i)] for i in np.argsort(-scores, kind="stable")[:top_k]]

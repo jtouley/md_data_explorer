@@ -36,6 +36,14 @@ pytest_plugins = ["performance.plugin"]
 # ============================================================================
 
 
+@pytest.fixture(autouse=True)
+def no_local_model(monkeypatch):
+    """No test reaches a model server by accident: the question path sees no local model, so it
+    runs as it does without Ollama, whatever is running on the developer's machine. A test of the
+    model-written query path sets ``service._model_available`` and ``service._model`` itself."""
+    monkeypatch.setattr("clinical_analytics.core.query_service.model_available", lambda: False)
+
+
 @pytest.fixture
 def mock_llm_calls(request):
     """
@@ -2114,6 +2122,40 @@ def make_contract() -> Callable[..., OpenDataContractStandard]:
         }
         fields.update(overrides)
         return build_contract(df, ContractInputs(**fields))
+
+    return _make
+
+
+@pytest.fixture
+def make_sql_catalog(tmp_path, make_contract):
+    """Factory: the SQL catalog of ``df`` stored as Parquet, with its contract (``make_contract``).
+
+    Shared by the governed SQL tests and the model-written query tests (both read the sandbox).
+    """
+    from clinical_analytics.sql.catalog import SqlCatalog
+
+    def _make(df: pl.DataFrame, levels: tuple = (), **contract_overrides: Any):
+        path = tmp_path / f"cohort_{len(list(tmp_path.glob('*.parquet')))}.parquet"
+        df.write_parquet(path)
+        return SqlCatalog.from_contract(make_contract(df, **contract_overrides), path, levels)
+
+    return _make
+
+
+@pytest.fixture
+def make_query_table(make_sql_catalog):
+    """Factory: (catalog, context) of ``df`` for the model-written query path: the table as the
+    sandbox reads it and as the model is told about it (``model_query.context``)."""
+    from clinical_analytics.model_query.context import build_context
+    from clinical_analytics.sql.sandbox import SandboxConnection
+
+    def _make(df: pl.DataFrame, doc_context: str | None = None, confirmed_patient_rows: bool = False, **overrides: Any):
+        catalog = make_sql_catalog(df, **overrides)
+        with SandboxConnection(catalog) as sandbox:
+            context = build_context(
+                sandbox, catalog, doc_context=doc_context, confirmed_patient_rows=confirmed_patient_rows
+            )
+        return catalog, context
 
     return _make
 

@@ -15,6 +15,7 @@ table's grain (``resolve_unit``). On visit rows patients are ``COUNT(DISTINCT <p
 
 from __future__ import annotations
 
+import dataclasses
 import difflib
 import re
 from dataclasses import dataclass
@@ -43,6 +44,33 @@ LISTING_REASON: Final = (
     "ask how many there are, or for a breakdown by a group."
 )
 _ROW_WORDS = re.compile(r"\b(rows|records|lines|entries)\b", re.IGNORECASE)
+_PEOPLE = r"(?:patients?|people|persons?|individuals|women|men|children|workers|subjects|participants|everyone)"
+_RECORDS = r"(?:ids?|mrns?|names|charts?|record numbers?)"
+_LISTING_PATTERNS: Final = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        rf"\b(?:which|what) (?:of (?:the|our) )?{_PEOPLE}\b",
+        r"^\s*who\b",
+        rf"\b(?:list|name|identify|show|give me|pull)\b[^.?!]*\b(?:{_PEOPLE}|{_RECORDS})\b",
+        r"\b(?:patient ids?|record numbers?|mrns?|chart numbers?)\b",
+    )
+)
+_SUMMARY_WORDS: Final = re.compile(
+    r"\b(how many|number of|count|share|proportion|percent\w*|rate|mean|average|median|odds|compare\w*)\b",
+    re.IGNORECASE,
+)
+
+
+def asks_for_listing(question: str) -> bool:
+    """Whether the question's own words ask for individual patients ("which patients ...", "list
+    the ...", "their record numbers") and for no count or summary. The model is asked the same
+    (answer "listing"); this catches the plain cases without it, so they are never answered with
+    a table by mistake."""
+    if _SUMMARY_WORDS.search(question):
+        return False
+    return any(pattern.search(question) for pattern in _LISTING_PATTERNS)
+
+
 _YES = frozenset({"yes", "y", "true", "t", "1"})
 _NO = frozenset({"no", "n", "false", "f", "0"})
 _AGGREGATES: tuple[type[exp.Expr], ...] = (exp.AggFunc,)
@@ -87,7 +115,9 @@ def parse_reply(payload: Any) -> ModelReply:
     """Raises: PlanError when the payload is not a reply object."""
     if not isinstance(payload, dict):
         raise PlanError("The reply must be one JSON object.")
-    cleaned = {k: (None if isinstance(v, str) and v.strip().lower() in ("", "null", "none") else v) for k, v in payload.items()}
+    cleaned = {
+        k: (None if isinstance(v, str) and v.strip().lower() in ("", "null", "none") else v) for k, v in payload.items()
+    }
     try:
         return ModelReply.model_validate(cleaned)
     except ValidationError as e:
@@ -294,7 +324,11 @@ def _value_owner(text: str, context: DatasetContext, prefer: ColumnInfo | None =
     def holds(column: ColumnInfo) -> Any:
         return next((v for v in column.values or () if str(v).casefold() == wanted), None)
 
-    owners = [prefer] if prefer is not None and holds(prefer) is not None else [c for c in context.columns if holds(c) is not None]
+    owners = (
+        [prefer]
+        if prefer is not None and holds(prefer) is not None
+        else [c for c in context.columns if holds(c) is not None]
+    )
     if len(owners) != 1 or owners[0] is None:
         return None
     return exp.EQ(this=exp.column(owners[0].name, quoted=True), expression=_value_literal(holds(owners[0])))
@@ -443,6 +477,7 @@ class Compiled:
     value_text: str | None = None
     event_text: str | None = None
     limited: bool = False
+    columns: frozenset[str] = frozenset()  # every table column the query reads
     total_sql: str | None = None  # the ungrouped count behind a grouped count
     # A share of patients on visit rows: how many patients meet the event on some rows but not
     # all (then "ever" and "always" give different shares, and the question must say which).
@@ -462,6 +497,7 @@ class TestCall:
     time: str | None = None
     entity_key: str | None = None
     where_text: str | None = None
+    columns: frozenset[str] = frozenset()  # every table column the call reads
 
 
 def _base_table(context: DatasetContext, *, dedupe: bool) -> exp.Expr:
@@ -500,13 +536,15 @@ def _group(text: str | None, context: DatasetContext) -> tuple[exp.Expr | None, 
 
 
 def _where_all(*conditions: exp.Expr | None) -> exp.Expr | None:
-    kept = [exp.paren(c.copy()) if isinstance(c, exp.Or) else c.copy() for c in conditions if c is not None]
-    return exp.and_(*kept) if kept else None
+    """The conditions joined by AND, each term once (a model often states one twice)."""
+    seen: dict[str, exp.Expr] = {}
+    for condition in conditions:
+        for term in _terms(condition):
+            seen.setdefault(render(term), exp.paren(term.copy()) if isinstance(term, exp.Or) else term.copy())
+    return exp.and_(*seen.values()) if seen else None
 
 
-def _select(
-    projections: list[exp.Expr], base: exp.Expr, where: exp.Expr | None, group: exp.Expr | None
-) -> exp.Select:
+def _select(projections: list[exp.Expr], base: exp.Expr, where: exp.Expr | None, group: exp.Expr | None) -> exp.Select:
     select = exp.select(*projections).from_(base)
     if where is not None:
         select = select.where(where)
@@ -629,6 +667,17 @@ def compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> C
     Raises:
         PlanError: the plan names a column or value the table does not have, or is incomplete.
     """
+    compiled = _compile_plan(reply, question, context)
+    return dataclasses.replace(compiled, columns=_sql_columns(compiled.sql, context))
+
+
+def _sql_columns(sql: str, context: DatasetContext) -> frozenset[str]:
+    """The table's columns a generated or checked statement reads."""
+    found = {column.name.casefold() for column in sqlglot.parse_one(sql, dialect="duckdb").find_all(exp.Column)}
+    return frozenset(c.name for c in context.columns if c.name.casefold() in found)
+
+
+def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> Compiled:
     answer = reply.answer
     if answer not in TABULATIONS:
         raise PlanError(f"answer must be one of: {', '.join(TABULATIONS)}.")
@@ -654,6 +703,11 @@ def compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> C
     where, spelled = _split_where(where, group_column, context)
     if spelled is not None and group is None and answer == "count":
         group, group_name, group_column = _group(f'"{spelled}"', context)
+    elif spelled is not None and group_column not in (None, spelled) and answer == "count":
+        raise PlanError(
+            f"where lists every value of {spelled}, which keeps every row, while group_by is {group_column}. "
+            f"To show each value of {spelled}, set group_by to {spelled} and where to null."
+        )
     number: exp.Expr | None = None
     if answer in STATISTICS:
         if not reply.number or not reply.number.strip():
@@ -726,7 +780,10 @@ def compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> C
             raise PlanError(LISTING_REASON)
         if column is not None and column.text:
             value = exp.TryCast(this=value, to=exp.DataType.build("DOUBLE"))
+    # The table's label: the column, or "<column> (converted)" for an expression over one.
+    used = sorted(_columns_of(number))
     value_text = _plain(number)
+    label = value_text if isinstance(number, exp.Column) or not used else f"{used[0]} (converted)"
     base = _base_table(context, dedupe=True)
     double = exp.DataType.build("DOUBLE")
 
@@ -751,7 +808,7 @@ def compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> C
         group=group_name,
         group_column=group_column,
         statistic=answer,
-        value_text=value_text,
+        value_text=label,
         limited=where is not None,
     )
 
@@ -789,16 +846,23 @@ def compile_test(reply: ModelReply, context: DatasetContext) -> TestCall:
             raise PlanError("A survival test needs number (the time column) and outcome (the event column).")
         time, outcome = outcome, time  # TestCall: outcome holds the time, time the event (as compute reads them)
     else:
-        for text in (reply.numerator, reply.outcome, reply.number):
+        # The outcome as a condition, wherever the model wrote it; a condition on the group
+        # column itself only says which group is the exposed one, so it is not the outcome.
+        for text in (reply.outcome, reply.number, reply.numerator):
             if not text or not text.strip() or _bare_column(text, context) is not None:
                 continue
             owned = _value_owner(text, context, prefer=_bare_column(reply.outcome, context))
             condition = owned if owned is not None else _condition(text, "outcome", context)
-            if condition is not None and test in ("compare_groups", "odds_ratio"):
+            if condition is None or _columns_of(condition) <= {group}:
+                continue
+            if test in ("compare_groups", "odds_ratio"):
                 derived, outcome = condition, _slug(_plain(condition))
                 break
         if outcome is None:
-            outcome = column(reply.outcome or reply.number or reply.numerator, "outcome")
+            named = next(
+                (c for t in (reply.outcome, reply.number, reply.numerator) if (c := _bare_column(t, context))), None
+            )
+            outcome = named.name if named is not None else None
         if outcome is None:
             raise PlanError(f"A {test} test needs outcome: the outcome column.")
     if outcome == group or (derived is not None and group in _columns_of(derived)):
@@ -835,6 +899,7 @@ def compile_test(reply: ModelReply, context: DatasetContext) -> TestCall:
         time=time,
         entity_key=key,
         where_text=_plain(where) if where is not None else None,
+        columns=_sql_columns(render(select), context),
     )
 
 
@@ -912,9 +977,7 @@ def compile_sql(reply: ModelReply, question: str, context: DatasetContext) -> Co
         first.this, exp.Column | exp.Cast | exp.TryCast
     ):
         kind = "statistic"
-        statistic = {exp.Avg: "mean", exp.Median: "median", exp.Min: "min", exp.Max: "max", exp.Sum: "sum"}[
-            type(first)
-        ]
+        statistic = {exp.Avg: "mean", exp.Median: "median", exp.Min: "min", exp.Max: "max", exp.Sum: "sum"}[type(first)]
         value_text = _plain(first.this)
     elif isinstance(first, exp.Div | exp.Mul | exp.Avg | exp.Round | exp.Cast | exp.Paren) or _RATE_HINT.search(name):
         kind = "share"
@@ -934,4 +997,48 @@ def compile_sql(reply: ModelReply, question: str, context: DatasetContext) -> Co
         value_text=value_text,
         event_text=name if kind == "share" else None,
         limited=where_node is not None,
+        columns=_sql_columns(render(tree), context),
     )
+
+
+# ---------------------------------------------------------------------------- unused mentions
+
+# Words for the two values a sex column usually holds, whatever it spells them as.
+_SEX_WORDS: Final = {
+    "female": ("women", "woman", "female", "females", "girls"),
+    "male": ("men", "man", "male", "males", "boys"),
+}
+_SEX_VALUES: Final = {"female": "female", "f": "female", "woman": "female", "male": "male", "m": "male", "man": "male"}
+
+
+def _mentions(question: str, phrase: str) -> bool:
+    words = re.sub(r"[^a-z0-9]+", " ", phrase.casefold()).strip()
+    if len(words) < 3:
+        return False
+    text = " " + re.sub(r"[^a-z0-9]+", " ", question.casefold()) + " "
+    return f" {words} " in text
+
+
+def unused_mentions(question: str, used: frozenset[str], context: DatasetContext) -> list[tuple[str, str]]:
+    """(the words of the question, the column) for each value of a column the question names
+    while the query reads that column nowhere: "women" with a sex column the query does not use.
+
+    A hint for the model's next attempt, never a reason to hold the question: the model may
+    answer that the mention limits nothing, and that answer stands.
+    """
+    found: list[tuple[str, str]] = []
+    for column in context.columns:
+        if column.values is None or not column.text or column.name in used:
+            continue
+        sexes = {_SEX_VALUES.get(str(v).casefold()) for v in column.values}
+        for value in column.values:
+            phrases = [str(value)]
+            if sexes == {"female", "male"}:
+                phrases = list(_SEX_WORDS[_SEX_VALUES[str(value).casefold()]])
+            elif str(value).casefold() in _YES | _NO or len(column.values) < 2:
+                continue  # "yes" or "no" in a question names no column
+            said = next((phrase for phrase in phrases if _mentions(question, phrase)), None)
+            if said is not None:
+                found.append((said, column.name))
+                break
+    return found

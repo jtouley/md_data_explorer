@@ -72,7 +72,9 @@ def run_governed_sql(
         SqlRefusedError: the reason the query was not run or its result not shown.
     """
     log = logger.bind(dataset_id=dataset_id)
-    catalog, declared, version = catalog_for_layer(layer, dataset_id=dataset_id, data_dir=data_dir, declarations=declarations)
+    catalog, declared, version = catalog_for_layer(
+        layer, dataset_id=dataset_id, data_dir=data_dir, declarations=declarations
+    )
     query = validate_sql(sql, catalog)
     with SandboxConnection(catalog) as sandbox:
         try:

@@ -13,6 +13,7 @@ reached, or when no attempt produced a query that runs.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal
@@ -21,8 +22,8 @@ import polars as pl
 import structlog
 
 from clinical_analytics.model_query import present
-from clinical_analytics.model_query.context import DatasetContext
-from clinical_analytics.model_query.examples import Example, similar_examples
+from clinical_analytics.model_query.context import DatasetContext, column_lines, column_search_texts
+from clinical_analytics.model_query.examples import Example, related_columns, similar_examples
 from clinical_analytics.model_query.llm import ModelFn
 from clinical_analytics.model_query.plan import (
     LISTING,
@@ -35,11 +36,13 @@ from clinical_analytics.model_query.plan import (
     PlanError,
     ReplyFormat,
     TestCall,
+    asks_for_listing,
     compile_plan,
     compile_sql,
     compile_test,
     parse_reply,
     reply_schema,
+    unused_mentions,
 )
 from clinical_analytics.model_query.prompt import system_prompt, user_prompt
 from clinical_analytics.sql.errors import SqlRefusedError
@@ -122,17 +125,29 @@ def answer_question(
     ``open_sandbox``: a new sandbox over the dataset's stored rows for each attempt.
     ``previous``: earlier (question, reply) turns of the conversation, for follow-up questions.
     """
+    if asks_for_listing(question):
+        logger.info("model_query_listing_refused", attempt=0)
+        return ModelAnswer("refused", reason=LISTING_REASON)
     shots = list(examples) if examples is not None else similar_examples(question)
+    lines = column_lines(context)
+    related = [lines[name] for name in related_columns(question, column_search_texts(context))]
     system = system_prompt(context, fmt)
     schema = reply_schema(fmt)
     problems: list[str] = []
     failed_reply: dict[str, Any] | None = None
     problem: str | None = None
+    # An answer that ran but drew a hint (a value the question names, on a column the query does
+    # not read): the model gets one more look, and this answer stands if it does no better.
+    standing: ModelAnswer | None = None
     for attempt in range(1, max_attempts + 1):
-        user = user_prompt(question, shots, fmt, previous=previous, failed_reply=failed_reply, problem=problem)
+        user = user_prompt(
+            question, shots, fmt, previous=previous, failed_reply=failed_reply, problem=problem, related=related
+        )
         payload = model(system, user, schema)
         if payload is None:
             logger.warning("model_query_unavailable", attempt=attempt)
+            if standing is not None:
+                return dataclasses.replace(standing, attempts=attempt)
             return ModelAnswer("unavailable", reason=MODEL_UNAVAILABLE_REASON, attempts=attempt)
         failed_reply = payload if isinstance(payload, dict) else None
         try:
@@ -175,14 +190,15 @@ def answer_question(
         except SqlRunError as e:
             # The engine's message goes to the local model only; the user sees the plain reason.
             problem = e.engine_message.splitlines()[0][:400] if e.engine_message else e.reason
+            if standing is not None:
+                return dataclasses.replace(standing, attempts=attempt)
             problems.append(e.reason)
             logger.info("model_query_attempt_failed", attempt=attempt, kind="engine")
             continue
         except SqlRefusedError as e:
             problem = e.reason
         else:
-            logger.info("model_query_answered", attempt=attempt, answer=reply.answer, kind=analysis.get("type"))
-            return ModelAnswer(
+            answered = ModelAnswer(
                 "answered",
                 analysis={**analysis, "sql": compiled.sql, "reading": compiled.reading},
                 sql=compiled.sql,
@@ -191,8 +207,27 @@ def answer_question(
                 attempts=attempt,
                 problems=tuple(problems),
             )
+            unused = unused_mentions(question, compiled.columns, context) if standing is None else []
+            if not unused or attempt == max_attempts:
+                logger.info("model_query_answered", attempt=attempt, answer=reply.answer, kind=analysis.get("type"))
+                return answered
+            standing = answered
+            named = "; ".join(f"'{said}' (column {column})" for said, column in unused)
+            problem = (
+                f"The question mentions {named}, but your reply does not use "
+                f"{'that column' if len(unused) == 1 else 'those columns'}. If the question limits or groups by it, "
+                "add it; if not, send the same reply again."
+            )
+            problems.append(f"hint: {problem}")
+            logger.info("model_query_hinted", attempt=attempt, mentions=len(unused))
+            continue
+        if standing is not None:
+            # The second look did not run: the first answer stands.
+            return dataclasses.replace(standing, attempts=attempt)
         problems.append(problem)
         logger.info("model_query_attempt_failed", attempt=attempt, kind="plan")
+    if standing is not None:
+        return dataclasses.replace(standing, attempts=max_attempts)
     last = problems[-1] if problems else ""
     return ModelAnswer(
         "refused",
