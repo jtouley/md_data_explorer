@@ -29,6 +29,7 @@ from clinical_analytics.model_query.grounding import (
     MISSING_MEETS_PHRASE,
     MISSING_OUT_PHRASE,
     Doubt,
+    dropped_number,
     find_doubts,
     user_choices,
     without_columns,
@@ -46,6 +47,7 @@ from clinical_analytics.model_query.plan import (
     ReplyFormat,
     TestCall,
     asks_for_listing,
+    asks_for_summary,
     compile_plan,
     compile_sql,
     compile_test,
@@ -130,18 +132,24 @@ def _honour_choices(reply: ModelReply, question: str) -> ModelReply:
     return reply.model_copy(update=update) if update else reply
 
 
-def _doubts(question: str, compiled: Compiled | TestCall, context: DatasetContext) -> list[Doubt]:
+def _doubts(
+    question: str, compiled: Compiled | TestCall, context: DatasetContext, kept_group: str | None = None
+) -> list[Doubt]:
     _excluded, one_number = user_choices(question)
+    dropped = dropped_number(question, compiled.sql)
     if isinstance(compiled, TestCall):
-        return find_doubts(question, context, conditions=compiled.conditions, group_column=None, tabulation=False)
-    return find_doubts(
+        found = find_doubts(question, context, conditions=compiled.conditions, group_column=None, tabulation=False)
+        return found + ([dropped] if dropped is not None else [])
+    found = find_doubts(
         question,
         context,
         conditions=compiled.conditions,
         group_column=None if one_number else compiled.group_column,
         group_expression=compiled.group_expression and not one_number,
         tabulation=not one_number,
+        kept_group=kept_group,
     )
+    return found + ([dropped] if dropped is not None else [])
 
 
 def _asked_back(
@@ -150,9 +158,7 @@ def _asked_back(
     """The user is asked: the model kept a reading the question does not back."""
     logger.info("model_query_doubt_asked", attempt=attempt, kind=doubt.kind)
     if not doubt.choices:
-        return ModelAnswer(
-            "refused", reason=f"{doubt.reason} Ask again naming the groups to compare.", reply=reply, attempts=attempt
-        )
+        return ModelAnswer("refused", reason=doubt.reason, reply=reply, attempts=attempt)
     return ModelAnswer(
         "clarify",
         reason=doubt.reason,
@@ -209,6 +215,11 @@ def answer_question(
     # more look with the doubt as feedback; if it keeps that reading, or does no better, the user
     # is asked which reading is meant.
     doubted: tuple[Doubt, Compiled | TestCall, dict[str, Any] | None] | None = None
+    # A follow-up ("now only the women") keeps what the earlier questions asked for.
+    asked_so_far = " ".join([*(asked for asked, _reply in previous), question])
+    # A refinement ("now only the women": no counting words of its own) keeps the last breakdown.
+    last_group = previous[-1][1].get("group_by") if previous and not asks_for_summary(question) else None
+    kept_group = last_group if isinstance(last_group, str) else None
     for attempt in range(1, max_attempts + 1):
         user = user_prompt(
             question, shots, fmt, previous=previous, failed_reply=failed_reply, problem=problem, related=related
@@ -222,12 +233,17 @@ def answer_question(
         failed_reply = payload if isinstance(payload, dict) else None
         try:
             reply = parse_reply(payload)
+            if reply.answer == LISTING and asks_for_summary(asked_so_far):
+                # "How many ... broken down by X" is a count: the words ask for a number.
+                raise PlanError(
+                    "The question asks for a number (how many, a share or a summary), not a list of patients. "
+                    "Reply with count, share or a summary; group_by breaks it down."
+                )
             if reply.answer == LISTING:
                 logger.info("model_query_listing_refused", attempt=attempt)
                 return ModelAnswer("refused", reason=LISTING_REASON, reply=failed_reply, attempts=attempt)
             compiled = _compile(_honour_choices(reply, question), question, context, fmt)
-            # A follow-up ("now only the women") keeps what the earlier questions asked for.
-            doubts = _doubts(" ".join([*(asked for asked, _reply in previous), question]), compiled, context)
+            doubts = _doubts(asked_so_far, compiled, context, kept_group)
             if doubts and (doubted is not None or attempt == max_attempts):
                 return _asked_back(doubts[0], question, compiled, failed_reply, attempt)
             if doubts:

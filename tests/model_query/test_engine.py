@@ -451,3 +451,47 @@ def test_answer_question_missingValueChoice_isAnsweredAsChosen(make_query_table,
     # Assert
     assert answer.status == "answered" and answer.analysis is not None
     assert answer.analysis["proportion"] == pytest.approx(rate)
+
+
+def test_answer_question_listingReplyToAHowManyQuestion_isFedBackAsACount(ask):
+    # Arrange: the model calls "how many ..., broken down by" a listing
+    model = Recorded(_plan("listing", group_by="dx"), _plan("count", where="confirmed = 'yes'", group_by="dx"))
+
+    # Act
+    answer = ask("How many patients had a confirmed infection, broken down by diagnosis?", model)
+
+    # Assert: the words ask for a number, so the model is told and the count is answered
+    assert (answer.status, answer.attempts) == ("answered", 2)
+    assert "not a list of patients" in model.prompts[1][1]
+
+
+@pytest.mark.parametrize(
+    "first",
+    [
+        _plan("odds_ratio", where="abx = 'yes'", outcome="result"),
+        _plan("odds_ratio", where="abx = 'yes'", group_by="abx", outcome="result"),
+    ],
+)
+def test_answer_question_exposureWrittenAsALimit_comparesBothGroups(ask, first):
+    # Arrange: "with antibiotics versus without" written as where abx = 'yes'
+    model = Recorded(first, _plan("odds_ratio", where="abx = 'yes'", group_by="abx", outcome="result"))
+
+    # Act
+    answer = ask("What is the odds ratio for a result with antibiotics versus without?", model, table="visits")
+
+    # Assert: the exposure is the group; the limit that would leave one group is not applied
+    assert answer.status == "answered"
+    assert answer.reading == "Odds ratio of result for abx (logistic regression, unadjusted)."
+
+
+def test_answer_question_statedNumberDropped_isFedBackThenRefusedIfKept(ask):
+    # Arrange: "born after 2005" twice answered without the year
+    reply = _plan("count", where="admitted = 'yes'")
+    model = Recorded(reply, reply)
+
+    # Act
+    answer = ask("How many patients with onset after 2005 were admitted?", model)
+
+    # Assert: never answered without the limit the number sets
+    assert answer.status == "refused" and answer.analysis is None
+    assert "2005" in model.prompts[1][1] and "uses it nowhere" in model.prompts[1][1]

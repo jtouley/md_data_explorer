@@ -9,6 +9,7 @@ import pytest
 
 from clinical_analytics.model_query.grounding import (
     find_doubts,
+    unused_numbers,
     user_choices,
     without_columns,
 )
@@ -136,3 +137,52 @@ def test_user_choices_wordsAddedByAChoice_areRead(question, columns, one_number)
 def test_without_columns_dropsOnlyTheTermsOnThoseColumns(condition, expected):
     # Act / Assert
     assert without_columns(condition, frozenset({"titer"})) == expected
+
+
+def test_find_doubts_followUpDropsTheBreakdown_isFound(visits):
+    # Arrange: "now only the women" after a question broken down by region
+    question = "How many patients tested positive in each region? Now only the women."
+    compiled = compile_plan(ModelReply(answer="count", where="sex = 'female'"), question, visits)
+
+    # Act
+    found = find_doubts(question, visits, conditions=compiled.conditions, group_column=None, kept_group="region")
+
+    # Assert
+    assert [doubt.kind for doubt in found] == ["missing_group"]
+    assert "keep group_by region" in found[0].feedback
+
+
+def test_find_doubts_listOfThreeValues_isABreakdown(visits):
+    # Act / Assert: "North, South or East" asks for each of them
+    assert (
+        _doubts("What share of patients are from the North, the South, or the East?", visits, group_by="region") == []
+    )
+
+
+def test_find_doubts_unitConversionInsideTheLimit_onlyTheComparedValueMustBeStated(visits):
+    # Arrange: the CASE's unit value and factor are the model's arithmetic, not a stated value
+    where = "CASE WHEN titer_unit = 'IU/mL' THEN titer * 1000 ELSE titer END >= 120"
+
+    # Act / Assert
+    assert _doubts("How many patients had a titer of at least 120 mIU/mL?", visits, where=where) == []
+    assert _doubts("How many patients had a titer drawn?", visits, where=where) == ["limit"]
+
+
+@pytest.mark.parametrize(
+    ("question", "sql", "unused"),
+    [
+        ("How many patients 70 and older?", "SELECT COUNT(*) FROM unified", {70.0}),
+        ("How many patients 70 and older?", "SELECT COUNT(*) FROM unified WHERE age_years >= 70", set()),
+        ("How many COVID-19 deaths, with a 95% CI?", "SELECT COUNT(*) FROM unified", set()),
+        ("How many died within 30 days?", "SELECT COUNT(*) FROM unified WHERE \"died_30d\" = 'yes'", set()),
+        (
+            "Visits from 2022 through 2023?",
+            "SELECT COUNT(*) FROM unified WHERE visit_year BETWEEN 2022 AND 2023",
+            set(),
+        ),
+        ("How many had fewer than two doses?", "SELECT COUNT(*) FROM unified", set()),
+    ],
+)
+def test_unused_numbers_numberStatedButNotUsed_isFound(question, sql, unused):
+    # Act / Assert
+    assert unused_numbers(question, sql) == unused

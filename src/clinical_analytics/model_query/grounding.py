@@ -13,7 +13,8 @@ trace that can be checked against the question without a model:
   not checked;
 - a breakdown by a column the question never names, or a breakdown when the question has no
   breakdown words and names no two values of that column;
-- no breakdown when the question contrasts two groups ("versus", "or not", "and how many").
+- no breakdown when the question contrasts two groups ("versus", "or not", "and how many");
+- a number the question states in digits (an age, a year, a threshold) used nowhere in the query.
 
 A doubt goes back to the model once as feedback. If the next reply still carries it, the user is
 asked: the doubt becomes concrete choices (with or without the limit, broken down or one number),
@@ -38,7 +39,7 @@ from sqlglot.errors import SqlglotError
 from clinical_analytics.model_query.context import ColumnInfo, DatasetContext
 from clinical_analytics.sql.render import render
 
-DoubtKind = Literal["limit", "group", "no_group", "missing_group"]
+DoubtKind = Literal["limit", "group", "no_group", "missing_group", "dropped"]
 
 # The words a choice adds to the question it re-asks (matched case-insensitively).
 NO_LIMIT_PHRASE: Final = "Do not limit it by {column}."
@@ -58,6 +59,8 @@ _BREAKDOWN_WORDS = re.compile(
     r"distribution|or not|and how many|which)\b",
     re.IGNORECASE,
 )
+# "A, B or C" / "A, B, or C": a list of three or more alternatives, one group each.
+_ENUMERATION = re.compile(r",[^,.?;]+,?\s+or\s+\w", re.IGNORECASE)
 _CONTRAST_WORDS = re.compile(r"\b(versus|vs|or not|and how many)\b", re.IGNORECASE)
 _NUMBER_WORDS: Final = {
     "one": "1",
@@ -92,7 +95,6 @@ _ABBREVIATIONS: Final = {
     "rx": ("prescription", "prescribed", "medication"),
     "hx": ("history",),
     "abx": ("antibiotic", "antibiotics"),
-    "dmt": ("disease", "modifying", "therapy"),
     "yr": ("year",),
     "dob": ("birth", "born"),
     "los": ("length", "stay"),
@@ -178,12 +180,27 @@ def _column_words(column: ColumnInfo) -> set[str]:
     return {_stem(w) for w in words if w not in _COMMON and not w.isdigit() and len(w) >= 2}
 
 
-def column_named(question: _Question, column: ColumnInfo) -> bool:
+# A word in this share of the table's columns (or more) names what the table is about ("covid" in
+# a COVID registry), not one column.
+SHARED_WORD_SHARE: Final = 0.2
+
+
+def _shared_words(context: DatasetContext) -> set[str]:
+    counts: dict[str, int] = {}
+    for column in context.columns:
+        for word in _column_words(column):
+            counts[word] = counts.get(word, 0) + 1
+    limit = max(3.0, SHARED_WORD_SHARE * len(context.columns))
+    return {word for word, n in counts.items() if n >= limit}
+
+
+def column_named(question: _Question, column: ColumnInfo, context: DatasetContext | None = None) -> bool:
     """Whether the question's words name ``column`` (a word of its name, description or values)."""
     if column.values is not None and {_sex_of(v) for v in column.values} == {"female", "male"}:
         if question.says_sex("female") or question.says_sex("male") or question.says("sex") or question.says("gender"):
             return True
-    return bool(_column_words(column) & question.words)
+    shared = _shared_words(context) if context is not None else set()
+    return bool((_column_words(column) - shared) & question.words)
 
 
 def _value_said(question: _Question, value: str) -> bool:
@@ -203,13 +220,90 @@ def _number_said(question: _Question, literal: exp.Literal) -> bool:
         return False
 
 
+def _compared_literals(term: exp.Expr) -> list[exp.Literal]:
+    """The values a condition compares with: a literal side of a comparison, an IN list, BETWEEN's
+    bounds. Literals inside an expression being compared (a unit conversion's CASE and factor) are
+    the model's arithmetic, not a value the question has to state."""
+    node = term
+    while isinstance(node, exp.Paren):
+        node = node.this
+    if isinstance(node, exp.Connector):
+        return _compared_literals(node.this) + _compared_literals(node.expression)
+    if isinstance(node, exp.Not):
+        return _compared_literals(node.this)
+    if isinstance(node, exp.Between):
+        sides = [node.args.get("low"), node.args.get("high")]
+    elif isinstance(node, exp.In):
+        sides = list(node.expressions)
+    elif isinstance(node, exp.Binary):
+        sides = [node.this, node.expression]
+    else:
+        return list(node.find_all(exp.Literal))
+    return [side for side in sides if isinstance(side, exp.Literal)]
+
+
+# A number written in digits that is part of a name ("COVID-19", "H1N1"), a confidence level
+# ("95% CI") or a unit ("mmol/L") is not a value the query has to use.
+_NAME_NUMBER = re.compile(r"(?<![\w.])\d+(?:\.\d+)?(?![\w.%/-])")
+_CONFIDENCE = re.compile(r"\b(?:9[059])\s*%\s*(?:ci|confidence)", re.IGNORECASE)
+
+
+def stated_numbers(question: str) -> set[float]:
+    """The numbers the question states in digits as values (ages, years, thresholds)."""
+    text = _CONFIDENCE.sub(" ", question)
+    text = re.sub(r"[A-Za-z]+-\d+\b", " ", text)  # COVID-19, type-2
+    return {float(m.group(0)) for m in _NAME_NUMBER.finditer(text)}
+
+
+def unused_numbers(question: str, sql: str) -> set[float]:
+    """The question's stated numbers that appear nowhere in the query: not as a value it compares
+    with, and not in a column name it reads ("died_30d" for "within 30 days")."""
+    try:
+        tree = sqlglot.parse_one(sql, dialect="duckdb")
+    except SqlglotError:
+        return set()
+    used: set[float] = set()
+    for literal in tree.find_all(exp.Literal):
+        if not literal.is_string:
+            try:
+                used.add(float(literal.name))
+            except ValueError:
+                pass
+        else:
+            used.update(float(t) for t in re.findall(r"\d+(?:\.\d+)?", literal.name))
+    for column in tree.find_all(exp.Column):
+        used.update(float(t) for t in re.findall(r"\d+", column.name))
+    return {number for number in stated_numbers(question) if number not in used}
+
+
+def dropped_number(question: str, sql: str) -> Doubt | None:
+    """A doubt when the question states a number (an age, a year, a threshold) the query never
+    uses: the limit it sets was most likely left out."""
+    unused = sorted(unused_numbers(question, sql))
+    if not unused:
+        return None
+    said = ", ".join(f"{n:g}" for n in unused)
+    return Doubt(
+        "dropped",
+        feedback=(
+            f"The question states {said}, but the reply uses it nowhere. Put the limit it sets into where "
+            "(for example an age, a year or a threshold); keep every other part of the reply."
+        ),
+        reason=(
+            f"The question states {said}, but I could not tell which limit it sets, so I did not answer. "
+            "Ask again naming the column it applies to."
+        ),
+        choices=(),
+    )
+
+
 def limit_backed(term: exp.Expr, question: _Question, context: DatasetContext) -> bool:
     """Whether one condition is backed by the question: a value it compares with is stated (all
     of them, for text values; one of them, for numbers), or it only tests yes/no or presence."""
     columns = [c for name in sorted({c.name for c in term.find_all(exp.Column)}) if (c := context.column(name))]
     if not columns:
         return True
-    literals = list(term.find_all(exp.Literal))
+    literals = _compared_literals(term)
     texts = [lit.name for lit in literals if lit.is_string and lit.name.strip().casefold() not in _YES_NO]
     numbers = [lit for lit in literals if not lit.is_string and lit.name.strip() not in ("0", "1")]
     if texts:
@@ -242,7 +336,7 @@ def _plain(node: exp.Expr) -> str:
 
 
 def _breakdown_asked(question: _Question, column: ColumnInfo | None) -> bool:
-    if _BREAKDOWN_WORDS.search(question.text):
+    if _BREAKDOWN_WORDS.search(question.text) or _ENUMERATION.search(question.text):
         return True
     if column is None or column.values is None:
         return False
@@ -259,13 +353,15 @@ def find_doubts(
     group_column: str | None,
     group_expression: bool = False,
     tabulation: bool = True,
+    kept_group: str | None = None,
 ) -> list[Doubt]:
     """The doubts about one compiled query, most serious first.
 
     ``conditions``: the limits it applies (top-level AND terms of where, and a share's event).
     ``group_column``: the table column it breaks the answer down by (None: none, or an expression,
     then ``group_expression`` is True). ``tabulation``: a count, share or summary (a statistical
-    test's group is its exposure, and is not checked here).
+    test's group is its exposure, and is not checked here). ``kept_group``: for a follow-up, the
+    column the previous answer was broken down by (a refinement keeps it).
     """
     asked = _Question.of(question)
     doubts: list[Doubt] = []
@@ -292,7 +388,7 @@ def find_doubts(
     if not tabulation:
         return doubts
     column = context.column(group_column) if group_column else None
-    if column is not None and not column_named(asked, column):
+    if column is not None and not column_named(asked, column, context):
         doubts.append(
             Doubt(
                 "group",
@@ -319,6 +415,22 @@ def find_doubts(
                 reason=f"I read this as broken down by {name}, but the question asks for one number.",
                 choices=(
                     (f"Broken down by {name}", BREAK_DOWN_PHRASE.format(column=name)),
+                    ("One overall number", ONE_NUMBER_PHRASE),
+                ),
+            )
+        )
+    elif column is None and not group_expression and kept_group and (kept := context.column(kept_group)):
+        doubts.append(
+            Doubt(
+                "missing_group",
+                feedback=(
+                    f"The previous answer was broken down by {kept.name}, and this follow-up does not ask to drop "
+                    f"that. Repeat the previous reply with only the change the follow-up asks for: keep group_by "
+                    f"{kept.name}."
+                ),
+                reason=f"The previous answer was broken down by {kept.name}; I read this follow-up as one number.",
+                choices=(
+                    (f"Broken down by {kept.name}", BREAK_DOWN_PHRASE.format(column=kept.name)),
                     ("One overall number", ONE_NUMBER_PHRASE),
                 ),
             )
@@ -352,7 +464,10 @@ def _missing_group(word: str, conditions: list[exp.Expr], context: DatasetContex
             f"The question compares groups ('{word}'), but group_by is null. Set group_by to the column whose values "
             "are compared, and remove that column from where."
         ),
-        reason=f"The question compares groups ('{word}'), but I read it as one number for one group.",
+        reason=(
+            f"The question compares groups ('{word}'), but I read it as one number for one group."
+            + ("" if choices else " Ask again naming the groups to compare.")
+        ),
         choices=choices,
     )
 

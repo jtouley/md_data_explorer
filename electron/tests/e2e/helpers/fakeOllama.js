@@ -28,6 +28,19 @@ const RECORDED = [
       outcome: null,
     },
   },
+  {
+    // A share of patients whose result differs between their visits: the app asks ever or always.
+    when: 'share of our folks tested positive',
+    reply: {
+      thought: 'Share of patients with result positive.',
+      answer: 'share',
+      where: null,
+      group_by: null,
+      numerator: "result = 'positive'",
+      number: null,
+      outcome: null,
+    },
+  },
 ];
 const DEFAULT_REPLY = {
   thought: 'Count everyone.',

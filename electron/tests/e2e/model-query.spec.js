@@ -82,4 +82,35 @@ test.describe('Model-written query path (live API, mocked model)', () => {
     await expect(sql.locator('pre')).toContainText('COUNT(DISTINCT "patient_id")');
     await expect(sql.locator('pre')).toContainText('FROM unified');
   });
+
+  test('a reading that changes the number is asked back as a choice, and the choice is answered', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await page.locator('[data-testid="upload-file-input"]').setInputFiles({
+      name: `model_query_choice_${Date.now()}.csv`,
+      mimeType: 'text/csv',
+      buffer: makeVisitsCsv(),
+    });
+    await expect(page.locator('#query-input')).toBeEnabled();
+
+    // A patient's result differs between visits: "ever" and "always" give different shares.
+    await page.locator('#query-input').fill('What share of our folks tested positive?');
+    await page.locator('#query-input').press('Enter');
+
+    const choice = page.locator('[data-testid="choice-card"]').last();
+    await expect(choice).toBeVisible({ timeout: 45000 });
+    await expect(choice).toContainText('ever true, or only when it was always true');
+    const buttons = choice.locator('[data-testid="choice-button"]');
+    await expect(buttons).toHaveText([/^Ever/, /^Always/]);
+
+    // Choosing asks that reading as its own question; the answer says which reading it used.
+    await buttons.first().click();
+    const card = page.locator('[data-testid="result-card"]').last();
+    await expect(card.locator('[data-testid="answer-reading"]')).toContainText(
+      'One patient counts when at least one of its rows meets it.',
+      { timeout: 45000 }
+    );
+    await expect(card.locator('[data-testid="result-claim"]')).toContainText('%');
+  });
 });

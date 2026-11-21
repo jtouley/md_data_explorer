@@ -62,6 +62,11 @@ _SUMMARY_WORDS: Final = re.compile(
 )
 
 
+def asks_for_summary(question: str) -> bool:
+    """Whether the question's own words ask for a number: how many, a share, a mean, a test."""
+    return bool(_SUMMARY_WORDS.search(question))
+
+
 def asks_for_listing(question: str) -> bool:
     """Whether the question's own words ask for individual patients ("which patients ...", "list
     the ...", "their record numbers") and for no count or summary. The model is asked the same
@@ -264,7 +269,10 @@ def _fixed_literal(column: ColumnInfo, literal: exp.Expr) -> exp.Expr:
     if len(starts) == 1:
         return _value_literal(starts[0])
     shown = ", ".join(repr(v) for v in column.values)
-    raise PlanError(f"Column {column.name} has no value {text!r}. Its values are: {shown}.")
+    raise PlanError(
+        f"Column {column.name} has no value {text!r}. Its values are: {shown}. If none of them is what the "
+        "question says, remove that condition: a word that names what the whole table is about is not a limit."
+    )
 
 
 def _value_literal(value: Any) -> exp.Expr:
@@ -898,6 +906,16 @@ def compile_test(reply: ModelReply, context: DatasetContext) -> TestCall:
 
     group = column(reply.group_by, "group_by")
     if group is None and test != "survival":
+        pinned = [
+            listed for term in _terms(_condition(reply.where, "where", context)) if (listed := _listed_values(term))
+        ]
+        if test in ("compare_groups", "odds_ratio") and len(pinned) == 1:
+            # "in patients with X versus without": X is the exposure, written as a limit.
+            name, values = pinned[0]
+            raise PlanError(
+                f"For a {test} test the exposure goes in group_by, not where: set group_by to {name} and remove "
+                f"{name} = {values[0]!r} from where, so both groups are compared."
+            )
         raise PlanError(f"A {test} test needs group_by: the group or exposure column.")
     derived: exp.Expr | None = None
     outcome: str | None = None
@@ -932,7 +950,14 @@ def compile_test(reply: ModelReply, context: DatasetContext) -> TestCall:
             f"outcome and group_by are both {group}. The outcome is what is compared; group_by is the column "
             "whose groups are compared."
         )
-    where, _spelled = _split_where(_condition(reply.where, "where", context), None, context)
+    # A where term pinning the group column to one value says which group is the exposed one; as a
+    # limit it would leave one group and nothing to compare, so it is not applied.
+    stated = [
+        term
+        for term in _terms(_condition(reply.where, "where", context))
+        if not (_listed_values(term) is not None and _columns_of(term) == {group})
+    ]
+    where, _spelled = _split_where(_where_all(*stated), None, context)
     check_units([where, derived], context)
     key = context.patient_key if not context.rows_are_patients else None
     selected: list[exp.Expr] = []
