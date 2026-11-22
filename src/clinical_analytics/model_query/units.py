@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Final, Literal
 
 from clinical_analytics.core import counting_unit
-from clinical_analytics.model_query.context import DatasetContext
+from clinical_analytics.model_query.context import PERSON_ROLES, DatasetContext, id_role
 
 HeadKind = Literal["patients", "events"]
 
@@ -139,13 +139,70 @@ def head_noun(question: str, extra_events: frozenset[str] = frozenset()) -> tupl
     return None
 
 
+# Choice wording re-asked when a rate does not say what it is out of (see ``rate_unstated``).
+SHARE_OF_PHRASE: Final = "Give the share of {noun}."
+_SHARE_OF = re.compile(r"\bgive the share of ([a-z]+)\.", re.IGNORECASE)
+_RATE = re.compile(r"\brates?\b", re.IGNORECASE)
+
+
+def rate_unstated(question: str, context: DatasetContext) -> bool:
+    """A "rate" whose question names no plural unit it is out of ("the readmission rate"), on a
+    table with several rows per patient: out of patients and out of visits are different numbers."""
+    if not _RATE.search(question) or _SHARE_OF.search(question):
+        return False
+    if context.patient_key is None or context.rows_are_patients:
+        return False
+    for word in _WORD.findall(question.casefold()):
+        plural_noun = word.endswith("s") and singular(word) != word
+        if plural_noun and (word in PATIENT_NOUNS or word in EVENT_NOUNS or word in context.row_nouns):
+            return False
+    return True
+
+
+def _counted_role(question: str, context: DatasetContext) -> tuple[str, str] | None:
+    """(role, its ID column) when the noun after the counting words names a person role with its
+    own ID column that is not the patient key ("how many guardians" -> guardian_id)."""
+    text = question.casefold()
+    words = [(m.start(), m.group(0)) for m in _WORD.finditer(text)]
+    for head in _HEAD.finditer(text):
+        after = [w for at, w in words if at >= head.end()][:_HEAD_WINDOW]
+        for word in after:
+            noun = singular(word)
+            if (key := _role_key(noun, context)) is not None:
+                return noun, key
+            if word in PATIENT_NOUNS or word in EVENT_NOUNS:
+                break
+    return None
+
+
+def _role_key(noun: str, context: DatasetContext) -> str | None:
+    """The ID column named for ``noun`` ("mother" -> mother_id) when it is not the patient key."""
+    named = [
+        c.name
+        for c in context.columns
+        if not c.is_patient_id
+        and not c.is_encounter_id
+        and not c.is_sequence
+        and noun in PERSON_ROLES
+        and id_role(c.name) == noun
+    ]
+    return named[0] if len(named) == 1 else None
+
+
 def resolve_unit(question: str, context: DatasetContext) -> Unit:
     """The counted unit from the question's head noun and the table's grain.
 
     Raises:
         UnitError: the noun cannot be counted on this table as asked.
     """
-    found = head_noun(question, context.row_nouns)
+    # A choice the user made ("Give the share of patients.") names the unit.
+    share_of = _SHARE_OF.search(question)
+    found = head_noun(share_of.group(1), context.row_nouns) if share_of else None
+    found = found or head_noun(question, context.row_nouns)
+    role = _counted_role(question, context)
+    if role is not None:
+        # "How many mothers" on a table of one row per infant with mother_id: the mothers' IDs.
+        return Unit(role[1], "patients", role[0])
     if context.rows_are_patients:
         if found is None or found[0] == "patients":
             return Unit(None, "patients")
@@ -175,6 +232,10 @@ def resolve_unit(question: str, context: DatasetContext) -> Unit:
     noun = singular(found[1])
     if noun in _ROW_NOUNS:
         return Unit(None, "rows", noun if noun not in ("record", "row", "entry") else None)
+    if noun in context.row_nouns:
+        # The noun the dictionary gives one row ("one row per episode") counts the rows, never a
+        # column that numbers them.
+        return Unit(None, "visits", noun)
     keys = list(context.encounter_keys)
     chosen = counting_unit.pick_encounter_key(keys, noun)
     if chosen is not None:

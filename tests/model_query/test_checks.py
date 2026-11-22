@@ -297,7 +297,7 @@ def test_build_context_wordValuesDescribedInTheDictionary_keepTheirStoredValues(
 
     # Act
     answer = answer_question(
-        "How many patients by shots?",
+        "How many visits by shots?",
         context,
         model=lambda *_args: queue.pop(0),
         open_sandbox=lambda: SandboxConnection(catalog),

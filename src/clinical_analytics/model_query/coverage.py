@@ -55,8 +55,15 @@ _CHOICE_WORDS = re.compile(
     r"do not limit it by [\w ,]+\.|give one overall number\.|break it down by \w+\.|only where [^.]*\.|"
     r"count a missing value as (?:not )?meeting it\.|leave out rows with a missing value\.|"
     r"count one (?:when|only when) it was (?:ever|always) true[^.]*\.|use one value per patient[^.]*\.|"
-    r"count every visit\.|use \w+\.|give counts, not a share\.|count [^.]* as the share's numerator\.",
+    r"count every visit\.|use \w+\.|give counts, not a share\.|count [^.]* as the share's numerator\.|"
+    r"count a patient in every \w+ they had\.|use each patient's (?:first|last) \w+\.|give the share of \w+\.",
     re.IGNORECASE,
+)
+
+# Words a difference of two columns says ("the reduction in area" for baseline - week 12).
+CHANGE_WORDS: Final = (
+    "change changes changed reduction reductions reduced loss lost gain gained increase increased decrease "
+    "decreased drop dropped improvement improved decline declined rise rose fall fell shrinkage growth"
 )
 
 # Words that carry no condition: question and auxiliary words, counting and statistics words,

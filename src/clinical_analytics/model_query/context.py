@@ -12,6 +12,7 @@ user confirmed one row per patient); otherwise rows are visits and patients are 
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from dataclasses import dataclass, field
 from typing import Any, Final
@@ -178,30 +179,57 @@ def _clip(text: str, limit: int) -> str:
 
 # "1 = male", "2: female", "0=No; 1=Yes", "M - male": a code and its label in a dictionary entry.
 # A code introducing its label in a dictionary entry: "1 = ", "M: ", "0 - ".
-_CODE_START = re.compile(r"(?<![\w.])([A-Za-z0-9][\w.+-]{0,11})\s*(?:=|:|–|-(?=\s))\s*")
+# A code is written before its label with "=", ":", a dash or a tab: "1 = Yes", "2=No", "3: Other",
+# "4 - Unknown", "5<TAB>Declined".
+_SEPARATOR = r"(?:[ ]*(?:=|:|\u2013|\u2014|-(?=\s))[ ]*|\t+[ ]*)"
+_CODE = r"[A-Za-z0-9][\w.+-]{0,11}"
+_CODE_START = re.compile(rf"(?<![\w.])({_CODE}){_SEPARATOR}")
+# Another code's entry inside a label's run: ", 9 = not asked" or "; 9: not asked".
+_NEXT_ENTRY = re.compile(rf"\s*[,;]\s*{_CODE}{_SEPARATOR}")
+# The longest run of words still read as a label rather than an explanation of the value.
+MAX_LABEL_CHARS = 120
+
+
+def _label_run(run: str) -> str:
+    """The label at the start of ``run``: up to the end of its line, or of its sentence or the next
+    code's entry outside parentheses, so "(mitral, aortic, or both)" and "etc.)" stay whole."""
+    run = run.split("\n")[0]
+    depth = 0
+    for index, char in enumerate(run):
+        if char in "([":
+            depth += 1
+        elif char in ")]":
+            depth = max(depth - 1, 0)
+        elif depth == 0 and (
+            char == ";"
+            or (char == "." and run[index + 1 : index + 2].isspace())
+            or (char == "," and _NEXT_ENTRY.match(run, index))
+        ):
+            return run[:index]
+    return run
 
 
 def value_labels(text: str | None, values: tuple[Any, ...] | None) -> tuple[tuple[str, str], ...]:
     """(code, label) pairs a dictionary entry gives for codes the column actually holds.
 
-    A label runs from its code to the next code of the column (or the end of its line, or of its
-    sentence), so parentheses, commas, slashes and "=" inside it are kept: "1 = planned (elective
-    cesarean), 2 = emergency" gives "planned (elective cesarean)"."""
+    Entries may be written "1 = Label (a, b, or c)", "2=Label, with comma", "3: Label" or
+    "code<TAB>label", on one line or several. A label runs from its code to the next code of the
+    column, and is cut only at a code boundary, the end of its line, or a sentence end outside
+    parentheses, so parentheses, commas, slashes and "=" inside it are kept."""
     if not text or not values:
         return ()
     # A whole-number float is written as an integer in a dictionary ("1", not "1.0").
     held = {(str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)): str(v) for v in values}
+    held |= {str(v): str(v) for v in values}
     starts = [m for m in _CODE_START.finditer(text) if m.group(1) in held]
     found: dict[str, str] = {}
     for index, match in enumerate(starts):
         end = starts[index + 1].start() if index + 1 < len(starts) else len(text)
-        label = text[match.end() : end].split("\n")[0]
-        label = re.split(r"\.\s|[,;]\s*[A-Za-z0-9][\w.+-]{0,11}\s*(?:=|:)", label, maxsplit=1)[0]
-        label = " ".join(label.split()).strip(" ,;.")
+        label = " ".join(_label_run(text[match.end() : end]).split()).strip(" ,;.")
         code = match.group(1)
         # A sentence explaining the value ("if the age range is between 18 and 50") describes it;
         # it is not a label to show in place of the stored value.
-        describes = len(label) > 40 or bool(re.match(r"(?:if|when|where|whether)\b", label, re.IGNORECASE))
+        describes = len(label) > MAX_LABEL_CHARS or bool(re.match(r"(?:if|when|where|whether)\b", label, re.IGNORECASE))
         if label and not describes and held[code] not in found and label.casefold() != code.casefold():
             found[held[code]] = label
     # Labels for only some codes are kept too; a code without one keeps its stored value.
@@ -272,6 +300,49 @@ def dictionary_descriptions(doc: str | None, columns: list[str]) -> tuple[dict[s
 _COUNTER_WORDS: Final = frozenset(
     {"seq", "sequence", "number", "no", "num", "nr", "index", "idx", "order", "visit", "session", "cycle", "occasion"}
 )
+
+
+# Words naming a person in a column like "<role>_id" ("infant_id", "donor_no", "student_id").
+PERSON_ROLES: Final = frozenset(
+    {
+        "patient", "pt", "pat", "person", "individual", "participant", "subject", "subj", "member", "resident",
+        "client", "enrollee", "respondent", "volunteer", "infant", "baby", "newborn", "neonate", "child", "kid",
+        "mother", "father", "parent", "woman", "man", "adult", "adolescent", "teen", "girl", "boy", "donor",
+        "recipient", "student", "pupil", "employee", "worker", "athlete", "player", "user", "customer",
+        "veteran", "beneficiary", "caregiver", "guardian", "partner", "twin", "sibling", "teacher", "coach",
+    }
+)  # fmt: skip
+_ROLE_ID_WORDS: Final = frozenset({"id", "no", "nr", "num", "number", "nbr", "key", "code", "ident", "identifier"})
+_CAMEL_SPLIT: Final = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def id_role(name: str) -> str | None:
+    """The role an ID column is named for ("infant_id" -> infant, "MotherID" -> mother), or None."""
+    parts = [p for p in re.split(r"[^a-z0-9]+", _CAMEL_SPLIT.sub("_", name).casefold()) if p]
+    if len(parts) >= 2 and parts[-1] in _ROLE_ID_WORDS:
+        return parts[-2]
+    return None
+
+
+def row_person_key(columns: list[ColumnInfo], rows: int, notes: str) -> str | None:
+    """The column that names one person per row ("infant_id", every value once, none missing),
+    when exactly one does; None otherwise. The role must be a person, or the noun the dictionary
+    gives one row ("one row per calf" with calf_id)."""
+    row_words = set(
+        re.findall(r"\b(?:one|each) (?:row|record|line) (?:per|is|for)(?: one| an?| each)? ([a-z]+)", notes.casefold())
+    )
+    row_words |= {w[:-1] for w in row_words if w.endswith("s")}
+    found = [
+        c.name
+        for c in columns
+        if (role := id_role(c.name)) is not None
+        and (role in PERSON_ROLES or role in row_words)
+        and not c.is_encounter_id
+        and c.nulls == 0
+        and c.distinct == rows
+        and rows > 1
+    ]
+    return found[0] if len(found) == 1 else None
 
 
 def build_context(
@@ -366,6 +437,13 @@ def build_context(
                 is_sequence=col.name in sequences,
             )
         )
+    if key is None and (row_key := row_person_key(columns, rows, notes)) is not None:
+        # One row per person, named by its own role ("infant_id", unique on every row): that
+        # column is the person key, so patients are the rows; another role's ID that repeats
+        # ("mother_id") stays a column to group or count by.
+        key = row_key
+        columns = [dataclasses.replace(c, is_patient_id=True) if c.name == key else c for c in columns]
+        logger.info("model_query_row_person_key", column=key)
     patients = next((c.distinct for c in columns if c.is_patient_id), None)
     logger.info("model_query_context_built", columns=len(columns), rows=rows, duplicate_rows=rows - distinct_rows)
     return DatasetContext(

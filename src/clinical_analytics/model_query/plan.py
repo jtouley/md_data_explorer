@@ -390,6 +390,18 @@ def _bare_column(text: str | None, context: DatasetContext) -> ColumnInfo | None
     return context.column(text.strip().strip('"`'))
 
 
+def _only_numeric_column(text: str | None, context: DatasetContext) -> ColumnInfo | None:
+    """The one number column an expression reads ("CASE WHEN age < 40 THEN ... END"), if it reads one."""
+    if not text or not text.strip():
+        return None
+    try:
+        names = _columns_of(resolve_columns(_parse_expression(text.strip(), "group_by"), context))
+    except PlanError:
+        return None
+    column = context.column(next(iter(names))) if len(names) == 1 else None
+    return column if column is not None and column.numeric else None
+
+
 def _condition(text: str | None, what: str, context: DatasetContext) -> exp.Expr | None:
     """A checked row condition, or None for no text.
 
@@ -551,6 +563,12 @@ class Compiled:
     # A summary over one value per patient on visit rows: how many patients have more than one
     # value (then "each visit" and "each patient" differ, and the question must say which).
     per_patient_varies_sql: str | None = None
+    # A count of patients by a column whose value changes between a patient's visits: how many
+    # patients have more than one value (then a patient is in more than one group, and the
+    # question must say which value counts: any, the first or the last).
+    group_varies_sql: str | None = None
+    # The summarised value is a difference of two columns (a change from one time to another).
+    change: bool = False
     # The dictionary's labels of the group column's codes, shown instead of the codes.
     group_labels: tuple[tuple[str, str], ...] = ()
     # The limits it applies (where's AND terms, and a share's event), for the grounding check.
@@ -595,62 +613,116 @@ def _filtered(aggregate: exp.Expr, condition: exp.Expr) -> exp.Expr:
 # A number column broken down by its own values must have at most this many.
 MAX_NUMBER_GROUPS: Final = 20
 _NUM = r"(\d+(?:\.\d+)?)"
+# A unit word after a number ("40 years", "2.5 kg", "30%"), never a word that joins ranges.
+_UNIT = (
+    r"(?:\s*(?:%|(?!(?:and|or|to|through|thru|than|vs|versus|up|over|above|older|younger|more|less|fewer|"
+    r"higher|lower|greater|plus|under|below|between|at|in|of|the|with|for|were|was|is|are|who|whose|"
+    r"patients?|people)\b)[A-Za-z/]{1,12}\b(?:\s+old\b)?))?"
+)
+_UPWARD = r"(?:over|older|more|above|higher|greater|up|beyond)"
+_DOWNWARD = r"(?:under|less|fewer|younger|below|lower)"
+# (kind, pattern): each kind gives (low, high, low_inclusive, high_inclusive) from its numbers.
 _BIN_PATTERNS: Final = (
-    ("below", re.compile(rf"\b(?:under|below|less than|younger than|lower than)\s+{_NUM}|<\s*{_NUM}", re.I)),
+    # "40 to under 50", "40 up to (but) less than 50": the upper end is left out.
+    (
+        "to_under",
+        re.compile(rf"\b{_NUM}{_UNIT}\s*(?:to|-|–|up to)\s*(?:but\s+)?(?:under|below|less than|<)\s*{_NUM}", re.I),
+    ),
+    ("between", re.compile(rf"\bbetween\s+{_NUM}{_UNIT}\s+and\s+{_NUM}", re.I)),
     (
         "range",
-        re.compile(rf"\b{_NUM}\s*(?:to|-|–|through|and)\s*{_NUM}\b(?!\s*(?:or|and)\s+(?:over|older|above|more))", re.I),
+        re.compile(rf"\b{_NUM}{_UNIT}\s*(?:to|-|–|through|thru)\s*{_NUM}\b(?!{_UNIT}\s*(?:or|and)\s+{_UPWARD})", re.I),
     ),
-    ("from", re.compile(rf"\b{_NUM}\s*(?:\+|or (?:over|older|more|above)|and (?:over|older|above|up|more))", re.I)),
-    ("above", re.compile(rf"\b(?:over|above|older than|more than|greater than)\s+{_NUM}|>\s*{_NUM}", re.I)),
+    (
+        "from",
+        re.compile(rf"\b{_NUM}{_UNIT}\s*(?:\+|or\s+{_UPWARD}|and\s+{_UPWARD}|plus\b)|(?:at least|≥|>=)\s*{_NUM}", re.I),
+    ),
+    ("at_most", re.compile(rf"\b{_NUM}{_UNIT}\s*(?:or|and)\s+{_DOWNWARD}\b|(?:at most|≤|<=)\s*{_NUM}", re.I)),
+    ("below", re.compile(rf"\b(?:under|below|less than|fewer than|younger than|lower than)\s+{_NUM}|<\s*{_NUM}", re.I)),
+    ("above", re.compile(rf"\b(?:over|above|older than|more than|greater than|higher than)\s+{_NUM}|>\s*{_NUM}", re.I)),
 )
+# "75+ vs younger", "under 30 compared with everyone else": the other side of a one-range split.
+_COMPLEMENT: Final = re.compile(
+    r"\b(?:vs\.?|versus|compared (?:with|to)|against)\s+((?:those\s+|patients\s+|people\s+)?"
+    r"(?:younger|older|lower|higher|the rest|everyone else|all others|others|the others|below|above|under|over)\b)",
+    re.I,
+)
+Bin = tuple[float | None, float | None, bool, bool, str]  # low, high, low_inclusive, high_inclusive, label
 
 
-def stated_bins(question: str) -> list[tuple[float | None, float | None, bool, str]]:
-    """The numeric ranges a question lists for a breakdown ("under 40, 40 to 64, 65 and over"), as
-    (low, high, high_inclusive, label) sorted by low; empty unless at least two ranges are stated
-    and they do not overlap. A range "A to B" includes B; "under A" excludes A; "A and over"
-    includes A; "over A" excludes A."""
+def _bin_bounds(kind: str, numbers: list[float]) -> tuple[float | None, float | None, bool, bool] | None:
+    """(low, high, low_inclusive, high_inclusive) of one stated range, or None when it is not one."""
+    if kind in ("range", "between", "to_under"):
+        if len(numbers) != 2 or numbers[0] > numbers[1]:
+            return None
+        return numbers[0], numbers[1], True, kind != "to_under"
+    return {
+        "from": (numbers[0], None, True, False),
+        "above": (numbers[0], None, False, False),
+        "at_most": (None, numbers[0], False, True),
+        "below": (None, numbers[0], False, False),
+    }[kind]
+
+
+def stated_bins(question: str) -> list[Bin]:
+    """The numeric ranges a question lists for a breakdown ("under 40, 40 to under 50, 50 or
+    higher"), as (low, high, low_inclusive, high_inclusive, label) sorted by low, each labelled as the question
+    words it; empty unless at least two ranges are stated and they do not overlap.
+
+    "A to B" includes B unless the next range starts at B (then the ranges are half-open: "40 to
+    50, 50 to 60"); "A to under B" and "under A" leave the end out; "A or older", "at least A" and
+    "A+" include A; "over A" leaves A out. Values outside every stated range are in none."""
     found: list[tuple[int, float | None, float | None, bool, bool, str]] = []
     taken: list[tuple[int, int]] = []
-    for kind, pattern in (_BIN_PATTERNS[2], _BIN_PATTERNS[1], _BIN_PATTERNS[0], _BIN_PATTERNS[3]):
+    for kind, pattern in _BIN_PATTERNS:
         for m in pattern.finditer(question):
             if any(m.start() < e and s < m.end() for s, e in taken):
                 continue
-            numbers = [float(g) for g in m.groups() if g is not None]
-            label = " ".join(m.group(0).split())
-            if kind == "below":
-                found.append((m.start(), None, numbers[0], False, False, label))
-            elif kind == "range" and len(numbers) == 2 and numbers[0] <= numbers[1]:
-                found.append((m.start(), numbers[0], numbers[1], True, True, label))
-            elif kind == "from":
-                found.append((m.start(), numbers[0], None, True, False, label))
-            elif kind == "above":
-                found.append((m.start(), numbers[0], None, False, False, label))
-            else:
+            bounds = _bin_bounds(kind, [float(g) for g in m.groups() if g is not None])
+            if bounds is None:
                 continue
+            found.append((m.start(), *bounds, " ".join(m.group(0).split()).strip(" ,;")))
             taken.append((m.start(), m.end()))
+    if len(found) == 1 and (rest := _COMPLEMENT.search(question[found[0][0] :])):
+        # "75+ vs younger": one stated range and everyone else is a two-way split.
+        _at, low, high, low_inc, high_inc, label = found[0]
+        if low is not None and high is None:
+            found.append((_at + rest.start(), None, low, False, not low_inc, rest.group(1)))
+        elif low is None and high is not None:
+            found.append((_at + rest.start(), high, None, not high_inc, False, rest.group(1)))
     if len(found) < 2:
         return []
-    bins = sorted(found, key=lambda b: float("-inf") if b[1] is None else b[1])
-    for (_, _lo1, hi1, _li1, hi_inc1, _l1), (_, lo2, _hi2, lo_inc2, _hi_inc2, _l2) in zip(bins, bins[1:], strict=False):
-        if hi1 is None or lo2 is None or lo2 < hi1 or (lo2 == hi1 and hi_inc1 and lo_inc2):
-            return []  # overlapping or open in the middle: not a clean breakdown
-    return (
-        [(lo, hi, hi_inc, label) for _at, lo, hi, _lo_inc, hi_inc, label in bins]
-        if all(b[1] is not None or b[2] is not None for b in bins)
-        else []
-    )
+    ordered = sorted(found, key=lambda b: (float("-inf") if b[1] is None else b[1], b[0]))
+    bins: list[Bin] = []
+    for index, (_at, low, high, low_inc, high_inc, label) in enumerate(ordered):
+        following = ordered[index + 1] if index + 1 < len(ordered) else None
+        if following is not None:
+            next_low, next_low_inc = following[1], following[3]
+            if high is None or next_low is None or next_low < high:
+                return []  # overlapping, or open in the middle: not a clean breakdown
+            if next_low == high and high_inc and next_low_inc:
+                high_inc = False  # "40 to 50, 50 to 60": 50 is in the second range only
+            elif next_low == high and not high_inc and not next_low_inc:
+                return []  # "under 50, over 50": 50 itself is in neither, so ask rather than drop it
+        if index > 0 and low is None:
+            return []
+        bins.append((low, high, low_inc, high_inc, label))
+    return bins
 
 
-def _bins_case(value: exp.Expr, bins: list[tuple[float | None, float | None, bool, str]]) -> exp.Expr:
+def _bins_case(value: exp.Expr, bins: list[Bin]) -> exp.Expr:
     """CASE over the stated ranges, labelled as the question words them; other values are NULL
     (and so left out of the breakdown)."""
     case = exp.Case()
-    for low, high, high_inclusive, label in bins:
+    for low, high, low_inclusive, high_inclusive, label in bins:
         conditions: list[exp.Expr] = []
         if low is not None:
-            conditions.append(exp.GTE(this=value.copy(), expression=exp.Literal.number(low)))
+            bound = exp.Literal.number(low)
+            conditions.append(
+                exp.GTE(this=value.copy(), expression=bound)
+                if low_inclusive
+                else exp.GT(this=value.copy(), expression=bound)
+            )
         if high is not None:
             bound = exp.Literal.number(high)
             conditions.append(
@@ -819,6 +891,85 @@ def _share_select(
     if group_out is not None:
         projections.insert(0, exp.alias_(group_out.copy(), group_name, quoted=True))
     return _select(projections, source, outer_where, group_out)
+
+
+# Choice wording re-asked when a patient's group changes between visits (see ``group_varies_sql``).
+GROUP_EVER_PHRASE: Final = "Count a patient in every {column} they had."
+GROUP_FIRST_PHRASE: Final = "Use each patient's first {column}."
+GROUP_LAST_PHRASE: Final = "Use each patient's last {column}."
+_GROUP_EVER = re.compile(r"\bcount a patient in every \w+ they had\.", re.IGNORECASE)
+_GROUP_AT = re.compile(r"\buse each patient's (first|last) (\w+)\.", re.IGNORECASE)
+
+
+_PERIOD_WORDS: Final = frozenset(
+    {"year", "yr", "month", "week", "quarter", "period", "date", "day", "season", "era", "cohort", "wave", "time"}
+)
+
+
+def _is_period(column: ColumnInfo | None) -> bool:
+    """A column that says when (a date, a year, a study wave) or orders visits (a sequence)."""
+    if column is None:
+        return False
+    words = set(re.findall(r"[a-z]+", column.name.casefold()))
+    return _is_date(column) or column.is_sequence or bool(words & _PERIOD_WORDS)
+
+
+def _group_varies_sql(unit: Unit, base: exp.Expr, where: exp.Expr | None, group_column: str) -> str:
+    """How many patients have more than one value of the group column (within the limits)."""
+    assert unit.key is not None
+    key, column = exp.column(unit.key, quoted=True), exp.column(group_column, quoted=True)
+    inner = exp.select(key.copy()).from_(base)
+    if where is not None:
+        inner = inner.where(where.copy())
+    inner = inner.group_by(key.copy()).having(
+        exp.GT(this=exp.Count(this=exp.Distinct(expressions=[column.copy()])), expression=exp.Literal.number(1))
+    )
+    return render(exp.select(exp.alias_(exp.Count(this=exp.Star()), "n")).from_(inner.subquery("varying")))
+
+
+def _group_at_count(
+    which: str, where: exp.Expr | None, group_column: str, unit: Unit, context: DatasetContext, by: str
+) -> Compiled:
+    """Patients counted by their first or last recorded value of the group column, so each is in
+    one group.
+
+    Raises:
+        PlanError: no column orders a patient's visits.
+    """
+    assert unit.key is not None
+    order = order_column(context)
+    if order is None:
+        raise PlanError(f"Nothing orders a patient's visits here, so their {which} {group_column} is unknown.")
+    key, column = exp.column(unit.key, quoted=True), exp.column(group_column, quoted=True)
+    by_col = exp.column(order.name, quoted=True)
+    picked = exp.func("ARG_MIN" if which == "first" else "ARG_MAX", column.copy(), by_col.copy())
+    recorded = _where_all(where, column.copy().is_(exp.null()).not_(), by_col.copy().is_(exp.null()).not_())
+    inner = exp.select(key.copy(), exp.alias_(picked, group_column, quoted=True)).from_(
+        _base_table(context, dedupe=True)
+    )
+    if recorded is not None:
+        inner = inner.where(recorded)
+    inner = inner.group_by(key.copy())
+    out = exp.column(group_column, quoted=True)
+    projections = [exp.alias_(out.copy(), group_column, quoted=True), exp.alias_(exp.Count(this=exp.Star()), "count")]
+    select = _select(projections, inner.subquery("per_patient"), None, out)
+    total = _select([exp.alias_(exp.Count(this=exp.Star()), "count")], inner.subquery("per_patient"), None, None)
+    return Compiled(
+        kind="count",
+        sql=render(select, pretty=True),
+        reading=(
+            f"Counted distinct patients ({unit.key}) by their {which} recorded {group_column} "
+            f"(visits ordered by {order.name}){_where_phrase(where)}{by}."
+        ),
+        unit=unit,
+        group=group_column,
+        group_column=group_column,
+        limited=where is not None,
+        total_sql=render(total),
+        conditions=tuple(_terms(where)),
+        helper_columns=frozenset({order.name}),
+        time_op=which,
+    )
 
 
 def _varies_sql(unit: Unit, event: exp.Expr, base: exp.Expr, where: exp.Expr | None, group: exp.Expr | None) -> str:
@@ -1178,6 +1329,51 @@ def _quantified_count(
 _STATISTIC_WORDS = re.compile(r"\b(?:median|average|mean|typical)\b", re.IGNORECASE)
 
 
+# Days between one patient's dates in turn ("days between consecutive scans", "the gap between visits").
+_GAP_WORDS: Final = re.compile(
+    r"\b(?:between (?:consecutive|successive|subsequent|back-to-back|each|their|two)\b|"
+    r"between (?:\w+ ){0,2}[a-z]+s\b|gaps?\b|intervals?\b|time between)",
+    re.IGNORECASE,
+)
+
+
+def _is_date(column: ColumnInfo) -> bool:
+    return column.logical_type in ("date", "timestamp", "datetime")
+
+
+# "mean percent weight loss", "% change in score", "percentage reduction": a change relative to
+# where it started.
+_PERCENT_CHANGE: Final = re.compile(
+    r"\b(?:percent(?:age)?|pct|%)\s*(?:of\s+)?(?:\w+\s+){0,3}?(?:change|changes|loss|lost|gain|gained|reduction|"
+    r"increase|decrease|decline|drop|fall|rise|improvement|difference)\b|%\s*(?:change|loss|gain|reduction|increase|"
+    r"decrease|decline|drop|improvement)\b",
+    re.IGNORECASE,
+)
+_PERCENT_WORDS: Final = re.compile(r"(?:\bpercent|\bpct\b|%|\bperc\b|_pct|pct_|percentage)", re.IGNORECASE)
+
+
+def _check_percent_change(question: str, number: exp.Expr, context: DatasetContext) -> None:
+    """A percent change divides the change by its baseline; a difference in the measure's own
+    units (kg, points) is not one.
+
+    Raises:
+        PlanError: the question asks for a percent change and number is not one.
+    """
+    if not _PERCENT_CHANGE.search(question):
+        return
+    if isinstance(number, exp.Column):
+        column = context.column(number.name)
+        said = number.name + " " + ((column.description or "") if column is not None else "")
+        if _PERCENT_WORDS.search(said):
+            return  # a column that already holds the percent change
+    elif any(isinstance(n, exp.Div) for n in number.walk()):
+        return
+    raise PlanError(
+        "The question asks for a percent change: number must divide the change by the starting value, for "
+        "example 100.0 * (start - end) / start, using the columns that hold the start and end values."
+    )
+
+
 def _per_patient_repairs(reply: ModelReply, question: str, context: DatasetContext) -> ModelReply:
     """A breakdown by, or a summary of, the patient key is a per-patient count summarised across
     patients ("average number of visits per patient"), never a listing. A question asking for a
@@ -1186,6 +1382,17 @@ def _per_patient_repairs(reply: ModelReply, question: str, context: DatasetConte
     Raises:
         PlanError: the question asks for a per-patient value and the reply has none.
     """
+    dated = _bare_column(reply.number, context)
+    if reply.answer in ("mean", "median", "sum") and not reply.per_patient and dated is not None and _is_date(dated):
+        # A mean or median of dates is never the answer. "Days between consecutive scans" is each
+        # patient's gaps between dates; anything else is sent back.
+        if _GAP_WORDS.search(question) and context.patient_key is not None and not context.rows_are_patients:
+            return reply.model_copy(update={"per_patient": "gap_days"})
+        raise PlanError(
+            f"{dated.name} is a date: a {reply.answer} of dates is not a number of days. For days between a "
+            "patient's dates set per_patient to gap_days (consecutive dates) or span_days (first to last); "
+            "for a number column, put that column in number."
+        )
     if context.rows_are_patients or context.patient_key is None or _PER_PATIENT.search(question):
         return reply
     key = context.patient_key.casefold()
@@ -1362,7 +1569,9 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
     if len(stated_bins(question)) >= 2:
         # "by age: under 40, 40 to 64, 65 and over": the ranges are the breakdown. Range limits
         # the model wrote in where on that column spell the same ranges and are dropped.
-        binned = _bare_column(group_text, context) or next(
+        # A CASE the model wrote over one number column is replaced by the ranges as stated.
+        binned = _bare_column(group_text, context) or _only_numeric_column(group_text, context)
+        binned = binned or next(
             (
                 c
                 for t in _terms(where)
@@ -1373,6 +1582,7 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
         if binned is not None and binned.numeric:
             group_text = f'"{binned.name}"'
             where = _where_all(*[t for t in _terms(where) if _columns_of(t) != {binned.name}])
+
     group, group_name, group_column = _group(group_text, context, question)
     event: exp.Expr | None = None
     if answer == "share":
@@ -1462,6 +1672,7 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
             raise PlanError("number is a column or row expression; the app applies the summary itself.")
         if _is_predicate(number):
             raise PlanError("number must be a number column, not a condition. Put conditions in where.")
+        _check_percent_change(question, number, context)
     check_units([where, event, number], context)
     not_null = exp.Is(this=group.copy(), expression=exp.null()).not_() if group is not None else None
     full_where = _where_all(where, not_null)
@@ -1487,6 +1698,21 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
             full_where = _where_all(
                 full_where, exp.Is(this=exp.column(measured, quoted=True), expression=exp.null()).not_()
             )
+    group_varies_sql: str | None = None
+    if (
+        answer == "count"
+        and unit.key is not None
+        and unit.key == context.patient_key
+        and group_column is not None
+        and not context.rows_are_patients
+    ):
+        at = _GROUP_AT.search(question)
+        if at is not None and at.group(2).casefold() == group_column.casefold():
+            return _group_at_count(at.group(1).casefold(), where, group_column, unit, context, by)
+        # A period ("by year") counts each patient in every period they were seen: never asked.
+        timed = _is_period(context.column(group_column))
+        if not timed and not _GROUP_EVER.search(question) and not _ORDERED.search(question):
+            group_varies_sql = _group_varies_sql(unit, _base_table(context, dedupe=True), full_where, group_column)
     if answer == "count":
         base = _base_table(context, dedupe=unit.key is None)
         select = _select([*group_projection, exp.alias_(_count(unit), "count")], base, full_where, group)
@@ -1502,6 +1728,7 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
             total_sql=render(total) if total is not None else None,
             conditions=tuple(_terms(where)),
             group_expression=group is not None and group_column is None,
+            group_varies_sql=group_varies_sql,
         )
 
     if answer == "share":
@@ -1640,6 +1867,7 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
         limited=where is not None,
         conditions=tuple(_terms(where)),
         group_expression=group is not None and group_column is None,
+        change=any(isinstance(n, exp.Sub) for n in number.walk()),
     )
 
 
@@ -1670,7 +1898,36 @@ def _slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_")[:48] or "outcome"
 
 
-def compile_test(reply: ModelReply, context: DatasetContext) -> TestCall:
+def _stated_split(
+    reply: ModelReply, question: str, context: DatasetContext, test: str
+) -> tuple[ColumnInfo, list[Bin]] | None:
+    """(number column, ranges) when a test's question states ranges of a number column as its
+    groups ("aged 75+ vs younger"): the ranges are the exposure, never a limit on the rows."""
+    if test not in ("compare_groups", "odds_ratio") or not question:
+        return None
+    bins = stated_bins(question)
+    if len(bins) < 2 or (test == "odds_ratio" and len(bins) != 2):
+        return None
+    named = _bare_column(reply.group_by, context)
+    if named is None or not named.numeric:
+        try:
+            terms = _terms(_condition(reply.where, "where", context))
+        except PlanError:
+            terms = []
+        named = next(
+            (
+                c
+                for t in terms
+                if len(cols := _columns_of(t)) == 1 and (c := context.column(next(iter(cols)))) and c.numeric
+            ),
+            None,
+        )
+    if named is None or not named.numeric or named.is_sequence or named.is_patient_id:
+        return None
+    return named, bins
+
+
+def compile_test(reply: ModelReply, context: DatasetContext, question: str = "") -> TestCall:
     """The rows and variables of a statistical test. The outcome is a column, or a yes/no
     condition (``covid19_diagnosis = 'confirmed'``) read as an outcome of its own.
 
@@ -1687,7 +1944,47 @@ def compile_test(reply: ModelReply, context: DatasetContext) -> TestCall:
             raise PlanError(f"{what} must be one column name for a {test} test, got {text!r}.")
         return tree.name
 
-    group = column(reply.group_by, "group_by")
+    split = _stated_split(reply, question, context, test)
+    group: str | None
+    exposure: exp.Expr | None = None
+    group_words: str | None = None
+    if split is not None:
+        split_column, bins = split
+        ref = exp.column(split_column.name, quoted=True)
+        if test == "odds_ratio":
+            # The range named first is the exposure: 1 in it, 0 in the other, so the odds ratio
+            # reads "first range against the other" whatever the labels sort as.
+            first, other = sorted(bins, key=lambda b: question.find(b[4]) if b[4] in question else len(question))
+            exposure = (
+                exp.case()
+                .when(_bins_case(ref, [first]).is_(exp.null()).not_(), exp.Literal.number(1))
+                .when(_bins_case(ref, [other]).is_(exp.null()).not_(), exp.Literal.number(0))
+            )
+            group = _slug(f"{split_column.name} {first[4]}")
+            group_words = f"{split_column.name} {first[4]} (against {other[4]})"
+        else:
+            exposure = _bins_case(ref, bins)
+            group = f"{split_column.name}_group"
+            group_words = f"{split_column.name} ({', '.join(b[4] for b in bins)})"
+        reply = reply.model_copy(
+            update={
+                "group_by": None,
+                "where": render(w)
+                if (
+                    w := _where_all(
+                        *[
+                            t
+                            for t in _terms(_condition(reply.where, "where", context))
+                            if _columns_of(t) != {split_column.name}
+                        ]
+                    )
+                )
+                is not None
+                else None,
+            }
+        )
+    else:
+        group = column(reply.group_by, "group_by")
     if group is None and test != "survival":
         pinned = [
             listed for term in _terms(_condition(reply.where, "where", context)) if (listed := _listed_values(term))
@@ -1751,15 +2048,26 @@ def compile_test(reply: ModelReply, context: DatasetContext) -> TestCall:
         yes_no = exp.case().when(derived.copy(), exp.Literal.string("yes"))
         yes_no = yes_no.when(exp.Not(this=exp.paren(derived.copy())), exp.Literal.string("no"))
         selected.append(exp.alias_(yes_no, outcome, quoted=True))
-    names = list(dict.fromkeys(n for n in (None if derived is not None else outcome, group, time, key) if n))
+    row_filter = where
+    if exposure is not None and group is not None:
+        selected.append(exp.alias_(exposure, group, quoted=True))
+        # Rows in neither stated range (or with no value) are in neither group.
+        row_filter = _where_all(where, exposure.copy().is_(exp.null()).not_())
+    names = list(
+        dict.fromkeys(
+            n
+            for n in (None if derived is not None else outcome, None if exposure is not None else group, time, key)
+            if n
+        )
+    )
     selected += [exp.column(n, quoted=True) for n in names]
     select = exp.select(*selected).from_(_base_table(context, dedupe=True))
-    if where is not None:
-        select = select.where(where)
+    if row_filter is not None:
+        select = select.where(row_filter)
     shown = _plain(derived) if derived is not None else outcome
     labels = {
-        "compare_groups": f"Compared {shown} between the groups of {group}",
-        "odds_ratio": f"Odds ratio of {shown} for {group} (logistic regression, unadjusted)",
+        "compare_groups": f"Compared {shown} between the groups of {group_words or group}",
+        "odds_ratio": f"Odds ratio of {shown} for {group_words or group} (logistic regression, unadjusted)",
         "correlation": f"Correlation between {shown} and {group}",
         "survival": f"Survival: time {outcome}, event {time}" + (f", by {group}" if group else ""),
     }

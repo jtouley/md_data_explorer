@@ -41,6 +41,9 @@ from clinical_analytics.model_query.grounding import (
 )
 from clinical_analytics.model_query.llm import ModelFn
 from clinical_analytics.model_query.plan import (
+    GROUP_EVER_PHRASE,
+    GROUP_FIRST_PHRASE,
+    GROUP_LAST_PHRASE,
     LISTING,
     LISTING_REASON,
     SQL,
@@ -62,7 +65,7 @@ from clinical_analytics.model_query.plan import (
     yes_no_of,
 )
 from clinical_analytics.model_query.prompt import system_prompt, user_prompt
-from clinical_analytics.model_query.units import UnitError
+from clinical_analytics.model_query.units import SHARE_OF_PHRASE, UnitError, plural, rate_unstated
 from clinical_analytics.sql import config as sql_config
 from clinical_analytics.sql.errors import SqlRefusedError
 from clinical_analytics.sql.render import render
@@ -96,6 +99,19 @@ PER_PATIENT_QUESTION: Final = (
 PER_PATIENT_CHOICES: Final = (
     ("Every visit counts", "Count every visit."),
     ("One value per patient (their average)", "Use one value per patient (their average)."),
+)
+RATE_QUESTION: Final = (
+    "The question asks for a rate without saying what it is out of. Patients have several {rows} here, so a "
+    "share of patients and a share of {rows} differ. Which do you mean?"
+)
+GROUP_VARIES_QUESTION: Final = (
+    "{n} patients have more than one {column} over their visits, so they would be counted in more than one "
+    "group. Which {column} counts?"
+)
+GROUP_VARIES_CHOICES: Final = (
+    ("Every {column} a patient had", GROUP_EVER_PHRASE),
+    ("Each patient's first {column}", GROUP_FIRST_PHRASE),
+    ("Each patient's last {column}", GROUP_LAST_PHRASE),
 )
 ROLLUP_CHOICES: Final = (
     ("Ever: true on at least one row", "{question} Count one when it was ever true (at least once)."),
@@ -157,6 +173,8 @@ def _coverage_doubts(
     values = [
         literal.name for term in compiled.conditions for literal in term.find_all(exp.Literal) if literal.is_string
     ]
+    if isinstance(compiled, Compiled) and compiled.change:
+        values.append(coverage.CHANGE_WORDS)  # the difference is the change the question names
     found = coverage.check(
         question,
         context,
@@ -269,7 +287,8 @@ def _measure_doubt(question: str, compiled: Compiled | TestCall, context: Datase
         if column is None or not column.numeric:
             continue
         candidates = coverage.measure_choice_needed(question, column, context)
-        if candidates:
+        # A value computed from every sibling (a change from the first to the last) chose them all.
+        if candidates and not set(candidates) <= compiled.columns:
             return Doubt(
                 "ambiguous",
                 feedback="",
@@ -387,7 +406,7 @@ def _asked_back(
 
 def _compile(reply: ModelReply, question: str, context: DatasetContext, fmt: ReplyFormat) -> Compiled | TestCall:
     if reply.answer in STAT_TESTS:
-        return compile_test(reply, context)
+        return compile_test(reply, context, question)
     if reply.answer == SQL and fmt == "sql":
         return compile_sql(reply, question, context)
     if reply.answer in TABULATIONS and fmt == "plan":
@@ -482,6 +501,42 @@ def answer_question(
                         "clarify",
                         reason=PER_PATIENT_QUESTION.format(n=per_patient_varies, value=compiled.value_text),
                         choices=tuple((label, f"{question.rstrip()} {words}") for label, words in PER_PATIENT_CHOICES),
+                        sql=compiled.sql,
+                        reading=compiled.reading,
+                        reply=failed_reply,
+                        attempts=attempt,
+                    )
+            if isinstance(compiled, Compiled) and compiled.kind == "share" and rate_unstated(question, context):
+                # "The readmission rate": out of patients or out of visits is the asker's call.
+                logger.info("model_query_rate_asked", attempt=attempt)
+                rows = plural(min(context.row_nouns, key=len)) if context.row_nouns else "visits"
+                return ModelAnswer(
+                    "clarify",
+                    reason=RATE_QUESTION.format(rows=rows),
+                    choices=(
+                        ("Out of patients", f"{question.rstrip()} {SHARE_OF_PHRASE.format(noun='patients')}"),
+                        (f"Out of {rows}", f"{question.rstrip()} {SHARE_OF_PHRASE.format(noun=rows)}"),
+                    ),
+                    sql=compiled.sql,
+                    reading=compiled.reading,
+                    reply=failed_reply,
+                    attempts=attempt,
+                )
+            if isinstance(compiled, Compiled) and compiled.group_varies_sql is not None and compiled.group_column:
+                with open_sandbox() as sandbox:
+                    group_varies = int(sandbox.run_model_sql(compiled.group_varies_sql).item() or 0)
+                if group_varies:
+                    # A patient whose group changes between visits would be counted in each group
+                    # they had: whether that, or their first or last value, is meant is the asker's.
+                    logger.info("model_query_group_varies_asked", attempt=attempt)
+                    column = compiled.group_column
+                    return ModelAnswer(
+                        "clarify",
+                        reason=GROUP_VARIES_QUESTION.format(n=group_varies, column=column),
+                        choices=tuple(
+                            (label.format(column=column), f"{question.rstrip()} {words.format(column=column)}")
+                            for label, words in GROUP_VARIES_CHOICES
+                        ),
                         sql=compiled.sql,
                         reading=compiled.reading,
                         reply=failed_reply,

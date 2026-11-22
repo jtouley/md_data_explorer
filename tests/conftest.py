@@ -2161,6 +2161,34 @@ def make_query_table(make_sql_catalog):
 
 
 @pytest.fixture
+def make_model_ask():
+    """Factory: ``ask(question, *replies)`` on a (catalog, context) from ``make_query_table``. The
+    model gives the replies in order (then None); returns (answer, the user prompts it was sent)."""
+    from clinical_analytics.model_query.engine import answer_question
+    from clinical_analytics.sql.sandbox import SandboxConnection
+
+    def _make(table: tuple[Any, Any]):
+        catalog, context = table
+
+        def _ask(question: str, *replies: dict[str, Any]):
+            queue = list(replies)
+            prompts: list[str] = []
+
+            def model(_system: str, user: str, _schema: dict[str, Any]) -> Any:
+                prompts.append(user)
+                return queue.pop(0) if queue else None
+
+            answer = answer_question(
+                question, context, model=model, open_sandbox=lambda: SandboxConnection(catalog), examples=[]
+            )
+            return answer, prompts
+
+        return _ask
+
+    return _make
+
+
+@pytest.fixture
 def upload_storage(tmp_path):
     """
     Create UserDatasetStorage with temp directory.
