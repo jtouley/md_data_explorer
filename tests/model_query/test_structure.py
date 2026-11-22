@@ -354,3 +354,18 @@ def test_answer_question_replyThatIsNotJson_isFedBackNotUnavailable(ask_eye):
 
     # Assert
     assert answer.status == "answered" and len(prompts) == 2
+
+
+def test_compile_plan_averageOfACountColumn_isAMeanNotAUnitQuestion(make_query_table):
+    # Arrange: "sessions" is held by therapy_sessions, which a mean reads directly
+    _catalog, context = make_query_table(tables.rehab_stays())
+
+    # Act
+    compiled = compile_plan(
+        ModelReply(answer="mean", number="therapy_sessions"),
+        "What is the average number of sessions per stay?",
+        context,
+    )
+
+    # Assert
+    assert compiled.kind == "statistic"

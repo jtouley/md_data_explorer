@@ -1215,7 +1215,12 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
     answer = reply.answer
     if answer not in TABULATIONS:
         raise PlanError(f"answer must be one of: {', '.join(TABULATIONS)}.")
-    unit = resolve_unit(question, context)
+    try:
+        unit = resolve_unit(question, context)
+    except UnitError:
+        if answer in ("count", "share"):
+            raise
+        unit = Unit(None, context.row_unit)  # a mean or median does not count the noun
     reply = _per_patient_repairs(reply, question, context)
     if reply.per_patient:
         return _per_patient_summary(reply, question, context)
