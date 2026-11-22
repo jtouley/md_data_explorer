@@ -180,6 +180,16 @@ def _tokens(text: str) -> list[str]:
     return words + joined
 
 
+def stem_word(word: str) -> str:
+    """The stem the coverage check compares words by (``_stem``)."""
+    return _stem(word)
+
+
+def word_tokens(text: str) -> list[str]:
+    """The words the coverage check reads from a text (``_tokens``)."""
+    return _tokens(text)
+
+
 @dataclass(frozen=True)
 class Link:
     """One mapped phrase: the question's words, their role, and the column they became."""

@@ -25,7 +25,7 @@ logger = structlog.get_logger()
 # Room for the table description, the examples and a retry's feedback; the server's default
 # (4096 tokens) silently cuts the start of a longer prompt, which is the table's columns.
 NUM_CTX: Final = 8192
-MAX_REPLY_TOKENS: Final = 400
+MAX_REPLY_TOKENS: Final = 600
 AVAILABILITY_TIMEOUT_S: Final = 3.0
 # (system prompt, user prompt, reply schema) -> the parsed reply object, or None when the model
 # could not be reached or did not answer with JSON in time.
@@ -76,4 +76,8 @@ def ollama_model(system: str, user: str, schema: dict[str, Any]) -> Any:
         answered=raw is not None,
         parsed=parsed is not None,
     )
+    if raw is not None and parsed is None:
+        # It answered, but not with usable JSON (cut short, or text around it): an attempt that
+        # failed and is fed back, not a model that is down.
+        return {}
     return parsed

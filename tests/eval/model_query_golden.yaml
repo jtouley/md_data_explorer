@@ -263,8 +263,8 @@ samples:
     table: visits
     question: In patients 65 and older, what share have ever been screened, by region?
     replies:
+      # "In patients 65 and older" names the age term (population); "screened" the event
       - {thought: "Share screened among 65+.", answer: share, where: "age_years >= 65 AND screened = 'yes'", group_by: region, numerator: null, number: null, outcome: null}
-      - {thought: "Share screened among 65+.", answer: share, where: "age_years >= 65", group_by: region, numerator: "screened = 'yes'", number: null, outcome: null}
     reading: "Share of distinct patients (patient_id) with screened = 'yes' where age_years >= 65, by region, among those with it recorded. One patient counts when at least one of its rows meets it."
     sql: ['"age_years" >= 65', "BOOL_OR"]
     expect: {analysis_type: rate}

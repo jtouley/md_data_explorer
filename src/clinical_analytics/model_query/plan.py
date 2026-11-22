@@ -28,6 +28,7 @@ from sqlglot.errors import SqlglotError
 
 from clinical_analytics.core import counting_unit
 from clinical_analytics.model_query.context import ColumnInfo, DatasetContext
+from clinical_analytics.model_query.coverage import column_words, stem_word, word_tokens
 from clinical_analytics.model_query.grounding import missing_choice
 from clinical_analytics.model_query.perpatient import (
     PER_PATIENT_KINDS,
@@ -940,6 +941,36 @@ def _latest_period(question: str, context: DatasetContext) -> exp.Expr | None:
     return exp.EQ(this=trunc, expression=latest.subquery())
 
 
+_AMONG = re.compile(
+    r"^(?P<population>.*?\b(?:among|of those|of the|in)\b.*?)"
+    r"\b(?P<rest>what (?:share|proportion|percent(?:age)?|fraction)|how many)\b(?P<event>.*)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _among_split(question: str, where: exp.Expr, context: DatasetContext) -> tuple[exp.Expr, exp.Expr] | None:
+    """(population, event) from a where of several terms, when the question's "among ..." part
+    names the columns of some terms and its "what share ..." part those of the others; else None."""
+    found = _AMONG.match(question)
+    terms = _terms(where)
+    if found is None or len(terms) < 2:
+        return None
+
+    def named(text: str, term: exp.Expr) -> bool:
+        stems = {stem_word(w) for w in word_tokens(text)}
+        columns = [c for name in _columns_of(term) if (c := context.column(name)) is not None]
+        return any(column_words(c) & stems for c in columns)
+
+    population = [t for t in terms if named(found.group("population"), t) and not named(found.group("event"), t)]
+    event = [t for t in terms if named(found.group("event"), t) and not named(found.group("population"), t)]
+    if not population or not event or len(population) + len(event) != len(terms):
+        return None
+    kept, counted = _where_all(*population), _where_all(*event)
+    if kept is None or counted is None:
+        return None
+    return kept, counted
+
+
 def _tests_no_value(term: exp.Expr, context: DatasetContext) -> bool:
     """Whether a condition tests a yes/no column for its "no" value."""
     node = term
@@ -1030,12 +1061,16 @@ def _per_patient_repairs(reply: ModelReply, question: str, context: DatasetConte
     Raises:
         PlanError: the question asks for a per-patient value and the reply has none.
     """
-    if reply.per_patient or context.rows_are_patients or context.patient_key is None or _PER_PATIENT.search(question):
+    if context.rows_are_patients or context.patient_key is None or _PER_PATIENT.search(question):
         return reply
     key = context.patient_key.casefold()
 
     def names_key(text: str | None) -> bool:
         return bool(text) and str(text).strip().strip('"`').casefold() == key
+
+    if reply.per_patient:
+        # "per patient" said as a breakdown by the patient key: the summary is across patients.
+        return reply.model_copy(update={"group_by": None}) if names_key(reply.group_by) else reply
 
     asks_summary = bool(_STATISTIC_WORDS.search(question))
     if (names_key(reply.group_by) or names_key(reply.number)) and asks_summary:
@@ -1194,6 +1229,10 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
             answer = "count"
             if group is None:
                 group, group_name, group_column = _group(f'"{numerator}"', context)
+        elif numerator is None and where is not None and (split := _among_split(question, where, context)):
+            # "Among graded visits, what share had drops": the terms the "among" part names keep
+            # the population; the rest is what is counted.
+            where, event = split
         elif numerator is None and where is not None and len(_terms(where)) > 1:
             # Several conditions and no numerator: which one is counted and which keep the
             # population ("in patients over 50") is the model's to say, never guessed here.

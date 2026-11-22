@@ -322,3 +322,35 @@ def test_answer_question_mostRecentMonthInTheData_limitsToThatMonth(ask_eye):
     # Assert
     assert answer.status == "answered", answer.reason
     assert answer.analysis["total_count"] == 1
+
+
+def test_answer_question_perPatientSaidAsABreakdownByThePatientKey_isAcrossPatients(ask_eye):
+    # Act: last pressures 19, 17, 19, 19
+    answer, _prompts = ask_eye(
+        "What is each patient's last pressure, on average?",
+        _plan("mean", per_patient="last", number="iop_mmhg", group_by="pat_no", order_by="visit_date"),
+    )
+
+    # Assert
+    assert answer.status == "answered", answer.reason
+    assert answer.analysis["mean"] == pytest.approx(18.5)
+
+
+def test_answer_question_amongSubsetWithoutNumerator_splitsPopulationAndEvent(ask_eye):
+    # Act: "among graded visits" keeps the population; "had drops in use" is counted
+    answer, _prompts = ask_eye(
+        "Among graded visits, what share had drops in use?",
+        _plan("share", where="grade IS NOT NULL AND drops_used = 'Y'"),
+    )
+
+    # Assert
+    assert answer.status == "answered", answer.reason
+    assert answer.analysis["proportion"] == pytest.approx(5 / 7)
+
+
+def test_answer_question_replyThatIsNotJson_isFedBackNotUnavailable(ask_eye):
+    # Act: an empty object is what the model call gives for text it could not parse
+    answer, prompts = ask_eye("How many visits are there?", {}, _plan("count"))
+
+    # Assert
+    assert answer.status == "answered" and len(prompts) == 2
