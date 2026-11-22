@@ -385,3 +385,58 @@ def test_answer_question_countWithAPerPatientField_isStillACountOfPatients(ask_e
     # Assert: never turned into a mean of rows per patient
     assert answer.status == "answered", answer.reason
     assert answer.analysis["total_count"] == expected
+
+
+@pytest.fixture
+def ask_speech(make_query_table):
+    """Factory: answer ``question`` on the speech therapy sessions with the replies given."""
+    catalog, context = make_query_table(tables.speech_sessions(), id_column="patient_no")
+
+    def _ask(question: str, *replies: dict[str, Any]):
+        queue = list(replies)
+        answer = answer_question(
+            question,
+            context,
+            model=lambda *_args: queue.pop(0) if queue else None,
+            open_sandbox=lambda: SandboxConnection(catalog),
+            examples=[],
+        )
+        return answer, context
+
+    return _ask
+
+
+def test_build_context_counterNamedColumnStartingAtOne_isASequence(ask_speech):
+    # Act
+    _answer, context = ask_speech("How many sessions?", _plan("count"))
+
+    # Assert: session_number is not named as an ID, but numbers each patient's sessions
+    column = context.column("session_number")
+    assert column is not None and column.is_sequence
+
+
+def test_answer_question_atLeastNSessionsWrittenOnTheCounter_countsPatientsRows(ask_speech):
+    # Act: "session_number >= 3" restates "at least three sessions"
+    answer, _context = ask_speech(
+        "How many patients attended at least three sessions?", _plan("count", where="session_number >= 3")
+    )
+
+    # Assert: S1 (4) and S3 (3)
+    assert answer.status == "answered", answer.reason
+    assert answer.analysis["total_count"] == 2
+
+
+@pytest.mark.parametrize("where", ["homework = 'done'", "homework = 'not done'"])
+def test_answer_question_alwaysOnANegatedPairColumn_isAFlag(ask_speech, where):
+    # Act: only S2 did the homework every session; "not done" is the flag's other value
+    question = (
+        "How many patients always did their homework?"
+        if "not" not in where
+        else ("How many patients never did their homework?")
+    )
+    # A count of 0 is checked once with the model, so the reply is given twice.
+    answer, _context = ask_speech(question, _plan("count", where=where), _plan("count", where=where))
+
+    # Assert
+    assert answer.status == "answered", answer.reason
+    assert answer.analysis["total_count"] == (1 if "not" not in where else 0)

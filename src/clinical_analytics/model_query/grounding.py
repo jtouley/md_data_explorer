@@ -329,7 +329,9 @@ def limit_backed(term: exp.Expr, question: _Question, context: DatasetContext) -
     labelled = [label for lit in literals for column in columns if (label := column.label_of(lit.name)) is not None]
     if labelled and any(_value_said(question, label) for label in labelled):
         return True
-    texts = [lit.name for lit in literals if lit.is_string and lit.name.strip().casefold() not in _YES_NO]
+    # A value of a two-valued "X" / "not X" column is a yes/no test in words, like yes or no.
+    flag_words = {str(v).strip().casefold() for c in columns if (pair := c.negated_pair()) for v in pair}
+    texts = [lit.name for lit in literals if lit.is_string and lit.name.strip().casefold() not in _YES_NO | flag_words]
     numbers = [lit for lit in literals if not lit.is_string and lit.name.strip() not in ("0", "1")]
     if texts:
         return all(_value_said(question, text) for text in texts)

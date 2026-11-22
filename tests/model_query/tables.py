@@ -181,3 +181,14 @@ def rehab_stays() -> pl.DataFrame:
         ("R4", 2023, "home", 8), ("R5", 2023, "hospital", 5), ("R6", 2024, "home", 12),
     ]  # fmt: skip
     return pl.DataFrame(rows, schema=["patient_id", "stay_year", "discharge_to", "therapy_sessions"], orient="row")
+
+
+def speech_sessions() -> pl.DataFrame:
+    """A made-up speech therapy service: one row per session, 3 patients with 2 to 4 sessions.
+    ``session_number`` counts each patient's sessions from 1; ``homework`` is done / not done."""
+    rows = [
+        ("S1", 1, "not done", 40.0), ("S1", 2, "done", 55.0), ("S1", 3, "done", 60.0), ("S1", 4, "done", 70.0),
+        ("S2", 1, "done", 50.0), ("S2", 2, "done", 65.0),
+        ("S3", 1, "not done", 30.0), ("S3", 2, "not done", 35.0), ("S3", 3, "done", 45.0),
+    ]  # fmt: skip
+    return pl.DataFrame(rows, schema=["patient_no", "session_number", "homework", "fluency_score"], orient="row")

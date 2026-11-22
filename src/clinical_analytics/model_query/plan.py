@@ -255,7 +255,10 @@ def yes_no_of(column: ColumnInfo) -> dict[bool, Any]:
     if found:
         return found
     yes, no = column.code_for("yes"), column.code_for("no")
-    return {True: yes, False: no} if yes is not None and no is not None else {}
+    if yes is not None and no is not None:
+        return {True: yes, False: no}
+    pair = column.negated_pair()
+    return {True: pair[0], False: pair[1]} if pair is not None else {}
 
 
 def _fixed_literal(column: ColumnInfo, literal: exp.Expr) -> exp.Expr:

@@ -64,6 +64,18 @@ class ColumnInfo:
     def label_of(self, value: Any) -> str | None:
         return dict(self.labels).get(str(value))
 
+    def negated_pair(self) -> tuple[Any, Any] | None:
+        """(the value, its negation) when the column holds exactly two text values and one is the
+        other negated ("done" / "not done", "smoker" / "non-smoker"): a yes/no flag in words."""
+        if self.values is None or len(self.values) != 2:
+            return None
+        a, b = (str(v).strip().casefold() for v in self.values)
+        for pos, neg, (pv, nv) in ((a, b, self.values), (b, a, tuple(reversed(self.values)))):
+            for prefix in ("not ", "no ", "non-", "non ", "non", "un", "in"):
+                if neg == prefix + pos:
+                    return pv, nv
+        return None
+
     def code_for(self, label: str) -> Any:
         """The stored value whose dictionary label is ``label`` (case-insensitive), or None."""
         wanted = label.strip().casefold()
@@ -216,6 +228,12 @@ def dictionary_descriptions(doc: str | None, columns: list[str]) -> tuple[dict[s
     return {k: v for k, v in descriptions.items() if v}, _clip(" ".join(notes), MAX_NOTES_CHARS)
 
 
+# Name words of a counter column: a number per patient (session_number, cycle, visit_seq).
+_COUNTER_WORDS: Final = frozenset(
+    {"seq", "sequence", "number", "no", "num", "nr", "index", "idx", "order", "visit", "session", "cycle", "occasion"}
+)
+
+
 def build_context(
     sandbox: SandboxConnection,
     catalog: SqlCatalog,
@@ -246,8 +264,20 @@ def build_context(
     # A candidate whose values repeat across patients but never within one numbers the visits of
     # each patient (visit_no = 1..6): it is a sequence, not a visit's ID.
     sequences: set[str] = set()
+    # Also any whole-number column named like a counter ("session_number", "cycle", "seq") that
+    # starts at 0 or 1: the same structural test decides.
+    counters = [
+        col.name
+        for i, col in enumerate(catalog.columns)
+        if col.logical_type == "integer"
+        and col.name != key
+        and col.name not in candidates
+        and set(re.findall(r"[a-z]+", col.name.casefold())) & _COUNTER_WORDS
+        and profile.get(f"lo{i}") is not None
+        and int(profile[f"lo{i}"]) in (0, 1)
+    ]
     if key is not None:
-        for name in candidates:
+        for name in [*candidates, *counters]:
             ref, pid = exp.column(name, quoted=True), exp.column(key, quoted=True)
             probe = exp.select(
                 exp.alias_(exp.Count(this=exp.Distinct(expressions=[ref.copy()])), "d"),
