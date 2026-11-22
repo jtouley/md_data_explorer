@@ -33,7 +33,7 @@ import structlog
 
 from clinical_analytics.core import embeddings
 from clinical_analytics.model_query.context import ColumnInfo, DatasetContext, column_search_texts
-from clinical_analytics.model_query.units import EVENT_NOUNS, PATIENT_NOUNS
+from clinical_analytics.model_query.units import EVENT_NOUNS
 
 logger = structlog.get_logger()
 
@@ -41,6 +41,9 @@ logger = structlog.get_logger()
 # the column is among the closest few of the table for that phrase.
 LINK_SIMILARITY: Final = 0.45
 LINK_TOP: Final = 3
+# A yes/no column linked by similarity alone needs this much (a topic word must never become a
+# yes/no filter on a weak link).
+STRONG_SIMILARITY: Final = 0.6
 # A column offered as what an unmatched word might mean must be at least this close to it.
 CANDIDATE_SIMILARITY: Final = 0.35
 # Re-asked choice wording (a choice the user made names the column, or leaves a word out).
@@ -89,7 +92,14 @@ STRUCTURAL: Final = frozenset(
     received receive receives receiving underwent undergo undergoes underwent having gave given giving
     folks folk ones end ended ending turned turn up down out off
     run ran runs perform performed performing conduct conducted done saw
+    scored score scores enrolled enrol enroll graded measured assessed evaluated examined collected
+    reported observed followed sampled seen visited attended registered entered logged noted listed
+    baseline first last latest final initial recent previous prior earlier later most least
+    non nonm without among amongst whose who whom someone anybody
+    kids kid patient patients people person persons subject subjects participant participants
+    level levels value values reading readings result results status measure measures
     above below beyond exceeding exceed exceeds least through thru equal equals exactly approximately about
+    consecutive successive between next since until per same days day weeks months
     unique distinct separate individual
     keep kept keeping own include includes including included exclude excluding excluded report separately
     check checked checking meaning means mean
@@ -140,9 +150,16 @@ _ABBREVIATIONS: Final = {
 
 
 def _stem(word: str) -> str:
-    for suffix in ("ies", "ing", "ed", "es", "s"):
+    """A crude stem shared by question words and column words ("scored"/"score", "adherent"/
+    "adherence", "enrolled"/"enrollment" meet)."""
+    for suffix in ("ments", "ment", "ences", "ence", "ances", "ance", "ent", "ant", "ies", "ing", "ed", "es", "s"):
         if word.endswith(suffix) and len(word) - len(suffix) >= 4:
-            return word[: -len(suffix)] + ("y" if suffix == "ies" else "")
+            word = word[: -len(suffix)] + ("y" if suffix == "ies" else "")
+            break
+    if word.endswith("e") and len(word) >= 5:
+        word = word[:-1]
+    if len(word) >= 5 and word[-1] == word[-2] and word[-1] not in "aeiou":
+        word = word[:-1]  # "enroll" / "enrol"
     return word
 
 
@@ -188,7 +205,13 @@ def column_words(column: ColumnInfo) -> set[str]:
     raw = set(_tokens(column.name.replace("_", " ")))
     for part in list(raw):
         raw.update(_ABBREVIATIONS.get(part, ()))
-    raw.update(_tokens(column.description or ""))
+    # A description's general words ("at the visit", "of the patient", "number") say nothing
+    # about which column a question means; only its other words name the column.
+    raw.update(
+        w
+        for w in _tokens(column.description or "")
+        if w not in STRUCTURAL and w not in EVENT_NOUNS and w not in _PERSON_NOUNS
+    )
     if column.values is not None and column.text:
         for value in column.values:
             raw.update(_tokens(str(value)))
@@ -227,6 +250,11 @@ def content_chunks(question: str, context: DatasetContext) -> list[tuple[str, ..
     text = _LEAVE_OUT.sub(" , ", text)
     left_out = {_stem(w) for found in _LEAVE_OUT.findall(question) for w in _tokens(found)}
     topic = topic_words(context)
+    limiting = limiting_nouns(context)
+    # "How many <X> visits are in this file": the file is about X. A word that names no column of
+    # the table there restates the file's topic and sets no limit.
+    whole_file = bool(_WHOLE_FILE.search(question))
+    named = set().union(*(column_words(c) for c in context.columns)) if whole_file and context.columns else set()
     chunks: list[tuple[str, ...]] = []
     current: list[str] = []
     for word in re.findall(r"[a-z]+|\d+(?:\.\d+)?|[^\sa-z0-9]", text.casefold()):
@@ -234,11 +262,12 @@ def content_chunks(question: str, context: DatasetContext) -> list[tuple[str, ..
         breaks = (
             not re.fullmatch(r"[a-z]+", word)
             or len(word) < 2
-            or word in STRUCTURAL
-            or word in PATIENT_NOUNS - _LIMITING_NOUNS
+            or (word in STRUCTURAL and not (word in _LIMITING_NOUNS and word in limiting))
+            or (word in _PERSON_NOUNS and word not in limiting)
             or word in EVENT_NOUNS
             or stem in topic
             or stem in left_out
+            or (whole_file and stem not in named)
         )
         if breaks:
             if current:
@@ -255,11 +284,47 @@ def content_chunks(question: str, context: DatasetContext) -> list[tuple[str, ..
     return unique
 
 
-# Patient nouns that also limit the patients (they must reach a filter).
+# Patient nouns that also limit the patients (they must reach a filter), by the concept that
+# tells them apart: they limit only when the table has a column for it that is not already the
+# same for everyone (a table of children has nothing to filter for "kids").
 _LIMITING_NOUNS: Final = frozenset(
-    {"women", "woman", "men", "man", "children", "child", "kids", "adults", "adult", "infants", "infant", "mothers",
-     "newborns", "babies", "girls", "boys", "smokers", "survivors"}
+    {"women", "woman", "men", "man", "children", "child", "kids", "kid", "adults", "adult", "infants", "infant",
+     "girls", "boys", "smokers"}
 )  # fmt: skip
+_SEX_NOUNS: Final = frozenset({"women", "woman", "men", "man", "girls", "boys"})
+# Nouns for people in general, or for a sex or age group (those limit only where the table can
+# tell them apart). Any other person noun ("smokers", "survivors") names a concept to find.
+_PERSON_NOUNS: Final = frozenset(
+    {"patient", "patients", "pt", "pts", "people", "person", "persons", "individual", "individuals", "participant",
+     "participants", "subject", "subjects", "member", "members", "resident", "residents", "folks", "enrollees",
+     "women", "woman", "men", "man", "children", "child", "kids", "kid", "adults", "adult", "infants", "infant",
+     "girls", "boys"}
+)  # fmt: skip
+_CHILD_NOUNS: Final = frozenset({"children", "child", "kids", "kid", "infants", "infant", "girls", "boys"})
+_ADULT_NOUNS: Final = frozenset({"adults", "adult"})
+_WHOLE_FILE: Final = re.compile(
+    r"\b(?:in|of) (?:this|the|our|my) (?:file|registry|dataset|data set|data|database|cohort|spreadsheet|table|"
+    r"extract|study)\b|\bin total\b|\baltogether\b|\bin all\b",
+    re.IGNORECASE,
+)
+
+
+def limiting_nouns(context: DatasetContext) -> frozenset[str]:
+    """The person nouns that limit on this table: a sex noun when a sex column holds both sexes,
+    a child or adult noun when an age column spans both sides of 18."""
+    found: set[str] = set()
+    for column in context.columns:
+        words = set(_tokens(column.name.replace("_", " ")))
+        labels = {label.casefold() for _code, label in column.labels}
+        values = {str(v).casefold() for v in column.values or ()} | labels
+        if words & {"sex", "gender"} and len(values) >= 2:
+            found |= _SEX_NOUNS
+        if "age" in words and column.numeric and column.low is not None and column.high is not None:
+            if float(column.low) < 18 <= float(column.high):
+                found |= _CHILD_NOUNS | _ADULT_NOUNS
+    if any("smok" in c.name.casefold() or "tobacco" in c.name.casefold() for c in context.columns):
+        found.add("smokers")
+    return frozenset(found & _LIMITING_NOUNS)
 
 
 @dataclass(frozen=True)
@@ -294,9 +359,16 @@ def _similar(phrases: Sequence[str], context: DatasetContext) -> dict[str, list[
     return out
 
 
-def _verified(phrase: str, column: str, ranked: dict[str, list[tuple[str, float]]]) -> bool:
+def _verified(phrase: str, column: str, ranked: dict[str, list[tuple[str, float]]], threshold: float = 0.0) -> bool:
     best = ranked.get(phrase, [])[:LINK_TOP]
-    return any(name.casefold() == column.casefold() and score >= LINK_SIMILARITY for name, score in best)
+    floor = threshold or LINK_SIMILARITY
+    return any(name.casefold() == column.casefold() and score >= floor for name, score in best)
+
+
+def _is_flag_column(context: DatasetContext, name: str) -> bool:
+    """A column holding two values (yes/no, 0/1, Y/N)."""
+    column = context.column(name)
+    return column is not None and column.values is not None and len(column.values) <= 2
 
 
 def closest_columns(phrase: str, context: DatasetContext, n: int = 2) -> list[str]:
@@ -346,8 +418,14 @@ def check(
         for link in mapped
         if any(c.name.casefold() == (link.column or "").casefold() for c in used_columns)
         and (
-            _verified(link.phrase, link.column or "", ranked)
-            or {_stem(w) for w in _tokens(link.phrase)} & vocab.get(link.column or "", set())
+            {_stem(w) for w in _tokens(link.phrase)} & vocab.get(link.column or "", set())
+            or (
+                _verified(link.phrase, link.column or "", ranked)
+                and (
+                    not _is_flag_column(context, link.column or "")
+                    or _verified(link.phrase, link.column or "", ranked, STRONG_SIMILARITY)
+                )
+            )
         )
     ]
     reached_by_link = {_stem(w) for link in verified_links for w in _tokens(link.phrase)}
@@ -359,7 +437,22 @@ def check(
             return True
         return any(stem == word and name in used_names for stem, name in means)
 
-    uncovered = [" ".join(chunk) for chunk in chunks if not any(reaches(_stem(word)) for word in chunk)]
+    open_chunks = [chunk for chunk in chunks if not any(reaches(_stem(word)) for word in chunk)]
+    # A run no word of which names a used column can still be close to one ("sat" and an
+    # oxygen-saturation column): accepted when the column is among the closest few for it. A yes/no
+    # column is only accepted on a strong link (a weak one is how a topic word becomes a filter).
+    near = _similar([" ".join(chunk) for chunk in open_chunks], context)
+    uncovered = []
+    for chunk in open_chunks:
+        text = " ".join(chunk)
+        best = near.get(text, [])[:LINK_TOP]
+        close = any(
+            name.casefold() in used_names
+            and score >= (STRONG_SIMILARITY if _is_flag_column(context, name) else LINK_SIMILARITY)
+            for name, score in best
+        )
+        if not close:
+            uncovered.append(text)
     question_stems = {_stem(w) for w in _tokens(question)}
     unlinked = []
     for column in used_columns:

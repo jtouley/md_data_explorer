@@ -29,7 +29,17 @@ from sqlglot.errors import SqlglotError
 from clinical_analytics.core import counting_unit
 from clinical_analytics.model_query.context import ColumnInfo, DatasetContext
 from clinical_analytics.model_query.grounding import missing_choice
-from clinical_analytics.model_query.units import Unit, head_noun, resolve_unit
+from clinical_analytics.model_query.perpatient import (
+    PER_PATIENT_KINDS,
+    QuantifierError,
+    asks_per_patient,
+    date_columns,
+    order_column,
+    quantifier,
+    rollable,
+    rolled_up,
+)
+from clinical_analytics.model_query.units import Unit, UnitError, head_noun, resolve_unit
 from clinical_analytics.sql.render import render
 
 ReplyFormat: TypeAlias = Literal["plan", "sql"]
@@ -103,6 +113,10 @@ class ModelReply(BaseModel):
     sql: str | None = None
     # Each phrase of the question and what it became (``coverage``): {phrase, role, column}.
     mapping: list[dict[str, Any]] | None = None
+    # A value per patient summarised across patients (``perpatient``): count | first | last |
+    # span_days | gap_days; and the column that orders a patient's visits, when the table has several.
+    per_patient: str | None = None
+    order_by: str | None = None
 
 
 _PLAN_FIELDS: Final = ("where", "group_by", "numerator", "number", "outcome")
@@ -130,6 +144,9 @@ def reply_schema(fmt: ReplyFormat) -> dict[str, Any]:
     if fmt == "sql":
         properties["sql"] = text
     properties |= dict.fromkeys(_PLAN_FIELDS, text)
+    if fmt == "plan":
+        properties["per_patient"] = {"type": ["string", "null"], "enum": [*PER_PATIENT_KINDS, None]}
+        properties["order_by"] = text
     return {"type": "object", "properties": properties, "required": list(properties)}
 
 
@@ -308,6 +325,11 @@ def fix_literals(tree: exp.Expr, context: DatasetContext) -> exp.Expr:
     def fix(node: exp.Expr) -> exp.Expr:
         if isinstance(node, exp.EQ | exp.NEQ):
             left, right = node.this, node.expression
+            column = spec(left)
+            if column is not None and isinstance(right, exp.Literal) and right.is_string and not right.name.strip():
+                # col = '' / col != '' on any column: "recorded or not", never a value to match.
+                missing = exp.Is(this=left.copy(), expression=exp.null())
+                return missing if isinstance(node, exp.EQ) else missing.not_()
             if (column := spec(left)) is not None and is_value(right):
                 node.set("expression", _fixed_literal(column, right))
             elif (column := spec(right)) is not None and is_value(left):
@@ -515,6 +537,8 @@ class Compiled:
     # all (then "ever" and "always" give different shares, and the question must say which).
     varies_sql: str | None = None
     rollup: str | None = None  # any | all, for such a share
+    # Columns the compiler itself reads to order a patient's visits: not the question's.
+    helper_columns: frozenset[str] = frozenset()
     # A share whose condition reads two or more columns: how many units have it unknown (a value
     # missing), when the question did not say what a missing value means.
     missing_sql: str | None = None
@@ -562,8 +586,15 @@ def _filtered(aggregate: exp.Expr, condition: exp.Expr) -> exp.Expr:
     return exp.Filter(this=aggregate, expression=exp.Where(this=condition))
 
 
-def _group(text: str | None, context: DatasetContext) -> tuple[exp.Expr | None, str | None, str | None]:
-    """(group expression, output name, table column when the group is one column)."""
+_YEAR_WORDS = re.compile(r"\b(?:year|years|yearly|annual|annually|calendar year)\b", re.IGNORECASE)
+_MONTH_WORDS = re.compile(r"\b(?:month|months|monthly)\b", re.IGNORECASE)
+
+
+def _group(
+    text: str | None, context: DatasetContext, question: str = ""
+) -> tuple[exp.Expr | None, str | None, str | None]:
+    """(group expression, output name, table column when the group is one column). A date column
+    is grouped by its year or month, as the question says; never by each date."""
     if not text or not text.strip():
         return None, None, None
     tree = resolve_columns(_parse_expression(text.strip(), "group_by"), context)
@@ -573,6 +604,15 @@ def _group(text: str | None, context: DatasetContext) -> tuple[exp.Expr | None, 
         column = context.column(tree.name)
         if column is not None and column.is_patient_id:
             raise PlanError(LISTING_REASON)
+        if column is not None and column.logical_type in ("date", "timestamp", "datetime"):
+            if _MONTH_WORDS.search(question) and not _YEAR_WORDS.search(question):
+                month = exp.func("STRFTIME", tree.copy(), exp.Literal.string("%Y-%m"))
+                return month, f"{column.name}_month", None
+            if _YEAR_WORDS.search(question):
+                return exp.func("YEAR", tree.copy()), f"{column.name}_year", None
+            raise PlanError(
+                f"group_by {column.name} is a date: group by YEAR({column.name}) or by month, as the question says."
+            )
         return tree, tree.name, tree.name
     if any(isinstance(n, _AGGREGATES) for n in tree.walk()):
         raise PlanError("group_by is a column or a row expression, not a summary.")
@@ -670,7 +710,9 @@ def _share_select(
     group_out: exp.Expr | None = group
     if unit.key is not None:
         key = exp.column(unit.key, quoted=True)
-        roll = exp.func("BOOL_AND" if rollup == "all" else "BOOL_OR", event.copy())
+        roll: exp.Expr = exp.func("BOOL_AND" if rollup == "all" else "BOOL_OR", event.copy())
+        if rollup == "none":
+            roll = exp.Not(this=exp.paren(roll))
         inner_cols: list[exp.Expr] = [key.copy(), exp.alias_(roll, "met")]
         if group is not None:
             inner_cols.insert(0, exp.alias_(group.copy(), group_name, quoted=True))
@@ -736,12 +778,251 @@ def _sql_columns(sql: str, context: DatasetContext) -> frozenset[str]:
     return frozenset(c.name for c in context.columns if c.name.casefold() in found)
 
 
+def _tests_no_value(term: exp.Expr, context: DatasetContext) -> bool:
+    """Whether a condition tests a yes/no column for its "no" value."""
+    node = term
+    while isinstance(node, exp.Paren):
+        node = node.this
+    if not isinstance(node, exp.EQ) or not isinstance(node.this, exp.Column):
+        return False
+    column = context.column(node.this.name)
+    flags = yes_no_of(column) if column is not None else {}
+    literal = node.expression
+    if not flags or not isinstance(literal, exp.Literal | exp.Boolean):
+        return False
+    said = literal.this if isinstance(literal, exp.Boolean) else literal.name
+    return str(said).casefold() == str(flags[False]).casefold()
+
+
+def _quantified_count(
+    question: str,
+    where: exp.Expr | None,
+    group: exp.Expr | None,
+    group_name: str | None,
+    group_column: str | None,
+    unit: Unit,
+    context: DatasetContext,
+    by: str,
+) -> Compiled | None:
+    """Patients counted by a per-patient quantifier ("never", "on every visit"), or None when the
+    question names none (then a row condition counts patients with it on any row).
+
+    Raises:
+        UnitError: the quantifier cannot be read without a guess.
+    """
+    try:
+        how = quantifier(question)
+    except QuantifierError as e:
+        raise UnitError(str(e)) from e
+    if how in (None, "ever") or context.rows_are_patients or unit.key is None:
+        return None
+    terms = _terms(where)
+    rolled_terms = [t for t in terms if rollable(t, context, lambda c: bool(yes_no_of(c)))]
+    if not rolled_terms:
+        return None
+    try:
+        aggregates = [rolled_up(t, how, question, lambda t: _tests_no_value(t, context)) for t in rolled_terms]
+    except QuantifierError as e:
+        raise UnitError(str(e)) from e
+    kept = _where_all(*[t for t in terms if t not in rolled_terms])
+    key = exp.column(unit.key, quoted=True)
+    inner_cols: list[exp.Expr] = [key.copy()]
+    if group is not None:
+        inner_cols.append(exp.alias_(group.copy(), group_name or "group", quoted=True))
+    inner_cols.append(exp.alias_(exp.and_(*aggregates), "met"))
+    keyed = _where_all(kept, exp.Is(this=key.copy(), expression=exp.null()).not_())
+    if group is not None:
+        keyed = _where_all(keyed, exp.Is(this=group.copy(), expression=exp.null()).not_())
+    inner = exp.select(*inner_cols).from_(_base_table(context, dedupe=False)).where(keyed)
+    inner = inner.group_by(*[exp.Literal.number(i + 1) for i in range(len(inner_cols) - 1)])
+    out_group = exp.column(group_name or "group", quoted=True) if group is not None else None
+    projections: list[exp.Expr] = [exp.alias_(exp.Count(this=exp.Star()), "count")]
+    if out_group is not None:
+        projections.insert(0, exp.alias_(out_group.copy(), group_name or "group", quoted=True))
+    select = _select(projections, inner.subquery("per_patient"), exp.column("met"), out_group)
+    said = " AND ".join(_plain(t) for t in rolled_terms)
+    when = "on every one of their rows" if how == "always" else "on none of their rows"
+    if how == "never" and all(isinstance(a, exp.Anonymous) or not isinstance(a, exp.Not) for a in aggregates):
+        when = "on every one of their rows"
+    return Compiled(
+        kind="count",
+        sql=render(select, pretty=True),
+        reading=f"Counted distinct patients ({unit.key}) with {said} {when}{_where_phrase(kept)}{by}.",
+        unit=unit,
+        group=group_name,
+        group_column=group_column,
+        limited=True,
+        conditions=tuple(terms),
+        group_expression=group is not None and group_column is None,
+    )
+
+
+_STATISTIC_WORDS = re.compile(r"\b(?:median|average|mean|typical)\b", re.IGNORECASE)
+
+
+def _per_patient_repairs(reply: ModelReply, question: str, context: DatasetContext) -> ModelReply:
+    """A breakdown by, or a summary of, the patient key is a per-patient count summarised across
+    patients ("average number of visits per patient"), never a listing. A question asking for a
+    value per patient with no per_patient in the reply is fed back.
+
+    Raises:
+        PlanError: the question asks for a per-patient value and the reply has none.
+    """
+    if reply.per_patient or context.rows_are_patients or context.patient_key is None or _PER_PATIENT.search(question):
+        return reply
+    key = context.patient_key.casefold()
+
+    def names_key(text: str | None) -> bool:
+        return bool(text) and str(text).strip().strip('"`').casefold() == key
+
+    asks_summary = bool(_STATISTIC_WORDS.search(question))
+    if (names_key(reply.group_by) or names_key(reply.number)) and asks_summary:
+        answer = (
+            reply.answer if reply.answer in STATISTICS else ("median" if "median" in question.casefold() else "mean")
+        )
+        return reply.model_copy(update={"per_patient": "count", "answer": answer, "group_by": None, "number": None})
+    if asks_per_patient(question) and asks_summary and reply.answer in STATISTICS:
+        raise PlanError(
+            "The question asks for a value per patient: set per_patient to count (the number of each patient's "
+            "rows), first or last (each patient's first or last value of number), span_days (days from each "
+            "patient's first to last visit) or gap_days (days between a patient's consecutive visits)."
+        )
+    return reply
+
+
+def _per_patient_summary(reply: ModelReply, question: str, context: DatasetContext) -> Compiled:
+    """A value per patient (or per consecutive pair of visits), then summarised across patients.
+
+    Raises:
+        PlanError: no patient key, no column to order visits by, or a value that is not a number.
+    """
+    kind = reply.per_patient
+    if kind not in PER_PATIENT_KINDS:
+        raise PlanError(f"per_patient must be one of: {', '.join(PER_PATIENT_KINDS)}.")
+    if context.patient_key is None or context.rows_are_patients:
+        raise PlanError("Each row is one patient here, so per_patient does not apply: set it to null.")
+    answer = reply.answer if reply.answer in STATISTICS else "mean"
+    key = exp.column(context.patient_key, quoted=True)
+    where = _condition(reply.where, "where", context)
+    group, group_name, group_column = _group(reply.group_by, context, question)
+    base = _base_table(context, dedupe=True)
+    value: exp.Expr
+    what: str
+    if kind == "count":
+        counted: exp.Expr = exp.Count(this=exp.Star())
+        value = _filtered(counted, where) if where is not None else counted
+        what = "number of rows per patient" + (f" with {_plain(where)}" if where is not None else "")
+        row_filter = None
+    order = None
+    if kind != "count":
+        dates = date_columns(context)
+        order = order_column(context, reply.order_by)
+        if kind in ("span_days", "gap_days"):
+            named = _bare_column(reply.number, context) or _bare_column(reply.order_by, context)
+            date = named if named is not None and named in dates else (dates[0] if len(dates) == 1 else None)
+            if date is None:
+                choices = ", ".join(c.name for c in dates) or "none"
+                raise PlanError(f"Days between visits need one date column in number (date columns: {choices}).")
+            ref = exp.column(date.name, quoted=True)
+            if kind == "span_days":
+                value = exp.DateDiff(
+                    this=exp.Max(this=ref.copy()), expression=exp.Min(this=ref.copy()), unit=exp.var("DAY")
+                )
+                what = f"days from each patient's first to last {date.name}"
+            else:
+                value = ref  # replaced below by the gap to the previous row
+                what = f"days between a patient's consecutive {date.name} values"
+            row_filter = where
+        else:
+            number = _bare_column(reply.number, context)
+            if number is None or not number.numeric:
+                raise PlanError(f"per_patient {kind} needs number: the number column whose {kind} value is taken.")
+            if order is None:
+                choices = ", ".join(c.name for c in [*dates, *[c for c in context.columns if c.is_sequence]])
+                raise PlanError(f"Set order_by to the column that orders a patient's visits (one of: {choices}).")
+            ref, by_col = exp.column(number.name, quoted=True), exp.column(order.name, quoted=True)
+            func = "ARG_MIN" if kind == "first" else "ARG_MAX"
+            value = exp.func(func, ref.copy(), by_col.copy())
+            what = f"each patient's {kind} {number.name} (by {order.name})"
+            row_filter = _where_all(where, exp.Is(this=ref.copy(), expression=exp.null()).not_())
+    group_alias = group_name or "group"
+    inner_cols: list[exp.Expr] = [key.copy()]
+    inner_group: list[exp.Expr] = [key.copy()]
+    if group is not None:
+        inner_cols.append(exp.alias_(group.copy(), group_alias, quoted=True))
+        inner_group.append(group.copy())
+    keyed = _where_all(row_filter, exp.Is(this=key.copy(), expression=exp.null()).not_())
+    if kind == "gap_days":
+        gap = exp.DateDiff(
+            this=value.copy(),
+            expression=exp.Window(
+                this=exp.func("LAG", value.copy()),
+                partition_by=[key.copy()],
+                order=exp.Order(expressions=[exp.Ordered(this=value.copy())]),
+            ),
+            unit=exp.var("DAY"),
+        )
+        inner = exp.select(*inner_cols, exp.alias_(gap, "patient_value")).from_(base)
+        if keyed is not None:
+            inner = inner.where(keyed)
+        source = (
+            exp.select("*")
+            .from_(inner.subquery("pairs"))
+            .where(exp.Is(this=exp.column("patient_value"), expression=exp.null()).not_())
+        )
+        source_q = source.subquery("per_pair")
+    else:
+        inner = exp.select(*inner_cols, exp.alias_(value, "patient_value")).from_(base)
+        if keyed is not None:
+            inner = inner.where(keyed)
+        source_q = inner.group_by(*inner_group).subquery("per_patient")
+    out_group = exp.column(group_alias, quoted=True) if group is not None else None
+    double = exp.DataType.build("DOUBLE")
+    v = exp.column("patient_value")
+    projections: list[exp.Expr] = [
+        exp.alias_(exp.Cast(this=exp.func(STATISTICS[answer], v.copy()), to=double.copy()), answer),
+        exp.alias_(exp.Count(this=v.copy()), "n"),
+    ]
+    if out_group is not None:
+        projections.insert(0, exp.alias_(out_group.copy(), group_alias, quoted=True))
+    else:
+        for extra in ("mean", "median", "min", "max"):
+            if extra != answer:
+                projections.insert(
+                    -1, exp.alias_(exp.Cast(this=exp.func(STATISTICS[extra], v.copy()), to=double.copy()), extra)
+                )
+        projections.insert(-1, exp.alias_(exp.Cast(this=exp.func("STDDEV_SAMP", v.copy()), to=double.copy()), "std"))
+        projections.append(exp.alias_(exp.Count(this=exp.Star()), "rows"))
+    select = _select(projections, source_q, None, out_group)
+    by = f", by {group_name}" if group_name else ""
+    over = "pairs of consecutive visits" if kind == "gap_days" else "patients"
+    return Compiled(
+        kind="statistic",
+        sql=render(select, pretty=True),
+        reading=(
+            f"{answer.capitalize()} of the {what}{_where_phrase(where) if kind != 'count' else ''}{by}, over {over}."
+        ),
+        unit=Unit(context.patient_key, "patients"),
+        group=group_name,
+        group_column=group_column,
+        statistic=answer,
+        value_text=what,
+        limited=where is not None,
+        conditions=tuple(_terms(where)),
+        group_expression=group is not None and group_column is None,
+        helper_columns=frozenset({order.name} if kind in ("first", "last") and order is not None else ()),
+    )
+
+
 def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> Compiled:
     answer = reply.answer
     if answer not in TABULATIONS:
         raise PlanError(f"answer must be one of: {', '.join(TABULATIONS)}.")
     unit = resolve_unit(question, context)
-    group, group_name, group_column = _group(reply.group_by, context)
+    reply = _per_patient_repairs(reply, question, context)
+    if reply.per_patient:
+        return _per_patient_summary(reply, question, context)
+    group, group_name, group_column = _group(reply.group_by, context, question)
     where = _condition(reply.where, "where", context)
     event: exp.Expr | None = None
     if answer == "share":
@@ -810,6 +1091,10 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
     by = f", by {group_name}" if group_name else ""
     group_projection = [exp.alias_(group.copy(), group_name, quoted=True)] if group is not None else []
 
+    if answer == "count" and unit.key == context.patient_key and unit.key is not None:
+        quantified = _quantified_count(question, where, group, group_name, group_column, unit, context, by)
+        if quantified is not None:
+            return quantified
     if answer == "count":
         base = _base_table(context, dedupe=unit.key is None)
         select = _select([*group_projection, exp.alias_(_count(unit), "count")], base, full_where, group)
@@ -830,7 +1115,14 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
     if answer == "share":
         assert event is not None
         words = counting_unit.read_units(question)
-        rollup = words.rollup or "any"
+        rollup: str = words.rollup or "any"
+        try:
+            how = quantifier(question) if unit.key is not None else None
+        except QuantifierError as e:
+            raise UnitError(str(e)) from e
+        if how == "never":
+            never = rolled_up(event, "never", question, lambda t: _tests_no_value(t, context))
+            rollup = "none" if isinstance(never, exp.Not) else "all"
         base = _base_table(context, dedupe=unit.key is None)
         # A condition on two or more columns is unknown (NULL) where one of them is missing, and
         # "among those with it recorded" would then drop those rows silently: what a missing value
@@ -852,11 +1144,10 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
         rolled = ""
         if unit.key is not None:
             one = unit.noun or "patient"
-            rolled = (
-                f" One {one} counts only when all of its rows that record it meet it."
-                if rollup == "all"
-                else f" One {one} counts when at least one of its rows meets it."
-            )
+            rolled = {
+                "all": f" One {one} counts only when all of its rows that record it meet it.",
+                "none": f" One {one} counts only when none of its rows meets it.",
+            }.get(rollup, f" One {one} counts when at least one of its rows meets it.")
         return Compiled(
             kind="share",
             sql=render(select, pretty=True),
@@ -870,7 +1161,7 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
             limited=where is not None,
             varies_sql=(
                 _varies_sql(unit, event, base, full_where, group)
-                if unit.key is not None and words.rollup is None
+                if unit.key is not None and words.rollup is None and how is None
                 else None
             ),
             rollup=rollup if unit.key is not None else None,
@@ -1052,10 +1343,13 @@ def compile_test(reply: ModelReply, context: DatasetContext) -> TestCall:
         )
     # A where term pinning the group column to one value says which group is the exposed one; as a
     # limit it would leave one group and nothing to compare, so it is not applied.
+    # The same for the outcome: a limit to one outcome value leaves nothing to compare.
+    outcome_column = _bare_column(reply.outcome, context)
+    pinned_out = {group, outcome_column.name if outcome_column is not None else None} - {None}
     stated = [
         term
         for term in _terms(_condition(reply.where, "where", context))
-        if not (_listed_values(term) is not None and _columns_of(term) == {group})
+        if not (_listed_values(term) is not None and _columns_of(term) <= pinned_out and _columns_of(term))
     ]
     where, _spelled = _split_where(_where_all(*stated), None, context)
     check_units([where, derived], context)

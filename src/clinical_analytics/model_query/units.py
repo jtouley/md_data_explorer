@@ -137,13 +137,22 @@ def resolve_unit(question: str, context: DatasetContext) -> Unit:
     """
     found = head_noun(question)
     if context.rows_are_patients:
-        if found is not None and found[0] == "events" and singular(found[1]) not in ("record", "row", "entry", "case"):
-            noun = found[1]
+        if found is None or found[0] == "patients":
+            return Unit(None, "patients")
+        noun = singular(found[1])
+        # One row per person or per event (a delivery, an operation): the rows are what is counted.
+        # A number column that counts the noun ("prenatal_visits") is a measure, not the rows.
+        counting = [
+            c.name
+            for c in context.columns
+            if c.numeric and plural(noun) in set(re.findall(r"[a-z]+", c.name.casefold()))
+        ]
+        if counting:
             raise UnitError(
-                f"Each row of this table is one patient, so {plural(singular(noun))} cannot be counted on their own. "
-                "Ask how many patients, or name the column that counts them."
+                f"Each row of this table is one record, and {', '.join(counting)} holds a number of {plural(noun)}. "
+                f"Ask for the total or the average of {counting[0]}, or for the number of rows."
             )
-        return Unit(None, "patients")
+        return Unit(None, "rows", noun)
     if found is None or found[0] == "patients":
         if context.patient_key is not None:
             return Unit(context.patient_key, "patients")

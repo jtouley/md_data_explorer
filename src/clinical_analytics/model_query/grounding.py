@@ -299,6 +299,25 @@ def dropped_number(question: str, sql: str) -> Doubt | None:
     )
 
 
+def _as_float(literal: exp.Literal) -> float | None:
+    try:
+        return float(literal.name)
+    except ValueError:
+        return None
+
+
+def fits_range(column: ColumnInfo, literal: exp.Literal) -> bool:
+    """Whether a number compared with a column lies within the column's recorded range (a
+    threshold at either end fits); True when the range is not known."""
+    if not column.numeric or column.low is None or column.high is None:
+        return True
+    try:
+        value, low, high = float(literal.name), float(column.low), float(column.high)
+    except (TypeError, ValueError):
+        return True
+    return low <= value <= high
+
+
 def limit_backed(term: exp.Expr, question: _Question, context: DatasetContext) -> bool:
     """Whether one condition is backed by the question: a value it compares with is stated (all
     of them, for text values; one of them, for numbers), or it only tests yes/no or presence."""
@@ -315,7 +334,13 @@ def limit_backed(term: exp.Expr, question: _Question, context: DatasetContext) -
     if texts:
         return all(_value_said(question, text) for text in texts)
     if numbers:
-        return any(_number_said(question, number) for number in numbers)
+        # A stated threshold must also fit the column it is compared with: "under 200" is not a
+        # limit on a percentage that runs from 0 to 100.
+        digits = stated_numbers(question.text)
+        return any(
+            _number_said(question, n) and (_as_float(n) not in digits or all(fits_range(c, n) for c in columns))
+            for n in numbers
+        )
     # Only a yes/no or presence test: the column is the model's reading of the question's words
     # ("ended up in hospital" for admitted), which is its job. Such a limit is not a guess.
     return True
@@ -511,8 +536,13 @@ def columns_with_stated_values(question: str, conditions: list[exp.Expr], contex
     for condition in conditions:
         for term in _terms(condition):
             literals = _compared_literals(term)
+            term_columns = [c for c in (context.column(col.name) for col in term.find_all(exp.Column)) if c]
             said = any(
-                _value_said(asked, lit.name) if lit.is_string else _number_said(asked, lit) for lit in literals
+                _value_said(asked, lit.name)
+                if lit.is_string
+                else _number_said(asked, lit)
+                and (_as_float(lit) not in stated_numbers(question) or all(fits_range(c, lit) for c in term_columns))
+                for lit in literals
             ) or any(
                 _value_said(asked, label)
                 for lit in literals

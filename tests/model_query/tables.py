@@ -130,3 +130,54 @@ ige           Total IgE at the visit (kU/L).
 visit_year    Calendar year of the visit.
 shots         yes if allergy shots were given at the visit.
 """
+
+
+def eye_visits() -> pl.DataFrame:
+    """A made-up glaucoma clinic: one row per visit, 4 patients with 2 to 4 visits.
+
+    ``visit_no`` numbers each patient's visits (1, 2, ...): it repeats across patients and is not a
+    visit ID. ``drops_used`` is a Y/N flag, ``iop_mmhg`` the eye pressure, ``adherence_pct`` a
+    percentage, ``grade`` a field grade recorded on some visits only.
+    """
+    import datetime as dt
+
+    rows = [
+        # pat_no, visit_no, date, iop, drops, adherence, grade, sex
+        ("G1", 1, dt.date(2022, 1, 10), 25.0, "N", 40.0, None, "F"),
+        ("G1", 2, dt.date(2022, 3, 10), 22.0, "Y", 70.0, 2, "F"),
+        ("G1", 3, dt.date(2023, 1, 5), 19.0, "Y", 90.0, 1, "F"),
+        ("G2", 1, dt.date(2022, 2, 1), 18.0, "N", 100.0, None, "M"),
+        ("G2", 2, dt.date(2023, 2, 1), 17.0, "N", 100.0, 1, "M"),
+        ("G3", 1, dt.date(2022, 5, 5), 30.0, "Y", 50.0, 3, "F"),
+        ("G3", 2, dt.date(2022, 6, 4), 26.0, "Y", 60.0, None, "F"),
+        ("G3", 3, dt.date(2023, 6, 4), 20.0, "Y", 80.0, 2, "F"),
+        ("G3", 4, dt.date(2024, 6, 3), 19.0, "Y", 95.0, 1, "F"),
+        ("G4", 1, dt.date(2023, 9, 9), 20.0, "N", 85.0, None, "M"),
+        ("G4", 2, dt.date(2024, 9, 8), 19.0, "N", 90.0, 1, "M"),
+    ]
+    columns = ["pat_no", "visit_no", "visit_date", "iop_mmhg", "drops_used", "adherence_pct", "grade", "sex"]
+    return pl.DataFrame(rows, schema=columns, orient="row")
+
+
+EYE_DICTIONARY = """\
+Made-up glaucoma clinic: one row per clinic visit.
+
+pat_no         Patient number.
+visit_no       Number of the visit for this patient (1 = first visit).
+visit_date     Date of the visit.
+iop_mmhg       Intraocular pressure (mmHg).
+drops_used     Y if pressure-lowering drops were in use at the visit, N if not.
+adherence_pct  Share of prescribed drop doses taken since the last visit (percent).
+grade          Optic disc grade, 1 to 3; empty when not graded.
+sex            F or M.
+"""
+
+
+def rehab_stays() -> pl.DataFrame:
+    """A made-up rehabilitation unit: one row per stay, each patient once; ``therapy_sessions``
+    counts the sessions of the stay."""
+    rows = [
+        ("R1", 2022, "home", 10), ("R2", 2022, "home", 14), ("R3", 2023, "care home", 20),
+        ("R4", 2023, "home", 8), ("R5", 2023, "hospital", 5), ("R6", 2024, "home", 12),
+    ]  # fmt: skip
+    return pl.DataFrame(rows, schema=["patient_id", "stay_year", "discharge_to", "therapy_sessions"], orient="row")

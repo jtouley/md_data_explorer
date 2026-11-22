@@ -57,6 +57,9 @@ class ColumnInfo:
     # What each stored code means, from the data dictionary ("1 = male"): (code, label) pairs,
     # only for codes the column holds.
     labels: tuple[tuple[str, str], ...] = ()
+    # A number of the visit within the patient (1, 2, 3, ... per patient): it orders a patient's
+    # visits and is never a visit's ID (its values repeat across patients).
+    is_sequence: bool = False
 
     def label_of(self, value: Any) -> str | None:
         return dict(self.labels).get(str(value))
@@ -92,6 +95,9 @@ class DatasetContext:
     notes: str = ""  # the data dictionary's general notes (or the whole short dictionary)
     encounter_keys: tuple[str, ...] = field(default_factory=tuple)
     title: str = ""  # the dataset's name as uploaded: what the whole table is about
+    # The dictionary is short and given whole in ``notes``: column lines then leave out the
+    # descriptions (they would repeat it, and a longer prompt is a slower answer).
+    dictionary_whole: bool = False
 
     def column(self, name: str) -> ColumnInfo | None:
         folded = name.casefold()
@@ -236,11 +242,29 @@ def build_context(
     distinct_rows = int(sandbox.run_generated(f"SELECT COUNT(*) AS n FROM (SELECT DISTINCT * FROM {table})").item())
     key = catalog.id_column.name if catalog.id_column is not None else None
     names = [c.name for c in catalog.columns]
-    encounter_keys = tuple(counting_unit.encounter_key_candidates(names, key))
+    candidates = counting_unit.encounter_key_candidates(names, key)
+    # A candidate whose values repeat across patients but never within one numbers the visits of
+    # each patient (visit_no = 1..6): it is a sequence, not a visit's ID.
+    sequences: set[str] = set()
+    if key is not None:
+        for name in candidates:
+            ref, pid = exp.column(name, quoted=True), exp.column(key, quoted=True)
+            probe = exp.select(
+                exp.alias_(exp.Count(this=exp.Distinct(expressions=[ref.copy()])), "d"),
+                exp.alias_(
+                    exp.Count(this=exp.Distinct(expressions=[exp.Tuple(expressions=[pid.copy(), ref.copy()])])), "pairs"
+                ),
+                exp.alias_(exp.Count(this=ref.copy()), "k"),
+            ).from_(table)
+            seen = sandbox.run_generated(render(probe)).row(0, named=True)
+            distinct, pairs, kept = int(seen["d"] or 0), int(seen["pairs"] or 0), int(seen["k"] or 0)
+            if 0 < distinct < kept and pairs == kept:
+                sequences.add(name)
+    encounter_keys = tuple(name for name in candidates if name not in sequences)
     listed = [
         (i, col)
         for i, col in enumerate(catalog.columns)
-        if 0 < int(profile[f"d{i}"]) <= MAX_LISTED_VALUES and not col.is_id and col.name not in encounter_keys
+        if 0 < int(profile[f"d{i}"]) <= MAX_LISTED_VALUES and not col.is_id and col.name not in candidates
     ]
     values: dict[str, list[Any]] = {}
     for _i, col in listed:
@@ -269,6 +293,7 @@ def build_context(
                 is_patient_id=col.name == key,
                 is_encounter_id=col.name in encounter_keys,
                 labels=value_labels(entries.get(col.name), tuple(values[col.name]) if col.name in values else None),
+                is_sequence=col.name in sequences,
             )
         )
     patients = next((c.distinct for c in columns if c.is_patient_id), None)
@@ -284,11 +309,14 @@ def build_context(
         notes=notes,
         encounter_keys=encounter_keys,
         title=title,
+        dictionary_whole=whole,
     )
 
 
-def _column_line(col: ColumnInfo, *, full: bool = False) -> str:
+def _column_line(col: ColumnInfo, *, full: bool = False, describe: bool = True) -> str:
     parts = [f"- {col.name} ({col.sql_type})"]
+    if col.is_sequence:
+        parts.append("the visit's number within its patient (1, 2, ...), not an ID")
     if col.is_patient_id:
         parts.append("patient ID")
     elif col.is_encounter_id:
@@ -305,7 +333,7 @@ def _column_line(col: ColumnInfo, *, full: bool = False) -> str:
     if col.nulls:
         parts.append("some rows empty (NULL)")
     line = "; ".join(parts)
-    if not col.description:
+    if not col.description or not describe:
         return line
     return f"{line}. {col.description if full else _clip(col.description, LISTED_DESCRIPTION_CHARS)}"
 
@@ -360,7 +388,7 @@ def context_text(context: DatasetContext, *, writes_sql: bool = True) -> str:
     """The table description block of the prompt. The same for every question on the dataset, so
     the model server can reuse its work on it from one question to the next."""
     lines = [f"Table {context.table} ({context.rows} rows). Columns:"]
-    lines += [_column_line(col) for col in context.columns]
+    lines += [_column_line(col, describe=not context.dictionary_whole) for col in context.columns]
     lines += ["", f"Grain: {grain_text(context, writes_sql=writes_sql)}"]
     if context.notes:
         lines += ["", "Notes from the data dictionary:", context.notes]

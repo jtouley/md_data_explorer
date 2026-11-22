@@ -26,17 +26,20 @@ Rules:
 - Put every limit the question states into "where": age limits, sex, a diagnosis, a result, a year. Add no limit the question does not state.
 - A word that only names what the whole table is about is not a limit.
 - When the question names several values of one column ("A, B or C", "X versus not X", "each type"), set "group_by" to that column instead of filtering on one value.
+- "never", "always", "on every visit" are about each patient's visits: write the condition for one visit in "where"; the app checks it over all of a patient's visits.
 - Never compute a number yourself."""
 
 _MAPPING_FIELD: Final = """\
-- "mapping": every phrase of the question that limits, groups, measures or names what is counted, as {"phrase": the question's own words, "role": "filter" | "group" | "measure" | "unit" | "ignored", "column": the column it became}. Words that only name what the whole table is about, or politeness, are "ignored" with column null. If a phrase has no column in the table, map it as "ignored" with column null: never use another column instead."""
+- "mapping": at most 6 entries: each phrase of the question that limits, groups, measures or names what is counted, as {"phrase": the question's own words, "role": "filter" | "group" | "measure" | "unit" | "ignored", "column": the column it became}. Words that only name what the whole table is about, or politeness, are "ignored" with column null. If a phrase has no column in the table, map it as "ignored" with column null: never use another column instead."""
 
 _COMMON_FIELDS: Final = """\
 - "where": an SQL condition keeping only the rows the question is about, for example "age_years >= 65 AND sex = 'female'"; null when it is about everyone.
 - "group_by": the column to break the answer down by; null for one overall answer.
 - "numerator": only for "share": the SQL condition that is counted, for example "infection = 'yes'"; otherwise null.
 - "number": only for "mean", "median", "min", "max", "sum": the number column, or an SQL expression over columns (for example to convert units); otherwise null.
-- "outcome": only for the tests: the outcome column, or a yes/no SQL condition such as "stage = 'IV'"; otherwise null."""
+- "outcome": only for the tests: the outcome column, or a yes/no SQL condition such as "stage = 'IV'"; otherwise null.
+- "per_patient": only when rows are visits and the question asks for a value per patient, summarised with "mean", "median", "min" or "max": "count" = the number of each patient's rows (meeting "where"), "first" / "last" = each patient's first or last value of "number" (baseline = first), "span_days" = days from each patient's first to last date ("number" = the date column), "gap_days" = days between a patient's consecutive dates ("number" = the date column). Otherwise null.
+- "order_by": only with per_patient first or last when the table has several date columns: the column that orders a patient's visits; otherwise null."""
 
 PLAN_INSTRUCTIONS: Final = (
     """\

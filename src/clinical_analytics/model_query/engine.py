@@ -63,6 +63,7 @@ from clinical_analytics.model_query.plan import (
 )
 from clinical_analytics.model_query.prompt import system_prompt, user_prompt
 from clinical_analytics.model_query.units import UnitError
+from clinical_analytics.sql import config as sql_config
 from clinical_analytics.sql.errors import SqlRefusedError
 from clinical_analytics.sql.render import render
 from clinical_analytics.sql.sandbox import SandboxConnection, SqlRunError
@@ -159,7 +160,7 @@ def _coverage_doubts(
     found = coverage.check(
         question,
         context,
-        used=compiled.columns,
+        used=compiled.columns - getattr(compiled, "helper_columns", frozenset()),
         values=values,
         links=coverage.parse_mapping(reply.mapping),
         stated=columns_with_stated_values(question, list(compiled.conditions), context),
@@ -457,6 +458,11 @@ def answer_question(
                 if analysis.get("error"):
                     raise PlanError(str(analysis["error"]))
             else:
+                if compiled.group is not None and frame.height > sql_config.MAX_GROUPS:
+                    raise PlanError(
+                        f"group_by gives {frame.height} groups, too many to show. Group by a column with fewer "
+                        "values, or by the year or month of a date."
+                    )
                 analysis = present.analysis_of(compiled, frame, total)
                 if not present.has_value(analysis) and attempt == 1 and max_attempts > 1:
                     raise PlanError(

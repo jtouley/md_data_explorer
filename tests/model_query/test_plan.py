@@ -16,7 +16,6 @@ from clinical_analytics.model_query.plan import (
     reply_schema,
     resolve_unit,
 )
-from clinical_analytics.model_query.units import UnitError
 from tests.model_query import tables
 
 
@@ -65,10 +64,12 @@ def test_resolve_unit_oneRowPerPatient_countsRowsAsPatients(patients):
     assert (unit.key, unit.word) == (None, "patients")
 
 
-def test_resolve_unit_eventsOnOneRowPerPatient_isAskedNotCountedAsPatients(patients):
-    # Act / Assert: admissions cannot be told apart on a table of one row per patient
-    with pytest.raises(UnitError, match="Each row of this table is one patient"):
-        resolve_unit("How many admissions were there?", patients)
+def test_resolve_unit_eventsOnOneRowPerRecord_countsTheRows(patients):
+    # Act: each row is one record; the question's noun names what the rows are
+    unit = resolve_unit("How many admissions were there?", patients)
+
+    # Assert
+    assert (unit.key, unit.word, unit.noun) == (None, "rows", "admission")
 
 
 @pytest.mark.parametrize(
