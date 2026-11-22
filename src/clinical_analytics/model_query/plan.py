@@ -778,6 +778,168 @@ def _sql_columns(sql: str, context: DatasetContext) -> frozenset[str]:
     return frozenset(c.name for c in context.columns if c.name.casefold() in found)
 
 
+_NUMBER_WORDS: Final = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "ten": 10}
+_OCCASIONS = (
+    r"(?:visits?|encounters?|admissions?|appointments?|sessions?|tests?|draws?|measurements?|readings?|"
+    r"stays?|episodes?|cycles?|records?|rows?)"
+)
+_AT_LEAST = re.compile(
+    rf"\b(?:(more than|over) (one|two|three|\d+)|(at least|(?:a minimum of)) (one|two|three|four|five|\d+)|"
+    rf"(two|three|four|five|\d+) or more|(multiple|several|repeat(?:ed)?))\s+{_OCCASIONS}\b",
+    re.IGNORECASE,
+)
+_WITHIN_DAYS = re.compile(
+    r"\bwithin (\d+) days? (?:of|after) (?:the same patient's|the patient's|their|his or her|a) "
+    r"(?:previous|prior|last|earlier) \w+",
+    re.IGNORECASE,
+)
+_LATEST_PERIOD = re.compile(
+    r"\b(?:in |during )?the (?:most recent|latest|last) (calendar )?(month|year)(?: in the (?:data|file|table))?\b",
+    re.IGNORECASE,
+)
+
+
+def _min_rows(question: str) -> int | None:
+    """N from "more than one visit", "at least two visits", "3 or more visits", "multiple visits"."""
+    found = _AT_LEAST.search(question)
+    if found is None:
+        return None
+    more, more_n, least, least_n, plus_n, several = found.groups()
+
+    def number(text: str) -> int:
+        return _NUMBER_WORDS.get(text.casefold(), 0) or int(text)
+
+    if more_n:
+        return number(more_n) + 1
+    if least_n:
+        return number(least_n)
+    if plus_n:
+        return number(plus_n)
+    return 2 if several else None
+
+
+def _repeated_count(
+    question: str,
+    where: exp.Expr | None,
+    group: exp.Expr | None,
+    group_name: str | None,
+    group_column: str | None,
+    unit: Unit,
+    context: DatasetContext,
+    by: str,
+) -> Compiled | None:
+    """Patients with at least N rows meeting where ("more than one visit"), or None."""
+    least = _min_rows(question)
+    if least is None or least < 2 or unit.key is None or context.rows_are_patients:
+        return None
+    key = exp.column(unit.key, quoted=True)
+    inner_cols: list[exp.Expr] = [key.copy()]
+    if group is not None:
+        inner_cols.append(exp.alias_(group.copy(), group_name or "group", quoted=True))
+    keyed = _where_all(where, exp.Is(this=key.copy(), expression=exp.null()).not_())
+    inner = exp.select(*inner_cols).from_(_base_table(context, dedupe=True)).where(keyed)
+    inner = inner.group_by(*[exp.Literal.number(i + 1) for i in range(len(inner_cols))]).having(
+        exp.GTE(this=exp.Count(this=exp.Star()), expression=exp.Literal.number(least))
+    )
+    out_group = exp.column(group_name or "group", quoted=True) if group is not None else None
+    projections: list[exp.Expr] = [exp.alias_(exp.Count(this=exp.Star()), "count")]
+    if out_group is not None:
+        projections.insert(0, exp.alias_(out_group.copy(), group_name or "group", quoted=True))
+    select = _select(projections, inner.subquery("per_patient"), None, out_group)
+    return Compiled(
+        kind="count",
+        sql=render(select, pretty=True),
+        reading=f"Counted distinct patients ({unit.key}) with at least {least} rows{_where_phrase(where)}{by}.",
+        unit=unit,
+        group=group_name,
+        group_column=group_column,
+        limited=True,
+        conditions=tuple(_terms(where)),
+        group_expression=group is not None and group_column is None,
+    )
+
+
+def _return_within_count(
+    question: str,
+    where: exp.Expr | None,
+    group: exp.Expr | None,
+    group_name: str | None,
+    group_column: str | None,
+    unit: Unit,
+    context: DatasetContext,
+    by: str,
+) -> Compiled | None:
+    """Rows within N days of the same patient's previous row ("returns within 30 days"), or None.
+
+    Raises:
+        PlanError: no patient key or no single date column to measure the days with.
+    """
+    found = _WITHIN_DAYS.search(question)
+    if found is None:
+        return None
+    dates = date_columns(context)
+    if context.patient_key is None or len(dates) != 1:
+        raise PlanError("Days since a patient's previous visit need a patient key and one date column.")
+    days = int(found.group(1))
+    key, date = exp.column(context.patient_key, quoted=True), exp.column(dates[0].name, quoted=True)
+    gap = exp.DateDiff(
+        this=date.copy(),
+        expression=exp.Window(
+            this=exp.func("LAG", date.copy()),
+            partition_by=[key.copy()],
+            order=exp.Order(expressions=[exp.Ordered(this=date.copy())]),
+        ),
+        unit=exp.var("DAY"),
+    )
+    cols: list[exp.Expr] = [exp.alias_(gap, "days_since_previous")]
+    if group is not None:
+        cols.insert(0, exp.alias_(group.copy(), group_name or "group", quoted=True))
+    inner = exp.select(*cols).from_(_base_table(context, dedupe=True))
+    if where is not None:
+        inner = inner.where(where)
+    out_group = exp.column(group_name or "group", quoted=True) if group is not None else None
+    projections: list[exp.Expr] = [exp.alias_(exp.Count(this=exp.Star()), "count")]
+    if out_group is not None:
+        projections.insert(0, exp.alias_(out_group.copy(), group_name or "group", quoted=True))
+    within = exp.LTE(this=exp.column("days_since_previous"), expression=exp.Literal.number(days))
+    select = _select(projections, inner.subquery("visits"), within, out_group)
+    return Compiled(
+        kind="count",
+        sql=render(select, pretty=True),
+        reading=(
+            f"Counted {_unit_phrase(unit)} within {days} days of the same patient's previous {dates[0].name}"
+            f"{_where_phrase(where)}{by}."
+        ),
+        unit=unit,
+        group=group_name,
+        group_column=group_column,
+        limited=True,
+        conditions=tuple(_terms(where)),
+        group_expression=group is not None and group_column is None,
+    )
+
+
+def _latest_period(question: str, context: DatasetContext) -> exp.Expr | None:
+    """The rows of the most recent calendar month (or year) in the data, when the question asks.
+
+    Raises:
+        PlanError: the table has no single date column to tell it by.
+    """
+    found = _LATEST_PERIOD.search(question)
+    if found is None:
+        return None
+    dates = date_columns(context)
+    if len(dates) != 1:
+        raise PlanError("'The most recent month' needs one date column; the table has none or several.")
+    date = exp.column(dates[0].name, quoted=True)
+    part = "month" if found.group(2).casefold() == "month" else "year"
+    trunc = exp.func("DATE_TRUNC", exp.Literal.string(part), date.copy())
+    latest = exp.select(exp.func("DATE_TRUNC", exp.Literal.string(part), exp.Max(this=date.copy()))).from_(
+        exp.to_table(context.table)
+    )
+    return exp.EQ(this=trunc, expression=latest.subquery())
+
+
 def _tests_no_value(term: exp.Expr, context: DatasetContext) -> bool:
     """Whether a condition tests a yes/no column for its "no" value."""
     node = term
@@ -1023,7 +1185,7 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
     if reply.per_patient:
         return _per_patient_summary(reply, question, context)
     group, group_name, group_column = _group(reply.group_by, context, question)
-    where = _condition(reply.where, "where", context)
+    where = _where_all(_condition(reply.where, "where", context), _latest_period(question, context))
     event: exp.Expr | None = None
     if answer == "share":
         numerator = _numerator(reply, context)
@@ -1095,6 +1257,13 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
         quantified = _quantified_count(question, where, group, group_name, group_column, unit, context, by)
         if quantified is not None:
             return quantified
+        repeated = _repeated_count(question, where, group, group_name, group_column, unit, context, by)
+        if repeated is not None:
+            return repeated
+    if answer == "count" and unit.key != context.patient_key:
+        returns = _return_within_count(question, where, group, group_name, group_column, unit, context, by)
+        if returns is not None:
+            return returns
     if answer == "count":
         base = _base_table(context, dedupe=unit.key is None)
         select = _select([*group_projection, exp.alias_(_count(unit), "count")], base, full_where, group)

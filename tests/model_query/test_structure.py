@@ -287,3 +287,38 @@ def test_answer_question_testWhoseOutcomeIsPinnedByWhere_comparesBothValues(ask_
     # Assert
     assert answer.status == "answered", answer.reason
     assert answer.reading == "Compared drops_used between the groups of sex."
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("How many patients had more than one visit?", 4),
+        ("How many patients had at least three visits?", 2),
+        ("How many patients had 3 or more visits?", 2),
+    ],
+)
+def test_answer_question_patientsWithSeveralVisits_countsPerPatientRows(ask_eye, question, expected):
+    # Act
+    answer, _prompts = ask_eye(question, _plan("count"))
+
+    # Assert
+    assert answer.status == "answered", answer.reason
+    assert answer.analysis["total_count"] == expected
+
+
+def test_answer_question_visitsWithinDaysOfThePreviousOne_useTheSamePatientsPreviousDate(ask_eye):
+    # Act: G1's second visit (59 days) and G3's second (30 days)
+    answer, _prompts = ask_eye("How many visits were within 60 days of the patient's previous visit?", _plan("count"))
+
+    # Assert
+    assert answer.status == "answered", answer.reason
+    assert answer.analysis["total_count"] == 2
+
+
+def test_answer_question_mostRecentMonthInTheData_limitsToThatMonth(ask_eye):
+    # Act: the last visit is in September 2024, the only one that month
+    answer, _prompts = ask_eye("How many visits were in the most recent month in the data?", _plan("count"))
+
+    # Assert
+    assert answer.status == "answered", answer.reason
+    assert answer.analysis["total_count"] == 1

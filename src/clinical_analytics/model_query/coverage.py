@@ -100,6 +100,8 @@ STRUCTURAL: Final = frozenset(
     level levels value values reading readings result results status measure measures
     above below beyond exceeding exceed exceeds least through thru equal equals exactly approximately about
     consecutive successive between next since until per same days day weeks months
+    two three four five six seven eight nine ten dozen multiple several repeat repeated more
+    lack lacks lacked lacking absent absence free yet only either neither nor
     unique distinct separate individual
     keep kept keeping own include includes including included exclude excluding excluded report separately
     check checked checking meaning means mean
