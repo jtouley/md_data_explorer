@@ -178,6 +178,7 @@ def _counted_role(question: str, context: DatasetContext) -> tuple[str, str] | N
 
 
 _ID_ENDINGS: Final = ("id", "identifier", "key", "ref")
+_COUNTER_ENDINGS: Final = ("no", "num", "number", "nr", "nbr", "seq", "sequence", "index", "idx")
 
 
 def _role_key(noun: str, context: DatasetContext) -> str | None:
@@ -242,8 +243,12 @@ def resolve_unit(question: str, context: DatasetContext) -> Unit:
     if noun in _ROW_NOUNS:
         return Unit(None, "rows", noun if noun not in ("record", "row", "entry") else None)
     if noun in context.row_nouns:
-        # The noun the dictionary gives one row ("one row per episode") counts the rows, never a
-        # column that numbers them.
+        # The noun the dictionary gives one row ("one row per episode"): its own ID column when the
+        # table has one (rows can repeat an admission), else the rows; never a column named as a
+        # counter ("episode_no" numbers each patient's episodes).
+        keyed = counting_unit.pick_encounter_key(list(context.encounter_keys), noun)
+        if keyed is not None and re.split(r"[^a-z0-9]+", keyed.casefold())[-1] not in _COUNTER_ENDINGS:
+            return Unit(keyed, "visits", noun)
         return Unit(None, "visits", noun)
     keys = list(context.encounter_keys)
     chosen = counting_unit.pick_encounter_key(keys, noun)

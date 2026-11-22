@@ -11,6 +11,7 @@ import pytest
 
 from clinical_analytics.model_query.context import dictionary_entries, value_labels
 from clinical_analytics.model_query.plan import ModelReply, compile_test, stated_bins
+from clinical_analytics.model_query.units import resolve_unit
 from clinical_analytics.sql.sandbox import SandboxConnection
 from tests.model_query import tables
 
@@ -497,3 +498,19 @@ def test_answer_question_measureTimeSaidInItsDescription_isNotAsked(make_model_a
     # Assert: 4, 5, 6, 8, 10, 10, 12, 16, 20
     assert answer.status == "answered", prompts[-1][:700]
     assert answer.analysis["median"] == pytest.approx(10.0)
+
+
+def test_resolve_unit_rowNounWithItsOwnIdColumn_countsTheIds(make_query_table):
+    # Arrange: one row per admission, but an admission can take two rows; admission_id names it
+    frame = tables.sleep_studies().with_columns(
+        tables.pl.Series("admission_id", ["S1", "S2", "S2", "S3", "S4", "S5", "S6", "S7"])
+    )
+    _catalog, context = make_query_table(
+        frame, doc_context=tables.SLEEP_DICTIONARY.replace("sleep study episode", "admission"), id_column="pt_id"
+    )
+
+    # Act
+    unit = resolve_unit("How many admissions were there?", context)
+
+    # Assert
+    assert unit.key == "admission_id"
