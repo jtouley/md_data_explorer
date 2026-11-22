@@ -189,3 +189,33 @@ def test_answer_question_shareWhoseLimitDecidesIt_isSentBack(ask_inr):
 def test_value_labels_labelsWithParenthesesCommasSlashesAndEquals_keptWhole(text, values, expected):
     # Act / Assert
     assert value_labels(text, values) == expected
+
+
+@pytest.mark.parametrize(
+    ("question", "reply", "expected"),
+    [
+        ("How many draw records are in this file?", _plan("count"), 11),
+        ("How many patients had three or more blood draws?", _plan("count", where="draw_no >= 3"), 2),
+        ("How many patients had an INR of 2 or more on every blood draw?", _plan("count", where="inr >= 2"), 3),
+    ],
+)
+def test_answer_question_theDictionarysRowNoun_countsAndQuantifiesLikeVisits(
+    make_query_table, question, reply, expected
+):
+    # Arrange: the dictionary says one row per "blood sample"; questions say draw or sample
+    doc = tables.INR_DICTIONARY.replace("one row per INR blood draw", "one row per blood draw")
+    catalog, context = make_query_table(tables.inr_draws(), doc_context=doc, id_column="pt_number")
+    queue = [reply]
+
+    # Act
+    answer = answer_question(
+        question,
+        context,
+        model=lambda *_a: queue.pop(0) if queue else None,
+        open_sandbox=lambda: SandboxConnection(catalog),
+        examples=[],
+    )
+
+    # Assert
+    assert answer.status == "answered", answer.reason
+    assert answer.analysis["total_count"] == expected

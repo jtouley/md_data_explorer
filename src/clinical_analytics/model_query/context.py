@@ -120,6 +120,36 @@ class DatasetContext:
         return self.rows - self.distinct_rows
 
     @property
+    def row_phrase(self) -> tuple[str, ...]:
+        """The words the dictionary uses for one row ("one row per INR blood draw")."""
+        found = re.search(
+            r"\b(?:one|each) (?:row|record|line) (?:per|is|for)(?: one| an?| each)? ([a-z][a-z -]{1,40})",
+            (self.notes or "").casefold(),
+        )
+        return tuple(re.findall(r"[a-z]+", found.group(1))) if found else ()
+
+    @property
+    def row_nouns(self) -> frozenset[str]:
+        """The noun the dictionary gives one row ("one row per DEXA scan" -> scan, scans)."""
+        found = re.search(
+            r"\b(?:one|each) (?:row|record|line) (?:per|is|for)(?: one| an?| each)? ([a-z][a-z -]{1,40})",
+            (self.notes or "").casefold(),
+        )
+        if found is None:
+            return frozenset()
+        words = re.findall(r"[a-z]+", found.group(1))
+        # The head of "INR blood draw", "clinic visit", "DEXA scan" is its last word, before any
+        # "of"/"with"/"and" that starts a qualifier.
+        stop = {"of", "with", "and", "or", "in", "at", "by", "for", "per", "from", "during", "after", "before"}
+        cut = next((i for i, w in enumerate(words) if w in stop), len(words))
+        phrase = [w for w in words[:cut] if w not in {"the", "a", "an"}]
+        if not phrase or phrase[-1] in {"patient", "patients", "person", "people"}:
+            return frozenset()
+        head = phrase[-1]
+        one = head[:-1] if head.endswith("s") and not head.endswith("ss") else head
+        return frozenset({one, one + "s", one + "es"})
+
+    @property
     def rows_are_patients(self) -> bool:
         """Counting rows counts patients: every row has its own patient ID, or the user said so."""
         if self.patient_key is None:

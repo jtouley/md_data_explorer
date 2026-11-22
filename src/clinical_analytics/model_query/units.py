@@ -102,7 +102,7 @@ def plural(noun: str) -> str:
     return noun if noun.endswith("s") else noun + "s"
 
 
-def head_noun(question: str) -> tuple[HeadKind, str] | None:
+def head_noun(question: str, extra_events: frozenset[str] = frozenset()) -> tuple[HeadKind, str] | None:
     """(patients | events, the noun) the question counts: the first unit noun within a few words
     after its counting words ("how many", "% of", "number of", "average"), else the first unit
     noun anywhere; None when it names none ("how many were positive?")."""
@@ -112,7 +112,7 @@ def head_noun(question: str) -> tuple[HeadKind, str] | None:
     def kind(word: str) -> HeadKind | None:
         if word in PATIENT_NOUNS:
             return "patients"
-        if word in EVENT_NOUNS:
+        if word in EVENT_NOUNS or word in extra_events:
             return "events"
         return None
 
@@ -145,7 +145,7 @@ def resolve_unit(question: str, context: DatasetContext) -> Unit:
     Raises:
         UnitError: the noun cannot be counted on this table as asked.
     """
-    found = head_noun(question)
+    found = head_noun(question, context.row_nouns)
     if context.rows_are_patients:
         if found is None or found[0] == "patients":
             return Unit(None, "patients")

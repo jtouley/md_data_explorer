@@ -60,13 +60,17 @@ class QuantifierError(ValueError):
     """The question's ever/never/always reading cannot be told apart. The message is for the user."""
 
 
-def quantifier(question: str) -> Quantifier | None:
-    """ever | never | always from the question's own words, or None.
+def quantifier(question: str, row_nouns: frozenset[str] = frozenset()) -> Quantifier | None:
+    """ever | never | always from the question's own words, or None. ``row_nouns``: the table's
+    own word for a row ("scan"), an occasion like visit.
 
     Raises:
         QuantifierError: it says both "never" and "always" (or "every time").
     """
-    never, always = bool(_NEVER.search(question)), bool(_ALWAYS.search(question))
+    text = question
+    for noun in sorted(row_nouns, key=len, reverse=True):
+        text = re.sub(rf"\b{re.escape(noun)}\b", "visit", text, flags=re.IGNORECASE)
+    never, always = bool(_NEVER.search(text)), bool(_ALWAYS.search(text))
     if never and always:
         raise QuantifierError(
             "The question says both 'never' and 'every time', so it is not clear which visits must meet the "
@@ -76,7 +80,7 @@ def quantifier(question: str) -> Quantifier | None:
         return "never"
     if always:
         return "always"
-    return "ever" if _EVER.search(question) else None
+    return "ever" if _EVER.search(text) else None
 
 
 def asks_per_patient(question: str) -> bool:

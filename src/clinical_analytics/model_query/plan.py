@@ -870,7 +870,7 @@ _OCCASIONS = (
 )
 _AT_LEAST = re.compile(
     rf"\b(?:(more than|over) (one|two|three|\d+)|(at least|(?:a minimum of)) (one|two|three|four|five|\d+)|"
-    rf"(two|three|four|five|\d+) or more|(multiple|several|repeat(?:ed)?))\s+{_OCCASIONS}\b",
+    rf"(two|three|four|five|\d+) or more|(multiple|several|repeat(?:ed)?))\s+(?:[a-z-]+\s+)?{_OCCASIONS}\b",
     re.IGNORECASE,
 )
 _WITHIN_DAYS = re.compile(
@@ -884,8 +884,11 @@ _LATEST_PERIOD = re.compile(
 )
 
 
-def _min_rows(question: str) -> int | None:
-    """N from "more than one visit", "at least two visits", "3 or more visits", "multiple visits"."""
+def _min_rows(question: str, row_nouns: frozenset[str] = frozenset()) -> int | None:
+    """N from "more than one visit", "at least two visits", "3 or more visits", "multiple visits"
+    (``row_nouns``: the table's own word for a row, read like visits)."""
+    for noun in sorted(row_nouns, key=len, reverse=True):
+        question = re.sub(rf"\b{re.escape(noun)}\b", "visits", question, flags=re.IGNORECASE)
     found = _AT_LEAST.search(question)
     if found is None:
         return None
@@ -914,7 +917,7 @@ def _repeated_count(
     by: str,
 ) -> Compiled | None:
     """Patients with at least N rows meeting where ("more than one visit"), or None."""
-    least = _min_rows(question)
+    least = _min_rows(question, context.row_nouns)
     if least is None or least < 2 or unit.key is None or context.rows_are_patients:
         return None
     # "visit_no > 1" is the model's way of saying "more than one visit": the count says it already.
@@ -1126,7 +1129,7 @@ def _quantified_count(
         UnitError: the quantifier cannot be read without a guess.
     """
     try:
-        how = quantifier(question)
+        how = quantifier(question, context.row_nouns)
     except QuantifierError as e:
         raise UnitError(str(e)) from e
     if how in (None, "ever") or context.rows_are_patients or unit.key is None:
@@ -1491,7 +1494,7 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
         words = counting_unit.read_units(question)
         rollup: str = words.rollup or "any"
         try:
-            how = quantifier(question) if unit.key is not None else None
+            how = quantifier(question, context.row_nouns) if unit.key is not None else None
         except QuantifierError as e:
             raise UnitError(str(e)) from e
         if how == "never":
@@ -1642,7 +1645,7 @@ def statistic_mode(question: str, context: DatasetContext) -> StatisticMode:
         return "rows"
     if _PER_PATIENT.search(question):
         return "patients"
-    found = head_noun(question)
+    found = head_noun(question, context.row_nouns)
     if (found is not None and found[0] == "events") or _ORDERED.search(question):
         return "rows"
     return "patients_if_constant"

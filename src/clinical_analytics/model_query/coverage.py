@@ -246,6 +246,8 @@ def topic_words(context: DatasetContext) -> set[str]:
     limit = max(3.0, 0.2 * len(context.columns))
     found = {word for word, n in counts.items() if n >= limit}
     found.update(_stem(w) for w in _tokens(context.title or ""))
+    # The words for one row ("blood draw") describe every row: they limit nothing.
+    found.update(_stem(w) for w in context.row_phrase if w not in {"of", "with", "and", "or", "the", "a", "an"})
     # The dictionary's opening sentence says what the table is ("A clinic registry: one row per
     # visit"); its words name no column unless a column's own words include them.
     opening = re.split(r"(?<=[.:;])\s|\n", (context.notes or "").strip(), maxsplit=1)[0][:160]
@@ -288,6 +290,7 @@ def content_chunks(question: str, context: DatasetContext) -> list[tuple[str, ..
             or (word in STRUCTURAL and not (word in _LIMITING_NOUNS and word in limiting))
             or (word in _PERSON_NOUNS and word not in limiting)
             or word in EVENT_NOUNS
+            or word in context.row_nouns
             or stem in topic
             or stem in left_out
             or (whole_file and stem not in named)

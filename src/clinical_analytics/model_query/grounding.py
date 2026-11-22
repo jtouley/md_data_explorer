@@ -349,9 +349,11 @@ def limit_backed(term: exp.Expr, question: _Question, context: DatasetContext) -
     if sequence and numbers:
         # A visit-number limit is stated only by its number in digits, or by "first"/"baseline"
         # for the first one: "pre-session sodium" never limits to session 1.
-        digits = stated_numbers(question.text)
         firsts = bool(_FIRST_WORDS.search(question.text))
-        return any((_as_float(n) in digits) or (firsts and _as_float(n) in (0.0, 1.0)) for n in numbers)
+        return any(
+            (firsts and _as_float(n) in (0.0, 1.0)) or (_as_float(n) not in (0.0, 1.0) and _number_said(question, n))
+            for n in numbers
+        )
     if numbers:
         # A stated threshold must also fit the column it is compared with: "under 200" is not a
         # limit on a percentage that runs from 0 to 100.
