@@ -147,22 +147,29 @@ def _clip(text: str, limit: int) -> str:
 
 
 # "1 = male", "2: female", "0=No; 1=Yes", "M - male": a code and its label in a dictionary entry.
-_CODE_LABEL = re.compile(
-    r"(?<![\w.])([A-Za-z0-9][\w.+-]{0,11})\s*(?:=|:|–|-(?=\s))\s*([A-Za-z][A-Za-z0-9 /'()+-]{0,40}?)"
-    r"\s*(?=[,;\n)]|$|\s+[A-Za-z0-9][\w.+-]{0,11}\s*(?:=|:))"
-)
+# A code introducing its label in a dictionary entry: "1 = ", "M: ", "0 - ".
+_CODE_START = re.compile(r"(?<![\w.])([A-Za-z0-9][\w.+-]{0,11})\s*(?:=|:|–|-(?=\s))\s*")
 
 
 def value_labels(text: str | None, values: tuple[Any, ...] | None) -> tuple[tuple[str, str], ...]:
-    """(code, label) pairs a dictionary entry gives for codes the column actually holds."""
+    """(code, label) pairs a dictionary entry gives for codes the column actually holds.
+
+    A label runs from its code to the next code of the column (or the end of its line, or of its
+    sentence), so parentheses, commas, slashes and "=" inside it are kept: "1 = planned (elective
+    cesarean), 2 = emergency" gives "planned (elective cesarean)"."""
     if not text or not values:
         return ()
     # A whole-number float is written as an integer in a dictionary ("1", not "1.0").
     held = {(str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)): str(v) for v in values}
+    starts = [m for m in _CODE_START.finditer(text) if m.group(1) in held]
     found: dict[str, str] = {}
-    for code, label in _CODE_LABEL.findall(text):
-        label = " ".join(label.split()).strip(" .")
-        if code in held and label and held[code] not in found and label.casefold() != code.casefold():
+    for index, match in enumerate(starts):
+        end = starts[index + 1].start() if index + 1 < len(starts) else len(text)
+        label = text[match.end() : end].split("\n")[0]
+        label = re.split(r"\.\s|[,;]\s*[A-Za-z0-9][\w.+-]{0,11}\s*(?:=|:)", label, maxsplit=1)[0]
+        label = " ".join(label.split()).strip(" ,;.")
+        code = match.group(1)
+        if label and held[code] not in found and label.casefold() != code.casefold():
             found[held[code]] = label
     # Labels for only some codes are kept too; a code without one keeps its stored value.
     return tuple(sorted(found.items()))

@@ -8,6 +8,7 @@ the visit-level samples are recomputed here by independent Polars oracles.
 
 from __future__ import annotations
 
+import datetime as dt
 import math
 from pathlib import Path
 from typing import Any
@@ -157,6 +158,13 @@ def test_model_query_examples_everyPlan_compilesOnATableWithItsColumns(make_quer
                 "patient_id": ["a", "a"], "encounter_id": ["e1", "e2"], "arrival_year": [2024, 2024],
                 "age_years": [70, 70], "triage_level": [1, 2], "admitted": ["no", "yes"],
                 "sepsis_flag": ["no", "yes"], "lactate": [2.0, 40.0], "lactate_unit": ["mmol/L", "mg/dL"],
+            }
+        ),
+        "lipid": pl.DataFrame(
+            {
+                "patient_id": ["a", "a", "b"], "visit_no": [1, 2, 1],
+                "visit_date": [dt.date(2024, 1, 1), dt.date(2024, 3, 1), dt.date(2024, 2, 1)],
+                "ldl": [130.0, 95.0, 88.0], "statin": ["no", "yes", "no"], "age": [55, 55, 72],
             }
         ),
         "vaccine": pl.DataFrame(

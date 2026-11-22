@@ -872,3 +872,34 @@ def test_sheetHasValues_otherSheetCannotBeScanned_countsAsNotReadNeverFails() ->
 
     # Assert
     assert has_values is True
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        pytest.param(["03/25/21", "12/01/22", "07/04/23"], [(2021, 3, 25), (2022, 12, 1), (2023, 7, 4)], id="mm_dd_yy"),
+        pytest.param(["25/03/21", "01/12/22", "04/07/23"], [(2021, 3, 25), (2022, 12, 1), (2023, 7, 4)], id="dd_mm_yy"),
+        pytest.param(["21/03/25", "22/12/01", "23/07/04"], [(2021, 3, 25), (2022, 12, 1), (2023, 7, 4)], id="yy_mm_dd"),
+    ],
+)
+def test_stage_twoDigitYearDates_oneFormatForTheWholeColumn(values, expected):
+    # Arrange: every value read with the one format that reads them all with years in one span
+    data = _csv(["patient_id,seen", *(f"P{i},{v}" for i, v in enumerate(values))])
+
+    # Act
+    staged = read_csv_typed(data)
+
+    # Assert
+    assert staged.data["seen"].to_list() == [dt.date(*d) for d in expected]
+
+
+def test_stage_twoDigitYearDatesNoValueAbove12_staysTextWithNote():
+    # Arrange: day-first and month-first both read every value, differently
+    data = _csv(["patient_id,seen", "P1,03/04/21", "P2,05/06/22", "P3,07/08/23"])
+
+    # Act
+    staged = read_csv_typed(data)
+
+    # Assert: never parsed row by row in different orders
+    assert staged.data.schema["seen"] == pl.String
+    assert _note(staged, "seen").reason == "ambiguous_dates"

@@ -280,8 +280,53 @@ def _clean_tokens(col: str) -> pl.Expr:
     return pl.when(_is_missing_token(cleaned)).then(None).otherwise(cleaned)
 
 
+# Every single date format a column may be written in, two-digit years included. A column is read
+# with ONE of them when one reads every value (``_one_format``), never format by format per row.
+_SINGLE_FORMATS: Final = (
+    *_ISO_DATE_FORMATS,
+    *(fmt for family in _AMBIGUOUS_FAMILIES for fmt in family),
+    "%d/%m/%y", "%m/%d/%y", "%y/%m/%d", "%d-%m-%y", "%m-%d-%y", "%y-%m-%d", "%d.%m.%y",
+)  # fmt: skip
+_PLAUSIBLE_YEARS: Final = (1900, 2100)
+
+
+def _one_format(s: pl.Series) -> tuple[pl.Series | None, NoteReason | None, bool]:
+    """(the column read with the one format that reads every value with plausible years, None,
+    True); (None, "ambiguous_dates", True) when several such formats read it differently and
+    nothing tells them apart; (None, None, False) when no single format reads every value."""
+    values = int(s.is_not_null().sum())
+    if values == 0:
+        return None, None, False
+    readings: list[pl.Series] = []
+    for fmt in _SINGLE_FORMATS:
+        parsed = s.str.strptime(pl.Date, fmt, strict=False)
+        if int(parsed.is_not_null().sum()) != values:
+            continue
+        years = parsed.dt.year().drop_nulls().to_list()
+        if min(years) < _PLAUSIBLE_YEARS[0] or max(years) > _PLAUSIBLE_YEARS[1]:
+            continue
+        if not any(parsed.equals(seen) for seen in readings):
+            readings.append(parsed)
+    if not readings:
+        return None, None, False
+    if len(readings) == 1:
+        return readings[0], None, True
+    # Two readings of the same text (dd/mm/yy and yy/mm/dd): the one whose years span far less
+    # than every other's is the dates; a day number read as a year spreads over decades.
+    spans = sorted(
+        (max(years) - min(years), i) for i, r in enumerate(readings) if (years := r.dt.year().drop_nulls().to_list())
+    )
+    if spans[0][0] * 2 + 2 <= spans[1][0]:
+        return readings[spans[0][1]], None, True
+    return None, "ambiguous_dates", True
+
+
 def _parse_dates(s: pl.Series) -> tuple[pl.Series | None, NoteReason | None]:
     """Parse a trimmed text series as Date/Datetime, or say why not (None when nothing parses)."""
+    if not s.str.contains(r"[ T]\d{1,2}:\d{2}").any():
+        single, reason, decided = _one_format(s)
+        if decided:
+            return single, reason
     parsed_dt = [s.str.strptime(pl.Datetime("us"), fmt, strict=False) for fmt in _DATETIME_FORMATS]
     parsed_date = [s.str.strptime(pl.Date, fmt, strict=False) for fmt in _ISO_DATE_FORMATS]
 

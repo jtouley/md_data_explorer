@@ -218,6 +218,47 @@ def _coverage_doubts(
     return doubts
 
 
+_FIRST_OP: Final = re.compile(
+    r"\b(?:baseline|initial|first|at (?:entry|enrol(?:l)?ment|intake|diagnosis|admission))\b", re.IGNORECASE
+)
+_LAST_OP: Final = re.compile(r"\b(?:last|final|latest|most recent|at (?:discharge|exit|the end))\b", re.IGNORECASE)
+_FIRST_PARTS: Final = frozenset(
+    {"baseline", "bl", "base", "first", "initial", "entry", "enrol", "enroll", "intake", "pre"}
+)
+_LAST_PARTS: Final = frozenset({"last", "final", "latest", "end", "exit", "discharge", "recent", "post"})
+
+
+def _time_op_doubt(question: str, compiled: Compiled | TestCall, context: DatasetContext) -> Doubt | None:
+    """ "Baseline", "first", "last", "most recent" on visit rows: the plan must apply that operation
+    (each patient's first or last value, a column for that time, the first visit's number, or the
+    latest period); otherwise the word was dropped and the answer would be over every visit."""
+    if not isinstance(compiled, Compiled) or context.rows_are_patients or context.patient_key is None:
+        return None
+    for pattern, parts, op in ((_FIRST_OP, _FIRST_PARTS, "first"), (_LAST_OP, _LAST_PARTS, "last")):
+        said = pattern.search(question)
+        if said is None:
+            continue
+        names = {p for name in compiled.columns for p in re.findall(r"[a-z]+", name.casefold())}
+        sequence_used = any(c.is_sequence for name in compiled.columns if (c := context.column(name)))
+        latest = op == "last" and "DATE_TRUNC" in compiled.sql.upper()
+        if compiled.time_op in (op, "both") or names & parts or (op == "first" and sequence_used) or latest:
+            continue
+        word = said.group(0)
+        return Doubt(
+            "time_op",
+            feedback=(
+                f"The question says '{word}', but the reply reads every visit. For each patient's {op} value set "
+                f"per_patient to {op} with number = the measure; or use the column for that time if the table has one."
+            ),
+            reason=(
+                f"The question says '{word}', but I read it over every visit, so I did not answer. Ask again "
+                f"saying 'each patient's {op} visit' or naming the column."
+            ),
+            choices=(),
+        )
+    return None
+
+
 def _measure_doubt(question: str, compiled: Compiled | TestCall, context: DatasetContext) -> Doubt | None:
     """A measure whose column has siblings (the same measure at another time) the question does
     not choose between: asked at once, never picked."""
@@ -280,7 +321,8 @@ def _doubts(
     _excluded, one_number = user_choices(question)
     dropped = dropped_number(question, compiled.sql)
     share_count = _share_as_count(question, compiled, context)
-    extra = [d for d in (dropped, share_count) if d is not None]
+    time_op = _time_op_doubt(question, compiled, context)
+    extra = [d for d in (dropped, share_count, time_op) if d is not None]
 
     covered = _coverage_doubts(question, compiled, context, reply)
     if isinstance(compiled, TestCall):

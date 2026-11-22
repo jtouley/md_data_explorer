@@ -32,14 +32,17 @@ PER_PATIENT_KINDS: Final[tuple[str, ...]] = ("count", "first", "last", "span_day
 
 _OCCASION = (
     r"(?:visits?|draws?|tests?|sessions?|measurements?|readings?|checks?|occasions?|admissions?|"
-    r"encounters?|cycles?|samples?|appointments?|times?|records?|results?|assessments?|exams?)"
+    r"encounters?|cycles?|samples?|appointments?|times?|records?|results?|assessments?|exams?|episodes?|"
+    r"doses?|infusions?|courses?|treatments?|stays?|attendances?|check-?ups?|follow-?ups?|reviews?|rounds?)"
 )
 _NEVER = re.compile(
-    rf"\bnever\b|\bnot once\b|\bon no {_OCCASION}\b|\bnone of (?:their|the|his|her) {_OCCASION}\b", re.I
+    rf"\bnever\b|\bnot once\b|\bnot (?:at|on|in) any\b|\b(?:on|at|in|during) no {_OCCASION}\b|"
+    rf"\bnone of (?:their|the|his|her|its) {_OCCASION}\b",
+    re.I,
 )
 _ALWAYS = re.compile(
-    rf"\balways\b|\b(?:on|at|in|for) (?:every|all|each)(?: of)?(?: (?:their|the|his|her))? {_OCCASION}\b|"
-    r"\b(?:each|every) time\b|\bconsistently\b|\bthroughout\b",
+    r"\balways\b|\b(?:every single|every|each|all)(?: of)?(?: (?:their|the|his|her|its))?\s+(?:\w+\s+)?"
+    rf"{_OCCASION}\b|\b(?:each|every) time\b|\bconsistently\b|\bthroughout\b|\bwithout exception\b",
     re.I,
 )
 _EVER = re.compile(rf"\bever\b|\bat least once\b|\b(?:on|at|in) any(?: of (?:their|the))? {_OCCASION}\b", re.I)

@@ -23,6 +23,9 @@ tables:
   vaccine: >-
     one row per person: person_id, age_group (0, 1, 2), region ('East', 'North', 'South'), doses
     (0 to 3), antibody_titer (number), pregnant ('no', 'yes')
+  lipid: >-
+    one row per clinic visit, patients repeat: patient_id (patient ID), visit_no (the visit's number
+    within its patient, 1, 2, ...), visit_date (date), ldl (number), statin ('no', 'yes'), age (number)
 examples:
   - table: stroke
     question: "Total number of patients in the registry?"
@@ -152,3 +155,27 @@ examples:
     question: "Correlate antibody titer with number of doses."
     plan: {thought: "Correlation between antibody_titer and doses.", answer: "correlation", where: null, group_by: "doses", numerator: null, number: null, outcome: "antibody_titer"}
     sql: null
+  - table: lipid
+    question: "Mean LDL at each patient's first visit?"
+    plan: {thought: "Each patient's first ldl, then the mean.", answer: "mean", where: null, group_by: null, numerator: null, number: "ldl", outcome: null, per_patient: "first", order_by: "visit_date"}
+    sql: "SELECT AVG(ldl) AS mean FROM (SELECT patient_id, ARG_MIN(ldl, visit_date) AS ldl FROM unified GROUP BY patient_id)"
+  - table: lipid
+    question: "Typical number of clinic visits per patient?"
+    plan: {thought: "Rows per patient, then the median.", answer: "median", where: null, group_by: null, numerator: null, number: null, outcome: null, per_patient: "count", order_by: null}
+    sql: "SELECT MEDIAN(n) AS median FROM (SELECT patient_id, COUNT(*) AS n FROM unified GROUP BY patient_id)"
+  - table: lipid
+    question: "Median days between consecutive visits of the same patient?"
+    plan: {thought: "Days between a patient's consecutive visit_date values, then the median.", answer: "median", where: null, group_by: null, numerator: null, number: "visit_date", outcome: null, per_patient: "gap_days", order_by: null}
+    sql: "SELECT MEDIAN(d) AS median FROM (SELECT DATE_DIFF('day', LAG(visit_date) OVER (PARTITION BY patient_id ORDER BY visit_date), visit_date) AS d FROM unified) WHERE d IS NOT NULL"
+  - table: lipid
+    question: "Number of patients never put on a statin?"
+    plan: {thought: "The condition for one visit is statin yes; the app checks it was true on none of a patient's visits.", answer: "count", where: "statin = 'yes'", group_by: null, numerator: null, number: null, outcome: null, per_patient: null, order_by: null}
+    sql: "SELECT COUNT(*) AS count FROM (SELECT patient_id FROM unified GROUP BY patient_id HAVING NOT BOOL_OR(statin = 'yes'))"
+  - table: lipid
+    question: "Patients whose LDL stayed below 100 at all of their visits?"
+    plan: {thought: "The condition for one visit is ldl below 100; the app checks it on every visit.", answer: "count", where: "ldl < 100", group_by: null, numerator: null, number: null, outcome: null, per_patient: null, order_by: null}
+    sql: "SELECT COUNT(*) AS count FROM (SELECT patient_id FROM unified GROUP BY patient_id HAVING BOOL_AND(ldl < 100))"
+  - table: lipid
+    question: "Patient counts in the age bands below 50, 50-69 and 70+?"
+    plan: {thought: "Count patients by age; the app makes the stated bands.", answer: "count", where: null, group_by: "age", numerator: null, number: null, outcome: null, per_patient: null, order_by: null}
+    sql: "SELECT CASE WHEN age < 50 THEN 'below 50' WHEN age <= 69 THEN '50-69' ELSE '70+' END AS age_band, COUNT(DISTINCT patient_id) AS count FROM unified GROUP BY 1"

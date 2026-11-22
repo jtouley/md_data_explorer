@@ -104,7 +104,7 @@ STRUCTURAL: Final = frozenset(
     lack lacks lacked lacking absent absence free yet only either neither nor
     hold holds held contain contains contained has have attend attended came come visit visited
     treated treat seen
-    unique distinct separate individual
+    unique distinct separate individual single
     keep kept keeping own include includes including included exclude excluding excluded report separately
     check checked checking meaning means mean
     """.split()
@@ -442,13 +442,7 @@ def check(
         if any(c.name.casefold() == (link.column or "").casefold() for c in used_columns)
         and (
             {_stem(w) for w in _tokens(link.phrase)} & vocab.get(link.column or "", set())
-            or (
-                _verified(link.phrase, link.column or "", ranked)
-                and (
-                    not _is_flag_column(context, link.column or "")
-                    or _verified(link.phrase, link.column or "", ranked, STRONG_SIMILARITY)
-                )
-            )
+            or (_verified(link.phrase, link.column or "", ranked) and not _is_flag_column(context, link.column or ""))
         )
     ]
     reached_by_link = {_stem(w) for link in verified_links for w in _tokens(link.phrase)}
@@ -469,9 +463,10 @@ def check(
     for chunk in open_chunks:
         text = " ".join(chunk)
         best = near.get(text, [])[:LINK_TOP]
+        # A yes/no column is never reached by similarity alone: "<procedure> patients" must not
+        # become another treatment's flag.
         close = any(
-            name.casefold() in used_names
-            and score >= (STRONG_SIMILARITY if _is_flag_column(context, name) else LINK_SIMILARITY)
+            name.casefold() in used_names and not _is_flag_column(context, name) and score >= LINK_SIMILARITY
             for name, score in best
         )
         if not close:

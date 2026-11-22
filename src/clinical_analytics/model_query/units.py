@@ -42,6 +42,9 @@ EVENT_NOUNS: Final = frozenset(
         "appointments", "consultation", "consultations", "consult", "consults", "sample", "samples",
         "specimen", "specimens", "record", "records", "row", "rows", "entries", "entry", "prescriptions",
         "prescription", "discharges", "discharge", "deliveries", "delivery", "births", "transfusions",
+        "result", "results", "measurement", "measurements", "reading", "readings", "draw", "draws",
+        "assessment", "assessments", "observation", "observations", "lab", "labs", "infusion", "infusions",
+        "attendance", "attendances", "exam", "exams",
     }
 )  # fmt: skip
 _HEAD: Final = re.compile(
@@ -56,6 +59,13 @@ _DETERMINERS: Final = frozenset({"each", "every", "any", "all", "their", "a", "t
 # Words between the counting words and the noun that do not end the search ("how many unique
 # patients", "number of clinic visits", "% of all ED visits").
 _HEAD_WINDOW: Final = 5
+
+
+# Nouns for a measured value or a row: they count rows (each row is one), never an ID.
+_ROW_NOUNS: Final = frozenset(
+    {"record", "row", "entry", "result", "measurement", "reading", "draw", "assessment", "observation", "lab",
+     "value", "exam"}
+)  # fmt: skip
 
 
 class UnitError(ValueError):
@@ -163,8 +173,8 @@ def resolve_unit(question: str, context: DatasetContext) -> Unit:
             )
         return Unit(None, "rows")
     noun = singular(found[1])
-    if noun in ("record", "row", "entry"):
-        return Unit(None, "rows")
+    if noun in _ROW_NOUNS:
+        return Unit(None, "rows", noun if noun not in ("record", "row", "entry") else None)
     keys = list(context.encounter_keys)
     chosen = counting_unit.pick_encounter_key(keys, noun)
     if chosen is not None:

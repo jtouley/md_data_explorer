@@ -56,7 +56,7 @@ class Example:
         """The reply the model should give for this example, in ``fmt`` (keys in schema order)."""
         plan = {name: self.plan.get(name) for name in _PLAN_FIELDS}
         if fmt == "plan":
-            return plan
+            return plan | {"per_patient": self.plan.get("per_patient"), "order_by": self.plan.get("order_by")}
         rest = {name: plan[name] for name in _PLAN_FIELDS[2:]}
         if plan["answer"] in (*STAT_TESTS, LISTING):
             return {"thought": plan["thought"], "answer": plan["answer"], "sql": None, **rest}

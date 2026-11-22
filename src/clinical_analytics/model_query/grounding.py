@@ -40,7 +40,7 @@ from clinical_analytics.model_query.context import ColumnInfo, DatasetContext
 from clinical_analytics.sql.render import render
 
 DoubtKind = Literal[
-    "limit", "no_group", "missing_group", "dropped", "unlinked", "uncovered", "ambiguous", "share_as_count"
+    "limit", "no_group", "missing_group", "dropped", "unlinked", "uncovered", "ambiguous", "share_as_count", "time_op"
 ]
 
 # The words a choice adds to the question it re-asks (matched case-insensitively).
@@ -302,6 +302,9 @@ def dropped_number(question: str, sql: str) -> Doubt | None:
     )
 
 
+_FIRST_WORDS = re.compile(r"\b(?:first|baseline|initial|at (?:entry|enrol(?:l)?ment|intake))\b", re.IGNORECASE)
+
+
 def _as_float(literal: exp.Literal) -> float | None:
     try:
         return float(literal.name)
@@ -335,9 +338,20 @@ def limit_backed(term: exp.Expr, question: _Question, context: DatasetContext) -
     # A value of a two-valued "X" / "not X" column is a yes/no test in words, like yes or no.
     flag_words = {str(v).strip().casefold() for c in columns if (pair := c.negated_pair()) for v in pair}
     texts = [lit.name for lit in literals if lit.is_string and lit.name.strip().casefold() not in _YES_NO | flag_words]
-    numbers = [lit for lit in literals if not lit.is_string and lit.name.strip() not in ("0", "1")]
+    numbers = [
+        lit
+        for lit in literals
+        if not lit.is_string and (lit.name.strip() not in ("0", "1") or any(c.is_sequence for c in columns))
+    ]
     if texts:
         return all(_value_said(question, text) for text in texts)
+    sequence = [c for c in columns if c.is_sequence]
+    if sequence and numbers:
+        # A visit-number limit is stated only by its number in digits, or by "first"/"baseline"
+        # for the first one: "pre-session sodium" never limits to session 1.
+        digits = stated_numbers(question.text)
+        firsts = bool(_FIRST_WORDS.search(question.text))
+        return any((_as_float(n) in digits) or (firsts and _as_float(n) in (0.0, 1.0)) for n in numbers)
     if numbers:
         # A stated threshold must also fit the column it is compared with: "under 200" is not a
         # limit on a percentage that runs from 0 to 100.

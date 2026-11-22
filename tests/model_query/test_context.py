@@ -118,7 +118,9 @@ def test_examples_pool_everyExample_hasBothFormatsOrIsATestCall():
     assert len(pool) >= 25
     for example in pool:
         plan, sql = example.reply("plan"), example.reply("sql")
-        assert list(plan) == ["thought", "answer", "where", "group_by", "numerator", "number", "outcome"]
+        assert list(plan) == [
+            "thought", "answer", "where", "group_by", "numerator", "number", "outcome", "per_patient", "order_by"
+        ]  # fmt: skip
         assert list(sql)[:3] == ["thought", "answer", "sql"]
         assert (sql["answer"] == "sql") == (sql["sql"] is not None)
 

@@ -8,7 +8,7 @@ in two units), generated from the row number so the oracles in the tests can rec
 
 from __future__ import annotations
 
-import polars as pl
+import polars as pl  # noqa: F401  (re-exported for tests)
 
 _PATIENTS = [
     # id, sex, dx, admitted, confirmed, onset_year, comorbid, age_cat
@@ -206,4 +206,41 @@ Made-up blood donor panel: one row per donor.
 donor_id     Donor identifier.
 blood_group  O, A, B or AB.
 first_year   Year of the first donation.
+"""
+
+
+def inr_draws() -> pl.DataFrame:
+    """A made-up anticoagulation clinic: one row per INR blood draw, 4 patients with 2 to 4 draws.
+
+    ``draw_no`` numbers each patient's draws; ``on_warfarin`` is a Y/N flag; ``inr`` is empty for a
+    draw the lab could not run.
+    """
+    import datetime as dt
+
+    rows = [
+        # pt_number, draw_no, date, inr, on_warfarin, age
+        ("A", 1, dt.date(2023, 1, 2), 1.8, "Y", 45),
+        ("A", 2, dt.date(2023, 1, 16), 2.4, "Y", 45),
+        ("A", 3, dt.date(2023, 2, 13), 2.9, "Y", 45),
+        ("B", 1, dt.date(2023, 1, 5), 2.2, "Y", 61),
+        ("B", 2, dt.date(2023, 2, 2), 2.6, "Y", 61),
+        ("C", 1, dt.date(2023, 1, 9), 3.4, "N", 72),
+        ("C", 2, dt.date(2023, 1, 23), None, "N", 72),
+        ("C", 3, dt.date(2023, 3, 6), 3.8, "N", 72),
+        ("C", 4, dt.date(2023, 4, 3), 2.1, "Y", 72),
+        ("D", 1, dt.date(2023, 2, 1), 2.5, "Y", 38),
+        ("D", 2, dt.date(2023, 3, 1), 2.7, "Y", 38),
+    ]
+    return pl.DataFrame(rows, schema=["pt_number", "draw_no", "draw_date", "inr", "on_warfarin", "age"], orient="row")
+
+
+INR_DICTIONARY = """\
+Made-up anticoagulation clinic: one row per INR blood draw.
+
+pt_number    Patient number.
+draw_no      Number of the draw for this patient (1 = first draw).
+draw_date    Date of the draw.
+inr          International normalised ratio; empty when the sample could not be run.
+on_warfarin  Y if the patient was taking warfarin at the draw, N if not.
+age          Age, years.
 """
