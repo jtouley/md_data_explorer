@@ -102,6 +102,7 @@ STRUCTURAL: Final = frozenset(
     consecutive successive between next since until per same days day weeks months
     two three four five six seven eight nine ten dozen multiple several repeat repeated more
     lack lacks lacked lacking absent absence free yet only either neither nor
+    hold holds held contain contains contained has have attend attended came come visit visited
     unique distinct separate individual
     keep kept keeping own include includes including included exclude excluding excluded report separately
     check checked checking meaning means mean

@@ -833,6 +833,9 @@ def _repeated_count(
     least = _min_rows(question)
     if least is None or least < 2 or unit.key is None or context.rows_are_patients:
         return None
+    # "visit_no > 1" is the model's way of saying "more than one visit": the count says it already.
+    sequence = {c.name for c in context.columns if c.is_sequence}
+    where = _where_all(*[t for t in _terms(where) if not (_columns_of(t) and _columns_of(t) <= sequence)])
     key = exp.column(unit.key, quoted=True)
     inner_cols: list[exp.Expr] = [key.copy()]
     if group is not None:
@@ -1221,6 +1224,10 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
         if answer in ("count", "share"):
             raise
         unit = Unit(None, context.row_unit)  # a mean or median does not count the noun
+    if reply.per_patient and answer not in STATISTICS:
+        # A per-patient value is summarised by a mean, median, minimum or maximum. A count or share
+        # with one is read from its own words ("more than one visit", "on every visit").
+        reply = reply.model_copy(update={"per_patient": None})
     reply = _per_patient_repairs(reply, question, context)
     if reply.per_patient:
         return _per_patient_summary(reply, question, context)

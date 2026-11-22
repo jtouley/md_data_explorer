@@ -369,3 +369,19 @@ def test_compile_plan_averageOfACountColumn_isAMeanNotAUnitQuestion(make_query_t
 
     # Assert
     assert compiled.kind == "statistic"
+
+
+@pytest.mark.parametrize(
+    ("question", "where", "expected"),
+    [
+        ("How many patients came to more than one visit?", "visit_no > 1", 4),
+        ("How many patients had a pressure under 21 at every visit?", "iop_mmhg < 21", 2),
+    ],
+)
+def test_answer_question_countWithAPerPatientField_isStillACountOfPatients(ask_eye, question, where, expected):
+    # Act: the model adds per_patient count to a count of patients
+    answer, _prompts = ask_eye(question, _plan("count", where=where, per_patient="count"))
+
+    # Assert: never turned into a mean of rows per patient
+    assert answer.status == "answered", answer.reason
+    assert answer.analysis["total_count"] == expected
