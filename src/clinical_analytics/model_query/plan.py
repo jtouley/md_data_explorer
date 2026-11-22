@@ -1203,6 +1203,9 @@ def _per_patient_repairs(reply: ModelReply, question: str, context: DatasetConte
             reply.answer if reply.answer in STATISTICS else ("median" if "median" in question.casefold() else "mean")
         )
         return reply.model_copy(update={"per_patient": "count", "answer": answer, "group_by": None, "number": None})
+    if names_key(reply.group_by) and reply.answer in ("count", "share"):
+        # A count of patients "by patient" counts the patients: one each, never a list of them.
+        return reply.model_copy(update={"group_by": None})
     if asks_per_patient(question) and asks_summary and reply.answer in STATISTICS:
         raise PlanError(
             "The question asks for a value per patient: set per_patient to count (the number of each patient's "

@@ -103,7 +103,7 @@ STRUCTURAL: Final = frozenset(
     two three four five six seven eight nine ten dozen multiple several repeat repeated more
     lack lacks lacked lacking absent absence free yet only either neither nor
     hold holds held contain contains contained has have attend attended came come visit visited
-    treated treat seen
+    treated treat seen found finds showed shows noted
     unique distinct separate individual single
     keep kept keeping own include includes including included exclude excluding excluded report separately
     check checked checking meaning means mean
@@ -156,7 +156,23 @@ _ABBREVIATIONS: Final = {
 def _stem(word: str) -> str:
     """A crude stem shared by question words and column words ("scored"/"score", "adherent"/
     "adherence", "enrolled"/"enrollment" meet)."""
-    for suffix in ("ments", "ment", "ences", "ence", "ances", "ance", "ent", "ant", "ies", "ing", "ed", "es", "s"):
+    for suffix in (
+        "ments",
+        "ment",
+        "ences",
+        "ence",
+        "ances",
+        "ance",
+        "ent",
+        "ant",
+        "als",
+        "al",
+        "ies",
+        "ing",
+        "ed",
+        "es",
+        "s",
+    ):
         if word.endswith(suffix) and len(word) - len(suffix) >= 4:
             word = word[: -len(suffix)] + ("y" if suffix == "ies" else "")
             break

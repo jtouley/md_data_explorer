@@ -219,3 +219,29 @@ def test_answer_question_theDictionarysRowNoun_countsAndQuantifiesLikeVisits(
     # Assert
     assert answer.status == "answered", answer.reason
     assert answer.analysis["total_count"] == expected
+
+
+def test_answer_question_countByThePatientKey_countsThePatients(ask_inr):
+    # Act: "three or more draws" written as a breakdown by the patient key
+    answer, _prompts = ask_inr(
+        "How many patients had three or more draws?", _plan("count", where="draw_no >= 3", group_by="pt_number")
+    )
+
+    # Assert: A and C, never a list of patients
+    assert answer.status == "answered", answer.reason
+    assert answer.analysis["total_count"] == 2
+
+
+@pytest.mark.parametrize("question", ["How many draws were done for referred patients aged 60 or over?"])
+def test_check_wordFormsOfAColumnName_meet(make_query_table, question):
+    # Arrange: "referred" and a column named referral_source
+    from clinical_analytics.model_query import coverage
+
+    frame = tables.inr_draws().with_columns(tables.pl.lit("gp").alias("referral_source"))
+    _catalog, context = make_query_table(frame, id_column="pt_number")
+
+    # Act
+    found = coverage.check(question, context, used=["referral_source", "age"], values=["gp"], links=[])
+
+    # Assert
+    assert found.uncovered == ()
