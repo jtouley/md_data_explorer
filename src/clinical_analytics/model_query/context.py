@@ -199,7 +199,10 @@ def value_labels(text: str | None, values: tuple[Any, ...] | None) -> tuple[tupl
         label = re.split(r"\.\s|[,;]\s*[A-Za-z0-9][\w.+-]{0,11}\s*(?:=|:)", label, maxsplit=1)[0]
         label = " ".join(label.split()).strip(" ,;.")
         code = match.group(1)
-        if label and held[code] not in found and label.casefold() != code.casefold():
+        # A sentence explaining the value ("if the age range is between 18 and 50") describes it;
+        # it is not a label to show in place of the stored value.
+        describes = len(label) > 40 or bool(re.match(r"(?:if|when|where|whether)\b", label, re.IGNORECASE))
+        if label and not describes and held[code] not in found and label.casefold() != code.casefold():
             found[held[code]] = label
     # Labels for only some codes are kept too; a code without one keeps its stored value.
     return tuple(sorted(found.items()))

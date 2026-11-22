@@ -311,6 +311,24 @@ def _share_as_count(question: str, compiled: Compiled | TestCall, context: Datas
     return None
 
 
+def _rival_doubt(question: str, compiled: Compiled | TestCall, context: DatasetContext) -> Doubt | None:
+    """A condition whose question words name another column just as well: asked, never picked."""
+    used = [c.name for term in compiled.conditions for c in term.find_all(exp.Column)]
+    rivals = coverage.rival_columns(question, context, used)
+    if not rivals:
+        return None
+    first, second, word = rivals[0]
+    return Doubt(
+        "ambiguous",
+        feedback="",
+        reason=f"'{word}' could mean {first} or {second}, which do not always agree. Which one?",
+        choices=(
+            (first, coverage.MEANS_PHRASE.format(word=word, column=first)),
+            (second, coverage.MEANS_PHRASE.format(word=word, column=second)),
+        ),
+    )
+
+
 def _doubts(
     question: str,
     compiled: Compiled | TestCall,
@@ -441,7 +459,7 @@ def answer_question(
                 logger.info("model_query_listing_refused", attempt=attempt)
                 return ModelAnswer("refused", reason=LISTING_REASON, reply=failed_reply, attempts=attempt)
             compiled = _compile(_honour_choices(reply, question), question, context, fmt)
-            measure = _measure_doubt(asked_so_far, compiled, context)
+            measure = _measure_doubt(asked_so_far, compiled, context) or _rival_doubt(asked_so_far, compiled, context)
             if measure is not None:
                 return _asked_back(measure, question, compiled, failed_reply, attempt)
             doubts = _doubts(asked_so_far, compiled, context, reply, kept_group)

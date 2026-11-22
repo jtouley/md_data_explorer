@@ -1409,7 +1409,19 @@ def _compile_plan(reply: ModelReply, question: str, context: DatasetContext) -> 
             where = _where_all(*[term for term in _terms(where) if render(term) not in counted])
         if event is not None:
             overlap = [t for t in _terms(where) if _columns_of(t) & _columns_of(event) and not _is_presence_test(t)]
-            if overlap:
+            event_values = _listed_values(event)
+            same_column = (
+                event_values is not None
+                and group_column in (None, event_values[0])
+                and all((v := _listed_values(t)) is not None and v[0] == event_values[0] for t in overlap)
+            )
+            if overlap and same_column and event_values is not None:
+                # Values of one column in both where and numerator ("on a therapy, not on one, or never
+                # treated"): the shares of that column's values, i.e. its distribution.
+                where = _where_all(*[t for t in _terms(where) if t not in overlap])
+                answer, event = "count", None
+                group, group_name, group_column = _group(f'"{event_values[0]}"', context, question)
+            elif overlap:
                 # "Of the visits where X was answered, what share had X >= 1": answered means
                 # recorded (IS NOT NULL); a limit on the counted column's values decides the share.
                 shown = _plain(overlap[0])

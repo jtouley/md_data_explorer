@@ -245,3 +245,50 @@ def test_check_wordFormsOfAColumnName_meet(make_query_table, question):
 
     # Assert
     assert found.uncovered == ()
+
+
+@pytest.fixture
+def ask_bleed(make_query_table):
+    """Factory: answer ``question`` on the bleeding audit with the replies given."""
+    catalog, context = make_query_table(tables.bleed_outcomes(), doc_context=tables.BLEED_DICTIONARY)
+
+    def _ask(question: str, *replies: dict[str, Any]):
+        queue = list(replies)
+        return answer_question(
+            question,
+            context,
+            model=lambda *_a: queue.pop(0) if queue else None,
+            open_sandbox=lambda: SandboxConnection(catalog),
+            examples=[],
+        )
+
+    return _ask
+
+
+def test_answer_question_conditionNamedByTwoColumns_asksWhichOne(ask_bleed):
+    # Act: "major bleed" names the flag and a value of the coded outcome
+    answer = ask_bleed("How many patients had a major bleed?", _plan("count", where="major_bleed = 'yes'"))
+
+    # Assert: asked, never picked
+    assert answer.status == "clarify"
+    assert [label for label, _q in answer.choices] == ["major_bleed", "outcome"]
+
+
+def test_answer_question_columnChosen_isAnswered(ask_bleed):
+    # Act
+    answer = ask_bleed(
+        "How many patients had a major bleed? By 'bleed' I mean outcome.", _plan("count", where="outcome = 1")
+    )
+
+    # Assert: B1, B2, B4
+    assert answer.status == "answered", answer.reason
+    assert answer.analysis["total_count"] == 3
+
+
+def test_answer_question_descriptiveDictionaryLabels_keepTheStoredCodes(ask_bleed):
+    # Act
+    answer = ask_bleed("How many patients in each age band?", _plan("count", group_by="age_band"))
+
+    # Assert: "if the age range is between ..." explains the code; it is not shown in its place
+    assert answer.status == "answered", answer.reason
+    assert sorted(row["age_band"] for row in answer.analysis["group_counts"]) == [1, 2, 3]

@@ -103,7 +103,7 @@ STRUCTURAL: Final = frozenset(
     two three four five six seven eight nine ten dozen multiple several repeat repeated more
     lack lacks lacked lacking absent absence free yet only either neither nor
     hold holds held contain contains contained has have attend attended came come visit visited
-    treated treat seen found finds showed shows noted
+    treated treat seen found finds showed shows noted evidence proof sign signs
     unique distinct separate individual single
     keep kept keeping own include includes including included exclude excluding excluded report separately
     check checked checking meaning means mean
@@ -565,3 +565,45 @@ def measure_choice_needed(question: str, column: ColumnInfo, context: DatasetCon
     if own_hits and not rival_hits:
         return []
     return [column.name, *others]
+
+
+def _own_words(column: ColumnInfo) -> set[str]:
+    """Stems of a column's name, listed text values and value labels (not its description or
+    generic synonyms): the words that name this column and no other."""
+    raw = set(_tokens(column.name.replace("_", " ")))
+    for part in list(raw):
+        raw.update(_ABBREVIATIONS.get(part, ()))
+    if column.values is not None and column.text:
+        for value in column.values:
+            raw.update(_tokens(str(value)))
+    for _code, label in column.labels:
+        raw.update(_tokens(label))
+    return {_stem(w) for w in raw if not w.isdigit() and w not in _STOP and w not in STRUCTURAL}
+
+
+def rival_columns(question: str, context: DatasetContext, conditions: Iterable[str]) -> list[tuple[str, str, str]]:
+    """(the column a condition reads, another column, the question's word both are named by) when
+    the words that tie a condition's column to the question name another column just as well
+    ("admitted to hospital" for both an admission flag and an outcome coded "hospitalised"):
+    which one is meant is the asker's call. Never when the question names a column outright."""
+    folded = question.casefold()
+    if _MEANS.search(question) or any(c.name.casefold() in folded for c in context.columns):
+        return []
+    topic = topic_words(context)
+    asked = {_stem(w) for w in _tokens(question)} - topic
+    found: list[tuple[str, str, str]] = []
+    for name in dict.fromkeys(conditions):
+        column = context.column(name)
+        if column is None or column.is_patient_id or column.is_encounter_id or column.is_sequence:
+            continue
+        reach = _own_words(column) & asked
+        if not reach:
+            continue
+        for other in context.columns:
+            if other.name == column.name or other.is_patient_id or other.is_encounter_id or other.is_sequence:
+                continue
+            if other.values is None or other.name in conditions:
+                continue  # only a column of categories or flags can be the same condition
+            if reach <= _own_words(other):
+                found.append((column.name, other.name, sorted(reach)[0]))
+    return found

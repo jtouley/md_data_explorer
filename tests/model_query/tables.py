@@ -244,3 +244,23 @@ inr          International normalised ratio; empty when the sample could not be 
 on_warfarin  Y if the patient was taking warfarin at the draw, N if not.
 age          Age, years.
 """
+
+
+def bleed_outcomes() -> pl.DataFrame:
+    """A made-up anticoagulation audit: one row per patient, a major-bleed flag and a coded outcome
+    whose labels also say "major bleed" (the two columns do not always agree)."""
+    rows = [("B1", "yes", 1, 2), ("B2", "no", 1, 1), ("B3", "no", 2, 3), ("B4", "yes", 1, 2), ("B5", "no", 2, 1)]
+    return pl.DataFrame(rows, schema=["patient_id", "major_bleed", "outcome", "age_band"], orient="row")
+
+
+BLEED_DICTIONARY = """\
+Made-up anticoagulation audit: one row per patient.
+
+patient_id   Patient identifier.
+major_bleed  yes if the patient had a major bleed.
+outcome      1 = major bleed, 2 = no bleed
+age_band     Age band.
+  1 = if the age range is between 18 and 50
+  2 = if the age range is between 51 and 70
+  3 = if 71 or older
+"""
