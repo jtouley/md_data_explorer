@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Final, Literal
 
 from clinical_analytics.core import counting_unit
-from clinical_analytics.model_query.context import PERSON_ROLES, DatasetContext, id_role
+from clinical_analytics.model_query.context import IRREGULAR_PLURALS, PERSON_ROLES, DatasetContext, id_role
 
 HeadKind = Literal["patients", "events"]
 
@@ -86,7 +86,9 @@ class Unit:
 
 
 def singular(noun: str) -> str:
-    """'surgeries' -> 'surgery', 'admissions' -> 'admission', 'pts' -> 'pt'."""
+    """'surgeries' -> 'surgery', 'admissions' -> 'admission', 'pts' -> 'pt', 'children' -> 'child'."""
+    if noun in IRREGULAR_PLURALS:
+        return IRREGULAR_PLURALS[noun]
     if noun.endswith("ies") and len(noun) > 4:
         return noun[:-3] + "y"
     if noun.endswith("ses") and noun[:-2] in ("case", "course"):
@@ -175,16 +177,23 @@ def _counted_role(question: str, context: DatasetContext) -> tuple[str, str] | N
     return None
 
 
+_ID_ENDINGS: Final = ("id", "identifier", "key", "ref")
+
+
 def _role_key(noun: str, context: DatasetContext) -> str | None:
-    """The ID column named for ``noun`` ("mother" -> mother_id) when it is not the patient key."""
+    """The ID column named for ``noun`` ("mother" -> mother_id, "carer" -> carer_id) when it is not
+    the patient key, an encounter key or a sequence, and the noun is not an event or the row."""
     named = [
         c.name
         for c in context.columns
         if not c.is_patient_id
         and not c.is_encounter_id
         and not c.is_sequence
-        and noun in PERSON_ROLES
+        and noun not in EVENT_NOUNS
+        and noun not in context.row_nouns
         and id_role(c.name) == noun
+        # "dose_no" numbers doses; only a person's ID may end in no/num ("donor_no").
+        and (noun in PERSON_ROLES or re.split(r"[^a-z0-9]+", c.name.casefold())[-1] in _ID_ENDINGS)
     ]
     return named[0] if len(named) == 1 else None
 

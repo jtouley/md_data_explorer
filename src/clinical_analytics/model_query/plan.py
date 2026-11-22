@@ -1352,6 +1352,60 @@ _PERCENT_CHANGE: Final = re.compile(
 _PERCENT_WORDS: Final = re.compile(r"(?:\bpercent|\bpct\b|%|\bperc\b|_pct|pct_|percentage)", re.IGNORECASE)
 
 
+_FALLS: Final = re.compile(
+    r"\b(?:reduction|reduced|loss|lost|decrease|decreased|drop|dropped|decline|declined|fall|fell)\b", re.I
+)
+_RISES: Final = re.compile(r"\b(?:increase|increased|gain|gained|rise|rose|growth)\b", re.I)
+_BETTER: Final = re.compile(r"\b(?:improvement|improved|improve|better|worsening|worse|deterioration)\b", re.I)
+_LOWER_BETTER: Final = re.compile(r"\blower (?:is|=) better\b|\bhigher (?:is|=) worse\b", re.I)
+_HIGHER_BETTER: Final = re.compile(r"\bhigher (?:is|=) better\b|\blower (?:is|=) worse\b", re.I)
+
+
+def _check_change_direction(question: str, division: exp.Div, context: DatasetContext) -> None:
+    """The change's sign matches the question's word: a reduction is start - end, an increase end -
+    start, both over the start. "Improvement" needs the dictionary to say whether lower or higher is
+    better; otherwise the sign is the asker's call, never guessed.
+
+    Raises:
+        PlanError: the subtraction runs the wrong way, or the direction of "better" is unknown.
+    """
+    change = next((n for n in division.this.walk() if isinstance(n, exp.Sub)), None)
+    start = division.expression
+    if change is None or not isinstance(start, exp.Column):
+        return
+    first, second = change.this, change.expression
+    if not isinstance(first, exp.Column) or not isinstance(second, exp.Column):
+        return
+    if _BETTER.search(question):
+        notes = " ".join(c.description or "" for c in context.columns if c.name in (first.name, second.name))
+        notes += " " + (context.notes or "")
+        worse = bool(re.search(r"\b(?:worsening|worse|deterioration)\b", question, re.I))
+        if _LOWER_BETTER.search(notes):
+            falls = not worse
+        elif _HIGHER_BETTER.search(notes):
+            falls = worse
+        else:
+            raise PlanError(
+                "The question asks for an improvement, but neither the question nor the dictionary says whether a "
+                "lower or a higher value is better, so the sign of the change is unknown."
+            )
+    elif _FALLS.search(question):
+        falls = True
+    elif _RISES.search(question):
+        falls = False
+    else:
+        return
+    starts_first = first.name.casefold() == start.name.casefold()
+    if falls != starts_first:
+        order = f"{start.name} - {second.name if starts_first else first.name}"
+        if not falls:
+            order = f"{second.name if starts_first else first.name} - {start.name}"
+        raise PlanError(
+            f"The question asks for a {'fall' if falls else 'rise'}: write the change as ({order}) divided by "
+            f"{start.name}, so a {'fall' if falls else 'rise'} is a positive percent."
+        )
+
+
 def _check_percent_change(question: str, number: exp.Expr, context: DatasetContext) -> None:
     """A percent change divides the change by its baseline; a difference in the measure's own
     units (kg, points) is not one.
@@ -1366,7 +1420,8 @@ def _check_percent_change(question: str, number: exp.Expr, context: DatasetConte
         said = number.name + " " + ((column.description or "") if column is not None else "")
         if _PERCENT_WORDS.search(said):
             return  # a column that already holds the percent change
-    elif any(isinstance(n, exp.Div) for n in number.walk()):
+    elif (division := next((n for n in number.walk() if isinstance(n, exp.Div)), None)) is not None:
+        _check_change_direction(question, division, context)
         return
     raise PlanError(
         "The question asks for a percent change: number must divide the change by the starting value, for "

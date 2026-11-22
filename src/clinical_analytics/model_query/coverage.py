@@ -32,7 +32,8 @@ import numpy as np
 import structlog
 
 from clinical_analytics.core import embeddings
-from clinical_analytics.model_query.context import ColumnInfo, DatasetContext, column_search_texts
+from clinical_analytics.model_query.context import IRREGULAR_PLURALS as _IRREGULAR
+from clinical_analytics.model_query.context import ColumnInfo, DatasetContext, column_search_texts, id_role
 from clinical_analytics.model_query.units import EVENT_NOUNS
 
 logger = structlog.get_logger()
@@ -368,11 +369,19 @@ def limiting_nouns(context: DatasetContext) -> frozenset[str]:
         values = {str(v).casefold() for v in column.values or ()} | labels
         if words & {"sex", "gender"} and len(values) >= 2:
             found |= _SEX_NOUNS
-        if "age" in words and column.numeric and column.low is not None and column.high is not None:
+        # An age in years: one in months, weeks or days ("age_months") says nothing about 18.
+        said = words | set(_tokens(column.description or ""))
+        in_years = not said & {"month", "months", "mo", "week", "weeks", "wk", "day", "days"}
+        if "age" in words and in_years and column.numeric and column.low is not None and column.high is not None:
             if float(column.low) < 18 <= float(column.high):
                 found |= _CHILD_NOUNS | _ADULT_NOUNS
     if any("smok" in c.name.casefold() or "tobacco" in c.name.casefold() for c in context.columns):
         found.add("smokers")
+    # The person each row is ("child_id" on one row per child): the whole table, never a limit.
+    key = context.column(context.patient_key) if context.patient_key else None
+    role = id_role(key.name) if key is not None else None
+    if role is not None:
+        found -= {role, role + "s", *(w for w, one in _IRREGULAR.items() if one == role)}
     return frozenset(found & _LIMITING_NOUNS)
 
 
@@ -570,6 +579,18 @@ def measure_choice_needed(question: str, column: ColumnInfo, context: DatasetCon
     rivals = {p for other in others for p in time_parts(other)}
     own_hits, rival_hits = own & asked, (rivals - own) & asked
     if own_hits and not rival_hits:
+        return []
+
+    # The dictionary says when each was taken ("at fitting", "at six months"): a word of the question
+    # in this column's description and in no sibling's chooses it.
+    def described(col: ColumnInfo | None) -> set[str]:
+        text = col.description or "" if col is not None else ""
+        return {_stem(w) for w in _tokens(text) if w not in _STOP and w not in STRUCTURAL}
+
+    asked_stems = {_stem(w) for w in asked}
+    mine = described(column)
+    theirs = set().union(*(described(context.column(name)) for name in others))
+    if (mine - theirs) & asked_stems and not (theirs - mine) & asked_stems:
         return []
     return [column.name, *others]
 

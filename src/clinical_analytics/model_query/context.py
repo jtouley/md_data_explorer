@@ -312,6 +312,11 @@ PERSON_ROLES: Final = frozenset(
         "veteran", "beneficiary", "caregiver", "guardian", "partner", "twin", "sibling", "teacher", "coach",
     }
 )  # fmt: skip
+# Plurals not made by adding "s" (the singular of each).
+IRREGULAR_PLURALS: Final = {
+    "children": "child", "people": "person", "women": "woman", "men": "man", "mice": "mouse",
+    "feet": "foot", "teeth": "tooth", "geese": "goose", "wives": "wife", "calves": "calf",
+}  # fmt: skip
 _ROLE_ID_WORDS: Final = frozenset({"id", "no", "nr", "num", "number", "nbr", "key", "code", "ident", "identifier"})
 _CAMEL_SPLIT: Final = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 

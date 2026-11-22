@@ -403,3 +403,97 @@ def test_answer_question_rateOutOfPatientsChosen_asksEverOrAlways(make_model_ask
     # Assert
     assert answer.status == "clarify"
     assert "ever true" in answer.reason
+
+
+# ---------------------------------------------------------------------------- after held-out set 6
+
+
+@pytest.fixture
+def nursery(make_query_table):
+    """The school table as one row per child, age in months, and a tutor ID that repeats."""
+    frame = tables.school_screening().rename(
+        {"student_id": "child_id", "guardian_id": "tutor_id", "age_years": "age_months"}
+    )
+    doc = (
+        tables.SCHOOL_DICTIONARY.replace("one row per student", "one row per child")
+        .replace("student_id   Student identifier.", "child_id     Child identifier.")
+        .replace("guardian_id  Identifier of the student's guardian (siblings share one).", "tutor_id     Tutor.")
+        .replace("age_years    Age at screening, years.", "age_months   Age at screening, months.")
+    )
+    return make_query_table(frame.with_columns(tables.pl.col("age_months") * 3), doc_context=doc, id_column=None)
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        pytest.param("How many children were screened?", 6, id="row-person-noun-irregular-plural"),
+        pytest.param("How many tutors are there?", 4, id="role-outside-the-person-list"),
+    ],
+)
+def test_answer_question_rowPersonsAndOtherRoles_areCounted(make_model_ask, nursery, question, expected):
+    # Arrange
+    ask = make_model_ask(nursery)
+
+    # Act
+    answer, prompts = ask(question, _plan("count"))
+
+    # Assert
+    assert answer.status == "answered", prompts[-1][:700]
+    assert answer.analysis["total_count"] == expected
+
+
+@pytest.mark.parametrize(
+    ("question", "number"),
+    [
+        pytest.param(
+            "What is the mean percent reduction in wound area?",
+            "100.0 * (area_week12_cm2 - area_baseline_cm2) / area_baseline_cm2",
+            id="reduction-written-as-a-rise",
+        ),
+        pytest.param(
+            "What is the mean percent improvement in wound area?",
+            "100.0 * (area_baseline_cm2 - area_week12_cm2) / area_baseline_cm2",
+            id="improvement-direction-unstated",
+        ),
+    ],
+)
+def test_answer_question_percentChangeOfUnknownOrWrongSign_isNotAnswered(make_model_ask, wound, question, number):
+    # Arrange
+    ask = make_model_ask(wound)
+    reply = _plan("mean", number=number)
+
+    # Act
+    answer, _prompts = ask(question, reply, reply)
+
+    # Assert
+    assert answer.status != "answered"
+
+
+def test_answer_question_improvementWhereLowerIsBetter_isTheFallOverBaseline(make_model_ask, make_query_table):
+    # Arrange: the dictionary says a smaller wound is better
+    doc = tables.WOUND_DICTIONARY.replace("square centimetres.", "square centimetres (lower is better).", 1)
+    ask = make_model_ask(make_query_table(tables.wound_clinic(), doc_context=doc))
+    rise = _plan("mean", number="100.0 * (area_week12_cm2 - area_baseline_cm2) / area_baseline_cm2")
+    fall = _plan("mean", number="100.0 * (area_baseline_cm2 - area_week12_cm2) / area_baseline_cm2")
+
+    # Act
+    answer, prompts = ask("What is the mean percent improvement in wound area?", rise, fall)
+
+    # Assert
+    assert "positive percent" in prompts[1]
+    assert answer.status == "answered", prompts[-1][:700]
+    assert answer.analysis["mean"] == pytest.approx(525 / 8)
+
+
+def test_answer_question_measureTimeSaidInItsDescription_isNotAsked(make_model_ask, wound):
+    # Arrange
+    ask = make_model_ask(wound)
+
+    # Act
+    answer, prompts = ask(
+        "What is the median wound area at the first visit?", _plan("median", number="area_baseline_cm2")
+    )
+
+    # Assert: 4, 5, 6, 8, 10, 10, 12, 16, 20
+    assert answer.status == "answered", prompts[-1][:700]
+    assert answer.analysis["median"] == pytest.approx(10.0)
