@@ -249,8 +249,17 @@ def topic_words(context: DatasetContext) -> set[str]:
     # The dictionary's opening sentence says what the table is ("A clinic registry: one row per
     # visit"); its words name no column unless a column's own words include them.
     opening = re.split(r"(?<=[.:;])\s|\n", (context.notes or "").strip(), maxsplit=1)[0][:160]
-    named = set().union(*(column_words(c) for c in context.columns)) if context.columns else set()
-    found.update(s for w in _tokens(opening) if (s := _stem(w)) not in named and not w.isdigit())
+    # A word that is a column's whole name or one of its values ("diabetic" for a diabetic flag)
+    # can limit, so it is never the table's topic; a part of a longer name ("blood" of
+    # blood_group) can.
+    limiting: set[str] = set()
+    for column in context.columns:
+        parts = _tokens(column.name.replace("_", " "))
+        if len(parts) == 1:
+            limiting.add(_stem(parts[0]))
+        limiting.update(_stem(w) for v in column.values or () if column.text for w in _tokens(str(v)))
+        limiting.update(_stem(w) for _code, label in column.labels for w in _tokens(label))
+    found.update(s for w in _tokens(opening) if (s := _stem(w)) not in limiting and not w.isdigit())
     return found
 
 

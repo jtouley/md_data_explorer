@@ -212,6 +212,9 @@ def _value_said(question: _Question, value: str) -> bool:
     if re.fullmatch(r"\d{4}-\d{2}(-\d{2})?.*", value):
         return float(value[:4]) in question.numbers
     words = [w for w in _tokens(value) if len(w) >= 2 or w.isdigit()]
+    if not words and len(value.strip()) == 1:
+        # A one-letter value ("O", "B") is stated when the question has it as a word of its own.
+        return re.search(rf"(?<![\w-]){re.escape(value.strip())}(?![\w-])", question.text) is not None
     return bool(words) and all(question.says(w) for w in words)
 
 

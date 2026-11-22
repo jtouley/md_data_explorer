@@ -440,3 +440,31 @@ def test_answer_question_alwaysOnANegatedPairColumn_isAFlag(ask_speech, where):
     # Assert
     assert answer.status == "answered", answer.reason
     assert answer.analysis["total_count"] == (1 if "not" not in where else 0)
+
+
+@pytest.mark.parametrize(
+    ("question", "where", "expected"),
+    [
+        ("How many donors are blood group O?", "blood_group = 'O'", 2),
+        ("How many donors gave blood for the first time in 2020?", "first_year = 2020", 3),
+    ],
+)
+def test_answer_question_oneLetterValueAndTopicWordOfANamePart_areAnswered(make_query_table, question, where, expected):
+    # Arrange: "blood" is the panel's topic (part of blood_group's name, not a value)
+    catalog, context = make_query_table(
+        tables.donor_panel(), doc_context=tables.DONOR_PANEL_DICTIONARY, id_column="donor_id"
+    )
+    queue = [_plan("count", where=where)]
+
+    # Act
+    answer = answer_question(
+        question,
+        context,
+        model=lambda *_a: queue.pop(0) if queue else None,
+        open_sandbox=lambda: SandboxConnection(catalog),
+        examples=[],
+    )
+
+    # Assert
+    assert answer.status == "answered", answer.reason
+    assert answer.analysis["total_count"] == expected

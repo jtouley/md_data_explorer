@@ -192,3 +192,18 @@ def speech_sessions() -> pl.DataFrame:
         ("S3", 1, "not done", 30.0), ("S3", 2, "not done", 35.0), ("S3", 3, "done", 45.0),
     ]  # fmt: skip
     return pl.DataFrame(rows, schema=["patient_no", "session_number", "homework", "fluency_score"], orient="row")
+
+
+def donor_panel() -> pl.DataFrame:
+    """A made-up donor panel: one row per donor, a one-letter group code among others."""
+    rows = [("D1", "O", 2020), ("D2", "A", 2021), ("D3", "B", 2020), ("D4", "O", 2022), ("D5", "AB", 2020)]
+    return pl.DataFrame(rows, schema=["donor_id", "blood_group", "first_year"], orient="row")
+
+
+DONOR_PANEL_DICTIONARY = """\
+Made-up blood donor panel: one row per donor.
+
+donor_id     Donor identifier.
+blood_group  O, A, B or AB.
+first_year   Year of the first donation.
+"""
