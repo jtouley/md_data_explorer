@@ -214,7 +214,7 @@ def test_reply_schema_enumsComeFromContract(clinic):
     branches = schema["properties"]["filters"]["items"]["anyOf"]
     arm = next(b for b in branches if b["properties"]["column"]["const"] == "arm")
     assert arm["properties"]["values"]["items"]["enum"] == ["ACE inhibitor", "calcium blocker", "diuretic"]
-    assert "pt_ref" not in schema["properties"]["group_by"]["anyOf"][0]["enum"]
+    assert "pt_ref" not in schema["properties"]["group_by"]["items"]["enum"]
     assert schema["properties"]["count_of"]["enum"] == ["patients", "clinic visits"]
 
 
@@ -223,3 +223,27 @@ def test_parse_plan_invalid_raisesPlanError(payload):
     # Act / Assert
     with pytest.raises(PlanError):
         parse_plan(payload)
+
+
+@pytest.mark.parametrize(
+    ("group_by", "expected"),
+    [
+        pytest.param(["arm"], "arm", id="list"),
+        pytest.param([], None, id="empty_list"),
+        pytest.param("arm", "arm", id="string"),
+        pytest.param(None, None, id="null"),
+    ],
+)
+def test_parse_plan_groupByAsList_readsOneColumn(group_by, expected):
+    # Act
+    plan = parse_plan(tables.reply(group_by=group_by))
+
+    # Assert
+    assert plan.group_by == expected
+
+
+@pytest.mark.parametrize("group_by", [["sex", "arm"], "sex, arm"])
+def test_parse_plan_severalBreakdowns_isFedBackNotACrash(group_by):
+    # Act / Assert: one breakdown at a time, said as feedback the model can act on
+    with pytest.raises(PlanError, match="one breakdown at a time"):
+        parse_plan(tables.reply(group_by=group_by))

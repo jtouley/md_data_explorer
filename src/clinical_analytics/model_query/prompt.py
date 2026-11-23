@@ -27,7 +27,7 @@ Fields:
 - "filters": every limit the question states, each {"column", "op", "value", "values"}. A category: op "is" or "is not" with "values" from its list. A number: op "<", "<=", ">", ">=" with "value", or "is" with "values". A date: "before" or "on or after" with "value" YYYY-MM-DD. "is missing" / "is recorded" = not recorded / recorded. Add no limit the question does not state.
 - "numerator": for "share", "odds_ratio" and "survival" only: the condition counted, among the records "filters" keep. Otherwise [].
 - "measure": the number column a summary or a test reads; otherwise null.
-- "group_by": the column to break the answer down by ("by sex", "for each arm", "A versus B"); otherwise null. A number column needs "cut_points" ([65] = under 65 and 65 or more). A date column needs "period" "year" or "month".
+- "group_by": [the column] to break the answer down by ("by sex", "for each arm", "A versus B"); otherwise []. A number column needs "cut_points" ([65] = under 65 and 65 or more). A date column needs "period" "year" or "month".
 - "which_visit": when patients have several records: "any" = at any of their records (ever), "every" = at every record (always, never), "first" = at their first record (baseline), "last" = at their latest record, "change" = latest minus first (summaries only). Use "any" unless the question says which.
 
 - "totals_by": for a summary of totals per group ("the average number per year"): the column whose groups are totalled; the answer (mean, median, min, max) is then taken over those totals. Otherwise null.

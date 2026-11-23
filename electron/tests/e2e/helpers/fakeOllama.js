@@ -22,7 +22,7 @@ function plan(slots) {
     filters: [],
     numerator: [],
     measure: null,
-    group_by: null,
+    group_by: [],
     period: 'none',
     cut_points: [],
     which_visit: 'any',
@@ -39,7 +39,7 @@ const RECORDED = [
         { column: 'age_years', op: '>=', value: 65, values: [] },
         { column: 'result', op: 'is', value: null, values: ['positive'] },
       ],
-      group_by: 'visit_year',
+      group_by: ['visit_year'],
     }),
   },
   {

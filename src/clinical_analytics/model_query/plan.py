@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any, Final, Literal, TypeAlias, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from clinical_analytics.model_query.context import MAX_VALUE_CHARS, Column, DatasetContext
 
@@ -72,6 +72,20 @@ class Plan(_Strict):
     cut_points: tuple[float, ...] = Field(default=(), max_length=MAX_CUTS)
     which_visit: WhichVisit = "any"
     totals_by: str | None = None  # a summary of per-group totals ("average yearly total")
+
+    @field_validator("group_by", mode="before")
+    @classmethod
+    def _one_breakdown(cls, value: Any) -> Any:
+        """``group_by`` arrives as a list (the reply schema's shape); a string, or one naming
+        several columns ("sex, arm"), is read the same way. One breakdown at a time."""
+        if isinstance(value, str):
+            value = [part.strip() for part in value.split(",") if part.strip()]
+        if isinstance(value, list | tuple):
+            if len(value) > 1:
+                raise ValueError("one breakdown at a time: give the main column only")
+            return value[0] if value else None
+        return value
+
     missing: str | None = Field(default=None, max_length=60)  # not_in_table: what the table lacks
 
 
@@ -145,7 +159,9 @@ def reply_schema(context: DatasetContext) -> dict[str, Any]:
             "filters": condition_list,
             "numerator": condition_list,
             "measure": _nullable({"enum": names}) if names else {"type": "null"},
-            "group_by": _nullable({"enum": names}) if names else {"type": "null"},
+            "group_by": {"type": "array", "items": {"enum": names}, "maxItems": 1} if names else {
+                "type": "array", "maxItems": 0,
+            },  # fmt: skip
             "period": {"enum": list(get_args(Period))},
             "cut_points": {"type": "array", "items": {"type": "number"}, "maxItems": MAX_CUTS},
             "which_visit": {"enum": list(get_args(WhichVisit))},
