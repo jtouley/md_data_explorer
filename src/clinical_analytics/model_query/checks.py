@@ -434,7 +434,9 @@ def problems(compiled: Compiled, question: str, context: DatasetContext) -> list
             found.append(
                 Problem(
                     "value",
-                    feedback=f"The question names '{label}', a value of {name}: use {name} in the reply.",
+                    feedback=f"The question names '{label}', a value of {name}: add the filter "
+                    f'{{"column": "{name}", "op": "is", "value": null, "values": ["{label}"]}} '
+                    "(or use it in numerator or group_by).",
                     reason=f"I could not use '{label}' ({column.display if column else name}) in my reading, "
                     "so I did not answer.",
                 )
