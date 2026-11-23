@@ -314,7 +314,11 @@ def compile_plan(plan: Plan, context: DatasetContext) -> Compiled:
         raise PlanRefusedError(LISTING_REASON)
     if plan.answer == "not_in_table":
         raise PlanRefusedError(NOT_IN_TABLE_REASON.format(what=plan.missing) if plan.missing else NOT_IN_TABLE_GENERIC)
-    per_patient = plan.count_of == "patients" and context.visit_level
+    episode = context.episode
+    by_episode = episode is not None and plan.count_of == episode[1]
+    per_patient = (plan.count_of == "patients" and context.visit_level) or by_episode
+    if by_episode and plan.which_visit in ("first", "last"):
+        raise PlanError("first and last are read per patient: count episodes with which_visit any or every.")
     which = plan.which_visit if context.visit_level else "any"
     if which in ("first", "last", "change") and context.order_column is None:
         raise PlanError("Nothing orders a patient's records in this table: use which_visit any or every.")
@@ -332,13 +336,26 @@ def compile_plan(plan: Plan, context: DatasetContext) -> Compiled:
     return _compile_count(plan, context, which, per_patient, frozenset(used))
 
 
+def _unit_key(plan: Plan, context: DatasetContext) -> str:
+    """The column a per-unit count is distinct on: an episode key, else the patient key."""
+    episode = context.episode
+    return episode[0] if episode is not None and plan.count_of == episode[1] else context.patient_key or ""
+
+
+def _unit(plan: Plan, context: DatasetContext, per_patient: bool) -> str:
+    episode = context.episode
+    if episode is not None and plan.count_of == episode[1]:
+        return episode[1]
+    return "patients" if per_patient or context.semantics.one_row_per_patient else context.row_nouns
+
+
 def _compile_count(
     plan: Plan, context: DatasetContext, which: WhichVisit, per_patient: bool, used: frozenset[str]
 ) -> Compiled:
     where = _all(plan.filters, context)
     group = _group_expr(plan, context)
-    key = ident(context.patient_key or "")
-    unit = "patients" if per_patient or context.semantics.one_row_per_patient else context.row_nouns
+    key = ident(_unit_key(plan, context))
+    unit = _unit(plan, context, per_patient)
     if which == "change":
         raise PlanError("change is for a measure (mean, median ...): for a count use any, every, first or last.")
     if not per_patient:
@@ -389,8 +406,8 @@ def _compile_share(
     event = _all(plan.numerator, context)
     recorded = _recorded(plan.numerator)
     group = _group_expr(plan, context)
-    key = ident(context.patient_key or "")
-    unit = "patients" if per_patient or context.semantics.one_row_per_patient else context.row_nouns
+    key = ident(_unit_key(plan, context))
+    unit = _unit(plan, context, per_patient)
     if which == "change":
         raise PlanError("change is for a measure (mean, median ...): for a share use any, every, first or last.")
     group_sel = f"{group} AS grp, " if group is not None else ""

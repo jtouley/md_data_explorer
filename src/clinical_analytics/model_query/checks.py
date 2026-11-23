@@ -86,6 +86,7 @@ class Cues:
     times: frozenset[WhichVisit]
     persons: bool
     records: bool
+    episodes: bool  # the contract's episode noun ("admissions"), said as what is counted
     values: tuple[tuple[str, str], ...]  # (category label said, its column)
 
 
@@ -176,6 +177,12 @@ def read_cues(question: str, context: DatasetContext, used: frozenset[str] = fro
     # A records noun inside a timepoint phrase ("at their latest visit") says when, not what is
     # counted.
     counted_records = [m for m in records.finditer(text) if not _WHEN.search(" ".join(text[: m.start()].split()[-3:]))]
+    episode = context.episode
+    episodes = False
+    if episode is not None and context.visit_level:
+        word = episode[1].split()[-1].removesuffix("s")
+        found = re.finditer(rf"\b{re.escape(word)}s?\b", text, re.I)
+        episodes = any(not _WHEN.search(" ".join(text[: m.start()].split()[-3:])) for m in found)
     negated_text = re.sub(r"\b(?:or|and|vs\.?|versus) not\b", " ", text, flags=re.I)
     return Cues(
         numbers=tuple(numbers),
@@ -184,6 +191,7 @@ def read_cues(question: str, context: DatasetContext, used: frozenset[str] = fro
         times=times,
         persons=bool(_PERSONS.search(text)) and records_word not in ("patient",),
         records=context.visit_level and bool(counted_records),
+        episodes=episodes,
         values=tuple((label, name) for label, name, _span in labels),
     )
 
@@ -290,8 +298,10 @@ def apply_stated(plan: Plan, question: str, context: DatasetContext) -> tuple[Pl
             update["which_visit"] = "every"
             changed.append("which_visit:never->every")
         if plan.answer in ("count", "share"):
-            unit = "patients" if cues.persons and not cues.records else None
-            unit = context.row_nouns if cues.records and not cues.persons else unit
+            unit = "patients" if cues.persons and not cues.records and not cues.episodes else None
+            unit = context.row_nouns if cues.records and not cues.persons and not cues.episodes else unit
+            if cues.episodes and not cues.persons and context.episode is not None:
+                unit = context.episode[1]
             if unit is not None and plan.count_of != unit:
                 update["count_of"] = unit
                 changed.append(f"count_of->{unit}")
@@ -451,7 +461,7 @@ def ask_unit(compiled: Compiled, question: str, context: DatasetContext) -> Ask 
     if not context.visit_level or compiled.kind not in ("count", "share"):
         return None
     cues = read_cues(question, context, compiled.columns)
-    if cues.persons or cues.records:
+    if cues.persons or cues.records or cues.episodes:
         return None
     rows = context.row_nouns
     return Ask(
@@ -477,8 +487,8 @@ def needs_visit_choice(compiled: Compiled, question: str, context: DatasetContex
     which visit: asked when a column the plan reads differs between a patient's visits."""
     if not context.visit_level or compiled.kind == "test":
         return False
-    if compiled.kind in ("count", "share") and compiled.plan.count_of != "patients":
-        return False
+    if compiled.kind in ("count", "share") and compiled.unit != "patients":
+        return False  # records, or episodes: each is read on its own records
     cues = read_cues(question, context, compiled.columns)
     if _expected_time(cues) is not None or _time_by_column(compiled.plan, context, "first"):
         return False

@@ -167,6 +167,15 @@ class DatasetContext:
         return counted or "cases"
 
     @property
+    def episode(self) -> tuple[str, str] | None:
+        """(column, plural noun) of the contract's episode key within the patient (an admission
+        within an MRN), when it is not simply the records' own key."""
+        for ep in self.semantics.episode_keys:
+            if self.column(ep.column) is not None and ep.column not in self.semantics.row_key.columns:
+                return ep.column, plural(ep.noun)
+        return None
+
+    @property
     def units(self) -> tuple[str, ...]:
         """What a count can count here: patients, records (or both on a visit-level table)."""
         if self.aggregate:
@@ -175,7 +184,8 @@ class DatasetContext:
             return ("patients",)
         if self.patient_key is None:
             return (self.row_nouns,)
-        return ("patients", self.row_nouns)
+        episode = (self.episode[1],) if self.episode and self.episode[1] != self.row_nouns else ()
+        return ("patients", *episode, self.row_nouns)
 
     @property
     def order_column(self) -> str | None:

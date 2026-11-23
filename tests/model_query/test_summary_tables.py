@@ -149,3 +149,25 @@ def test_reading_lines_summaryCount_passesLinter(injuries):
 
     # Assert
     assert card.card_problems(lines, context) == []
+
+
+def test_answer_question_episodeNoun_countsEachEpisodeOnce(make_query_table, make_model_ask):
+    # Arrange: admissions within a patient, recorded by the contract as an episode key
+    from clinical_analytics.contracts.semantics import EpisodeKey
+
+    frame = tables.clinic().with_columns(
+        (pl.col("pt_ref") + "-A" + ((pl.col("visit_seq") + 1) // 2).cast(pl.Utf8)).alias("adm_ref")
+    )
+    episode = EpisodeKey(column="adm_ref", within="pt_ref", noun="admission", source="structure")
+    table = make_query_table(frame, doc_context=tables.CLINIC_DICTIONARY, semantics_update={"episode_keys": (episode,)})
+    ask = make_model_ask(table)
+
+    # Act
+    answer, _prompts = ask(
+        "How many admissions had a smoker?", tables.reply(filters=[_cond("smoker", "is", values=["yes"])])
+    )
+
+    # Assert: the unit comes from the question's noun and the contract's episode key
+    expected = frame.filter(pl.col("smoker") == "Y")["adm_ref"].n_unique()
+    assert answer.status == "answered" and answer.analysis["total_count"] == expected
+    assert answer.reading.startswith("Counted: admissions, each once")

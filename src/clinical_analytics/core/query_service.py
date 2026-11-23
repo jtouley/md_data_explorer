@@ -30,13 +30,8 @@ from clinical_analytics.contracts.declarations import (
 )
 from clinical_analytics.contracts.errors import ContractError, ContractStoreError, InvalidDeclarationKeyError
 from clinical_analytics.contracts.quality import QualityReport
-from clinical_analytics.contracts.semantics import (
-    DatasetSemantics,
-    SemanticsMissingError,
-    layer_semantics,
-    semantics_for,
-    with_declarations,
-)
+from clinical_analytics.contracts.semantics import DatasetSemantics
+from clinical_analytics.contracts.service import version_semantics
 from clinical_analytics.contracts.store import latest_report
 from clinical_analytics.core import answer_checks, counting_unit, estimates, nl_query_config
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
@@ -557,7 +552,7 @@ class QueryService:
             return None
         cached = self._model_context
         if cached is None or cached[0] != (version, declared):
-            semantics = self._semantics(dataset_id, version)
+            semantics = self._semantics(dataset_id, version, catalog)
             if semantics is None:
                 return None
             try:
@@ -570,35 +565,37 @@ class QueryService:
             cached = self._model_context = ((version, declared), context)
         return _ModelPath(catalog=catalog, context=cached[1])
 
-    def _semantics(self, dataset_id: str, version: str) -> DatasetSemantics | None:
-        """The version's contract semantics with the user's declarations applied (ADR017): what
-        the model is told and the compiler reads. A version written before semantics existed
-        reads the copy its semantic layer was built with."""
+    def _semantics(self, dataset_id: str, version: str, catalog: SqlCatalog) -> DatasetSemantics | None:
+        """The version's contract semantics with the user's declarations applied
+        (``contracts.service.version_semantics``, the one reader every part of the app uses,
+        versions stored before ADR017 included): what the model is told and the compiler reads."""
         assert self.data_dir is not None
         try:
-            return semantics_for(self.data_dir, dataset_id, version, declarations=self.declarations)
-        except SemanticsMissingError:
-            built = layer_semantics(self.semantic_layer)
-            if built is None:
-                logger.info("model_query_skipped_no_semantics", dataset_id=dataset_id)
-                return None
-            return with_declarations(
-                built.model_copy(update={"dataset_version": version}), self.declarations.load(dataset_id)
+            return version_semantics(
+                self.data_dir,
+                dataset_id,
+                version,
+                metadata=self._upload_metadata(dataset_id),
+                stored_frame=lambda: pl.read_parquet(catalog.parquet_path),
+                declarations=self.declarations,
             )
         except ContractError as e:
             logger.warning("model_query_semantics_unreadable", dataset_id=dataset_id, error_type=type(e).__name__)
             return None
 
-    def _upload_text(self, dataset_id: str, key: str) -> str | None:
-        """A text field of the upload's metadata: its data dictionary (``doc_context``) or the name
-        it was uploaded under (``dataset_name``), if it has one."""
+    def _upload_metadata(self, dataset_id: str) -> dict[str, Any]:
+        """The upload's metadata record ({} when it can't be read)."""
         assert self.data_dir is not None
         path = self.data_dir / "uploads" / "metadata" / f"{dataset_id}.json"
         try:
             metadata = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return None
-        text = metadata.get(key) if isinstance(metadata, dict) else None
+            return {}
+        return metadata if isinstance(metadata, dict) else {}
+
+    def _upload_text(self, dataset_id: str, key: str) -> str | None:
+        """A text field of the upload's metadata: the name it was uploaded under (``dataset_name``)."""
+        text = self._upload_metadata(dataset_id).get(key)
         return text if isinstance(text, str) and text.strip() else None
 
     def _ask_model(

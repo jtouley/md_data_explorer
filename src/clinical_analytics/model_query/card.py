@@ -85,12 +85,12 @@ def _counted_line(compiled: Compiled, context: DatasetContext) -> str:
     if not compiled.per_patient:
         return f"Counted: {nouns}, every {noun} on its own; a patient with several {nouns} counts once per {noun}."
     if which == "first":
-        return f"Counted: patients, each once, read at their first {noun}."
+        return f"Counted: {compiled.unit}, each once, read at their first {noun}."
     if which == "last":
-        return f"Counted: patients, each once, read at their latest {noun}."
+        return f"Counted: {compiled.unit}, each once, read at their latest {noun}."
     if which == "every":
-        return f"Counted: patients, each once, when every one of their {nouns} met the limits."
-    return f"Counted: patients, each once, when any one of their {nouns} met the limits."
+        return f"Counted: {compiled.unit}, each once, when every one of their {nouns} met the limits."
+    return f"Counted: {compiled.unit}, each once, when any one of their {nouns} met the limits."
 
 
 def _measured_line(compiled: Compiled, context: DatasetContext) -> str:
