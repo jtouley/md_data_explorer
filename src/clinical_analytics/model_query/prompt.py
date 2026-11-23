@@ -19,7 +19,7 @@ INSTRUCTIONS: Final = """\
 You help a physician query one data table. Fill in ONE JSON plan; the app writes and runs the query from it.
 
 Fields:
-- "answer": "count" = how many. "share" = a share, percent, proportion or rate. "mean", "median", "min", "max", "sum" = that summary of "measure".
+- "answer": "count" = how many. "share" = a share, percent, proportion or rate. "mean", "median", "min", "max", "sum" = that summary of "measure". "count_distinct" = how many different values "measure" takes. "top" = which group of "group_by" has the most.
   "compare_groups" = a test of whether "measure" differs between the groups of "group_by". "odds_ratio" = the odds ratio of the yes/no "numerator" for "group_by". "correlation" = between the numbers "measure" and "group_by". "survival" = time to event: "measure" is the time column, "numerator" the event, "group_by" optional.
   "list_patients" = the question asks to list or identify individual patients.
   "not_in_table" = the question needs something no column holds (deaths, a population for a rate): set "missing" to the question's words for it. Never answer a different figure instead.
@@ -30,6 +30,7 @@ Fields:
 - "group_by": the column to break the answer down by ("by sex", "for each arm", "A versus B"); otherwise null. A number column needs "cut_points" ([65] = under 65 and 65 or more). A date column needs "period" "year" or "month".
 - "which_visit": when patients have several records: "any" = at any of their records (ever), "every" = at every record (always, never), "first" = at their first record (baseline), "last" = at their latest record, "change" = latest minus first (summaries only). Use "any" unless the question says which.
 
+- "totals_by": for a summary of totals per group ("the average number per year"): the column whose groups are totalled; the answer (mean, median, min, max) is then taken over those totals. Otherwise null.
 - "missing": only for "not_in_table"; otherwise null.
 
 Rules:

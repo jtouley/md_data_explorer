@@ -47,7 +47,9 @@ def analysis_of(
     """The analysis dict for a count, share or statistic (``total``: the units counted out of)."""
     group = compiled.group_column
     rows = [{**r, "grp": _label(compiled, context, r.get("grp"))} for r in frame.to_dicts()]
-    base: dict[str, Any] = {"unit": compiled.unit}
+    # A count of lines no column names as anything else says "rows" (never the question's noun).
+    generic = compiled.unit == "records" and context.patient_key is None and not context.aggregate
+    base: dict[str, Any] = {"unit": "rows" if generic else compiled.unit}
     if compiled.kind == "count":
         if group is None:
             return {"type": "count", "total_count": int(frame.item(0, "count") or 0), **base}

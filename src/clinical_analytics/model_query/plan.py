@@ -10,7 +10,7 @@ plan it cannot compile raises ``PlanError`` with feedback that only names what i
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Final, Literal, TypeAlias, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from clinical_analytics.model_query.context import MAX_VALUE_CHARS, Column, DatasetContext
 
 Answer: TypeAlias = Literal[
-    "count", "share", "mean", "median", "min", "max", "sum",
+    "count", "share", "mean", "median", "min", "max", "sum", "count_distinct", "top",
     "compare_groups", "odds_ratio", "correlation", "survival", "list_patients", "not_in_table",
 ]  # fmt: skip
 WhichVisit: TypeAlias = Literal["any", "every", "first", "last", "change"]
@@ -71,6 +71,7 @@ class Plan(_Strict):
     period: Period = "none"
     cut_points: tuple[float, ...] = Field(default=(), max_length=MAX_CUTS)
     which_visit: WhichVisit = "any"
+    totals_by: str | None = None  # a summary of per-group totals ("average yearly total")
     missing: str | None = Field(default=None, max_length=60)  # not_in_table: what the table lacks
 
 
@@ -148,11 +149,12 @@ def reply_schema(context: DatasetContext) -> dict[str, Any]:
             "period": {"enum": list(get_args(Period))},
             "cut_points": {"type": "array", "items": {"type": "number"}, "maxItems": MAX_CUTS},
             "which_visit": {"enum": list(get_args(WhichVisit))},
+            "totals_by": _nullable({"enum": names}) if names else {"type": "null"},
             "missing": _nullable({"type": "string", "maxLength": 60}),
         },
         "required": [
             "answer", "count_of", "filters", "numerator", "measure", "group_by", "period", "cut_points", "which_visit",
-            "missing",
+            "totals_by", "missing",
         ],
     }  # fmt: skip
 
@@ -176,6 +178,7 @@ class Compiled:
     numerator: tuple[Condition, ...] = ()
     measure: str | None = None
     columns: frozenset[str] = frozenset()
+    lookup: bool = False  # estimates: each answer must be read from exactly one record
     test_outcome: str | None = None
     test_group: str | None = None
     test_time: str | None = None
@@ -277,8 +280,6 @@ def _group_expr(plan: Plan, context: DatasetContext) -> str | None:
             whens.append(f"WHEN {ref} < {literal(hi)} THEN '{_num(lo)} to under {_num(hi)}'")
         whens.append(f"WHEN {ref} >= {literal(cuts[-1])} THEN '{_num(cuts[-1])} or more'")
         return f"CASE {' '.join(whens)} END"
-    if column.kind == "number" and column.distinct > MAX_GROUPS:
-        raise PlanError(f"{column.name} is a number: give cut_points to break it into groups, or group by a category.")
     return ref
 
 
@@ -325,15 +326,21 @@ def compile_plan(plan: Plan, context: DatasetContext) -> Compiled:
     used = {c.column for c in (*plan.filters, *plan.numerator)} | {n for n in (plan.measure, plan.group_by) if n}
     for name in used:
         _column(name, context, f"'{name}'")
+    if plan.answer == "count_distinct":
+        return _compile_distinct(plan, context, frozenset(used))
+    if plan.totals_by is not None and plan.answer in STATISTICS:
+        return _compile_totals(plan, context, per_patient, frozenset(used))
     if context.aggregate:
-        return _compile_aggregate(plan, context, frozenset(used))
-    if plan.answer in TESTS:
+        compiled = _compile_aggregate(plan, context, frozenset(used))
+    elif plan.answer in TESTS:
         return _compile_test(plan, context, which, frozenset(used))
-    if plan.answer in STATISTICS:
+    elif plan.answer in STATISTICS:
         return _compile_statistic(plan, context, which, frozenset(used))
-    if plan.answer == "share":
+    elif plan.answer == "share":
         return _compile_share(plan, context, which, per_patient, frozenset(used))
-    return _compile_count(plan, context, which, per_patient, frozenset(used))
+    else:
+        compiled = _compile_count(plan, context, which, per_patient, frozenset(used))
+    return _top(compiled) if plan.answer == "top" else compiled
 
 
 def _unit_key(plan: Plan, context: DatasetContext) -> str:
@@ -511,7 +518,9 @@ AGGREGATE_ONLY_TOTALS: Final = (
 def _compile_aggregate(plan: Plan, context: DatasetContext, used: frozenset[str]) -> Compiled:
     """A summary table: every count adds up the contract's case-count column (never counts lines),
     and a share is part of that total."""
-    if plan.answer not in ("count", "share", "sum"):
+    if context.aggregate_kind == "estimate":
+        return _compile_lookup(plan, context, used)
+    if plan.answer not in ("count", "share", "sum", "top"):
         raise PlanRefusedError(AGGREGATE_ONLY_TOTALS)
     if plan.answer == "sum":
         column = _column(plan.measure, context, "measure")
@@ -543,6 +552,87 @@ def _compile_aggregate(plan: Plan, context: DatasetContext, used: frozenset[str]
         total_sql=f"SELECT {total} FROM unified" if kind == "count" else None, group_column=plan.group_by,
         filters=plan.filters, numerator=plan.numerator if kind == "share" else (), measure=count, columns=used,
     )  # fmt: skip
+
+
+ESTIMATES_NEVER_ADDED: Final = (
+    "This table holds published estimates for groups; they are never added up or averaged across groups. "
+    "Ask for the estimate of one group (name it), or for each group side by side."
+)
+LOOKUP_NOT_ONE: Final = (
+    "Your question matches {n} records of estimates, not one, so there is no single figure to read. "
+    "Name the group (each limit the table is broken down by)."
+)
+
+
+def _compile_lookup(plan: Plan, context: DatasetContext, used: frozenset[str]) -> Compiled:
+    """An estimate table: the figure is read from the one record the question names (per group
+    with group_by); the engine refuses when the limits match more or fewer than one."""
+    if plan.answer not in ("mean", "median", "min", "max", "sum") or plan.measure is None:
+        raise PlanRefusedError(ESTIMATES_NEVER_ADDED)
+    column = _column(plan.measure, context, "measure")
+    where = _all(plan.filters, context)
+    group = _group_expr(plan, context)
+    group_sel, tail = (f"{group} AS grp, " if group else "", " GROUP BY 1 ORDER BY 1 NULLS LAST" if group else "")
+    sql = f"SELECT {group_sel}MIN({ident(column.name)}) AS value, COUNT(*) AS n FROM unified{_where(where)}{tail}"
+    return Compiled(
+        plan=plan.model_copy(update={"answer": "mean"}), kind="statistic", sql=sql, unit="records",
+        per_patient=False, group_column=plan.group_by, filters=plan.filters, measure=column.name, columns=used,
+        lookup=True,
+    )  # fmt: skip
+
+
+def _unit_total(plan: Plan, context: DatasetContext, per_patient: bool) -> str:
+    """One group's total: the summed case count of a frequency table, distinct patients (or
+    episodes) on a visit-level table, else its records."""
+    if context.aggregate_kind == "estimate":
+        raise PlanRefusedError(ESTIMATES_NEVER_ADDED)
+    if context.aggregate:
+        if context.count_column is None:
+            raise CountColumnUnknownError("This table counts groups, and no column is known to hold the counts.")
+        return f"SUM({ident(context.count_column)})"
+    return f"COUNT(DISTINCT {ident(_unit_key(plan, context))})" if per_patient else "COUNT(*)"
+
+
+def _compile_totals(plan: Plan, context: DatasetContext, per_patient: bool, used: frozenset[str]) -> Compiled:
+    """A summary over per-group totals ("the average yearly total"): each group's total, then the
+    statistic across the groups."""
+    if plan.group_by is not None:
+        raise PlanError("totals_by summarises one total per group: set group_by null.")
+    totals = _group_expr(plan.model_copy(update={"group_by": plan.totals_by}), context)
+    total = _unit_total(plan, context, per_patient)
+    inner = f"SELECT {totals} AS t, {total} AS v FROM unified{_where(_all(plan.filters, context))} GROUP BY 1"
+    func = STATISTICS[plan.answer]
+    sql = f"SELECT {func}(v) AS value, COUNT(v) AS n FROM ({inner}) AS g"
+    return Compiled(
+        plan=plan, kind="statistic", sql=sql, unit=plural_group(plan, context), per_patient=False,
+        filters=plan.filters, measure=None, columns=used | {plan.totals_by or ""},
+    )  # fmt: skip
+
+
+def plural_group(plan: Plan, context: DatasetContext) -> str:
+    column = context.column(plan.totals_by or "")
+    return f"groups of {column.display}" if column is not None else "groups"
+
+
+def _compile_distinct(plan: Plan, context: DatasetContext, used: frozenset[str]) -> Compiled:
+    """How many different values a column takes ("how many different wards")."""
+    column = _column(plan.measure, context, "measure (the column whose different values are counted)")
+    group = _group_expr(plan, context)
+    group_sel, tail = (f"{group} AS grp, " if group else "", " GROUP BY 1 ORDER BY 1 NULLS LAST" if group else "")
+    where = _where(_all(plan.filters, context))
+    sql = f"SELECT {group_sel}COUNT(DISTINCT {ident(column.name)}) AS count FROM unified{where}{tail}"
+    return Compiled(
+        plan=plan, kind="count", sql=sql, unit=f"different values of {column.display}", per_patient=False,
+        group_column=plan.group_by, filters=plan.filters, measure=column.name, columns=used,
+    )  # fmt: skip
+
+
+def _top(compiled: Compiled) -> Compiled:
+    """The group (or tied groups) with the largest count or total."""
+    if compiled.kind != "count" or compiled.group_column is None:
+        raise PlanError("top needs group_by: the groups whose count or total is compared.")
+    sql = f"WITH g AS ({compiled.sql}) SELECT * FROM g WHERE count = (SELECT MAX(count) FROM g)"
+    return replace(compiled, sql=sql)
 
 
 def varies_sql(context: DatasetContext, columns: list[str]) -> str:

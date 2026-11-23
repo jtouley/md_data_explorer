@@ -127,6 +127,15 @@ def _mentioned_labels(question: str, context: DatasetContext) -> list[tuple[str,
     return found
 
 
+def _value_spans(question: str, context: DatasetContext) -> list[tuple[int, int]]:
+    spans = []
+    for column in context.columns:
+        for label in column.choices() if column.kind in ("category", "flag") else ():
+            if len(label) >= 3 and label.casefold() not in _PLAIN_LABELS and not label.isdigit():
+                spans += [m.span() for m in re.finditer(rf"(?<!\w){re.escape(label)}(?!\w)", question, re.I)]
+    return spans
+
+
 def _blank(text: str, spans: list[tuple[int, int]]) -> str:
     for start, end in spans:
         text = text[:start] + " " * (end - start) + text[end:]
@@ -152,7 +161,9 @@ def read_cues(question: str, context: DatasetContext, used: frozenset[str] = fro
     column's own description set aside (so "non-binary" is not a negation, nor "Initial serum
     lactate" a timepoint)."""
     labels = _mentioned_labels(question, context)
-    text = _blank(question, [span for *_rest, span in labels])
+    # Every category value the question names is set aside, whichever columns hold it: a value
+    # ("women" in a column of groups) never sets the counted unit, a negation or a timepoint.
+    text = _blank(question, _value_spans(question, context))
     between = {float(n): cmp for m in _BETWEEN.finditer(text) for n, cmp in zip(m.groups(), (">=", "<="), strict=True)}
     numbers: list[Stated] = []
     previous = 0
@@ -308,11 +319,14 @@ def apply_stated(plan: Plan, question: str, context: DatasetContext) -> tuple[Pl
     return plan.model_copy(update=update), changed
 
 
-def _negated(plan: Plan, context: DatasetContext) -> bool:
+def _negated(plan: Plan, context: DatasetContext, named: frozenset[str] = frozenset()) -> bool:
     """The plan excludes something: "is not" a value (not "is not none", a double negative), a
-    value that means no, a number of zero, or not recorded."""
+    value that means no, a number of zero, or not recorded. ``named``: values the question names
+    itself ("never" as a smoking status), whose condition is the value, not a negation."""
     for cond in (*plan.filters, *plan.numerator):
         column = context.column(cond.column)
+        if cond.op == "is" and cond.values and all(str(v).casefold() in named for v in cond.values):
+            continue
         if cond.op == "is missing":
             return True
         if column is None or cond.op not in ("is", "is not"):
@@ -389,7 +403,7 @@ def problems(compiled: Compiled, question: str, context: DatasetContext) -> list
                 )
             )
     group = context.column(compiled.group_column or "")
-    if group is not None and not compiled.plan.cut_points and compiled.kind != "test":
+    if group is not None and not compiled.plan.cut_points and compiled.kind != "test" and compiled.plan.answer != "top":
         asked = _PERIOD.search(question) if group.kind == "date" else _BREAKDOWN.search(question)
         if not asked:
             found.append(
@@ -400,7 +414,8 @@ def problems(compiled: Compiled, question: str, context: DatasetContext) -> list
                     "for, so I did not answer.",
                 )
             )
-    if compiled.group_column is None and cues.negated != _negated(compiled.plan, context):
+    named = frozenset(question[a:b].casefold() for a, b in _value_spans(question, context))
+    if compiled.group_column is None and cues.negated != _negated(compiled.plan, context, named):
         found.append(
             Problem(
                 "negation",
@@ -450,7 +465,7 @@ def ask_open(compiled: Compiled, context: DatasetContext) -> Ask | None:
     for q in context.open_questions():
         if q.column is not None and q.column in compiled.columns:
             return Ask("open_question", f"{q.question} You can answer it in the Data check panel.")
-        if q.column is None and compiled.kind in ("count", "share"):
+        if q.column is None and compiled.kind in ("count", "share") and not context.aggregate:
             return Ask("open_question", f"{q.question} You can answer it in the Data check panel.")
     return None
 

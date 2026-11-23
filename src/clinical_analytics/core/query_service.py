@@ -543,10 +543,8 @@ class QueryService:
             )
         except SqlRefusedError:
             return None
-        with self._connection_lock():
-            estimates_file = self._estimate_table() is not None
-        if declared.population_estimates_for(version) is not None or estimates_file:
-            return None
+        if declared.population_estimates_for(version) is not None:
+            return None  # declared published estimates: the matcher's estimate path reads the row
         if not self._model_available():
             logger.info("model_query_skipped_no_model", dataset_id=dataset_id)
             return None
@@ -563,6 +561,16 @@ class QueryService:
             except SqlRefusedError:
                 return None
             cached = self._model_context = ((version, declared), context)
+        context = cached[1]
+        # The contract says what the lines are. Estimates keep the read-the-row path; counts of
+        # groups (a frequency table) go to the model path, which adds up their count column. A
+        # table the contract does not mark keeps the structural estimate check (ADR014).
+        if context.aggregate_kind == "estimate":
+            return None
+        if context.aggregate_kind is None:
+            with self._connection_lock():
+                if self._estimate_table() is not None:
+                    return None
         return _ModelPath(catalog=catalog, context=cached[1])
 
     def _semantics(self, dataset_id: str, version: str, catalog: SqlCatalog) -> DatasetSemantics | None:
@@ -617,6 +625,7 @@ class QueryService:
             open_sandbox=lambda: SandboxConnection(path.catalog),
             max_attempts=nl_query_config.MODEL_QUERY_MAX_ATTEMPTS,
             previous=previous,
+            budget_s=nl_query_config.MODEL_QUERY_BUDGET_S,
         )
         base = QueryResult(plan=None, issues=[], result=None, confidence=0.0, run_key=None, context=None)
         base.sql, base.reading, base.model_reply = answer.sql, answer.reading, answer.reply

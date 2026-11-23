@@ -74,6 +74,8 @@ def _split(head: str, parts: list[str]) -> list[str]:
 def _counted_line(compiled: Compiled, context: DatasetContext) -> str:
     noun, nouns = context.row_noun, context.row_nouns
     which = compiled.plan.which_visit
+    if compiled.plan.answer == "count_distinct":
+        return f"Counted: the {compiled.unit}."
     if context.aggregate:
         column = context.column(compiled.measure or "")
         what = column.display if column is not None else "the count"
@@ -94,6 +96,20 @@ def _counted_line(compiled: Compiled, context: DatasetContext) -> str:
 
 
 def _measured_line(compiled: Compiled, context: DatasetContext) -> str:
+    if compiled.lookup:
+        column = context.column(compiled.measure or "")
+        what = column.display if column is not None else "the estimate"
+        return f"Read: the published {what} of the group named; estimates are never added up."
+    if compiled.plan.totals_by is not None:
+        by = context.column(compiled.plan.totals_by)
+        if context.aggregate:
+            total = "total of the case counts"
+        elif context.visit_level and compiled.plan.count_of != context.row_nouns:
+            total = f"number of {compiled.plan.count_of}"
+        else:
+            total = f"number of {context.row_nouns}"
+        word = _STATISTIC_WORDS[compiled.plan.answer]
+        return f"Measured: the {word} of the {total} per {by.display if by else 'group'}."
     column = context.column(compiled.measure or "")
     what = column.display if column else "the measure"
     unit = f" ({column.unit})" if column is not None and column.unit else ""
@@ -126,6 +142,8 @@ def _result_lines(
     if kind == "count" and not analysis.get("grouped_by"):
         n = int(analysis.get("total_count") or 0)
         return [f"Result: {_pct(n, total, unit)}." if total is not None else f"Result: {n:,} {unit}."]
+    if kind == "count" and compiled.plan.answer == "top":
+        return [f"Result: the group with the most {unit}; tied groups are shown together."]
     if kind == "count":
         overlap = " A patient can be in more than one group." if analysis.get("overlapping") else ""
         base = f" out of {total:,} {unit} in the file" if total is not None else ""

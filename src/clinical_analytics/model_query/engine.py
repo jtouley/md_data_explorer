@@ -13,7 +13,9 @@ logged as numbers only (``model_query_held_answer``), so hold quality can be mea
 
 from __future__ import annotations
 
+import difflib
 import re
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal
@@ -27,11 +29,13 @@ from clinical_analytics.model_query.examples import Example, similar_examples
 from clinical_analytics.model_query.llm import ModelFn, ModelTimedOut
 from clinical_analytics.model_query.plan import (
     LISTING_REASON,
+    LOOKUP_NOT_ONE,
     Compiled,
     CountColumnUnknownError,
     PlanError,
     PlanRefusedError,
     compile_plan,
+    ident,
     parse_plan,
     reply_schema,
     varies_sql,
@@ -51,6 +55,8 @@ MODEL_TIMEOUT_REASON: Final = (
     "The local model took too long to answer (more than {minutes} minutes), so the question was not answered. "
     "The computer may be busy: ask again in a moment. The wait can be raised with model_query_timeout_s."
 )
+VALUE_NOT_FOUND_QUESTION: Final = "I can't find '{said}' in {column}. Did you mean one of these?"
+MAX_DISTINCT_CHECKED: Final = 20_000
 COUNT_COLUMN_QUESTION: Final = (
     "Each line of this table counts a group, so counting lines would count groups, not cases. "
     "Which column holds the number of cases on each line?"
@@ -122,6 +128,21 @@ def _numbers(analysis: dict[str, Any]) -> list[float]:
     return found
 
 
+def plan_shape(compiled: Compiled) -> dict[str, Any]:
+    """The plan without any value: what it computes, on which columns, with which operators."""
+    plan = compiled.plan
+    return {
+        "kind": plan.answer,
+        "unit": compiled.unit,
+        "which_visit": plan.which_visit,
+        "conditions": [[c.column, c.op] for c in compiled.filters],
+        "counted_if": [[c.column, c.op] for c in compiled.numerator],
+        "measure": compiled.measure,
+        "group_by": compiled.group_column,
+        "totals_by": plan.totals_by,
+    }
+
+
 def _log_would_have(
     why: str, compiled: Compiled, context: DatasetContext, open_sandbox: Callable[[], SandboxConnection], question: str
 ) -> None:
@@ -131,15 +152,13 @@ def _log_would_have(
         numbers = _numbers(_analysis(compiled, frame, total, context, question))
     except (SqlRunError, SqlRefusedError, PlanError) as e:
         logger.info(
-            "model_query_held_answer", why=why, plan_answer=compiled.plan.answer, ran=False, error_type=type(e).__name__
+            "model_query_held_answer", why=why, plan_shape=plan_shape(compiled), ran=False, error_type=type(e).__name__
         )
         return
     logger.info(
         "model_query_held_answer",
         why=why,
-        plan_answer=compiled.plan.answer,
-        which_visit=compiled.plan.which_visit,
-        count_of=compiled.unit,
+        plan_shape=plan_shape(compiled),
         ran=True,
         numbers=numbers[:40],
     )
@@ -159,6 +178,34 @@ def _ask(
         reply=reply,
         attempts=attempt,
     )
+
+
+def _value_ask(
+    compiled: Compiled, context: DatasetContext, open_sandbox: Callable[[], SandboxConnection], question: str
+) -> checks.Ask | None:
+    """A filter value on a column with too many values to list, checked against the values the
+    column holds (whole, any case): a miss is asked, offering the nearest values."""
+    for cond in (*compiled.filters, *compiled.numerator):
+        column = context.column(cond.column)
+        if column is None or column.kind != "text" or cond.op not in ("is", "is not"):
+            continue
+        ref = ident(column.name)
+        with open_sandbox() as sandbox:
+            held = sandbox.run_model_sql(
+                f"SELECT DISTINCT CAST({ref} AS VARCHAR) AS v FROM unified WHERE {ref} IS NOT NULL "
+                f"LIMIT {MAX_DISTINCT_CHECKED}"
+            ).get_column("v")
+        stored = {str(v).strip().casefold(): str(v) for v in held.to_list()}
+        for said in (*cond.values, cond.value):
+            if said is None or str(said).strip().casefold() in stored:
+                continue
+            near = difflib.get_close_matches(str(said).casefold(), list(stored), n=4, cutoff=0.5)
+            return checks.Ask(
+                "value_not_found",
+                VALUE_NOT_FOUND_QUESTION.format(said=said, column=column.display),
+                tuple((stored[n], f"({column.display}: {stored[n]})") for n in near),
+            )
+    return None
 
 
 def _count_column_ask(
@@ -203,6 +250,7 @@ def answer_question(
     max_attempts: int = 3,
     previous: Sequence[tuple[str, dict[str, Any]]] = (),
     examples: Sequence[Example] | None = None,
+    budget_s: float | None = None,
 ) -> ModelAnswer:
     """Ask the model for a plan, check it, run it; feed a failure back for a bounded number of
     retries.
@@ -210,7 +258,10 @@ def answer_question(
     ``model``: the local model call (``llm.ollama_model`` in the app; a recorded reply in tests).
     ``open_sandbox``: a new sandbox over the dataset's stored rows.
     ``previous``: earlier (question, reply) turns of the conversation, for follow-up questions.
+    ``budget_s``: the whole question's time with the model (every attempt); past it, the app says
+    the model took too long rather than starting another attempt.
     """
+    started = time.monotonic()
     if asks_for_listing(question):
         logger.info("model_query_listing_refused", attempt=0)
         return ModelAnswer("refused", reason=LISTING_REASON)
@@ -223,6 +274,10 @@ def answer_question(
     failed_reply: dict[str, Any] | None = None
     held: tuple[checks.Problem, Compiled] | None = None
     for attempt in range(1, max_attempts + 1):
+        if budget_s is not None and attempt > 1 and time.monotonic() - started >= budget_s:
+            logger.warning("model_query_budget_spent", attempt=attempt, budget_s=budget_s)
+            reason = MODEL_TIMEOUT_REASON.format(minutes=max(1, round(budget_s / 60)))
+            return ModelAnswer("unavailable", reason=reason, attempts=attempt - 1, problems=tuple(problems))
         payload = model(
             system, user_prompt(question, shots, previous=previous, failed_reply=failed_reply, problem=problem), schema
         )
@@ -275,10 +330,18 @@ def answer_question(
                     ask = checks.visit_ask(
                         compiled, context, varying, [n for n, c in zip(names, counts, strict=False) if c]
                     )
+            if ask is None:
+                ask = _value_ask(compiled, context, open_sandbox, question)
             if ask is not None:
                 _log_would_have(ask.kind, compiled, context, open_sandbox, asked)
                 return _ask(ask, question, compiled, context, reply, attempt)
             frame, total = _run(compiled, open_sandbox)
+            if compiled.lookup and frame.height and any(n != 1 for n in frame.get_column("n").to_list()):
+                worst = next(n for n in frame.get_column("n").to_list() if n != 1)
+                logger.info("model_query_lookup_not_one", attempt=attempt, plan_shape=plan_shape(compiled))
+                return ModelAnswer(
+                    "refused", reason=LOOKUP_NOT_ONE.format(n=worst), sql=compiled.sql, reply=reply, attempts=attempt
+                )
             analysis = _analysis(compiled, frame, total, context, question)
         except PlanError as e:
             problem = str(e)

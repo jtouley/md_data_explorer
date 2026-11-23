@@ -33,8 +33,6 @@ MAX_DESCRIPTION_CHARS: Final = 140
 MAX_DISPLAY_WORDS: Final = 8
 
 Kind = Literal["key", "category", "number", "date", "text", "flag"]
-# Grain kinds (ADR017) whose lines are groups, not people: a summary table and published estimates.
-AGGREGATE_GRAIN_KINDS: Final = frozenset({"stratum", "estimate"})
 
 # Stored yes/no spellings (structure, never the question): a column holding only these is a flag.
 _YES: Final = frozenset({"y", "yes", "true", "1", "t"})
@@ -147,10 +145,24 @@ class DatasetContext:
         return plural(self.row_noun)
 
     @property
-    def aggregate(self) -> bool:
-        """Each line counts a group (a summary or published table): counts add up a count column."""
+    def aggregate_kind(self) -> Literal["frequency", "estimate"] | None:
+        """What the contract says each line of a table of groups is: counts of cases to add up
+        (frequency), or published estimates and rates never added up (estimate). Read from the
+        contract, never inferred here."""
         sem = self.semantics
-        return sem.case_count_column is not None or sem.grain.kind in AGGREGATE_GRAIN_KINDS
+        declared = getattr(sem, "aggregate_kind", None)  # #155's explicit kind, when present
+        if declared in ("frequency", "estimate"):
+            return declared  # type: ignore[no-any-return]
+        if sem.population_estimates or sem.grain.kind == "estimate":
+            return "estimate"
+        if sem.case_count_column is not None or sem.grain.kind == "stratum":
+            return "frequency"
+        return None
+
+    @property
+    def aggregate(self) -> bool:
+        """Each line is a group (counts or estimates), never one person."""
+        return self.aggregate_kind is not None
 
     @property
     def count_column(self) -> str | None:
@@ -346,7 +358,12 @@ def context_text(context: DatasetContext) -> str:
     """The table as the model reads it: what a record is, who the patient is, the columns."""
     sem = context.semantics
     lines = [f"Table: {context.title}" if context.title else "Table:"]
-    if context.aggregate:
+    if context.aggregate_kind == "estimate":
+        lines.append(
+            f"{sem.grain.sentence or 'Each record is one published estimate for a group.'} Estimates are never added "
+            "up: read the record of the group the question names."
+        )
+    elif context.aggregate:
         counted = (
             f"{context.count_column} holds how many {context.case_noun} each record counts: a count adds it up."
             if context.count_column

@@ -222,6 +222,7 @@ SQL_SANDBOX_SLOTS: int = 1
 ENABLE_MODEL_QUERIES: bool = _config["enable_model_queries"]
 MODEL_QUERY_TIMEOUT_S: float = _config["model_query_timeout_s"]
 MODEL_QUERY_COLD_TIMEOUT_S: float = max(MODEL_QUERY_TIMEOUT_S, float(_config["model_query_cold_timeout_s"]))
+MODEL_QUERY_BUDGET_S: float = max(MODEL_QUERY_TIMEOUT_S, float(_config["model_query_budget_s"]))
 MODEL_QUERY_MAX_ATTEMPTS: int = max(1, int(_config["model_query_max_attempts"]))
 _SANDBOX_IN_USE: bool = ENABLE_SQL_QUERIES or ENABLE_MODEL_QUERIES
 CACHED_LAYER_MEMORY_LIMIT: DuckdbMemoryLimit = per_layer_memory_limit(

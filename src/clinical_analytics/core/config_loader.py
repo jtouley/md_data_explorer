@@ -190,6 +190,7 @@ class NLQueryConfigDefaults:
     enable_model_queries: bool = True
     model_query_timeout_s: float = 300.0
     model_query_cold_timeout_s: float = 900.0
+    model_query_budget_s: float = 1200.0  # all attempts of one question
     model_query_max_attempts: int = 3
     # Open semantic layers (datasets) the API keeps, and the DuckDB memory they share: a
     # percentage of RAM or a size ("60%", "8GB"), split evenly, so each layer gets
@@ -236,6 +237,7 @@ class NLQueryConfigDefaults:
             "enable_model_queries": self.enable_model_queries,
             "model_query_timeout_s": self.model_query_timeout_s,
             "model_query_cold_timeout_s": self.model_query_cold_timeout_s,
+            "model_query_budget_s": self.model_query_budget_s,
             "model_query_max_attempts": self.model_query_max_attempts,
             "semantic_layer_cache_size": self.semantic_layer_cache_size,
             "duckdb_memory_budget": self.duckdb_memory_budget,
@@ -389,6 +391,7 @@ def load_nl_query_config(config_path: Path | None = None) -> dict[str, Any]:
         "ENABLE_MODEL_QUERIES": "enable_model_queries",
         "MODEL_QUERY_TIMEOUT_S": "model_query_timeout_s",
         "MODEL_QUERY_COLD_TIMEOUT_S": "model_query_cold_timeout_s",
+        "MODEL_QUERY_BUDGET_S": "model_query_budget_s",
         "MODEL_QUERY_MAX_ATTEMPTS": "model_query_max_attempts",
     }
 

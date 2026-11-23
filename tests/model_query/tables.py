@@ -122,3 +122,14 @@ def injuries() -> pl.DataFrame:
                     {"district": district, "year": year, "road_user": user, "injury_cases": (d * 7 + year + u * 3) % 40}
                 )
     return pl.DataFrame(rows)
+
+
+def coverage_estimates() -> pl.DataFrame:
+    """Published estimates: vaccination coverage per region and year (never added up)."""
+    return pl.DataFrame(
+        {
+            "region": [r for r in ("north", "south") for _ in range(2015, 2025)],
+            "year": [y for _ in ("north", "south") for y in range(2015, 2025)],
+            "coverage_pct": [round(80 + ((r * 3 + y) % 15) * 1.1, 1) for r in range(2) for y in range(2015, 2025)],
+        }
+    )
