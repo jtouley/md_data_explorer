@@ -54,11 +54,13 @@ from clinical_analytics.contracts.config import (
     UNRELIABLE_FLAG_SUFFIX,
 )
 from clinical_analytics.contracts.dates import DateAmbiguity, DateChoice, choose_text_format, date_coverage
+from clinical_analytics.contracts.inference import KEY_COLUMN_NAMES
 
 logger = structlog.get_logger()
 
-# Columns stored as text whatever they hold (avoids integer overflow, keeps joins consistent).
-ID_COLUMN_NAMES: Final = frozenset({"patient_id", "patientid", "subject_id", "subjectid", "id", "mrn", "study_id"})
+# Columns stored as text whatever they hold (avoids integer overflow, keeps joins consistent): the
+# one list of whole ID column names, kept with the inference's other name rules.
+ID_COLUMN_NAMES: Final = KEY_COLUMN_NAMES
 
 # A column is reported as "numeric with some text" when at least this share is numeric.
 NUMERIC_NOTE_SHARE: Final = 0.5

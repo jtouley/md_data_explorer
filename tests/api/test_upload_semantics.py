@@ -155,3 +155,101 @@ def test_governedSqlCatalog_contractSemantics_idIsTheFilesKey(test_client: TestC
     assert catalog.id_column is not None and catalog.id_column.name == "subj"
     copy = catalog.column("patient_id")
     assert copy is not None and (copy.is_id, copy.phi) == (False, True)
+
+
+def _post_zip_of(client: TestClient, name: str, table: pl.DataFrame, dictionary: str) -> dict[str, Any]:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("table.csv", table.write_csv())
+        zf.writestr("dictionary.txt", dictionary)
+    response = client.post(
+        "/api/datasets/upload",
+        files={"file": (f"{name}.zip", buf.getvalue(), "application/zip")},
+        data={"dataset_name": name},
+    )
+    assert response.status_code == 200, response.text
+    body: dict[str, Any] = response.json()
+    return body
+
+
+def test_uploadDataset_floatScoreWithIntegerCode_readyCodeStoredMissing(test_client: TestClient) -> None:
+    # Arrange: fibromyalgia FIQ totals with decimals; the dictionary documents 999 as an integer
+    table = pl.DataFrame(
+        {
+            "mrn": [f"F{i % 90:03d}" for i in range(180)],
+            "fiq_total": [12.5 + i % 60 if i % 30 else 999.0 for i in range(180)],
+        }
+    )
+
+    # Act
+    body = _post_zip_of(test_client, "fiq", table, "fiq_total  FIQ total (0-100). 999 = not done\n")
+
+    # Assert: no 500; the code is a missing value for every reader
+    assert body["status"] == "ready"
+    assert "999 in fiq_total means not recorded (not done)." in body["facts"]
+
+
+def test_semanticsEndpoint_versionWithoutSemantics_sameReadOnlyPass(test_client: TestClient) -> None:
+    # Arrange: strip the semantics from the stored contract, as for a version stored before ADR017
+    import yaml
+
+    from clinical_analytics.contracts.store import contract_path
+    from clinical_analytics.core.data_home import uploads_dir
+    from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
+
+    body = _post_zip(test_client, "iop_legacy")
+    version = (UserDatasetStorage().get_upload_metadata(body["upload_id"]) or {})["dataset_version"]
+    path = contract_path(uploads_dir().parent, body["upload_id"], version)
+    document = yaml.safe_load(path.read_text())
+    document["customProperties"] = [p for p in document["customProperties"] if p["property"] != "semantics"]
+    path.write_text(yaml.safe_dump(document))
+
+    # Act
+    response = test_client.get(f"/api/datasets/{body['upload_id']}/semantics")
+
+    # Assert: answered from the stored data (no dictionary any more), never a 404; nothing written
+    assert response.status_code == 200, response.text
+    assert response.json()["semantics"]["patient_key"]["column"] == "subj"
+    assert "semantics" not in path.read_text()
+
+
+def test_missingCodeAnswer_yes_answersReadItAsMissing(test_client: TestClient) -> None:
+    # Arrange: chest-pain unit troponin with an undocumented 999 the upload asks about
+    from clinical_analytics.api import dependencies
+
+    table = pl.DataFrame(
+        {
+            "mrn": [f"C{i:03d}" for i in range(200)],
+            "trop_ng_l": [999.0 if i % 20 == 0 else 4.0 + i % 30 for i in range(200)],
+        }
+    )
+    body = _post_zip_of(test_client, "trop", table, "mrn  Medical record number (patient identifier)\n")
+    assert "Question for you: Does 999 in trop_ng_l mean not recorded?" in body["facts"]
+
+    # Act
+    answer = test_client.post(
+        f"/api/datasets/{body['upload_id']}/missing-codes",
+        json={"column": "trop_ng_l", "value": 999.0, "not_recorded": True},
+    )
+    with dependencies.lease_semantic_layer(body["upload_id"]) as lease:
+        view = lease.layer.get_base_view().to_polars()
+    dependencies.invalidate_semantic_layer_cache(body["upload_id"])
+
+    # Assert
+    assert answer.status_code == 200, answer.text
+    assert "999 in trop_ng_l means not recorded." in answer.json()["facts"]
+    assert view.get_column("trop_ng_l").null_count() == 10
+
+
+def test_missingCodeAnswer_valueNotAsked_409NothingStored(test_client: TestClient) -> None:
+    # Arrange
+    body = _post_zip(test_client, "iop_not_asked")
+
+    # Act
+    response = test_client.post(
+        f"/api/datasets/{body['upload_id']}/missing-codes",
+        json={"column": "iop_mmhg", "value": 14, "not_recorded": True},
+    )
+
+    # Assert
+    assert response.status_code == 409

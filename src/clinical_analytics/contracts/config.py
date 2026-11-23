@@ -849,16 +849,34 @@ DATE_YEAR_MAX: Final = 2100
 MISSING_CODE_CANDIDATES: Final[frozenset[int]] = frozenset(
     {99, 999, 9999, 99999, 88, 888, 8888, 77, 777, 7777, 98, 998, 9998, -1, -9, -99, -999, -9999}
 )
-MISSING_CODE_MIN_ROWS: Final = 2
+MISSING_CODE_MIN_ROWS: Final = 3
+MISSING_CODE_MIN_SHARE: Final = 0.005
 MISSING_CODE_GAP: Final = 1.5
+# Undocumented codes are never stored as missing: they are asked about. Names of counts, changes
+# and durations hold real -1, 0 and 99 values (a length of stay of 99 days), so they are not asked.
+MISSING_CODE_EXEMPT_TOKENS: Final = frozenset(
+    {"change", "chg", "diff", "difference", "delta", "los", "stay", "days", "day", "count", "duration", "length",
+     "num", "number", "n", "hours", "weeks", "months", "years", "minutes", "score_change"}
+)  # fmt: skip
 
-# Words in a dictionary label that say the value was not recorded ("99 = questionnaire not done").
-# A label that also names a real category ("5 = unknown / other") is a category, not a missing code.
-MISSING_LABEL_PATTERN: Final = re.compile(
-    r"\b(?:not\s+(?:done|recorded|known|available|measured|collected|assessed|obtained|tested|asked|"
-    r"reported|performed|stated)|missing|no\s+data|unknown|refused|declined|don'?t\s+know|n/a)\b",
+# A dictionary code is a missing-value code only when its label says the measurement itself was
+# not recorded ("999 = not recorded", "99 = missing"). Labels that name an answer or an event
+# ("0 = not done" for a biopsy, "1 = refused" for chemotherapy, "unknown", "not tested") are
+# categories: nulling them would change a rate.
+MISSING_LABEL_STRICT: Final = re.compile(
+    r"\b(?:not\s+(?:recorded|measured|available|collected|entered|captured)|missing|no\s+data|"
+    r"data\s+not\s+(?:collected|available)|blank)\b",
     re.IGNORECASE,
 )
+# On a lone note beside a measurement ("PHQ-9 total (0-27). 99 = questionnaire not done") these
+# also say the measurement was not taken, when the code lies outside the measurement's values.
+MISSING_LABEL_NOT_TAKEN: Final = re.compile(
+    r"\b(?:not\s+(?:done|assessed|obtained|performed|taken|measured|recorded|available|evaluated|tested|asked)|"
+    r"missing|unknown|no\s+data|n/a)\b",
+    re.IGNORECASE,
+)
+# A codebook keeps at least this many coded categories after its missing codes are taken out.
+MISSING_CODE_MIN_CATEGORIES: Final = 2
 MISSING_LABEL_EXCEPT: Final = re.compile(r"\bother\b", re.IGNORECASE)
 
 # A sequence column numbers the rows of each patient 1..k (or 0..k-1) in at least this share of
@@ -869,3 +887,7 @@ SEQUENCE_UNNAMED_MIN_SHARE: Final = 0.98
 # A repeating ID that names no role is the patient key only with at least this share of distinct
 # values per line (a GBD location_id repeats over thousands of lines; patients repeat a few times).
 GENERIC_KEY_MIN_SHARE: Final = 0.05
+# Day/month order is settled only by at least this many values that one order alone reads, and
+# at least this share of the column (real dates have a day above 12 on about 60% of lines).
+DATE_ORDER_MIN_VALUES: Final = 3
+DATE_ORDER_MIN_SHARE: Final = 0.1

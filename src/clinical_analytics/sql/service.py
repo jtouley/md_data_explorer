@@ -91,7 +91,7 @@ def run_governed_sql(
     except ContractStoreError as e:
         log.warning("governed_sql_declarations_unreadable", error_type=type(e).__name__)
         raise SqlRefusedError(DECLARATIONS_UNREADABLE) from e
-    catalog = SqlCatalog.from_contract(contract, Path(source), declared.levels)
+    catalog = SqlCatalog.from_contract(contract, Path(source), declared.levels, declared.missing_codes)
     query = validate_sql(sql, catalog)
     with SandboxConnection(catalog) as sandbox:
         try:

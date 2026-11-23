@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 from open_data_contract_standard.model import OpenDataContractStandard, SchemaProperty
 from sqlglot import exp
@@ -51,6 +51,8 @@ class SqlCatalog:
     columns: tuple[ColumnSpec, ...]
     parquet_path: Path
     levels: tuple[LevelMapping, ...] = ()
+    # column -> values the user confirmed mean not recorded (ADR017): NULL in the view.
+    missing: tuple[tuple[str, tuple[int | float | str, ...]], ...] = ()
 
     def column(self, name: str) -> ColumnSpec | None:
         """A column by name, case-insensitive as DuckDB identifiers are."""
@@ -76,9 +78,14 @@ class SqlCatalog:
             if mapping.spellings:
                 merges.setdefault(mapping.column, []).append(mapping)
         select: list[exp.Expr] = []
+        missing = dict(self.missing)
         for col in self.columns:
             ref = exp.column(col.name, quoted=True)
             value: exp.Expr = ref
+            codes = missing.get(col.name)
+            if codes:
+                literals = [exp.Literal.string(str(v)) if isinstance(v, str) else exp.Literal.number(v) for v in codes]
+                value = exp.case().when(exp.In(this=ref.copy(), expressions=literals), exp.Null()).else_(ref.copy())
             if col.logical_type == "string" and merges.get(col.name):
                 case = exp.case()
                 for mapping in merges[col.name]:
@@ -86,13 +93,17 @@ class SqlCatalog:
                     case = case.when(
                         exp.In(this=ref.copy(), expressions=spellings), exp.Literal.string(mapping.canonical)
                     )
-                value = case.else_(ref.copy())
+                value = case.else_(value.copy())
             select.append(exp.alias_(value, col.name, quoted=True))
         return select
 
     @classmethod
     def from_contract(
-        cls, contract: OpenDataContractStandard, parquet_path: Path, levels: Iterable[LevelMapping] = ()
+        cls,
+        contract: OpenDataContractStandard,
+        parquet_path: Path,
+        levels: Iterable[LevelMapping] = (),
+        missing: Iterable[Any] = (),
     ) -> SqlCatalog:
         """The catalog of the contract's unified object.
 
@@ -112,7 +123,16 @@ class SqlCatalog:
                 "This dataset has columns whose names differ only in capitalisation, so SQL cannot tell them apart."
             )
         names = {c.name for c in columns}
-        return cls(columns=columns, parquet_path=parquet_path, levels=tuple(m for m in levels if m.column in names))
+        confirmed: dict[str, list[int | float | str]] = {}
+        for answer in missing:  # MissingCodeDeclaration: only "yes, not recorded" answers
+            if answer.missing and answer.column in names:
+                confirmed.setdefault(answer.column, []).append(answer.value)
+        return cls(
+            columns=columns,
+            parquet_path=parquet_path,
+            levels=tuple(m for m in levels if m.column in names),
+            missing=tuple((c, tuple(v)) for c, v in confirmed.items()),
+        )
 
 
 def _spec(prop: SchemaProperty, semantics: DatasetSemantics | None) -> ColumnSpec:

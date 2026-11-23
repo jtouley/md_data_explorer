@@ -17,7 +17,7 @@ from typing import Annotated, Any, Literal
 import polars as pl
 import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from pydantic import BaseModel, ConfigDict, Field, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -421,13 +421,18 @@ class DatasetSemanticsResponse(BaseModel):
 
 @router.get("/datasets/{dataset_id}/semantics", response_model=DatasetSemanticsResponse)
 def get_dataset_semantics(dataset_id: str) -> DatasetSemanticsResponse:
-    """What the active version's file means, read from its data contract (``semantics_for``).
+    """What the active version's file means, read from its data contract (``semantics_for``; a
+    version stored before ADR017 gets the same inference pass over its stored data, read-only).
+
+    Privacy: the response holds patient counts and evidence sentences. They are shown on this
+    machine as they are (ADR015); anything that exports or packages them (a report, a model
+    packet) must pass them through ``core.export_boundary`` first.
 
     Raises:
         HTTPException: 400 bad id, 404 unknown dataset or no semantics yet, 409 while deleting,
             500 when the contract or declarations can't be read.
     """
-    from clinical_analytics.contracts.semantics import SemanticsMissingError, describe, semantics_for
+    from clinical_analytics.contracts.semantics import describe
 
     try:
         validate_dataset_id(dataset_id)
@@ -436,15 +441,9 @@ def get_dataset_semantics(dataset_id: str) -> DatasetSemanticsResponse:
     reject_if_deleting(dataset_id)
     storage = UserDatasetStorage()
     version = active_version_id(storage.get_upload_metadata(dataset_id))
-    if version is None:
+    semantics = _contract_semantics(storage, dataset_id, declared=True)
+    if version is None or semantics is None:
         raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
-    try:
-        semantics = semantics_for(storage.upload_dir.parent, dataset_id, version)
-    except SemanticsMissingError as e:
-        raise HTTPException(status_code=404, detail="This cohort's data contract has no semantics yet.") from e
-    except ContractError as e:
-        logger.error("dataset_semantics_failed", dataset_id=dataset_id, **error_fields(e))
-        raise HTTPException(status_code=500, detail="This cohort's data contract can't be read.") from e
     return DatasetSemanticsResponse(
         dataset_id=dataset_id,
         dataset_version=version,
@@ -621,20 +620,36 @@ def _upload_declarations(storage: UserDatasetStorage, upload_id: str) -> Declara
         return Declarations()
 
 
-def _contract_semantics(storage: UserDatasetStorage, upload_id: str) -> DatasetSemantics | None:
-    """The active version's semantics as its contract states them (declarations not applied),
-    or None when the version has no contract with semantics (logged)."""
-    from clinical_analytics.contracts.declarations import MemoryDeclarationStore
-    from clinical_analytics.contracts.semantics import semantics_for
+def _contract_semantics(
+    storage: UserDatasetStorage, upload_id: str, *, declared: bool = False
+) -> DatasetSemantics | None:
+    """The active version's semantics (``contracts.service.version_semantics``: from its contract,
+    or for a version stored before ADR017 the same pass over its stored frame). As inferred
+    unless ``declared``; None only when the dataset has no active version.
 
-    version = active_version_id(storage.get_upload_metadata(upload_id))
-    if version is None:
+    Raises:
+        HTTPException: 500 when the contract or declarations can't be read (never a silent fallback:
+            the unit note and "Is each row one patient?" depend on it).
+    """
+    from clinical_analytics.contracts.declarations import MemoryDeclarationStore
+    from clinical_analytics.contracts.service import version_semantics
+
+    metadata = storage.get_upload_metadata(upload_id)
+    version = active_version_id(metadata)
+    if metadata is None or version is None:
         return None
     try:
-        return semantics_for(storage.upload_dir.parent, upload_id, version, declarations=MemoryDeclarationStore())
+        return version_semantics(
+            storage.upload_dir.parent,
+            upload_id,
+            version,
+            metadata=metadata,
+            stored_frame=lambda: storage.stored_dataset(upload_id, metadata).scan_cohort().collect(),
+            declarations=None if declared else MemoryDeclarationStore(),
+        )
     except ContractError as e:
-        logger.warning("dataset_semantics_unavailable", upload_id=upload_id, **error_fields(e))
-        return None
+        logger.error("dataset_semantics_unreadable", upload_id=upload_id, **error_fields(e))
+        raise HTTPException(status_code=500, detail="This cohort's data contract can't be read.") from e
 
 
 def _facts(semantics: DatasetSemantics | None, declarations: Declarations) -> list[str]:
@@ -825,6 +840,76 @@ def answer_one_row_per_patient(dataset_id: str, answer: OneRowPerPatientAnswer) 
             log.error("patient_rows_answer_not_saved", **error_fields(e))
             raise HTTPException(status_code=500, detail="The answer couldn’t be stored. Try again.") from e
     return OneRowPerPatientResult(dataset_id=dataset_id, counts=counts)
+
+
+class MissingCodeAnswer(BaseModel):
+    """The answer to "Does 99 in los_days mean not recorded?" (an open question of the contract)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    column: str = Field(..., min_length=1, max_length=512)
+    value: StrictInt | StrictFloat | str = Field(..., description="The value the question asks about, as given")
+    not_recorded: StrictBool = Field(..., description="true: the value means not recorded; false: a real value")
+
+
+class MissingCodeResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_id: str
+    facts: list[str]
+
+
+@router.post("/datasets/{dataset_id}/missing-codes", response_model=MissingCodeResult)
+def answer_missing_code(dataset_id: str, answer: MissingCodeAnswer) -> MissingCodeResult:
+    """Record whether a value the contract asked about means "not recorded", for this version.
+
+    A "yes" makes every answer read the value as missing (the stored data keeps it: answers apply
+    the declaration). Only a value the version's contract asks about is accepted.
+
+    Raises:
+        HTTPException: 400 bad id, 404 unknown dataset, 409 not asked on this version, 500 when
+            the answer can't be stored.
+    """
+    from clinical_analytics.contracts.declarations import MissingCodeDeclaration
+    from clinical_analytics.contracts.semantics import describe
+
+    try:
+        validate_dataset_id(dataset_id)
+    except InvalidDatasetIdError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    storage = UserDatasetStorage()
+    with dataset_files_lock(dataset_id):
+        reject_if_deleting(dataset_id)
+        semantics = _contract_semantics(storage, dataset_id)
+        if semantics is None:
+            raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
+        asked = next(
+            (
+                q
+                for q in semantics.open_questions
+                if q.kind == "missing_code" and q.column == answer.column and str(q.value) == str(answer.value)
+            ),
+            None,
+        )
+        if asked is None or asked.value is None:
+            raise HTTPException(status_code=409, detail="This cohort is not asked about that value.")
+        declaration = MissingCodeDeclaration(
+            column=answer.column,
+            value=asked.value,
+            missing=answer.not_recorded,
+            dataset_version=semantics.dataset_version,
+        )
+        try:
+            FileDeclarationStore(storage.upload_dir.parent).update(
+                dataset_id, lambda current: current.with_missing_code(declaration)
+            )
+        except (ContractStoreError, InvalidDeclarationKeyError) as e:
+            logger.error("missing_code_answer_not_saved", dataset_id=dataset_id, **error_fields(e))
+            raise HTTPException(status_code=500, detail="The answer couldn’t be stored. Try again.") from e
+    invalidate_semantic_layer_cache(dataset_id)
+    forget_query_service(dataset_id)
+    declared = _contract_semantics(storage, dataset_id, declared=True)
+    return MissingCodeResult(dataset_id=dataset_id, facts=describe(declared) if declared else [])
 
 
 @router.post("/datasets/sample", response_model=DatasetUploadResponse)

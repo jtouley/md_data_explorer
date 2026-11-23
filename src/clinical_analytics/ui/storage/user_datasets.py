@@ -1680,8 +1680,10 @@ def save_table_list(
                 _upload_facts(tables[0], metadata, cohort_key=(cohort_build or {}).get("grain_key")),
             )
             unified_df = apply_semantics(unified_df, semantics)
-            if len(tables) == 1:
-                tables[0]["data"] = unified_df
+            # Each table's Parquet holds the same values as the cohort: codes and dates applied
+            # to the columns it shares with the cohort.
+            for table in tables:
+                table["data"] = unified_df if len(tables) == 1 else apply_semantics(table["data"], semantics)
 
         # 5. Raw landing + typed Parquet per table (versioned, never replaced)
         for table in tables:
