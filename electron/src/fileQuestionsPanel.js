@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * "Questions about your file" (ADR017): every open question the app has about the cohort's file,
  * of any kind, in clinical words with its evidence (counts only, never a row value), one plain
