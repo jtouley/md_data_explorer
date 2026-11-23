@@ -236,8 +236,9 @@ def test_inferSemantics_undocumentedCode_askedOnlyOutsideCountsAndChanges(
 def test_withDeclarations_confirmedCode_declaredAndAppliedInLayerView(make_semantic_layer: Callable[..., Any]) -> None:
     # Arrange: chest-pain unit; the user confirms 999 means not recorded
     from clinical_analytics.contracts.declarations import Declarations, MissingCodeDeclaration
-    from clinical_analytics.contracts.semantics import declared_missing_codes, with_declarations
-    from clinical_analytics.core.semantic import DECLARED_MISSING_CODES_KEY
+    from clinical_analytics.contracts.readings import declared_reads, reads_config
+    from clinical_analytics.contracts.semantics import with_declarations
+    from clinical_analytics.core.semantic import DECLARED_READS_KEY
 
     df = pl.DataFrame({"mrn": [f"M{i}" for i in range(120)], "trop_ng_l": [4.0, 12.0, 999.0, 8.0] * 30})
     semantics = infer_semantics(df).model_copy(update={"dataset_version": "v1"})
@@ -245,12 +246,12 @@ def test_withDeclarations_confirmedCode_declaredAndAppliedInLayerView(make_seman
 
     # Act
     declared = with_declarations(semantics, Declarations(missing_codes=(answer,)))
-    codes = declared_missing_codes(declared)
-    layer = make_semantic_layer(data=df, config_overrides={DECLARED_MISSING_CODES_KEY: codes})
+    reads = declared_reads(Declarations(missing_codes=(answer,)), "v1")
+    layer = make_semantic_layer(data=df, config_overrides={DECLARED_READS_KEY: reads_config(reads)})
     view = layer.get_base_view().to_polars()
 
     # Assert
-    assert codes == {"trop_ng_l": (999.0,)}
+    assert reads.missing == {"trop_ng_l": (999.0,)}
     assert declared.question("missing_code").answered
     assert view.get_column("trop_ng_l").null_count() == 30
 

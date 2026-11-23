@@ -29,7 +29,7 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 import polars as pl
 import structlog
@@ -48,6 +48,7 @@ from clinical_analytics.contracts.dates import (
 )
 from clinical_analytics.contracts.dictionary import Dictionary, DictionaryEntry, parse_dictionary
 from clinical_analytics.contracts.semantics import (
+    AggregateInfo,
     AppColumn,
     ColumnSemantics,
     DatasetSemantics,
@@ -63,6 +64,7 @@ from clinical_analytics.contracts.semantics import (
     SequenceColumn,
     StatedRange,
     Timepoint,
+    TotalLevel,
     Unit,
 )
 
@@ -541,6 +543,7 @@ def _date_question(name: str, found: DateAmbiguity) -> OpenQuestion:
             id=f"date_century:{name}",
             kind="date_century",
             column=name,
+            value=found.format,
             question=f"In {name}, does {example} mean 15 March 1945 or 15 March 2045?",
             options=("1900s (15 March 1945)", "2000s (15 March 2045)"),
         )
@@ -549,44 +552,53 @@ def _date_question(name: str, found: DateAmbiguity) -> OpenQuestion:
         id=f"date_order:{name}",
         kind="date_order",
         column=name,
+        value=found.format,
         question=f"In {name}, does {example} mean 3 April 2021 or March 4, 2021?",
         options=("day first (3 April)", "month first (March 4)"),
     )
 
 
-def _undocumented_missing(series: pl.Series, stated: tuple[float, float] | None) -> MissingCode | None:
-    """One repeated value from ``MISSING_CODE_CANDIDATES`` far outside the column's other values."""
+def _undocumented_missing(series: pl.Series, stated: tuple[float, float] | None) -> list[MissingCode]:
+    """Repeated values from ``MISSING_CODE_CANDIDATES`` far outside the column's other values:
+    the largest value, and every negative code in a column whose other values are 0 or more
+    ("pack_years" with -9 and -8). Counts, changes and lengths of stay hold real -1 and 99 values:
+    asked there only when far beyond everything else (a stay of 999 days)."""
     if not series.dtype.is_numeric() or series.dtype == pl.Boolean:
-        return None
-    if set(name_tokens(series.name)) & config.MISSING_CODE_EXEMPT_TOKENS:
-        return None  # a count, change or duration: -1, 0 and 99 are real values there
+        return []
+    exempt = bool(set(name_tokens(series.name)) & config.MISSING_CODE_EXEMPT_TOKENS)
     values = series.drop_nulls()
     if values.len() < 3:
-        return None
+        return []
     floats = values.cast(pl.Float64)
-    top, bottom = _float(floats.max()), _float(floats.min())
-    for candidate in (top, bottom):
-        if not candidate.is_integer() or int(candidate) not in config.MISSING_CODE_CANDIDATES:
-            continue
-        hits = int((floats == candidate).sum())
-        rest = floats.filter(floats != candidate)
-        if (
-            hits < config.MISSING_CODE_MIN_ROWS
-            or hits < config.MISSING_CODE_MIN_SHARE * values.len()
-            or rest.len() == 0
-        ):
-            continue
-        if candidate < 0:
-            far = _float(rest.min()) >= 0
-        elif stated is not None:
-            far = candidate > stated[1] and _float(rest.max()) <= stated[1] * config.MISSING_CODE_GAP
-        else:
-            far = candidate > max(_float(rest.max()), 0.0) * config.MISSING_CODE_GAP
-        if far:
-            value: int | float = int(candidate) if series.dtype.is_integer() else candidate
-            side = "below every other value" if candidate < 0 else "far above every other value"
-            return MissingCode(value=value, source="structure", evidence=f"{_n(hits)} lines hold {value:g}, {side}")
-    return None
+    distinct = [_float(v) for v in floats.unique().to_list()]
+    negatives = [v for v in distinct if v < 0 and v.is_integer() and int(v) in config.MISSING_CODE_CANDIDATES]
+    real = floats.filter(~floats.is_in(negatives)) if negatives else floats
+    found: list[MissingCode] = []
+    if negatives and not exempt and real.len() and _float(real.min()) >= 0:
+        for code in sorted(negatives):
+            hits = int((floats == code).sum())
+            if hits >= config.MISSING_CODE_MIN_ROWS and hits >= config.MISSING_CODE_MIN_SHARE * values.len():
+                found.append(_suspect(series, code, hits, "below every other value"))
+    top = _float(floats.max())
+    # On a count, change or stay the -1 and 99 rules do not apply; 999 and above far beyond the
+    # rest is still asked (a stay of 999 days).
+    if top > 0 and top.is_integer() and int(top) in config.MISSING_CODE_CANDIDATES and not (exempt and top < 999):
+        hits = int((floats == top).sum())
+        rest = floats.filter(floats != top)
+        gap = config.MISSING_CODE_EXEMPT_GAP if exempt else config.MISSING_CODE_GAP
+        if hits >= config.MISSING_CODE_MIN_ROWS and hits >= config.MISSING_CODE_MIN_SHARE * values.len() and rest.len():
+            if stated is not None and not exempt:
+                far = top > stated[1] and _float(rest.max()) <= stated[1] * config.MISSING_CODE_GAP
+            else:
+                far = top > max(_float(rest.max()), 0.0) * gap
+            if far:
+                found.append(_suspect(series, top, hits, "far above every other value"))
+    return found
+
+
+def _suspect(series: pl.Series, code: float, hits: int, side: str) -> MissingCode:
+    value: int | float = int(code) if series.dtype.is_integer() else code
+    return MissingCode(value=value, source="structure", evidence=f"{_n(hits)} lines hold {value:g}, {side}")
 
 
 def _is_number(value: object) -> bool:
@@ -608,8 +620,17 @@ def _n(count: int) -> str:
     return f"{count:,}"
 
 
+_MASS_STEMS: Final = frozenset({"weight", "wt", "mass", "bw", "birthweight"})
+_DAY_STEMS: Final = frozenset({"age", "ga", "gest", "gestation", "gestational", "dur", "duration", "los"})
+
+
 def _unit_from_name(column: str) -> str | None:
     tokens = [t for t in _SPLIT.split(column.lower()) if t]  # no case split: "cmH2O" is one unit
+    # One letter is a unit only after a stem that measures in it: "bw_g", "ga_d" (not "vitamin_d").
+    if len(tokens) >= 2 and tokens[-1] == "g" and set(tokens[:-1]) & _MASS_STEMS:
+        return "g"
+    if len(tokens) >= 2 and tokens[-1] == "d" and set(tokens[:-1]) & _DAY_STEMS:
+        return "days"
     if len(tokens) < 2:
         return None
     for width in (2, 1):
@@ -861,7 +882,7 @@ def _choose_keys(df: pl.DataFrame, dictionary: Dictionary, facts: UploadFacts, e
         )
         infants = [c for c in people if c.role == "infant"]
         mothers = [c for c in people if c.role == "mother"]
-        if infants and any(not c.unique for c in mothers):
+        if infants and any(c.distinct < rows - c.nulls for c in mothers):
             # A mother ID repeats beside a baby ID: twins, or one line per mother? Only the
             # clinician can say; the baby is the tentative patient.
             chosen = next((c for c in infants if c.unique), infants[0])
@@ -970,7 +991,7 @@ def _choose_keys(df: pl.DataFrame, dictionary: Dictionary, facts: UploadFacts, e
     return keys
 
 
-_SINCE_TOKENS: Final = frozenset({"since", "from", "post", "after", "of"})
+_SINCE_TOKENS: Final = frozenset({"since", "from", "post", "after"})
 _TIME_UNIT_TOKENS: Final = frozenset({"day", "days", "week", "weeks", "wk", "wks", "month", "months", "hour", "hours"})
 
 
@@ -1120,10 +1141,26 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
             header = code_labels(name)
             if header:
                 labels, labels_source = header, "structure"
+        if dictionary.shared_missing and date_fmt is None and dtype.is_numeric() and dtype != pl.Boolean:
+            # A note for every measurement ("For all measurements, 999 = not recorded"): a code of
+            # each numeric column that holds it and does not list it as a category.
+            present = set(series.drop_nulls().cast(pl.Float64).unique().to_list())
+            for code, label in dictionary.shared_missing.items():
+                typed = _typed_code(code, dtype)
+                if typed is None or code in labels or float(typed) not in present:
+                    continue
+                if all(str(m.value) != str(typed) for m in missing):
+                    missing.append(
+                        MissingCode(
+                            value=typed,
+                            label=label,
+                            source="dictionary",
+                            evidence="a note in the data dictionary documents it for every measurement",
+                        )
+                    )
         if not missing and date_fmt is None and not labels:
             # Never stored as missing without the dictionary or the user: asked instead.
-            suspect = _undocumented_missing(series, entry.stated_range if entry else None)
-            if suspect is not None:
+            for suspect in _undocumented_missing(series, entry.stated_range if entry else None):
                 questions.append(
                     OpenQuestion(
                         id=f"missing_code:{name}:{suspect.value}",
@@ -1173,6 +1210,8 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
         roles[s.column] = "sequence"
     for g in keys.groups:
         roles[g.column] = "grouping"
+    # A key, a sequence or a grouping column is never asked about "not recorded" values.
+    questions = [q for q in questions if not (q.kind == "missing_code" and q.column in roles)]
     for col, role in roles.items():
         current = columns[col]
         # A key or a sequence is never a measure: no missing codes, units or timepoints on it.
@@ -1189,10 +1228,28 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
 
     grain = _grain(df, dictionary, keys, facts)
     case_count: str | None = None
+    aggregate: AggregateInfo | None = None
     if keys.patient is None and not published and not any(g.is_id for g in keys.groups):
-        summary = _summary_table(df, date_columns)
-        if summary is not None:
-            grain, case_count = summary
+        summary = _summary_table(df, date_columns, dictionary.says_aggregate)
+        if isinstance(summary, _Summary):
+            grain, aggregate, case_count = summary.grain, summary.aggregate, summary.aggregate.count_column
+            questions.extend(summary.questions)
+        elif isinstance(summary, str):
+            # Looks like a table of groups but not recognised with confidence: asked, never
+            # silently read as one line per patient.
+            logger.info("summary_table_not_recognised", reason=summary)
+            count_column = _count_columns(df)[0]
+            questions.append(
+                OpenQuestion(
+                    id="aggregate_unsure",
+                    kind="aggregate_unsure",
+                    column=count_column,
+                    question=(
+                        f"Does each line count cases for a group (in {count_column}), rather than describe one patient?"
+                    ),
+                    options=("yes, each line counts cases for a group", "no, each line is about one patient"),
+                )
+            )
     if (
         keys.patient is None
         and not facts.population_estimates
@@ -1219,6 +1276,7 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
         grouping_columns=keys.groups,
         episode_keys=keys.episodes,
         case_count_column=case_count,
+        aggregate=aggregate,
         columns=columns,
         open_questions=tuple(questions),
         population_estimates=facts.population_estimates,
@@ -1250,55 +1308,159 @@ def _human(column: str) -> str:
     return " ".join(name_tokens(column)) or column
 
 
-def _summary_table(df: pl.DataFrame, dates: set[str]) -> tuple[Grain, str] | None:
-    """A table of counts for strata (region x year x category with a count column, no person ID):
-    each line counts cases for one combination. Returns the grain and the count column, or None."""
+_RATE_TOKENS: Final = frozenset(
+    {"rate", "rates", "pct", "percent", "percentage", "per", "ratio", "crude", "adjusted", "prevalence", "incidence",
+     "proportion", "share", "mean", "median"}
+)  # fmt: skip
+_WHAT_WORDS: Final = ("deaths", "cases", "events", "admissions", "births", "visits", "infections")
+
+
+@dataclass(frozen=True)
+class _Summary:
+    """A table of groups: its grain, what it holds, and what only the clinician can settle."""
+
+    grain: Grain
+    aggregate: AggregateInfo
+    questions: tuple[OpenQuestion, ...] = ()
+
+
+def _count_columns(df: pl.DataFrame) -> list[str]:
+    """Whole, non-negative numbers named as counts ("cases", "Deaths", "n", "number_of_events")."""
+    found = []
+    for c in df.columns:
+        dtype = df.schema[c]
+        if not (dtype.is_integer() or dtype.is_float()) or not set(name_tokens(c)) & _CASE_COUNT_TOKENS:
+            continue
+        values = df.get_column(c).drop_nulls()
+        if values.len() == 0 or _float(values.min()) < 0:
+            continue
+        if dtype.is_float() and not bool((values == values.floor()).all()):
+            continue
+        found.append(c)
+    return found
+
+
+def _total_levels(df: pl.DataFrame, strata: Sequence[str]) -> tuple[TotalLevel, ...]:
+    """Stratum values that mean "all" (``ESTIMATE_TOTAL_LEVELS``, or "All …"): total rows."""
+    found = []
+    for c in strata:
+        if df.schema[c] != pl.String:
+            continue
+        levels = [v for v in df.get_column(c).drop_nulls().unique().sort().to_list() if isinstance(v, str)]
+        totals = tuple(
+            v
+            for v in levels
+            if v.strip().lower() in config.ESTIMATE_TOTAL_LEVELS or v.strip().lower().startswith("all ")
+        )
+        if totals:
+            found.append(TotalLevel(column=c, values=totals))
+    return tuple(found)
+
+
+def _stratum(df: pl.DataFrame, column: str, dates: set[str], loose: bool) -> bool:
+    """A low-cardinality category, a place, a period or a year: never a measure like age or SBP."""
+    dtype = df.schema[column]
+    series = df.get_column(column)
+    if column in dates:
+        return True
+    if dtype == pl.String:
+        distinct = series.n_unique()
+        return distinct <= max(60, df.height // 2)
+    if not dtype.is_integer():
+        return False
+    distinct = series.n_unique()
+    values = series.drop_nulls()
+    year_like = bool(set(name_tokens(column)) & {"year", "yr", "years"}) or (
+        values.len() > 0 and bool(values.is_between(config.DATE_YEAR_MIN, config.DATE_YEAR_MAX).all())
+    )
+    return year_like or distinct <= (200 if loose else config.STRATUM_MAX_CODES)
+
+
+def _summary_table(df: pl.DataFrame, dates: set[str], says_aggregate: bool = False) -> _Summary | str | None:
+    """A table of groups (region x year x category with a count column, no person ID).
+
+    Returns the summary; or a reason (str) when it looks like one (a count column, no person ID)
+    but is not recognised with confidence; or None when it does not look like one (a record-level
+    file: a measure such as age or SBP with many values beside the count).
+
+    * frequency: each line counts cases for one stratum (the SUM of the count is "how many");
+    * estimate: rates or percentages, or counts with total rows ("All", "United States"): never
+      summed, a question reads the matching line.
+
+    Strata repeated on several lines are kept and asked about, never a reason to reject. A
+    dictionary that says the lines are counts for groups (``says_aggregate``) loosens the strata.
+    """
     if df.height < 2:
         return None
-    counts = [
-        c
-        for c in df.columns
-        if df.schema[c].is_integer()
-        and set(name_tokens(c)) & _CASE_COUNT_TOKENS
-        and _float(df.get_column(c).drop_nulls().min() or 0) >= 0
-    ]
+    counts = _count_columns(df)
     if not counts:
         return None
     count = counts[0]
-    strata = [
-        c
-        for c in df.columns
-        if c != count
-        and c not in counts
-        and (
-            df.schema[c] == pl.String
-            or c in dates
-            or (df.schema[c].is_integer() and df.get_column(c).n_unique() <= 200)
-        )
+    values = [
+        c for c in df.columns if c not in counts and df.schema[c].is_float() and set(name_tokens(c)) & _RATE_TOKENS
     ]
+    strata = [c for c in df.columns if c not in counts and c not in values and _stratum(df, c, dates, says_aggregate)]
+    measures = [c for c in df.columns if c not in counts and c not in values and c not in strata]
+    many_valued = [
+        c for c in measures if df.schema[c].is_numeric() and df.get_column(c).n_unique() > config.STRATUM_MAX_CODES
+    ]
+    if many_valued and not says_aggregate:
+        return None  # a measure with many values beside the count: one line per record
     if not strata or not any(df.schema[c] == pl.String for c in strata):
-        return None
-    if bool(df.select(pl.struct(strata).is_duplicated().any()).item()):
-        return None
+        return f"{count} looks like a count, but no column of group names (a place, a year, a category) was found"
+    if measures and not says_aggregate:
+        return f"{count} looks like a count, but {', '.join(measures[:3])} are neither groups nor counts"
+    rates = values
+    values = [*values, *measures]
+    repeated = int(df.select(pl.struct(strata).is_duplicated().sum()).item())
+    totals = _total_levels(df, strata)
+    kind: Literal["frequency", "estimate"] = "estimate" if totals or rates else "frequency"
     tokens = set(name_tokens(count))
-    what = next(
-        (t for t in ("deaths", "cases", "events", "admissions", "births", "visits", "infections") if t in tokens),
-        "cases",
-    )
+    what = next((t for t in _WHAT_WORDS if t in tokens), "cases")
     names = [_human(c) for c in strata]
     listed = names[0] if len(names) == 1 else ", ".join(names[:-1]) + f" and {names[-1]}"
-    sentence = f"Each line counts {what} for one {listed}."
-    return (
-        Grain(
+    total_words = "; ".join(f"{t.column} = {', '.join(t.values)}" for t in totals)
+    evidence = f"{count} counts {what} for each {listed}" + (f"; total rows: {total_words}" if totals else "")
+    questions: list[OpenQuestion] = []
+    if repeated:
+        questions.append(
+            OpenQuestion(
+                id="repeated_strata",
+                kind="repeated_strata",
+                question=(
+                    f"{repeated:,} lines repeat a group that another line also has (the same {listed}). "
+                    "Should their counts be added together?"
+                ),
+                options=("yes, add them together", "no, one of them replaces the other"),
+            )
+        )
+        logger.info("summary_table_repeated_strata", lines=repeated, strata=len(strata))
+    sentence = (
+        f"Each line counts {what} for one {listed}."
+        if kind == "frequency"
+        else f"Each line gives published {what} for one {listed}, with total lines; lines are read, never added."
+    )
+    return _Summary(
+        grain=Grain(
             kind="stratum",
             noun=f"count of {what}",
             one_row_per_patient=False,
             rows=df.height,
             source="structure",
-            evidence=f"{count} counts {what}; {listed} are unique together on every line",
+            evidence=evidence,
             sentence=sentence,
         ),
-        count,
+        aggregate=AggregateInfo(
+            kind=kind,
+            count_column=count,
+            value_columns=tuple(values),
+            strata=tuple(strata),
+            total_levels=totals,
+            repeated_strata_lines=repeated,
+            source="dictionary" if says_aggregate else "structure",
+            evidence=evidence,
+        ),
+        questions=tuple(questions),
     )
 
 
@@ -1352,7 +1514,9 @@ def _grain(df: pl.DataFrame, dictionary: Dictionary, keys: _Keys, facts: UploadF
             evidence=f"{key.column} is on every line once",
         )
     if key is not None:
-        word = next((s.noun for s in keys.sequences if s.noun != "row"), None)
+        # An order number named for an event ("visit_no", "cycle") says what a line is; a time
+        # since a start ("weeks_since_start") or an unnamed number never does.
+        word = next((s.noun for s in keys.sequences if s.kind == "order" and s.noun in EVENT_TOKENS.values()), None)
         if word is None and keys.row.kind == "column":
             word = _event_word(keys.row.columns[0])
         if word is None:

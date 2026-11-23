@@ -163,11 +163,23 @@ export function isAllowedExtension(filename) {
  * @param {HTMLElement} container
  * @param {{ onFileSelect: (file: File) => void, onLoadSample?: () => void, statusText?: string }} handlers
  */
+export const POPULATION_ESTIMATES_LABEL = 'Public population estimates – no patient-level data';
+
 export function renderUploadArea(container, handlers) {
   container.replaceChildren();
 
   const wrapper = document.createElement('div');
   wrapper.className = 'upload-area';
+
+  // ADR014 §7: the person declares a file of published estimates before uploading it.
+  const estimates = document.createElement('input');
+  estimates.type = 'checkbox';
+  estimates.id = 'upload-population-estimates';
+  estimates.dataset.testid = 'upload-population-estimates';
+  const estimatesLabel = document.createElement('label');
+  estimatesLabel.htmlFor = estimates.id;
+  estimatesLabel.className = 'upload-estimates';
+  estimatesLabel.append(estimates, ` ${POPULATION_ESTIMATES_LABEL}`);
 
   const input = document.createElement('input');
   input.type = 'file';
@@ -176,7 +188,7 @@ export function renderUploadArea(container, handlers) {
   input.dataset.testid = 'upload-file-input';
   input.addEventListener('change', () => {
     if (input.files && input.files[0]) {
-      handlers.onFileSelect(input.files[0]);
+      handlers.onFileSelect(input.files[0], { populationEstimates: estimates.checked });
     }
   });
 
@@ -189,6 +201,7 @@ export function renderUploadArea(container, handlers) {
 
   wrapper.appendChild(input);
   wrapper.appendChild(btn);
+  wrapper.appendChild(estimatesLabel);
 
   if (typeof handlers.onLoadSample === 'function') {
     const sampleBtn = document.createElement('button');

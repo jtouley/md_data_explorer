@@ -27,6 +27,7 @@ from typing import Literal
 import structlog
 
 from clinical_analytics.contracts.declarations import (
+    AggregateDeclaration,
     Declarations,
     DeclarationStore,
     GrainDeclaration,
@@ -37,11 +38,12 @@ from clinical_analytics.core.identifier_rules import rows_may_be_patients
 
 logger = structlog.get_logger()
 
-RowsCount = Literal["patients", "rows"]
+RowsCount = Literal["patients", "rows", "cases"]
 
 # Said after "Your answer wasn't saved, so answers still count rows." (the app's prefix).
 NOT_ASKED = "This cohort is not asked whether each row is one patient."
 STALE = "The cohort changed after you were asked. Upload the file again to answer for the new data."
+NOT_A_COUNT = "That column doesn't hold counts in this cohort. Choose one of the count columns offered."
 
 
 class PatientRowsError(Exception):
@@ -59,7 +61,7 @@ class PatientRowsStaleError(PatientRowsError):
 def _asked_about(metadata: Mapping[str, object], semantics: DatasetSemantics | None) -> tuple[str, int] | None:
     """(dataset version, row count) the question is asked about, or None when it is not asked
     (no semantics: the version has no contract yet, so nothing is asked)."""
-    if semantics is None or not rows_may_be_patients(semantics):
+    if semantics is None or not (rows_may_be_patients(semantics) or semantics.question("aggregate_unsure")):
         return None
     version, rows = metadata.get("dataset_version"), metadata.get("row_count")
     if not isinstance(version, str) or not version or not isinstance(rows, int) or isinstance(rows, bool) or rows < 1:
@@ -94,6 +96,21 @@ def pending_token(
     return question_token(metadata, semantics)
 
 
+def count_column_choices(semantics: DatasetSemantics | None) -> list[str]:
+    """Columns a "Each row counts cases for a group" answer may name: numbers named as counts."""
+    from clinical_analytics.contracts.inference import _CASE_COUNT_TOKENS, name_tokens
+
+    if semantics is None:
+        return []
+    return [
+        name
+        for name, column in semantics.columns.items()
+        if column.logical_type in ("integer", "number")
+        and column.role == "value"
+        and set(name_tokens(name)) & _CASE_COUNT_TOKENS
+    ]
+
+
 def record_answer(
     dataset_id: str,
     metadata: Mapping[str, object],
@@ -102,6 +119,7 @@ def record_answer(
     *,
     confirmation: str,
     one_row_per_patient: bool,
+    counts_cases_in: str | None = None,
 ) -> RowsCount:
     """Store the user's answer for the dataset's current version and say what answers count.
 
@@ -110,6 +128,7 @@ def record_answer(
     Raises:
         PatientRowsNotAskedError: the current version is not asked.
         PatientRowsStaleError: ``confirmation`` is not the current version's token.
+        PatientRowsNotAskedError: ``counts_cases_in`` is not a count column of this version.
         ContractStoreError: the declarations could not be read or saved (nothing changed).
         InvalidDeclarationKeyError: ``dataset_id`` is not a valid key.
     """
@@ -122,6 +141,19 @@ def record_answer(
     if not hmac.compare_digest(confirmation.encode(), confirmation_token(version, None, rows).encode()):
         log.info("patient_rows_answer_stale", dataset_version=version)
         raise PatientRowsStaleError(STALE)
+    if counts_cases_in is not None:
+        # "Each row counts cases for a group (in column …)": the table kind and its count column.
+        if counts_cases_in not in count_column_choices(semantics):
+            log.info("patient_rows_count_column_refused")
+            raise PatientRowsNotAskedError(NOT_A_COUNT)
+        declared = AggregateDeclaration(
+            kind="frequency", count_column=counts_cases_in, rows=rows, dataset_version=version
+        )
+        store.update(dataset_id, lambda current: current.without_patient_grain(version).with_aggregate(declared))
+        log.info("patient_rows_counts_cases", dataset_version=version)
+        return "cases"
+    if store.load(dataset_id).aggregate_for(version) is not None:
+        store.update(dataset_id, lambda current: current.without_aggregate(version))
     if one_row_per_patient:
         grain = GrainDeclaration(grain="patient", key=None, rows=rows, patients=rows, dataset_version=version)
         store.update(dataset_id, lambda current: current.with_grain(grain))

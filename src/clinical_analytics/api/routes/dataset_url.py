@@ -12,8 +12,12 @@ the dataset (metadata key ``source``) for the user and the methods section.
 
 import asyncio
 import io
+import json
+import re
+import zipfile
 from pathlib import Path
 from typing import Final
+from urllib.parse import urlsplit
 
 import structlog
 from fastapi import APIRouter, HTTPException, UploadFile
@@ -63,6 +67,11 @@ class DatasetFromUrlRequest(BaseModel):
 
     url: str = Field(..., min_length=1, max_length=MAX_URL_LENGTH, description="HTTPS link to a public data file")
     dataset_name: str | None = Field(None, max_length=200, description="Optional display name")
+    population_estimates: str | None = Field(
+        None,
+        description="Declare public population estimates exactly as the upload form does (ADR014 §7); "
+        "or later with POST /api/datasets/{id}/population-estimates",
+    )
 
 
 class SourceRecord(SourceProvenance):
@@ -76,6 +85,70 @@ class DatasetFromUrlResponse(DatasetUploadResponse):
 
     source: SourceRecord = Field(..., description="Link, download time, size and SHA-256")
     source_recorded: bool = Field(..., description="False if the source could not be saved with the dataset")
+
+
+SOCRATA_HOST: Final[str] = "data.cdc.gov"
+# A Socrata dataset id: two groups of four lower-case letters or digits ("bi63-dtpu").
+_SOCRATA_ID: Final = re.compile(r"(?<![a-z0-9])([a-z0-9]{4}-[a-z0-9]{4})(?![a-z0-9])")
+_SOCRATA_ID_FULL: Final = re.compile(r"[a-z0-9]{4}-[a-z0-9]{4}")
+MAX_DICTIONARY_COLUMNS: Final[int] = 500
+
+
+def socrata_id(url: str) -> str | None:
+    """The dataset id of a data.cdc.gov link (``/api/views/<id>/rows.csv``, ``/resource/<id>.csv``,
+    ``/<category>/<name>/<id>``), or None for any other host or a link without one."""
+    parts = urlsplit(url)
+    if (parts.hostname or "").lower() != SOCRATA_HOST or parts.scheme != "https":
+        return None
+    found = _SOCRATA_ID.findall(parts.path.lower())
+    return found[-1] if found else None
+
+
+def socrata_dictionary(url: str) -> str | None:
+    """The column names and descriptions of a data.cdc.gov dataset, as dictionary text, or None
+    (another host, no id, or the metadata could not be read: logged, and the file loads without it).
+
+    Only ``https://data.cdc.gov/api/views/<id>.json`` is fetched, through the same checked public
+    download as the data, with an id of the exact Socrata form.
+    """
+    dataset = socrata_id(url)
+    if dataset is None or not _SOCRATA_ID_FULL.fullmatch(dataset):
+        return None
+    meta_url = f"https://{SOCRATA_HOST}/api/views/{dataset}.json"
+    try:
+        fetched = fetch_public_file(meta_url, accepted_extensions=frozenset({".json"}))
+        document = json.loads(fetched.content)
+    except (UrlFetchError, ValueError) as e:
+        logger.warning("dataset_url_socrata_metadata_unavailable", error_type=type(e).__name__)
+        return None
+    if not isinstance(document, dict) or not isinstance(document.get("columns"), list):
+        logger.warning("dataset_url_socrata_metadata_unexpected")
+        return None
+    lines = [f"DATA DICTIONARY FROM {SOCRATA_HOST} (dataset {dataset})"]
+    about = document.get("description")
+    if isinstance(about, str) and about.strip():
+        lines.extend(line.strip() for line in about.strip().splitlines() if line.strip())
+    lines.append("")
+    for column in document["columns"][:MAX_DICTIONARY_COLUMNS]:
+        if not isinstance(column, dict):
+            continue
+        description = str(column.get("description") or "").strip().replace("\n", " ")
+        for name in dict.fromkeys(str(column.get(k) or "").strip() for k in ("name", "fieldName")):
+            if name and description and " " not in name:
+                lines.append(f"{name}  {description}")
+            elif name and description:
+                lines.append(f"| {name} | {description} |")
+    logger.info("dataset_url_socrata_dictionary", columns=len(document["columns"]))
+    return "\n".join(lines) + "\n"
+
+
+def _with_dictionary(content: bytes, filename: str, dictionary: str) -> tuple[bytes, str]:
+    """The data file and its dictionary as one ZIP, the upload's table-plus-documentation path."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(filename, content)
+        archive.writestr("dictionary.txt", dictionary)
+    return buffer.getvalue(), f"{Path(filename).stem}.zip"
 
 
 def source_record(provenance: SourceProvenance) -> SourceRecord:
@@ -134,11 +207,21 @@ async def load_dataset_from_url(request: DatasetFromUrlRequest) -> DatasetFromUr
 
     if chosen_name is None:
         await asyncio.to_thread(_refuse_taken_name, Path(fetched.filename).stem)
-    upload = UploadFile(file=io.BytesIO(fetched.content), filename=fetched.filename, size=len(fetched.content))
+    # A data.cdc.gov (Socrata) link: its column names and descriptions are the data dictionary the
+    # contract inference reads, as for an uploaded ZIP of a table and its dictionary.
+    dictionary = await asyncio.to_thread(socrata_dictionary, fetched.provenance.final_url)
+    content, filename = fetched.content, fetched.filename
+    if dictionary is not None:
+        content, filename = _with_dictionary(fetched.content, fetched.filename, dictionary)
+    upload = UploadFile(file=io.BytesIO(content), filename=filename, size=len(content))
     # Called directly, not through FastAPI, so every Form() parameter must be passed explicitly:
-    # a default left out is a Form object, not None. A linked file declares no population
-    # estimates; that is set the same way as for any upload, after it is loaded.
-    uploaded = await upload_dataset(file=upload, dataset_name=chosen_name, population_estimates=None)
+    # a default left out is a Form object, not None. The upload runs the same contract inference
+    # (aggregate tables included); estimates can also be declared after loading.
+    uploaded = await upload_dataset(
+        file=upload,
+        dataset_name=chosen_name or Path(fetched.filename).stem,
+        population_estimates=request.population_estimates,
+    )
 
     message = uploaded.message
     recorded = await asyncio.to_thread(_record_source, uploaded.upload_id, fetched.provenance)

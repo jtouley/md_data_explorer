@@ -582,6 +582,16 @@ ul {
   display: none;
 }
 
+.menu-upload .upload-estimates {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
 .menu-item,
 .menu-upload .btn-upload {
   display: flex;

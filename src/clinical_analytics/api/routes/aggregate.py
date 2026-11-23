@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from clinical_analytics.contracts.declarations import DimensionChoice, FileDeclarationStore
 from clinical_analytics.contracts.errors import ContractStoreError, InvalidDeclarationKeyError
+from clinical_analytics.contracts.readings import apply_declared, declared_reads
 from clinical_analytics.core import estimate_join, estimates
 from clinical_analytics.core.data_home import uploads_dir
 from clinical_analytics.storage.dataset_deletion import InvalidDatasetIdError, validate_dataset_id
@@ -118,8 +119,12 @@ def load_source(storage: UserDatasetStorage, store: FileDeclarationStore, datase
         raise HTTPException(status_code=404, detail=f"Dataset {dataset_id} not found")
     version = active_version_id(metadata)
     try:
-        frame = storage.stored_dataset(dataset_id, metadata).scan_cohort().collect()
         declarations = store.load(dataset_id)
+        # The stored data as every reader sees it: confirmed "not recorded" values and date
+        # readings applied (contracts.readings), never the raw Parquet values.
+        frame = apply_declared(
+            storage.stored_dataset(dataset_id, metadata).scan_cohort().collect(), declared_reads(declarations, version)
+        )
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=f"Dataset {dataset_id} has no stored data") from e
     except (ContractStoreError, InvalidDeclarationKeyError) as e:

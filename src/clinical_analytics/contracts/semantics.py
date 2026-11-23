@@ -44,7 +44,11 @@ logger = structlog.get_logger()
 
 FactSource: TypeAlias = Literal["structure", "dictionary", "declared", "default"]
 Confidence: TypeAlias = Literal["high", "medium", "low"]
-QuestionKind: TypeAlias = Literal["rows_are_patients", "person_role", "date_order", "date_century", "missing_code"]
+QuestionKind: TypeAlias = Literal[
+    "rows_are_patients", "person_role", "date_order", "date_century", "missing_code", "repeated_strata",
+    "aggregate_unsure",
+]  # fmt: skip
+AggregateKind: TypeAlias = Literal["frequency", "estimate"]
 LogicalType: TypeAlias = Literal[
     "string", "integer", "number", "boolean", "date", "timestamp", "time", "array", "object"
 ]
@@ -127,6 +131,36 @@ class EpisodeKey(_Model):
     noun: str = "episode"
     source: FactSource
     evidence: str = ""
+
+
+class TotalLevel(_Model):
+    """Values of a stratum column that mean "all" ("All ages", "United States", "Total"): a line
+    holding one is a total or subtotal of the other lines, never one more group."""
+
+    column: str
+    values: tuple[str, ...]
+
+
+class AggregateInfo(_Model):
+    """A table whose lines are groups, not patients (ADR017 with ADR014).
+
+    * ``frequency``: each line counts cases for one stratum; "how many" is the SUM of
+      ``count_column`` over the lines that are not totals.
+    * ``estimate``: rates, percentages, or counts with total rows; never summed: a question reads
+      the matching line (the total row for "all").
+    """
+
+    kind: AggregateKind
+    count_column: str | None = None
+    value_columns: tuple[str, ...] = ()
+    strata: tuple[str, ...] = ()
+    total_levels: tuple[TotalLevel, ...] = ()
+    repeated_strata_lines: int = 0
+    source: FactSource
+    evidence: str = ""
+
+    def total_values(self, column: str) -> tuple[str, ...]:
+        return next((t.values for t in self.total_levels if t.column == column), ())
 
 
 class AppColumn(_Model):
@@ -219,6 +253,8 @@ class DatasetSemantics(_Model):
     episode_keys: tuple[EpisodeKey, ...] = ()
     # A summary table's count column (the cases each line counts), or None.
     case_count_column: str | None = None
+    # Lines are groups (a frequency or estimate table), with its count column and total rows.
+    aggregate: AggregateInfo | None = None
     app_columns: tuple[AppColumn, ...] = ()
     columns: dict[str, ColumnSemantics] = Field(default_factory=dict)
     open_questions: tuple[OpenQuestion, ...] = ()
@@ -285,6 +321,8 @@ def with_declarations(semantics: DatasetSemantics, declarations: Any) -> Dataset
     if declarations is None:
         return semantics
     semantics = _with_missing_answers(semantics, declarations.missing_codes_for(semantics.dataset_version))
+    semantics = _with_table_kind(semantics, declarations)
+    semantics = _with_date_readings(semantics, declarations.date_readings_for(semantics.dataset_version))
     grain = declarations.grain_for(semantics.dataset_version)
     if grain is None:
         return semantics
@@ -362,14 +400,86 @@ def _with_missing_answers(semantics: DatasetSemantics, answers: Any) -> DatasetS
     return semantics.model_copy(update={"columns": columns, "open_questions": questions})
 
 
-def declared_missing_codes(semantics: DatasetSemantics) -> dict[str, tuple[int | float | str, ...]]:
-    """column -> values the user confirmed mean not recorded (applied where answers read data;
-    the typed Parquet was written before the question was answered)."""
-    return {
-        name: tuple(m.value for m in col.missing_codes if m.source == "declared")
-        for name, col in semantics.columns.items()
-        if any(m.source == "declared" for m in col.missing_codes)
-    }
+def _with_date_readings(semantics: DatasetSemantics, readings: Any) -> DatasetSemantics:
+    """A date column the user settled ("day first", "the 1900s") is a date column, read with that
+    format by every reader; its question is answered."""
+    if not readings:
+        return semantics
+    columns = dict(semantics.columns)
+    settled = set()
+    for reading in readings:
+        column = columns.get(reading.column)
+        if column is None:
+            continue
+        settled.add(reading.column)
+        century = f", years in the {reading.century}" if reading.century else ""
+        fmt = DateFormat(
+            format=reading.format, written=reading.format, example_in="", example_out="", source="declared",
+            evidence=f"you said how to read it{century}",
+        )  # fmt: skip
+        columns[reading.column] = column.model_copy(update={"date": fmt, "logical_type": "date", "role": "date"})
+    questions = tuple(
+        q.model_copy(update={"answered": True})
+        if q.kind in ("date_order", "date_century") and q.column in settled
+        else q
+        for q in semantics.open_questions
+    )
+    return semantics.model_copy(update={"columns": columns, "open_questions": questions})
+
+
+_TABLE_QUESTIONS = frozenset({"rows_are_patients", "aggregate_unsure"})
+
+
+def _with_table_kind(semantics: DatasetSemantics, declarations: Any) -> DatasetSemantics:
+    """A declared table of groups: "Each row counts cases for a group (in column …)", or public
+    population estimates (ADR014). Lines are then groups, never patients."""
+    version = semantics.dataset_version
+    declared = declarations.aggregate_for(version)
+    estimates = declarations.population_estimates_for(version) is not None
+    if declared is None and not estimates:
+        return semantics
+    answered = tuple(
+        q.model_copy(update={"answered": True}) if q.kind in _TABLE_QUESTIONS else q for q in semantics.open_questions
+    )
+    if estimates:
+        return semantics.model_copy(
+            update={
+                "population_estimates": True,
+                "patient_key": None,
+                "grain": semantics.grain.model_copy(
+                    update={"kind": "estimate", "noun": "published estimate", "one_row_per_patient": False,
+                            "patients": None, "source": "declared", "sentence": None,
+                            "evidence": "you declared public population estimates"}
+                ),
+                "open_questions": answered,
+            }
+        )  # fmt: skip
+    assert declared is not None
+    current = semantics.aggregate
+    aggregate = AggregateInfo(
+        kind=declared.kind,
+        count_column=declared.count_column,
+        value_columns=current.value_columns if current else (),
+        strata=current.strata if current else tuple(c for c in semantics.columns if c != declared.count_column),
+        total_levels=current.total_levels if current else (),
+        repeated_strata_lines=current.repeated_strata_lines if current else 0,
+        source="declared",
+        evidence=f"you said each line counts cases for a group, in {declared.count_column}",
+    )
+    return semantics.model_copy(
+        update={
+            "patient_key": None,
+            "aggregate": aggregate,
+            "case_count_column": declared.count_column,
+            "grain": semantics.grain.model_copy(
+                update={"kind": "stratum", "noun": "count of cases", "one_row_per_patient": False, "patients": None,
+                        "source": "declared",
+                        "sentence": f"Each line counts cases for a group, in {declared.count_column}.",
+                        "evidence": aggregate.evidence}
+            ),
+            "open_questions": answered,
+        }
+    )  # fmt: skip
 
 
 def semantics_for(data_dir: Path, dataset_id: str, version: str, *, declarations: Any = None) -> DatasetSemantics:
@@ -427,6 +537,13 @@ def _count(n: int, one: str, many: str | None = None) -> str:
     return f"{n:,} {one if n == 1 else (many or one + 's')}"
 
 
+def _plural(noun: str) -> str:
+    """'visit' -> 'visits', 'pregnancy' -> 'pregnancies'."""
+    if noun.endswith("y") and noun[-2:-1] not in ("a", "e", "i", "o", "u"):
+        return noun[:-1] + "ies"
+    return noun if noun.endswith("s") else noun + "s"
+
+
 def _list(items: list[str]) -> str:
     return items[0] if len(items) == 1 else ", ".join(items[:-1]) + f" and {items[-1]}"
 
@@ -466,10 +583,12 @@ def describe(semantics: DatasetSemantics, *, max_lines: int = 12) -> list[str]:
             lines.append(f"{seq.column} is the time of each line ({seq.noun}), different on each line of a patient.")
             continue
         start = "1" if seq.start == 1 else str(seq.start)
-        lines.append(f"{seq.column} numbers each patient's {seq.noun}s in order ({start} = first).")
+        lines.append(f"{seq.column} numbers each patient's {_plural(seq.noun)} in order ({start} = first).")
     for episode in semantics.episode_keys:
         if episode.column not in semantics.row_key.columns:
-            lines.append(f"{episode.column} names each {episode.noun} of a patient, so {episode.noun}s can be counted.")
+            lines.append(
+                f"{episode.column} names each {episode.noun} of a patient, so {_plural(episode.noun)} can be counted."
+            )
     for group in semantics.grouping_columns:
         if group.is_id:
             lines.append(f"{group.column} groups lines by {group.role}; it does not name the patient.")

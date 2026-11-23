@@ -47,7 +47,7 @@ logger = structlog.get_logger(__name__)
 
 _STATISTIC_INTENTS = frozenset({"DESCRIBE", "COMPARE_GROUPS"})
 # Report checks an answer already handles itself (hold or disclosure), so not repeated as notes.
-_HANDLED_METRICS = frozenset({RANGE_METRIC, "duplicateValues", "censoredValues", "levelVariants"})
+_HANDLED_METRICS = frozenset({RANGE_METRIC, "duplicateValues", "censoredValues", "levelVariants", "openQuestion"})
 
 
 @dataclass(frozen=True)
@@ -306,6 +306,42 @@ def implausible_sentences(plan: QueryPlan, layer: Any) -> list[tuple[str, str, D
         )
         found.append((column, hold, note))
     return found
+
+
+def open_value_questions(
+    plan: QueryPlan, layer: Any, declarations: Declarations, dataset_version: str | None
+) -> list[str]:
+    """Holds for columns the plan reads that hold a value the contract asks about ("Does 999 in
+    trop_ng_l mean not recorded?") and the user has not answered on this version: until then an
+    answer would count it as a real value without saying so."""
+    semantics = layer_semantics(layer)
+    if semantics is None:
+        return []
+    answered = {(a.column, same_value_key(a.value)) for a in declarations.missing_codes_for(dataset_version)}
+    columns = set(plan_columns(plan))
+    holds = []
+    for question in semantics.open_questions:
+        if question.kind != "missing_code" or question.column not in columns:
+            continue
+        if (question.column, same_value_key(question.value)) in answered:
+            continue
+        holds.append(
+            f"{question.column} holds {question.value:g} on some rows, which may mean not recorded "
+            f"({question.question}). Confirm to count it as a real value, or answer the question in the "
+            "cohort details first."
+            if isinstance(question.value, int | float)
+            else f"{question.question} Confirm to count it as a real value, or answer it in the cohort details first."
+        )
+    return holds
+
+
+def same_value_key(value: object) -> str:
+    """999, 999.0 and "999" are one value."""
+    try:
+        number = float(str(value))
+    except ValueError:
+        return str(value)
+    return f"{number:g}"
 
 
 def variant_sentence(column: str, group: tuple[str, ...], frequency: dict[str, int]) -> tuple[str, str]:

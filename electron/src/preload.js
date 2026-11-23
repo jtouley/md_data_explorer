@@ -468,12 +468,17 @@ const clinicalAPI = {
    * Upload a dataset file (CSV, Excel, SPSS).
    * @param {File} file
    * @param {string} [datasetName]
+   * @param {boolean} [populationEstimates] the person ticked "Public population estimates – no
+   *   patient-level data" (ADR014 §7); sent as the one exact form value the API accepts
    * @returns {Promise<{ upload_id: string, dataset_name: string, status: string, message: string, quality: object|null }>}
    */
-  async uploadDataset(file, datasetName) {
+  async uploadDataset(file, datasetName, populationEstimates) {
     const form = new FormData();
     form.append('file', file);
     if (datasetName) form.append('dataset_name', datasetName);
+    if (populationEstimates === true) {
+      form.append('population_estimates', 'public_population_estimates_no_patient_rows');
+    }
     const response = await apiFetch(`${API_BASE_URL}/api/datasets/upload`, {
       method: 'POST',
       body: form,
@@ -527,14 +532,20 @@ const clinicalAPI = {
    * @param {string} datasetId
    * @param {string} confirmation the token from the upload response's `one_row_per_patient`
    * @param {boolean} oneRowPerPatient
-   * @returns {Promise<{ dataset_id: string, counts: 'patients' | 'rows' }>}
+   * @param {string} [countsCasesIn] third answer: each row counts cases for a group, in this column
+   * @returns {Promise<{ dataset_id: string, counts: 'patients' | 'rows' | 'cases' }>}
    */
-  async answerOneRowPerPatient(datasetId, confirmation, oneRowPerPatient) {
+  async answerOneRowPerPatient(datasetId, confirmation, oneRowPerPatient, countsCasesIn) {
     const enc = encodeURIComponent(datasetId);
+    const body = { confirmation, one_row_per_patient: oneRowPerPatient === true };
+    if (typeof countsCasesIn === 'string' && countsCasesIn) {
+      body.one_row_per_patient = false;
+      body.counts_cases_in = countsCasesIn;
+    }
     const response = await apiFetch(`${API_BASE_URL}/api/datasets/${enc}/one-row-per-patient`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ confirmation, one_row_per_patient: oneRowPerPatient === true }),
+      body: JSON.stringify(body),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {

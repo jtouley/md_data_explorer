@@ -548,6 +548,34 @@ def level_variant_results(lf: pl.LazyFrame, contract: OpenDataContractStandard) 
     return results
 
 
+OPEN_QUESTION_METRIC = "openQuestion"
+
+
+def open_question_results(contract: OpenDataContractStandard) -> list[QualityCheckResult]:
+    """Values the contract's semantics ask about ("Does 999 in trop_ng_l mean not recorded?"):
+    listed as needing an answer, never reported as "no problems" (ADR017)."""
+    from clinical_analytics.contracts.semantics import semantics_from_contract
+
+    semantics = semantics_from_contract(contract)
+    if semantics is None:
+        return []
+    return [
+        QualityCheckResult(
+            id=f"{question.id}",
+            column=question.column,
+            metric=OPEN_QUESTION_METRIC,
+            dimension="validity",
+            severity="warning",
+            status="warning",
+            count=None,
+            percent=None,
+            message=f"Needs your answer: {question.question} Answers on {question.column} are held until then",
+        )
+        for question in semantics.open_questions
+        if question.kind == "missing_code" and question.column
+    ]
+
+
 def run_quality(
     lf: pl.LazyFrame,
     contract: OpenDataContractStandard,
@@ -566,7 +594,11 @@ def run_quality(
     schema = lf.collect_schema()
     checks = compile_contract(contract, schema)
     typed_by = previous_contract if previous_contract is not None else contract
-    extra = [*type_results(typed_by, schema, data_version), *level_variant_results(lf, contract)]
+    extra = [
+        *type_results(typed_by, schema, data_version),
+        *level_variant_results(lf, contract),
+        *open_question_results(contract),
+    ]
     report = report_from_counts(contract, checks, measure(lf, checks), run_at=run_at, extra=extra)
     logger.info(
         "quality_run_completed",
