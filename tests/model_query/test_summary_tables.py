@@ -18,7 +18,8 @@ _cond = tables.cond
 
 @pytest.fixture
 def injuries(make_query_table):
-    return make_query_table(tables.injuries())
+    # The contract's "Does each line count cases?" answered yes, as the upload's user would.
+    return make_query_table(tables.injuries(), semantics_update={"open_questions": ()})
 
 
 @pytest.fixture
@@ -60,7 +61,9 @@ def test_answer_question_summaryWithoutCountColumn_asksWhichColumnCounts(make_qu
     from clinical_analytics.contracts.semantics import AggregateInfo
 
     unnamed = AggregateInfo(kind="frequency", count_column=None, source="structure")
-    table = make_query_table(tables.injuries(), semantics_update={"case_count_column": None, "aggregate": unnamed})
+    table = make_query_table(
+        tables.injuries(), semantics_update={"case_count_column": None, "aggregate": unnamed, "open_questions": ()}
+    )
     ask = make_model_ask(table)
 
     # Act

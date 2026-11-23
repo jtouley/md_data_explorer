@@ -14,10 +14,11 @@ logged as numbers only (``model_query_held_answer``), so hold quality can be mea
 from __future__ import annotations
 
 import difflib
+import json
 import re
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Final, Literal
 
 import polars as pl
@@ -26,7 +27,7 @@ import structlog
 from clinical_analytics.model_query import card, checks, present
 from clinical_analytics.model_query.context import DatasetContext
 from clinical_analytics.model_query.examples import Example, similar_examples
-from clinical_analytics.model_query.llm import ModelFn, ModelTimedOut
+from clinical_analytics.model_query.llm import MAX_REPLY_TOKENS, NUM_CTX, ModelFn, ModelTimedOut
 from clinical_analytics.model_query.plan import (
     LISTING_REASON,
     LOOKUP_NOT_ONE,
@@ -38,6 +39,7 @@ from clinical_analytics.model_query.plan import (
     ident,
     parse_plan,
     reply_schema,
+    ties_sql,
     varies_sql,
 )
 from clinical_analytics.model_query.prompt import system_prompt, user_prompt
@@ -57,6 +59,23 @@ MODEL_TIMEOUT_REASON: Final = (
 )
 VALUE_NOT_FOUND_QUESTION: Final = "I can't find '{said}' in {column}. Did you mean one of these?"
 MAX_DISTINCT_CHECKED: Final = 20_000
+# ADR015: a number from fewer than this many records can be one person's value; never logged.
+MIN_LOGGED_N: Final = 11
+# The prompt's share of the model's window (tokens; about 4 characters each), the rest for the reply.
+PROMPT_TOKENS: Final = NUM_CTX - MAX_REPLY_TOKENS - 400
+MAX_SCHEMA_CHARS: Final = 60_000
+TOO_WIDE_REASON: Final = (
+    "This table has too many columns for the local model to read at once. Ask again naming the columns "
+    "(or the values) your question is about."
+)
+TIES_REASON: Final = (
+    "{n} patients have more than one record on their {which} {order}, and those records disagree, so which one "
+    "is their {which} is not clear. I did not answer."
+)
+SUSPECT_TOTAL_REASON: Final = (
+    "'{value}' in {column} may be a total of the other lines; adding it to them would count cases twice. "
+    "Answer it in the Data check panel (is it a total?), then ask again."
+)
 COUNT_COLUMN_QUESTION: Final = (
     "Each line of this table counts a group, so counting lines would count groups, not cases. "
     "Which column holds the number of cases on each line?"
@@ -121,10 +140,14 @@ def _numbers(analysis: dict[str, Any]) -> list[float]:
     one record's value, so it is never logged."""
     if analysis.get("statistic") in ("min", "max"):
         return []
-    keys = ("total_count", "proportion", "events", "n_used", "mean", "median", "sum", "non_null_count")
+    small = isinstance(analysis.get("non_null_count"), int | float) and analysis["non_null_count"] < MIN_LOGGED_N
+    keys: tuple[str, ...] = ("total_count", "proportion", "events", "n_used", "non_null_count")
+    keys += () if small else ("mean", "median", "sum")
     found = [float(analysis[k]) for k in keys if isinstance(analysis.get(k), int | float)]
     for row in analysis.get("group_counts") or analysis.get("groups") or []:
-        found += [float(v) for k, v in row.items() if k in ("count", "rate", "value", "n", "events") and v is not None]
+        few = isinstance(row.get("n"), int | float) and row["n"] < MIN_LOGGED_N
+        wanted = ("count", "rate", "n", "events") if few else ("count", "rate", "value", "n", "events")
+        found += [float(v) for k, v in row.items() if k in wanted and v is not None]
     return found
 
 
@@ -208,6 +231,69 @@ def _value_ask(
     return None
 
 
+def _ties_ask(
+    compiled: Compiled, context: DatasetContext, open_sandbox: Callable[[], SandboxConnection]
+) -> checks.Ask | None:
+    """First or latest read on an order column where a patient's first (or latest) date holds
+    several records that disagree: never picked arbitrarily."""
+    which = compiled.plan.which_visit
+    if not context.visit_level or which not in ("first", "last", "change") or context.order_column is None:
+        return None
+    if compiled.constant:
+        return None  # the same value at every record: no tie can change it
+    names = checks.visit_columns(compiled)
+    ends = ("first", "last") if which == "change" else (which,)
+    order = context.column(context.order_column)
+    for end in ends:
+        with open_sandbox() as sandbox:
+            tied = int(sandbox.run_model_sql(ties_sql(context, end, names)).item() or 0)  # type: ignore[arg-type]
+        if tied:
+            words = "first" if end == "first" else "latest"
+            return checks.Ask("ties", TIES_REASON.format(n=tied, which=words, order=order.display if order else "date"))
+    return None
+
+
+_TOTAL_LIKE: Final = re.compile(r"^\s*(?:total|all\b|overall)", re.I)
+
+
+def _suspect_total_ask(compiled: Compiled, context: DatasetContext) -> checks.Ask | None:
+    """A frequency table's sum over a column holding a value that reads like a total ("Total",
+    "All ages") the contract does not mark as one: asked, never summed."""
+    if context.aggregate_kind != "frequency":
+        return None
+    declared = {(c, v) for c, values in context.total_levels for v in values}
+    for column in context.columns:
+        for label in column.choices() if column.kind in ("category", "flag", "text") else ():
+            if _TOTAL_LIKE.match(label) and (column.name, label) not in declared:
+                return checks.Ask("suspect_total", SUSPECT_TOTAL_REASON.format(value=label, column=column.display))
+    return None
+
+
+def _prompt_parts(
+    question: str, context: DatasetContext, shots: Sequence[Example]
+) -> tuple[str, dict[str, Any]] | None:
+    """The system prompt and reply schema, within the model's window. A table too wide is cut to
+    the columns the question names (and the ones every answer reads); None when even that is too
+    long (the question is refused plainly, never silently cut by the server)."""
+    system, schema = system_prompt(context), reply_schema(context)
+    if _tokens(system, shots, schema) <= PROMPT_TOKENS:
+        return system, schema
+    keep = {c.name for c in context.columns if checks.anchors(c, question, context)}
+    keep |= {n for n in (context.patient_key, context.order_column, context.count_column) if n}
+    system, schema = system_prompt(context, keep), reply_schema(context, keep)
+    logger.info("model_query_prompt_trimmed", columns=len(keep), of=len(context.columns))
+    return (system, schema) if keep and _tokens(system, shots, schema) <= PROMPT_TOKENS else None
+
+
+def _tokens(system: str, shots: Sequence[Example], schema: dict[str, Any]) -> int:
+    """About how many tokens the prompt takes (four characters each; room for the question and a
+    retry's feedback). A schema past MAX_SCHEMA_CHARS (a grammar the server builds per call) counts
+    as over budget too."""
+    if len(json.dumps(schema)) > MAX_SCHEMA_CHARS:
+        return PROMPT_TOKENS + 1
+    return (len(system) + sum(len(e.text()) for e in shots) + 3200) // 4
+
+
 def _count_column_ask(
     question: str, context: DatasetContext, reply: dict[str, Any] | None, attempt: int
 ) -> ModelAnswer:
@@ -266,7 +352,11 @@ def answer_question(
         logger.info("model_query_listing_refused", attempt=0)
         return ModelAnswer("refused", reason=LISTING_REASON)
     shots = list(examples) if examples is not None else similar_examples(question)
-    system, schema = system_prompt(context), reply_schema(context)
+    parts = _prompt_parts(question, context, shots)
+    if parts is None:
+        logger.info("model_query_too_wide", columns=len(context.columns))
+        return ModelAnswer("refused", reason=TOO_WIDE_REASON)
+    system, schema = parts
     # A follow-up ("now only the women") keeps what the earlier questions said.
     asked = " ".join([*(q for q, _reply in previous), question])
     problems: list[str] = []
@@ -311,6 +401,10 @@ def answer_question(
         reply = plan.model_dump(mode="json")
         found = checks.problems(compiled, asked, context)
         if found:
+            final = next((p for p in found if not p.feedback), None)  # the model cannot fix it (a unit, a range)
+            if final is not None:
+                _log_would_have(final.kind, compiled, context, open_sandbox, asked)
+                return _held(final, compiled, context, reply, attempt, problems)
             if held is None and attempt < max_attempts:
                 held = (found[0], compiled)
                 problem = " ".join(dict.fromkeys(p.feedback for p in found))
@@ -330,8 +424,15 @@ def answer_question(
                     ask = checks.visit_ask(
                         compiled, context, varying, [n for n, c in zip(names, counts, strict=False) if c]
                     )
+                elif compiled.kind == "statistic" and not compiled.per_patient:
+                    # The same at every record (an age at enrolment): one value per patient, never
+                    # weighted by how many records a patient has.
+                    once = compile_plan(compiled.plan.model_copy(update={"which_visit": "first"}), context)
+                    compiled = replace(once, constant=True)
             if ask is None:
                 ask = _value_ask(compiled, context, open_sandbox, question)
+            if ask is None:
+                ask = _ties_ask(compiled, context, open_sandbox) or _suspect_total_ask(compiled, context)
             if ask is not None:
                 _log_would_have(ask.kind, compiled, context, open_sandbox, asked)
                 return _ask(ask, question, compiled, context, reply, attempt)
@@ -343,6 +444,9 @@ def answer_question(
                     "refused", reason=LOOKUP_NOT_ONE.format(n=worst), sql=compiled.sql, reply=reply, attempts=attempt
                 )
             analysis = _analysis(compiled, frame, total, context, question)
+            if compiled.missing_group_sql is not None:
+                with open_sandbox() as sandbox:
+                    analysis["missing_group"] = int(sandbox.run_model_sql(compiled.missing_group_sql).item() or 0)
         except PlanError as e:
             problem = str(e)
         except SqlRunError as e:

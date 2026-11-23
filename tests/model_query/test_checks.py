@@ -218,7 +218,7 @@ def test_ask_open_unansweredQuestionOnUsedColumn_isAsked(make_query_table):
     ask = checks.ask_open(compiled, context)
 
     # Assert
-    assert ask is not None and ask.reason.startswith("Does 03/04/21 mean 3 April?")
+    assert ask is not None and "Does 03/04/21 mean 3 April?" in ask.reason
 
 
 @pytest.mark.parametrize(

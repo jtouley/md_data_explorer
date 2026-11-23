@@ -115,7 +115,9 @@ def test_compile_plan_shareOfPatients_matchesOracle(clinic, which):
     [
         pytest.param(
             "first",
-            lambda f: f.sort("visit_seq").group_by("pt_ref").first()["systolic_mmhg"].mean(),
+            lambda f: (
+                f.drop_nulls("systolic_mmhg").sort("visit_seq").group_by("pt_ref").first()["systolic_mmhg"].mean()
+            ),
             id="first",
         ),
         pytest.param(
@@ -124,7 +126,7 @@ def test_compile_plan_shareOfPatients_matchesOracle(clinic, which):
                 f.sort("visit_seq")
                 .group_by("pt_ref")
                 .agg(
-                    pl.col("systolic_mmhg").drop_nulls().last() - pl.col("systolic_mmhg").first(),
+                    pl.col("systolic_mmhg").drop_nulls().last() - pl.col("systolic_mmhg").drop_nulls().first(),
                     pl.col("systolic_mmhg").count().alias("n"),
                 )
                 .filter(pl.col("n") >= 2)["systolic_mmhg"]

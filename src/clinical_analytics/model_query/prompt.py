@@ -40,8 +40,8 @@ Rules:
 - Never compute a number yourself."""
 
 
-def system_prompt(context: DatasetContext) -> str:
-    return f"{INSTRUCTIONS}\n\n{context_text(context)}"
+def system_prompt(context: DatasetContext, keep: set[str] | None = None) -> str:
+    return f"{INSTRUCTIONS}\n\n{context_text(context, keep)}"
 
 
 def user_prompt(

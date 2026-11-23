@@ -46,7 +46,7 @@ samples:
     replies: [{answer: count, count_of: patients, filters: [], numerator: [], measure: null, group_by: arm, period: none, cut_points: [], which_visit: any}]
     status: answered
     oracle: clinic_latest_arm
-    reading: ["Counted: patients, each once, read at their latest clinic visit."]
+    reading: ["Counted: patients, each once, read at their latest clinic visit with it recorded."]
   - id: clinic-never-smoked
     table: clinic
     question: How many patients never smoked?

@@ -12,6 +12,7 @@ Everything stays on the machine: it is sent to the local model only.
 
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal
@@ -35,6 +36,7 @@ MAX_DISPLAY_WORDS: Final = 8
 Kind = Literal["key", "category", "number", "date", "text", "flag"]
 
 # Stored yes/no spellings (structure, never the question): a column holding only these is a flag.
+_BIRTH: Final = re.compile(r"\b(?:birth|dob)\b|_dob\b|^dob", re.I)
 _YES: Final = frozenset({"y", "yes", "true", "1", "t"})
 _NO: Final = frozenset({"n", "no", "false", "0", "f"})
 
@@ -57,6 +59,10 @@ class Column:
     is_sequence: bool = False
     phi: bool = False
     distinct: int = 0
+    # Non-response codes (stored value -> label, "9" -> "Don't know"): kept as categories, left out
+    # of denominators and averages (the contract's ``nonresponse_codes``).
+    nonresponse: dict[str, str] = field(default_factory=dict)
+    unit_column: str | None = None  # a column holding this column's unit (months/years)
 
     def label(self, value: Any) -> str:
         """What a stored value means in words: its dictionary label, yes/no for a flag, or itself."""
@@ -87,12 +93,24 @@ class Column:
     def numeric(self) -> bool:
         return self.kind == "number"
 
+    def words(self) -> set[str]:
+        """The words that name this column in a question: its name's parts, its description's
+        first clause and its value labels (lower case, three letters or more)."""
+        clause = re.split(r"[:;(]|,\s|\.\s", self.description, maxsplit=1)[0] if self.description else ""
+        parts = re.split(r"[_.\s]+|(?<=[a-z])(?=[A-Z])", self.name)
+        labels = " ".join(self.choices()) if self.kind in ("category", "flag") else ""
+        found = {w.casefold() for w in re.findall(r"[A-Za-z][A-Za-z0-9-]+", " ".join([*parts, clause, labels]))}
+        return {w for w in found if len(w) >= 3 and not w.isdigit()}
+
     @property
     def display(self) -> str:
         """The column in clinical words, for the reading card (never its raw name when the
         dictionary describes it)."""
         if self.description:
             text = re.split(r"[:;(]|,\s|\.\s|\s[-–]\s", self.description, maxsplit=1)[0].strip(" .,")
+            label_words = {w for lab in self.choices() for w in re.findall(r"\w+", lab.casefold())}
+            if text and set(re.findall(r"\w+", text.casefold())) <= label_words:
+                text = ""  # a description that only lists the labels ("female / male") names nothing
             if text:
                 words = text.split()[:MAX_DISPLAY_WORDS]
                 first = words[0]
@@ -120,6 +138,17 @@ class DatasetContext:
     def column(self, name: str) -> Column | None:
         folded = name.casefold()
         return next((c for c in self.columns if c.name.casefold() == folded), None)
+
+    @functools.cached_property
+    def common_words(self) -> frozenset[str]:
+        """Words too common in this table to name one column: in three or more columns' words, or
+        in the contract's own nouns for a patient and a record."""
+        counts: dict[str, int] = {}
+        for column in self.columns:
+            for w in column.words():
+                counts[w] = counts.get(w, 0) + 1
+        nouns = {w.casefold() for w in re.findall(r"[A-Za-z]+", f"{self.row_noun} {self.row_nouns} patient patients")}
+        return frozenset({w for w, n in counts.items() if n >= 3} | nouns)
 
     @property
     def patient_key(self) -> str | None:
@@ -215,7 +244,8 @@ class DatasetContext:
         for seq in self.semantics.sequence_columns:
             if self.column(seq.column) is not None:
                 return seq.column
-        dates = [c.name for c in self.columns if c.kind == "date"]
+        # A birth date is a fact about the person, never the order of their records.
+        dates = [c.name for c in self.columns if c.kind == "date" and not _BIRTH.search(f"{c.name} {c.description}")]
         return dates[0] if len(dates) == 1 else None
 
     def sequence_start(self, name: str) -> int | None:
@@ -284,6 +314,8 @@ def build_context(
             ).get_column("v")
             values = tuple(v for v in listed.to_list() if len(_text(v)) <= MAX_VALUE_CHARS)
         kind = _kind(spec.name, spec.logical_type, distinct, values, semantics)
+        if spec.phi and kind in ("category", "flag"):
+            kind, values = "text", ()  # a restricted column's values never reach the prompt or schema
         columns.append(
             Column(
                 name=spec.name,
@@ -304,6 +336,8 @@ def build_context(
                 is_sequence=any(s.column == spec.name for s in semantics.sequence_columns),
                 phi=spec.phi,
                 distinct=distinct,
+                nonresponse={_text(c.value): c.label for c in col.nonresponse_codes} if col is not None else {},
+                unit_column=col.unit_column if col is not None else None,
             )
         )
     counts = sandbox.run_model_sql(_counts_sql(semantics, {c.name for c in columns})).row(0)
@@ -352,6 +386,10 @@ def column_line(column: Column, context: DatasetContext) -> str:
         head = f"{column.name}: text"
     if column.is_sequence:
         head += f" (numbers each patient's {plural(context.row_noun)} in order)"
+    if column.nonresponse:
+        head += f" ({', '.join(column.nonresponse.values())}: non-response, left out of shares and averages)"
+    if column.unit_column:
+        head += f" (its unit is in {column.unit_column})"
     return head + (f". {column.description}" if column.description else "")
 
 
@@ -363,7 +401,7 @@ def _short(value: Any) -> str:
     return str(value)
 
 
-def context_text(context: DatasetContext) -> str:
+def context_text(context: DatasetContext, keep: set[str] | None = None) -> str:
     """The table as the model reads it: what a record is, who the patient is, the columns."""
     sem = context.semantics
     lines = [f"Table: {context.title}" if context.title else "Table:"]
@@ -394,6 +432,8 @@ def context_text(context: DatasetContext) -> str:
         )
     else:
         lines.append(f"Each record is one {context.row_noun} ({context.rows} records); no column names a patient.")
+    if sem.survey_sample:
+        lines.append("A survey sample: counts are of this file's respondents, never weighted national estimates.")
     lines.append("Columns:")
-    lines += [f"- {column_line(c, context)}" for c in context.columns]
+    lines += [f"- {column_line(c, context)}" for c in context.columns if keep is None or c.name in keep]
     return "\n".join(lines)

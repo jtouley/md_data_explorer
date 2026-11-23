@@ -59,6 +59,7 @@ class Condition(_Strict):
     op: str
     value: float | str | None = None
     values: tuple[float | str, ...] = ()
+    unit: str | None = None  # the unit the question states for the value (set by the app, never the model)
 
 
 class Plan(_Strict):
@@ -143,9 +144,10 @@ def _condition_schema(column: Column) -> dict[str, Any] | None:
     }
 
 
-def reply_schema(context: DatasetContext) -> dict[str, Any]:
-    """The JSON schema the model's reply is held to: every name and value comes from the table."""
-    usable = [c for c in context.columns if c.kind != "key"]
+def reply_schema(context: DatasetContext, keep: set[str] | None = None) -> dict[str, Any]:
+    """The JSON schema the model's reply is held to: every name and value comes from the table
+    (``keep``: only these columns, when the whole table would not fit the model's window)."""
+    usable = [c for c in context.columns if c.kind != "key" and (keep is None or c.name in keep)]
     conditions = [s for c in usable if (s := _condition_schema(c)) is not None]
     condition_list = {"type": "array", "items": {"anyOf": conditions}, "maxItems": 6} if conditions else {
         "type": "array", "maxItems": 0,
@@ -195,6 +197,10 @@ class Compiled:
     measure: str | None = None
     columns: frozenset[str] = frozenset()
     lookup: bool = False  # estimates: each answer must be read from exactly one record
+    missing_group_sql: str | None = None  # top: the units with no value of the group column
+    left_out: tuple[str, ...] = ()  # non-response labels left out of a share's or average's base
+    zero_filled: bool = False  # totals per group, groups with none counted as zero
+    constant: bool = False  # a per-patient value the same at every record, read once per patient
     test_outcome: str | None = None
     test_group: str | None = None
     test_time: str | None = None
@@ -268,7 +274,42 @@ def condition_sql(cond: Condition, context: DatasetContext) -> str:
         raise PlanError(f"{column.name} takes is or is not with its listed values.")
     if not isinstance(cond.value, int | float):
         raise PlanError(f"The comparison on {column.name} needs a number in value.")
+    if column.unit_column:
+        ref = _in_unit(column, cond.unit, context)
     return f"{ref} {cond.op} {literal(cond.value)}"
+
+
+# Days per time unit: a duration whose unit is in another column is compared in the question's unit.
+_DAYS: Final = {"day": 1.0, "week": 7.0, "month": 30.4375, "year": 365.25}
+
+
+def _unit_name(text: str) -> str | None:
+    word = text.strip().casefold().rstrip("s")
+    return next((u for u in _DAYS if word in (u, u[0], f"{u[:2]}", f"{u[:3]}")), None)
+
+
+def _in_unit(column: Column, unit: str | None, context: DatasetContext) -> str:
+    """``column`` (whose unit is held per record in the contract's ``unit_column``) in ``unit``.
+
+    Raises:
+        PlanRefusedError: the question gives no unit, or a record's unit is not a time unit.
+    """
+    held = context.column(column.unit_column or "")
+    target = _unit_name(unit or "")
+    if held is None or target is None:
+        raise PlanRefusedError(
+            f"{column.display} is recorded in several units ({column.unit_column}); say the unit with the number "
+            "(for example '2 years')."
+        )
+    names = {str(v): _unit_name(str(v)) for v in held.values}
+    if not names or any(n is None for n in names.values()):
+        raise PlanRefusedError(
+            f"{column.display} has units other than days, weeks, months or years: I can't compare them."
+        )
+    whens = " ".join(
+        f"WHEN {literal(v)} THEN {ident(column.name)} * {_DAYS[n] / _DAYS[target]!r}" for v, n in names.items() if n
+    )
+    return f"(CASE CAST({ident(held.name)} AS VARCHAR) {whens} END)"
 
 
 def _all(conditions: tuple[Condition, ...], context: DatasetContext) -> str | None:
@@ -280,6 +321,34 @@ def _recorded(conditions: tuple[Condition, ...]) -> str:
     """Every column a condition reads is recorded (a share's denominator)."""
     names = dict.fromkeys(c.column for c in conditions if c.op not in ("is missing", "is recorded"))
     return " AND ".join(f"{ident(n)} IS NOT NULL" for n in names) or "TRUE"
+
+
+def _responded(names: list[str], context: DatasetContext) -> tuple[str | None, tuple[str, ...]]:
+    """Records whose ``names`` columns hold an answer, not a non-response code (the contract's
+    ``nonresponse_codes``: kept as categories, left out of a share's base and of averages), and
+    the labels left out."""
+    parts, labels = [], []
+    for name in dict.fromkeys(names):
+        column = context.column(name)
+        if column is None or not column.nonresponse:
+            continue
+        codes = ", ".join(literal(_typed(column, code)) for code in column.nonresponse)
+        parts.append(f"COALESCE({ident(column.name)} NOT IN ({codes}), TRUE)")
+        labels += list(column.nonresponse.values())
+    return (" AND ".join(parts) or None), tuple(dict.fromkeys(labels))
+
+
+def _typed(column: Column, code: str) -> Any:
+    """A code as the column stores it (a number column's code as a number)."""
+    match = next((v for v in column.values if str(v) == code), None)
+    if match is not None:
+        return match
+    if column.logical_type in ("integer", "number"):
+        try:
+            return float(code) if "." in code else int(code)
+        except ValueError:
+            return code
+    return code
 
 
 def _group_expr(plan: Plan, context: DatasetContext) -> str | None:
@@ -342,21 +411,29 @@ def compile_plan(plan: Plan, context: DatasetContext) -> Compiled:
     used = {c.column for c in (*plan.filters, *plan.numerator)} | {n for n in (plan.measure, plan.group_by) if n}
     for name in used:
         _column(name, context, f"'{name}'")
+    fixed = frozenset(used)
     if plan.answer == "count_distinct":
-        return _compile_distinct(plan, context, frozenset(used))
-    if plan.totals_by is not None and plan.answer in STATISTICS:
-        return _compile_totals(plan, context, per_patient, frozenset(used))
-    if context.aggregate:
-        compiled = _compile_aggregate(plan, context, frozenset(used))
+        compiled = _compile_distinct(plan, context, fixed)
+    elif plan.totals_by is not None and plan.answer in STATISTICS:
+        compiled = _compile_totals(plan, context, per_patient, fixed)
+    elif context.aggregate:
+        compiled = _compile_aggregate(plan, context, fixed)
     elif plan.answer in TESTS:
-        return _compile_test(plan, context, which, frozenset(used))
+        compiled = _compile_test(plan, context, which, fixed)
     elif plan.answer in STATISTICS:
-        return _compile_statistic(plan, context, which, frozenset(used))
+        compiled = _compile_statistic(plan, context, which, fixed)
     elif plan.answer == "share":
-        return _compile_share(plan, context, which, per_patient, frozenset(used))
+        compiled = _compile_share(plan, context, which, per_patient, fixed)
     else:
-        compiled = _compile_count(plan, context, which, per_patient, frozenset(used))
-    return _top(compiled) if plan.answer == "top" else compiled
+        compiled = _compile_count(plan, context, which, per_patient, fixed)
+    if plan.answer == "top":
+        compiled = _top(compiled)
+    # Columns the answer reads without naming them: the order of first and last, a table's count.
+    implicit = {context.count_column} if context.aggregate else set()
+    if context.visit_level and which in ("first", "last", "change"):
+        implicit.add(context.order_column)
+    implicit |= {c.unit_column for n in used if (c := context.column(n)) is not None and c.unit_column}
+    return replace(compiled, columns=compiled.columns | {n for n in implicit if n})
 
 
 def _unit_key(plan: Plan, context: DatasetContext) -> str:
@@ -372,6 +449,14 @@ def _unit(plan: Plan, context: DatasetContext, per_patient: bool) -> str:
     return "patients" if per_patient or context.semantics.one_row_per_patient else context.row_nouns
 
 
+def _first_last_recorded(plan: Plan, conditions: tuple[Condition, ...]) -> str | None:
+    """First and last read each patient's first or latest record with the read columns recorded
+    (one rule for counts, shares and summaries; the card says "recorded")."""
+    names = [c.column for c in conditions if c.op not in ("is missing", "is recorded")]
+    names += [plan.group_by] if plan.group_by else []
+    return " AND ".join(f"{ident(n)} IS NOT NULL" for n in dict.fromkeys(names)) or None
+
+
 def _compile_count(
     plan: Plan, context: DatasetContext, which: WhichVisit, per_patient: bool, used: frozenset[str]
 ) -> Compiled:
@@ -383,27 +468,27 @@ def _compile_count(
         raise PlanError("change is for a measure (mean, median ...): for a count use any, every, first or last.")
     if not per_patient:
         n, source = "COUNT(*)", "unified"
-        total = "SELECT COUNT(*) FROM unified"
     elif which == "every":
         if group is not None:
             raise PlanError("every applies to conditions, not to a breakdown: use any, first or last with group_by.")
+        # Every record with the condition's columns recorded meets it (a missing value is skipped).
         source = (
             f"(SELECT {key} FROM unified WHERE {key} IS NOT NULL GROUP BY {key} HAVING BOOL_AND({where or 'TRUE'}))"
         )
         where, n = None, "COUNT(*)"
-        total = f"SELECT COUNT(DISTINCT {key}) FROM unified"
     elif which in ("first", "last"):
-        source = f"({_ranked(context, which)})"
+        source = f"({_ranked(context, which, _first_last_recorded(plan, plan.filters))})"
         where = " AND ".join(p for p in ("_rank = 1", where) if p)
         n = "COUNT(*)"
-        total = f"SELECT COUNT(DISTINCT {key}) FROM unified"
     else:
         n, source = f"COUNT(DISTINCT {key})", "unified"
-        total = f"SELECT COUNT(DISTINCT {key}) FROM unified"
+    everyone = f"SELECT COUNT(DISTINCT {key}) FROM unified" if per_patient else "SELECT COUNT(*) FROM unified"
     if group is None:
         sql = f"SELECT {n} AS count FROM {source} AS t{_where(where)}"
+        total = everyone
     else:
         sql = f"SELECT {group} AS grp, {n} AS count FROM {source} AS t{_where(where)} GROUP BY 1 ORDER BY 1 NULLS LAST"
+        total = f"SELECT {n} FROM {source} AS t{_where(where)}"  # the units the limits keep, each once
     return Compiled(
         plan=plan, kind="count", sql=sql, unit=unit, per_patient=per_patient, total_sql=total,
         group_column=plan.group_by, filters=plan.filters, columns=used,
@@ -427,7 +512,8 @@ def _compile_share(
         raise PlanError("A share needs numerator: the condition counted among the records kept by filters.")
     where = _all(plan.filters, context)
     event = _all(plan.numerator, context)
-    recorded = _recorded(plan.numerator)
+    responded, left_out = _responded([c.column for c in plan.numerator], context)
+    recorded = _where_tail(_recorded(plan.numerator), responded)
     group = _group_expr(plan, context)
     key = ident(_unit_key(plan, context))
     unit = _unit(plan, context, per_patient)
@@ -437,7 +523,8 @@ def _compile_share(
     if not per_patient:
         inner = f"SELECT {group_sel}({event}) AS e FROM unified{_where(where, recorded)}"
     elif which in ("first", "last"):
-        inner = f"SELECT {group_sel}({event}) AS e FROM ({_ranked(context, which)}) AS r{_where('_rank = 1', where)}"
+        ranked = _ranked(context, which, _where_tail(_first_last_recorded(plan, plan.numerator), responded))
+        inner = f"SELECT {group_sel}({event}) AS e FROM ({ranked}) AS r{_where('_rank = 1', where)}"
         inner = f"SELECT * FROM ({inner}) AS x WHERE e IS NOT NULL"
     else:
         agg = "BOOL_AND" if which == "every" else "BOOL_OR"
@@ -453,7 +540,7 @@ def _compile_share(
         sql += " GROUP BY 1 ORDER BY 1 NULLS LAST"
     return Compiled(
         plan=plan, kind="share", sql=sql, unit=unit, per_patient=per_patient, group_column=plan.group_by,
-        filters=plan.filters, numerator=plan.numerator, columns=used,
+        filters=plan.filters, numerator=plan.numerator, columns=used, left_out=left_out,
     )  # fmt: skip
 
 
@@ -462,25 +549,28 @@ def _compile_statistic(plan: Plan, context: DatasetContext, which: WhichVisit, u
     if not column.numeric:
         raise PlanError(f"{column.name} is not a number column: a {plan.answer} needs one; count or share a category.")
     func = STATISTICS[plan.answer]
-    where = _all(plan.filters, context)
+    responded, left_out = _responded([column.name], context)
+    where = _where_tail(_all(plan.filters, context), responded)
     group = _group_expr(plan, context)
     ref = ident(column.name)
     group_sel = f"{group} AS grp, " if group is not None else ""
     head, tail = ("grp, ", " GROUP BY 1 ORDER BY 1 NULLS LAST") if group is not None else ("", "")
     per_patient = context.visit_level and which in ("first", "last", "change")
     if per_patient:
-        # One value per patient: the value at their first record (baseline; missing there, the
-        # patient is left out), their latest recorded value, or latest minus baseline.
+        # One value per patient: their first or latest recorded value, or latest minus first
+        # (the same rule as counts read at the first or latest record).
         key, order = ident(context.patient_key or ""), ident(context.order_column or "")
-        first, last = f"arg_min_null({ref}, {order})", f"arg_max({ref}, {order})"
+        first, last = f"arg_min({ref}, {order})", f"arg_max({ref}, {order})"
         one = {"first": first, "last": last, "change": f"{last} - {first}"}[which]
-        enough = f" HAVING COUNT({ref}) >= 2" if which == "change" else ""
+        enough = " HAVING COUNT(*) >= 2" if which == "change" else ""
         # Each patient in one group: their group at the record the value is read from (the
         # first one for a change).
         pick = "arg_max" if which == "last" else "arg_min"
         grp = f"{pick}({group}, {order}) AS grp, " if group is not None else ""
+        recorded = f"{ref} IS NOT NULL"
         source = (
-            f"(SELECT {grp}{key}, {one} AS v FROM unified{_where(f'{key} IS NOT NULL', where)} GROUP BY {key}{enough})"
+            f"(SELECT {grp}{key}, {one} AS v FROM unified{_where(f'{key} IS NOT NULL', recorded, where)} "
+            f"GROUP BY {key}{enough})"
         )
         sql = f"SELECT {head}{func}(v) AS value, COUNT(v) AS n FROM {source} AS t{tail}"
     else:
@@ -488,6 +578,7 @@ def _compile_statistic(plan: Plan, context: DatasetContext, which: WhichVisit, u
     return Compiled(
         plan=plan, kind="statistic", sql=sql, unit="patients" if per_patient else context.row_nouns,
         per_patient=per_patient, group_column=plan.group_by, filters=plan.filters, measure=column.name, columns=used,
+        left_out=left_out,
     )  # fmt: skip
 
 
@@ -540,8 +631,12 @@ def _compile_aggregate(plan: Plan, context: DatasetContext, used: frozenset[str]
         raise PlanRefusedError(AGGREGATE_ONLY_TOTALS)
     if plan.answer == "sum":
         column = _column(plan.measure, context, "measure")
-        if not column.numeric:
-            raise PlanError(f"{column.name} is not a number column.")
+        if column.name != context.count_column:
+            # Only the count column adds up across groups (a rate or a mean does not).
+            raise PlanRefusedError(
+                f"{column.display} is not a count of cases, so it can't be added up across groups. Ask for a total "
+                "of cases, or for each group's value side by side."
+            )
         count = column.name
     elif context.count_column is None:
         raise CountColumnUnknownError("This table counts groups, and no column is known to hold the counts.")
@@ -565,7 +660,11 @@ def _compile_aggregate(plan: Plan, context: DatasetContext, used: frozenset[str]
         kind = "count"
     return Compiled(
         plan=plan, kind=kind, sql=sql, unit=unit, per_patient=False,
-        total_sql=f"SELECT {total} FROM unified{_where(_not_totals(context))}" if kind == "count" else None,
+        total_sql=(
+            f"SELECT {total} FROM unified{_where(where if group else _not_totals(context))}"
+            if kind == "count"
+            else None
+        ),
         group_column=plan.group_by,
         filters=plan.filters, numerator=plan.numerator if kind == "share" else (), measure=count, columns=used,
     )  # fmt: skip
@@ -638,18 +737,33 @@ def _unit_total(plan: Plan, context: DatasetContext, per_patient: bool) -> str:
 
 def _compile_totals(plan: Plan, context: DatasetContext, per_patient: bool, used: frozenset[str]) -> Compiled:
     """A summary over per-group totals ("the average yearly total"): each group's total, then the
-    statistic across the groups."""
+    statistic across the groups. Groups with none count as zero: every level the column holds,
+    and for a year every year from the first to the last."""
     if plan.group_by is not None:
         raise PlanError("totals_by summarises one total per group: set group_by null.")
-    totals = _group_expr(plan.model_copy(update={"group_by": plan.totals_by}), context)
+    by_plan = plan.model_copy(update={"group_by": plan.totals_by})
+    totals = _group_expr(by_plan, context)
+    column = _column(plan.totals_by, context, "totals_by")
     total = _unit_total(plan, context, per_patient)
     lines = _not_totals(context) if context.aggregate else None
     inner = f"SELECT {totals} AS t, {total} AS v FROM unified{_where(_all(plan.filters, context), lines)} GROUP BY 1"
+    ref = ident(column.name)
+    if column.kind == "date" and plan.period != "month":
+        span = f"(SELECT MIN(year({ref})) FROM unified), (SELECT MAX(year({ref})) FROM unified) + 1"
+        levels = f"SELECT range AS t FROM range({span})"
+    elif column.numeric and isinstance(column.low, int) and isinstance(column.high, int):
+        levels = f"SELECT range AS t FROM range((SELECT MIN({ref}) FROM unified), (SELECT MAX({ref}) FROM unified) + 1)"
+    else:
+        levels = f"SELECT DISTINCT {totals} AS t FROM unified WHERE {ref} IS NOT NULL"
     func = STATISTICS[plan.answer]
-    sql = f"SELECT {func}(v) AS value, COUNT(v) AS n FROM ({inner}) AS g"
+    sql = (
+        f"WITH totals AS ({inner}), levels AS ({levels}) "
+        f"SELECT {func}(COALESCE(totals.v, 0)) AS value, COUNT(*) AS n "
+        "FROM levels LEFT JOIN totals ON levels.t = totals.t"
+    )
     return Compiled(
         plan=plan, kind="statistic", sql=sql, unit=plural_group(plan, context), per_patient=False,
-        filters=plan.filters, measure=None, columns=used | {plan.totals_by or ""},
+        filters=plan.filters, measure=None, columns=used | {plan.totals_by or ""}, zero_filled=True,
     )  # fmt: skip
 
 
@@ -672,11 +786,29 @@ def _compile_distinct(plan: Plan, context: DatasetContext, used: frozenset[str])
 
 
 def _top(compiled: Compiled) -> Compiled:
-    """The group (or tied groups) with the largest count or total."""
+    """The group (or tied groups) with the largest count or total, never the missing group; how
+    many had no value is said beside it."""
     if compiled.kind != "count" or compiled.group_column is None:
         raise PlanError("top needs group_by: the groups whose count or total is compared.")
-    sql = f"WITH g AS ({compiled.sql}) SELECT * FROM g WHERE count = (SELECT MAX(count) FROM g)"
-    return replace(compiled, sql=sql)
+    grouped = f"WITH g AS ({compiled.sql})"
+    sql = (
+        f"{grouped} SELECT * FROM g WHERE grp IS NOT NULL AND count = (SELECT MAX(count) FROM g WHERE grp IS NOT NULL)"
+    )
+    missing = f"{grouped} SELECT COALESCE(SUM(count), 0) FROM g WHERE grp IS NULL"
+    return replace(compiled, sql=sql, missing_group_sql=missing)
+
+
+def ties_sql(context: DatasetContext, which: WhichVisit, columns: list[str]) -> str:
+    """Patients whose first (or latest) date on the order column holds several records that
+    disagree on ``columns``: which one is first or latest is not known."""
+    key, order = ident(context.patient_key or ""), ident(context.order_column or "")
+    direction = "DESC" if which == "last" else "ASC"
+    differ = " OR ".join(f"COUNT(DISTINCT {ident(c)}) > 1" for c in columns) or "FALSE"
+    return (
+        f"SELECT COUNT(*) FROM (SELECT {key}, {order}, ({differ}) AS d, "
+        f"ROW_NUMBER() OVER (PARTITION BY {key} ORDER BY {order} {direction}) AS r FROM unified "
+        f"WHERE {key} IS NOT NULL AND {order} IS NOT NULL GROUP BY {key}, {order}) AS p WHERE r = 1 AND d"
+    )
 
 
 def varies_sql(context: DatasetContext, columns: list[str]) -> str:

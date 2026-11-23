@@ -368,6 +368,13 @@ class QueryService:
         if self._matcher_answers(question, fast, model_path.context):
             logger.info("question_answered_by_matcher", dataset_id=dataset_id)
             return fast
+        survey = self._survey_refusal(question)
+        if survey is not None:
+            # A national-estimate question on a survey sample: said, never computed (#155).
+            return QueryResult(
+                plan=None, issues=[{"message": survey, "severity": "error"}], result=None, confidence=0.0,
+                run_key=None, context=None, failure_reason=survey,
+            )  # fmt: skip
         return self._ask_model(question, model_path, conversation_history)
 
     @staticmethod

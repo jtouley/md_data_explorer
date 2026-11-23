@@ -63,7 +63,7 @@ def test_reading_lines_count_saysNofMWithPercent(make_query_table):
 
     # Assert
     n = frame.item(0, "count")
-    assert lines[0] == "Counted: patients, each once, read at their latest clinic visit."
+    assert lines[0] == "Counted: patients, each once, read at their latest clinic visit with it recorded."
     assert lines[1] == "Included: current smoker at the visit yes."
     assert lines[-1] == f"Result: {n} of {tables.CLINIC_PATIENTS} patients ({100 * n / tables.CLINIC_PATIENTS:.1f}%)."
 

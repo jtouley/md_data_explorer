@@ -87,11 +87,11 @@ def _counted_line(compiled: Compiled, context: DatasetContext) -> str:
     if not compiled.per_patient:
         return f"Counted: {nouns}, every {noun} on its own; a patient with several {nouns} counts once per {noun}."
     if which == "first":
-        return f"Counted: {compiled.unit}, each once, read at their first {noun}."
+        return f"Counted: {compiled.unit}, each once, read at their first {noun} with it recorded."
     if which == "last":
-        return f"Counted: {compiled.unit}, each once, read at their latest {noun}."
+        return f"Counted: {compiled.unit}, each once, read at their latest {noun} with it recorded."
     if which == "every":
-        return f"Counted: {compiled.unit}, each once, when every one of their {nouns} met the limits."
+        return f"Counted: {compiled.unit}, each once, when every one of their {nouns} with it recorded met the limits."
     return f"Counted: {compiled.unit}, each once, when any one of their {nouns} met the limits."
 
 
@@ -118,12 +118,14 @@ def _measured_line(compiled: Compiled, context: DatasetContext) -> str:
     which = compiled.plan.which_visit if compiled.per_patient else "any"
     if context.semantics.one_row_per_patient:
         timing = "one value per patient"
+    elif compiled.constant:
+        timing = f"each patient's value once (the same at every {noun})"
     elif which == "first":
-        timing = f"each patient's value at their first {noun}"
+        timing = "each patient's first recorded value"
     elif which == "last":
         timing = "each patient's latest recorded value"
     elif which == "change":
-        timing = f"each patient's change from their first {noun} to their latest value"
+        timing = "each patient's change from their first to their latest recorded value"
     else:
         timing = f"every {noun} with a value"
     return f"Measured: the {word} of {what}{unit}, using {timing}."
@@ -143,10 +145,14 @@ def _result_lines(
         n = int(analysis.get("total_count") or 0)
         return [f"Result: {_pct(n, total, unit)}." if total is not None else f"Result: {n:,} {unit}."]
     if kind == "count" and compiled.plan.answer == "top":
-        return [f"Result: the group with the most {unit}; tied groups are shown together."]
+        lines = [f"Result: the group with the most {unit}; tied groups are shown together."]
+        if analysis.get("missing_group"):
+            lines.append(f"Not in any group: {analysis['missing_group']:,} {unit} with none recorded.")
+        return lines
     if kind == "count":
         overlap = " A patient can be in more than one group." if analysis.get("overlapping") else ""
-        base = f" out of {total:,} {unit} in the file" if total is not None else ""
+        kept = " who met the limits" if compiled.filters else " in the file"
+        base = f" out of {total:,} {unit}{kept}" if total is not None else ""
         return [f"Result: each group shows its number of {unit}{base}.{overlap}"]
     if kind == "proportion":
         events, n = int(analysis.get("events") or 0), int(analysis.get("n_used") or 0)
@@ -198,8 +204,14 @@ def reading_lines(
             at = "latest" if compiled.plan.which_visit == "last" else "first"
             by = f"{by}, at each patient's {at} {context.row_noun}"
         lines.append(f"Broken down by: {by}.")
+    if compiled.left_out:
+        lines.append(f"Left out of the base: answers {', '.join(repr(w) for w in compiled.left_out)}.")
+    if compiled.zero_filled:
+        lines.append("Groups with none count as zero.")
     if analysis is not None:
         lines += _result_lines(compiled, analysis, total, context)
+    if context.semantics.survey_sample:
+        lines.append("Counts are of this file's respondents, not weighted national estimates.")
     return lines
 
 

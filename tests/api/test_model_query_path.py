@@ -172,7 +172,7 @@ def test_recordTurn_modelAnswer_keepsTheReplyForTheNextQuestion(ask_cohort):
 def test_ask_statisticalTest_isRoutedToTheStatisticsCode(ask_cohort):
     # Act
     result, _prompts = ask_cohort(
-        "What is the odds ratio of dying within a year for women versus men, with a CI?",
+        "What is the odds ratio that patients died within a year, women versus men, with a CI?",
         [_plan("odds_ratio", numerator=[_cond("died_1y", "is", values=["yes"])], group_by="sex")],
     )
 

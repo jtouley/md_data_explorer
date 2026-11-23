@@ -12,10 +12,12 @@ it contradicts is fed back once; what it leaves open is asked.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Final, Literal
 
+from clinical_analytics.contracts.holds import held_message, open_question_holds
 from clinical_analytics.model_query.context import Column, DatasetContext, plural
 from clinical_analytics.model_query.plan import Compiled, Condition, Plan, WhichVisit
 
@@ -35,12 +37,58 @@ _AFTER: Final[tuple[tuple[str, Cmp], ...]] = (
 _NUMBER: Final = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)(?![\w])")
 _BETWEEN: Final = re.compile(r"\b(?:between|from)\s+(\d+(?:\.\d+)?)\D{0,12}?\s(?:and|to)\s+(\d+(?:\.\d+)?)", re.I)
 _NEGATION: Final = re.compile(r"\b(?:not|no|without|never|none|neither|nor|non)\b|n't\b|\bnon-", re.I)
-_TIMES: Final[tuple[tuple[WhichVisit, re.Pattern[str]], ...]] = (
-    ("change", re.compile(r"\bchanges?d?\b", re.I)),
-    ("first", re.compile(r"\b(?:first|baseline|initial|intake|enrol(?:l)?ment|earliest)\b", re.I)),
-    ("last", re.compile(r"\b(?:last|latest|final|most recent)\b", re.I)),
-    ("every", re.compile(r"\b(?:every|always|throughout|never|all (?:of )?(?:their|his|her|the) )", re.I)),
-    ("any", re.compile(r"\b(?:ever|at any|any (?:visit|time|point)|at least once)\b", re.I)),
+# Timepoint words. A standalone one is a timepoint by itself ("baseline", "ever"); an attached one
+# ("first", "latest", "every") only when it names a record (the contract's noun) or a measure, and
+# never before a period ("last year" is a date range).
+_TIMES: Final[tuple[tuple[WhichVisit, re.Pattern[str], bool], ...]] = (
+    ("change", re.compile(r"\bchanges?d?\b", re.I), False),
+    ("first", re.compile(r"\b(?:baseline|intake|enrol(?:l)?ment)\b", re.I), False),
+    ("first", re.compile(r"\b(?:first|initial|earliest)\b", re.I), True),
+    ("last", re.compile(r"\b(?:last|latest|final|most recent)\b", re.I), True),
+    ("every", re.compile(r"\b(?:always|throughout|never)\b", re.I), False),
+    ("any", re.compile(r"\b(?:ever|at least once)\b", re.I), False),
+    ("any", re.compile(r"\bat any\b", re.I), True),
+)
+_PERIOD_WORD: Final = re.compile(r"^(?:\d+\s+)?(?:years?|months?|weeks?|days?|quarters?|decades?)\b", re.I)
+# A comparison said with a negation ("not under 65", "no older than 70") is the opposite comparison.
+_NEGATED_CMP: Final = re.compile(
+    r"\b(?:not|no)\s+(?=(?:under|below|less|fewer|younger|lower|shorter|earlier|over|above|more|greater|older|"
+    r"higher|longer|later)\b)",
+    re.I,
+)
+_INVERTED: Final[dict[str, Cmp]] = {"<": ">=", "<=": ">", ">": "<=", ">=": "<"}
+# Words that name a summary: the plan's answer must be one they allow.
+_STATISTIC_WORDS: Final[tuple[tuple[re.Pattern[str], frozenset[str]], ...]] = (
+    (re.compile(r"\bmedian\b", re.I), frozenset({"median"})),
+    (re.compile(r"\b(?:average|mean)\b", re.I), frozenset({"mean"})),
+    (re.compile(r"\b(?:highest|maximum|max|largest|longest|oldest)\b", re.I), frozenset({"max", "top"})),
+    (re.compile(r"\b(?:lowest|minimum|min|smallest|shortest|youngest)\b", re.I), frozenset({"min"})),
+    (re.compile(r"\b(?:how many|number of)\b", re.I), frozenset({"count", "count_distinct", "top", "sum"})),
+)
+# "The share of the women ...", "among smokers": what follows names the share's denominator.
+_DENOMINATOR: Final = re.compile(
+    r"\b(?:(?:share|percent(?:age)?|proportion|fraction|rate) of(?: the| all| our)?|among(?: the| all| our)?|"
+    r"of all(?: the)?|of the)\s+((?:[\w-]+\s+){0,2}[\w-]+)",
+    re.I,
+)
+# The denominator phrase ends where its clause's verb or relative word starts ("the women who
+# died": "women").
+_CLAUSE_END: Final = re.compile(
+    r"\b(?:who|that|which|whose|were|was|are|is|had|have|has|did|got|with|in|at|by|on)\b.*", re.I
+)
+_TIME_UNITS: Final = frozenset({"day", "week", "month", "year", "hour", "minute", "second"})
+# Glue words that never name a column, and the everyday words for the sexes a dictionary labels.
+_GLUE: Final = frozenset({
+    "the", "and", "for", "with", "from", "that", "this", "was", "were", "are", "has", "had", "have", "been", "not",
+    "who", "how", "many", "what", "which", "per", "all", "any", "its", "their", "his", "her", "our", "one", "there",
+    "into", "over", "under", "than", "more", "less", "each", "when", "did", "does", "got", "yes",
+})  # fmt: skip
+_SEXES: Final = {
+    "female": frozenset({"women", "woman", "female", "females", "girls", "girl"}),
+    "male": frozenset({"men", "man", "male", "males", "boys", "boy"}),
+}
+_MONTHS: Final = re.compile(
+    r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b|\b(?:since|before|after|until)\b", re.I
 )
 _PERSONS: Final = re.compile(
     r"\b(?:patients?|people|persons?|individuals?|subjects?|participants?|wom[ae]n|m[ae]n|child(?:ren)?|adults?|"
@@ -163,7 +211,40 @@ def _cmp_of(question: str, start: int, end: int, previous_end: int) -> Cmp | Non
         for match in re.finditer(rf"(?<!\w)(?:{words})(?!\w)", before):
             if found is None or match.start() > found[0]:
                 found = (match.start(), cmp)
-    return found[1] if found else None
+    if found is None:
+        return None
+    if re.search(r"\b(?:not|no)\s+$", before[: found[0]]) and found[1] in _INVERTED:
+        return _INVERTED[found[1]]  # "not under 65" is 65 or more
+    return found[1]
+
+
+def _timepoints(text: str, context: DatasetContext, used: frozenset[str], records_word: str) -> set[WhichVisit]:
+    """The timepoints the question states (see ``_TIMES``). A word that is part of a used column's
+    own description ("Initial serum lactate") is that column's name, not a timepoint."""
+    own = " ".join(f"{c.name} {c.description}".casefold() for name in used if (c := context.column(name)) is not None)
+    nouns = {records_word, plural(records_word), "record", "records"}
+    nouns |= {s.noun for s in context.semantics.sequence_columns} | {
+        plural(s.noun) for s in context.semantics.sequence_columns
+    }
+    if context.episode is not None:
+        nouns |= {context.episode[1], context.episode[1].removesuffix("s")}
+    measures = {w for name in used if (c := context.column(name)) for w in c.words()} - context.common_words - _GLUE
+    found: set[WhichVisit] = set()
+    for which, pattern, attached in _TIMES:
+        for match in pattern.finditer(text):
+            after = text[match.end() :].strip()
+            phrase = f"{match.group(0)} {after.split(' ', 1)[0] if after else ''}".casefold().strip()
+            if phrase in own and " " in phrase:
+                continue  # "initial serum ...", the column's own name
+            if not attached:
+                found.add(which)
+                continue
+            if _PERIOD_WORD.match(after):
+                continue  # "last year", "first 3 months": a date range, not a record
+            following = [w.strip(".,;:?!'s").casefold() for w in after.split()[:4]]
+            if any(w in nouns or w in measures for w in following):
+                found.add(which)
+    return found
 
 
 def read_cues(question: str, context: DatasetContext, used: frozenset[str] = frozenset()) -> Cues:
@@ -183,12 +264,9 @@ def read_cues(question: str, context: DatasetContext, used: frozenset[str] = fro
         year = value.is_integer() and _YEARS[0] <= value <= _YEARS[1]
         numbers.append(Stated(value=value, cmp=cmp, year=year))  # type: ignore[arg-type]
         previous = match.end()
-    own = " ".join(f"{c.name} {c.description}".casefold() for name in used if (c := context.column(name)) is not None)
-    times = frozenset(
-        which for which, pattern in _TIMES if any(m.group(0).casefold() not in own for m in pattern.finditer(text))
-    )
     records_word = context.row_noun.split()[-1]
     noun = rf"(?:{re.escape(records_word)}|{re.escape(plural(records_word))}|records?)"
+    times = frozenset(_timepoints(text, context, used, records_word))
     records = re.compile(rf"\b{noun}\b", re.I)
     # "over all encounters", "across every visit": every record, in the contract's own noun.
     if context.visit_level and re.search(
@@ -205,6 +283,7 @@ def read_cues(question: str, context: DatasetContext, used: frozenset[str] = fro
         found = re.finditer(rf"\b{re.escape(word)}s?\b", text, re.I)
         episodes = any(not _WHEN.search(" ".join(text[: m.start()].split()[-3:])) for m in found)
     negated_text = re.sub(r"\b(?:or|and|vs\.?|versus) not\b", " ", text, flags=re.I)
+    negated_text = _NEGATED_CMP.sub(" ", negated_text)  # its "not" is part of the comparison
     return Cues(
         numbers=tuple(numbers),
         negated=bool(_NEGATION.search(negated_text)),
@@ -304,6 +383,12 @@ def apply_stated(plan: Plan, question: str, context: DatasetContext) -> tuple[Pl
         if cond.op != op and not (op == "is" and cond.op == "is"):
             conditions[part][i] = cond.model_copy(update={"op": op, "value": stated.value, "values": ()})
             changed.append(f"operator:{cond.op}->{op}")
+    for part, conds in conditions.items():
+        for i, cond in enumerate(conds):
+            column = context.column(cond.column)
+            if column is not None and column.unit_column and isinstance(cond.value, int | float):
+                # A duration whose unit is per record: compared in the unit the question says.
+                conds[i] = cond.model_copy(update={"unit": _stated_unit(question, float(cond.value), context)})
     update: dict[str, object] = {k: tuple(v) for k, v in conditions.items()}
     if context.visit_level:
         expected = _expected_time(cues)
@@ -377,6 +462,111 @@ def _explained(stated: Stated, compiled: Compiled, context: DatasetContext) -> b
     return False
 
 
+def _tokens(question: str) -> list[str]:
+    return re.findall(r"[a-z][a-z0-9-]+", question.casefold())
+
+
+def _same(a: str, b: str) -> bool:
+    """One word, or one stem: a prefix of the other (four letters or more), or five shared first
+    letters ("smoked" and "smoker", "diabetic" and "diabetes")."""
+    if a == b or (min(len(a), len(b)) >= 4 and (a.startswith(b) or b.startswith(a))):
+        return True
+    return len(os.path.commonprefix([a, b])) >= 5
+
+
+def anchors(column: Column, question: str, context: DatasetContext) -> set[str]:
+    """The words of ``column`` (contract name, description, labels) the question says, plus a sex
+    label said in everyday words ("women" for female)."""
+    tokens = _tokens(question)
+    words = column.words() - context.common_words - _GLUE
+    hits = {w for w in words if any(_same(w, t) for t in tokens)}
+    spoken = re.sub(r"[_.]+", " ", column.name).strip()
+    if len(spoken) >= 3 and re.search(rf"(?<!\w){re.escape(spoken)}(?!\w)", question, re.I):
+        hits.add(column.name.casefold())  # the column's own name, said with spaces ("item 007")
+    labels = {label.casefold() for label in column.choices()} if column.kind in ("category", "flag") else set()
+    for label, said in _SEXES.items():
+        if label in labels and said & set(tokens):
+            hits.add(label)
+    return hits
+
+
+def _named_strongly(column: Column, question: str, context: DatasetContext) -> bool:
+    """The question names the column beyond doubt: two of its words, a part of its own name, or
+    one of its category labels whole."""
+    hits = anchors(column, question, context)
+    name_parts = {p.casefold() for p in re.split(r"[_.\s]+|(?<=[a-z])(?=[A-Z])", column.name) if len(p) >= 4}
+    name_parts -= context.common_words
+    label_said = column.kind in ("category", "flag") and any(
+        len(label) >= 3
+        and label.casefold() not in _PLAIN_LABELS
+        and re.search(rf"(?<!\w){re.escape(label)}(?!\w)", question, re.I)
+        for label in column.choices()
+    )
+    return len(hits) >= 2 or bool(name_parts & hits) or bool(label_said)
+
+
+def _stated_unit(question: str, value: float, context: DatasetContext) -> str | None:
+    """The unit said right after a number ("600 months"): a time unit or a unit the contract
+    gives any column, singular."""
+    known = _TIME_UNITS | {c.unit.casefold().rstrip("s") for c in context.columns if c.unit}
+    for match in _NUMBER.finditer(question):
+        if float(match.group(1)) != value:
+            continue
+        after = question[match.end() :].split()
+        word = after[0].strip(".,;:?!").casefold().rstrip("s") if after else ""
+        if word in known:
+            return word
+    return None
+
+
+def _anchor_problems(compiled: Compiled, question: str, context: DatasetContext, cues: Cues) -> list[Problem]:
+    """Every column a condition reads is named in the question, and every column the question
+    names beyond doubt is read (B1). A date condition needs a date, year or period said."""
+    found: list[Problem] = []
+    stated = {s.value for s in cues.numbers}
+    for cond in (*compiled.filters, *compiled.numerator):
+        column = context.column(cond.column)
+        if column is None:
+            continue
+        if column.kind == "date":
+            if not (cues.numbers or _PERIOD.search(question) or _MONTHS.search(question)):
+                found.append(
+                    Problem(
+                        "invented_date",
+                        feedback=f"The question gives no date, year or period: remove the condition on {column.name}.",
+                        reason=f"My reading limited {column.display} to dates your question does not give, so I did "
+                        "not answer.",
+                    )
+                )
+            continue
+        start = context.sequence_start(column.name)
+        by_number = column.numeric and bool(set(_floats(cond)) & stated)
+        by_time = start is not None and float(start) in _floats(cond) and "first" in cues.times
+        if not (anchors(column, question, context) or by_number or by_time):
+            found.append(
+                Problem(
+                    "unanchored",
+                    feedback=f"The question says nothing about {column.name}: remove that condition.",
+                    reason=f"My reading added a limit on {column.display} that your question does not state, so I "
+                    "did not answer.",
+                )
+            )
+    skip = {context.patient_key, context.count_column, context.order_column}
+    for column in context.columns:
+        if column.kind == "key" or column.name in skip or column.name in compiled.columns:
+            continue
+        if _named_strongly(column, question, context):
+            found.append(
+                Problem(
+                    "column",
+                    feedback=f"The question names {column.name} ({column.display}), but the reply does not use it: "
+                    "put it where the question means it (a filter, the numerator, the measure or group_by).",
+                    reason=f"I could not use '{column.display}' in my reading, so I did not answer.",
+                )
+            )
+    return found
+
+
 def _num(value: float) -> str:
     return str(int(value)) if value.is_integer() else f"{value:g}"
 
@@ -435,7 +625,9 @@ def problems(compiled: Compiled, question: str, context: DatasetContext) -> list
                 )
             )
     named = frozenset(question[a:b].casefold() for a, b in _value_spans(question, context))
-    if compiled.group_column is None and cues.negated != _negated(compiled.plan, context, named):
+    # A breakdown by a yes/no column ("died or not, by ...") says the negation itself.
+    by_negation = group is not None and any(group.negative(v) for v in group.values)
+    if not by_negation and cues.negated != _negated(compiled.plan, context, named):
         found.append(
             Problem(
                 "negation",
@@ -448,23 +640,10 @@ def problems(compiled: Compiled, question: str, context: DatasetContext) -> list
                 else "My reading excluded something your question does not exclude, so I did not answer.",
             )
         )
-    for column in context.columns:
-        # A column the question names by its own name ("discontinued", "smoker") the plan never reads.
-        said = column.name.replace("_", " ").casefold()
-        skip = column.kind == "key" or column.name == context.count_column or len(said) < 4
-        if (
-            not skip
-            and column.name not in compiled.columns
-            and re.search(rf"(?<!\w){re.escape(said)}(?!\w)", question, re.I)
-        ):
-            found.append(
-                Problem(
-                    "column",
-                    feedback=f"The question names {column.name}, but the reply does not use it: put it where the "
-                    "question means it (a filter, the numerator, the measure or group_by).",
-                    reason=f"I could not use '{column.display}' in my reading, so I did not answer.",
-                )
-            )
+    found += _anchor_problems(compiled, question, context, cues)
+    found += _statistic_problems(compiled, question)
+    found += _denominator_problems(compiled, question, context)
+    found += _unit_problems(compiled, question, context)
     for label, name in cues.values:
         if name not in compiled.columns:
             column = context.column(name)
@@ -478,6 +657,83 @@ def problems(compiled: Compiled, question: str, context: DatasetContext) -> list
                     "so I did not answer.",
                 )
             )
+    return found
+
+
+def _statistic_problems(compiled: Compiled, question: str) -> list[Problem]:
+    """A summary word of the question (median, average, highest, how many) the plan does not compute."""
+    allowed: set[str] = set()
+    for pattern, answers in _STATISTIC_WORDS:
+        if pattern.search(question):
+            allowed |= answers
+    if not allowed or compiled.plan.answer in allowed or compiled.kind == "test":
+        return []
+    words = sorted(allowed)
+    return [
+        Problem(
+            "statistic",
+            feedback=f"The question asks for {' or '.join(words)}, but the reply's answer is {compiled.plan.answer}.",
+            reason=f"Your question asks for {' or '.join(words)}, and my reading computed something else, so I did "
+            "not answer.",
+        )
+    ]
+
+
+def _denominator_problems(compiled: Compiled, question: str, context: DatasetContext) -> list[Problem]:
+    """A share whose numerator is what the question names as the denominator ("the share of the
+    women who ...": women are the denominator, a filter)."""
+    if compiled.kind != "share":
+        return []
+    found: list[Problem] = []
+    for match in _DENOMINATOR.finditer(question):
+        phrase = _CLAUSE_END.sub("", match.group(1)).strip()
+        if not phrase:
+            continue
+        for cond in compiled.numerator:
+            column = context.column(cond.column)
+            if column is not None and anchors(column, phrase, context):
+                found.append(
+                    Problem(
+                        "denominator",
+                        feedback=f"'{phrase}' is who the share is out of: put the condition on {column.name} in "
+                        "filters, and the counted event in numerator.",
+                        reason="I could not be sure which group your share is out of, so I did not answer.",
+                    )
+                )
+    return found[:1]
+
+
+def _unit_problems(compiled: Compiled, question: str, context: DatasetContext) -> list[Problem]:
+    """A threshold said in another unit than its column's, or outside the range the dictionary
+    gives the column or the values it holds."""
+    found: list[Problem] = []
+    for cond in (*compiled.filters, *compiled.numerator):
+        column = context.column(cond.column)
+        if column is None or not column.numeric or column.unit_column:
+            continue
+        for value in _floats(cond):
+            said = _stated_unit(question, value, context)
+            unit = (column.unit or "").casefold().rstrip("s")
+            if said and unit and said != unit:
+                found.append(
+                    Problem(
+                        "unit",
+                        feedback="",
+                        reason=f"Your question gives {_num(value)} {said}s, but {column.display} is recorded in "
+                        f"{column.unit}, so I did not answer. Ask again in {column.unit}.",
+                    )
+                )
+            low, high = column.stated_range or (column.low, column.high)
+            if isinstance(low, int | float) and isinstance(high, int | float) and not low <= value <= high:
+                found.append(
+                    Problem(
+                        "range",
+                        feedback="",
+                        reason=f"{_num(value)} is outside the values of {column.display} in this file "
+                        f"({_num(float(low))} to {_num(float(high))}), so I did not answer. Check the number or its "
+                        "unit.",
+                    )
+                )
     return found
 
 
@@ -498,20 +754,13 @@ def _visit_choices(context: DatasetContext, *, conditions: bool, statistic: bool
 
 
 def ask_open(compiled: Compiled, context: DatasetContext) -> Ask | None:
-    """An unresolved open question of the contract that changes this plan's number: any question
-    about a column the plan reads (a date order, a value that may mean not recorded), and a
-    question about who a line is when the plan counts."""
-    for q in context.open_questions():
-        if q.column is not None and q.column in compiled.columns:
-            return Ask("open_question", f"{q.question} You can answer it in the Data check panel.")
-        about_people = q.kind in ("rows_are_patients", "person_role") and not context.aggregate
-        about_groups = q.kind not in ("rows_are_patients", "person_role")  # repeated strata, unsure kind, totals
-        counts = compiled.kind in ("count", "share")
-        if q.column is None and (
-            (about_people and counts) or (about_groups and (counts or compiled.kind == "statistic"))
-        ):
-            return Ask("open_question", f"{q.question} You can answer it in the Data check panel.")
-    return None
+    """The contract's one hold rule (``contracts.holds``): an unanswered question about a column
+    the plan reads (implicitly too: the order of first and last, a table's count column), about
+    the whole table of groups, or about what a line is when the plan counts lines."""
+    holds = open_question_holds(
+        context.semantics, columns=compiled.columns, counts_lines=compiled.kind in ("count", "share")
+    )
+    return Ask("open_question", held_message(holds)) if holds else None
 
 
 def ask_unit(compiled: Compiled, question: str, context: DatasetContext) -> Ask | None:
@@ -577,6 +826,9 @@ def matcher_may_answer(question: str, context: DatasetContext, used: frozenset[s
     if not context.semantics.one_row_per_patient or context.aggregate:
         return False
     cues = read_cues(question, context, used)
-    if cues.numbers or cues.negated or cues.times:
-        return False
-    return all(name in used for _label, name in cues.values)
+    if cues.numbers or cues.negated or cues.times or any(p.search(question) for p, _a in _STATISTIC_WORDS[:4]):
+        return False  # a summary word: the model path checks the statistic
+    if any(not anchors(c, question, context) for name in used if (c := context.column(name)) is not None):
+        return False  # a column the question does not name
+    named = [c for c in context.columns if c.kind != "key" and _named_strongly(c, question, context)]
+    return all(c.name in used for c in named) and all(name in used for _label, name in cues.values)

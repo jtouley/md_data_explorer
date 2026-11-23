@@ -39,7 +39,10 @@ ORACLES: dict[str, Callable[[], Any]] = {
     "clinic_never_smoked": lambda: (
         tables.clinic().group_by("pt_ref").agg(pl.col("smoker").eq("N").all())["smoker"].sum()
     ),
-    "clinic_baseline_bp": lambda: tables.clinic().sort("visit_seq").group_by("pt_ref").first()["systolic_mmhg"].mean(),
+    # The first recorded value per patient (one rule for first and last, ADR016).
+    "clinic_baseline_bp": lambda: (
+        tables.clinic().drop_nulls("systolic_mmhg").sort("visit_seq").group_by("pt_ref").first()["systolic_mmhg"].mean()
+    ),
 }
 _ARM_CODES = {"ACE inhibitor": 1, "calcium blocker": 2, "diuretic": 3}
 
