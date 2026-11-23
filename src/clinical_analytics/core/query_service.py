@@ -714,6 +714,17 @@ class QueryService:
                 context=None,
                 failure_reason=wayne,
             )
+        cases = self._aggregate_cases(query_plan)
+        if cases is not None:
+            return QueryResult(
+                plan=query_plan,
+                issues=[{"message": cases, "severity": "warning"}],
+                result=None,
+                confidence=query_intent.confidence,
+                run_key=None,
+                context=None,
+                failure_reason=cases,
+            )
         estimate_table = detected if query_plan.intent != "COUNT" else None
         if estimate_table is not None:
             # Key dimensions the question names but the parse left open (years, levels): ADR014.
@@ -1200,6 +1211,9 @@ class QueryService:
         for _column, hold, note in answer_checks.implausible_sentences(plan, layer):
             findings.holds.append(hold)
             findings.notes.append(note)
+        # A value the contract asks about ("Does 999 mean not recorded?") holds every answer on
+        # its column until the user answers: never averaged in without a word (ADR017).
+        findings.holds.extend(answer_checks.open_value_questions(plan, layer, declarations, dataset_version))
         null_keys = answer_checks.missing_key_note(
             grain, visits or grain.repeated, encounter=unit.encounter_key is not None and plan.entity_key is not None
         )
@@ -1210,6 +1224,35 @@ class QueryService:
         findings.notes.extend(answer_checks.report_notes(report, columns))
         findings.notes.extend(answer_checks.missingness_notes(layer, columns, answer_checks.flagged_columns(report)))
         return findings
+
+    def _aggregate_cases(self, plan: QueryPlan) -> str | None:
+        """For a count question on a table of groups (its contract's ``aggregate``), what the
+        cases are, said in words: its lines are never counted as patients or cases (ADR017).
+        None for any other table or question."""
+        from clinical_analytics.contracts.aggregates import LAYER_AGGREGATE_KEY, count_cases
+        from clinical_analytics.contracts.semantics import AggregateInfo
+
+        raw = (getattr(self.semantic_layer, "config", None) or {}).get(LAYER_AGGREGATE_KEY)
+        if not isinstance(raw, dict) or plan.intent != "COUNT" or plan.metric:
+            return None
+        aggregate = AggregateInfo.model_validate(raw)
+        if plan.group_by:
+            return (
+                f"Each line of this table counts cases for a group: ask for the total of "
+                f"{aggregate.count_column} by {plan.group_by}, never a count of lines."
+            )
+        equals: dict[str, list[object]] = {}
+        for spec in plan.filters:
+            if spec.operator == "==":
+                equals[spec.column] = [spec.value]
+            elif spec.operator == "IN" and isinstance(spec.value, list):
+                equals[spec.column] = list(spec.value)
+            else:
+                return (
+                    "Each line of this table counts cases for a group; name the groups to count (for example a year)."
+                )
+        frame = self.semantic_layer.get_base_view().to_polars()
+        return count_cases(frame, aggregate, equals).message
 
     def _counting_unit(self, question: str, plan: QueryPlan) -> _CountingUnit:
         """The counted unit and roll-up the question names, on data whose patient IDs repeat.

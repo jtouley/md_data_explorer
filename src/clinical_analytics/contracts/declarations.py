@@ -134,6 +134,30 @@ class MissingCodeDeclaration(BaseModel):
     dataset_version: str | None = None
 
 
+class DateReadingDeclaration(BaseModel):
+    """The answer to a date question on one version: the column's one format, and for two-digit
+    years the century ("1900s": 03/15/45 is 1945)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    column: str = Field(min_length=1)
+    format: str = Field(min_length=2, max_length=64)
+    century: Literal["1900s", "2000s"] | None = None
+    dataset_version: str | None = None
+
+
+class AggregateDeclaration(BaseModel):
+    """The answer "Each row counts cases for a group (in column …)" to "Is each row one patient?":
+    the version's lines are groups, and ``count_column`` holds the cases each one counts."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["frequency", "estimate"] = "frequency"
+    count_column: str = Field(min_length=1)
+    rows: int = Field(..., ge=0)
+    dataset_version: str | None = None
+
+
 class Declarations(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -144,6 +168,8 @@ class Declarations(BaseModel):
     population_estimates: PopulationEstimatesDeclaration | None = None
     choices: tuple[DimensionChoice, ...] = ()
     missing_codes: tuple[MissingCodeDeclaration, ...] = ()
+    aggregates: tuple[AggregateDeclaration, ...] = ()
+    date_readings: tuple[DateReadingDeclaration, ...] = ()
 
     @model_validator(mode="before")
     @classmethod
@@ -222,6 +248,30 @@ class Declarations(BaseModel):
         )
         return self.model_copy(update={"missing_codes": (*kept, answer)})
 
+    def with_date_reading(self, declared: DateReadingDeclaration) -> Declarations:
+        kept = tuple(
+            d
+            for d in self.date_readings
+            if not (d.column == declared.column and d.dataset_version == declared.dataset_version)
+        )
+        return self.model_copy(update={"date_readings": (*kept, declared)})
+
+    def date_readings_for(self, dataset_version: str | None) -> tuple[DateReadingDeclaration, ...]:
+        return tuple(d for d in self.date_readings if d.dataset_version == dataset_version)
+
+    def with_aggregate(self, declared: AggregateDeclaration) -> Declarations:
+        """These declarations with ``declared`` as its version's table kind (others kept)."""
+        kept = tuple(a for a in self.aggregates if a.dataset_version != declared.dataset_version)
+        return self.model_copy(update={"aggregates": (*kept, declared)})
+
+    def without_aggregate(self, dataset_version: str | None) -> Declarations:
+        return self.model_copy(
+            update={"aggregates": tuple(a for a in self.aggregates if a.dataset_version != dataset_version)}
+        )
+
+    def aggregate_for(self, dataset_version: str | None) -> AggregateDeclaration | None:
+        return next((a for a in self.aggregates if a.dataset_version == dataset_version), None)
+
     def missing_codes_for(self, dataset_version: str | None) -> tuple[MissingCodeDeclaration, ...]:
         return tuple(m for m in self.missing_codes if m.dataset_version == dataset_version)
 
@@ -234,6 +284,8 @@ class Declarations(BaseModel):
             population_estimates=self.population_estimates_for(dataset_version),
             choices=tuple(c for c in self.choices if c.dataset_version == dataset_version),
             missing_codes=self.missing_codes_for(dataset_version),
+            aggregates=tuple(a for a in self.aggregates if a.dataset_version == dataset_version),
+            date_readings=self.date_readings_for(dataset_version),
         )
 
 

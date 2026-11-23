@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Final, Literal
 
 from clinical_analytics.contracts import config
@@ -28,10 +28,11 @@ Direction = Literal["lower_is_better", "higher_is_better"]
 
 # "code = label"; a number may also be written "code: label" ("1: Yes 2: No").
 _CODE: Final = re.compile(r"([A-Za-z0-9][A-Za-z0-9.+\-]{0,7})\s*=(?!=)\s*|(?<![\w.:])(\d{1,4})\s*:\s*(?=[A-Za-z])")
-_LIST_START: Final = frozenset("\n,;:(.")
+_LIST_START: Final = frozenset("\n,;:(.*†‡•")
 _BOUNDARY_ONLY: Final = frozenset({"blank", "blanks", "empty"})  # "blank = not drawn": no code value
 _RANGE: Final = re.compile(r"(?<![\w.^])(-?\d+(?:\.\d+)?)\s*(?:-|–|—|to)\s*(-?\d+(?:\.\d+)?)(?![\w.%/^])")
 _PAREN: Final = re.compile(r"\([^()]*\)")
+_SENTENCE_END: Final = re.compile(r"(?<=[.;!?])\s+(?=[A-Z0-9\-])")
 # The patient must be what the identifier identifies: "patient identifier", "(patient)",
 # "identifies the patient", "identifier of the patient". "Identifier of the surgeon who operated
 # on the patient" names the surgeon.
@@ -63,6 +64,11 @@ _NOUN_STOP: Final = re.compile(
     re.IGNORECASE,
 )
 _MAX_NOUN_WORDS: Final = 4
+_SAYS_AGGREGATE: Final = re.compile(
+    r"\b(?:counts?|number|numbers|totals?|tally|tallies)\s+of\s+[a-z ]+?\s+by\s+[a-z]|"
+    r"\b(?:summary|aggregate[d]?|frequency)\s+(?:table|data|counts)\b|\bno\s+(?:patient|person)[- ]level\b",
+    re.IGNORECASE,
+)
 _ONE_PER_PERSON: Final = re.compile(
     r"\beach\s+(?:woman|patient|person|participant|subject|mother|infant|child)\b[^.]*\bone\b|"
     r"\bfirst\s+\w+\s+only\b|\bone\s+per\s+(?:woman|patient|person|participant)\b",
@@ -80,6 +86,8 @@ _WORD_UNIT: Final = re.compile(
     r"percent|%|seconds|mmHg|cmH2O|bpm|beats per minute|breaths per minute|IU|U)(?![\w/])",
     re.IGNORECASE,
 )
+# Clinical units that are not made of unit words ("Kt/V" for dialysis adequacy, "INR").
+_NAMED_UNIT: Final = re.compile(r"(?<![\w/])(Kt/V|INR|MET-min/week|METs|IU/mL)(?![\w/])")
 # A ratio is a unit only when one side is a unit word ("mmol/L", "x10^9/L", "kg/m2"); "Yes/No" is
 # a label set, never a unit.
 _UNIT_PARTS: Final = frozenset(
@@ -112,6 +120,10 @@ class Dictionary:
     key_statements: tuple[str, ...] = ()
     one_per_person: bool = False
     repeats_stated: bool = False
+    # Codes a note documents for every measurement ("For all measurements, 999 = not recorded").
+    shared_missing: dict[str, str] = field(default_factory=dict)
+    # The dictionary says lines are counts for groups ("each row is a count of cases by state").
+    says_aggregate: bool = False
 
     def entry(self, column: str) -> DictionaryEntry | None:
         return self.entries.get(column)
@@ -176,6 +188,42 @@ def parse_pairs(text: str) -> list[tuple[str, str]]:
     return pairs
 
 
+# A "not recorded" code written as a sentence, not "code = label":
+# "A value of 999 indicates the measurement was not taken.", "999 is used where no reading was
+# available.", "Missing values were coded as -9.", "Coded as 99 when unknown."
+_CODE_NUM: Final = r"(?<![\w.\-])(?P<code>-?\d{1,5})(?!\w|\.\d)"
+_FREE_MISSING: Final = (
+    re.compile(
+        _CODE_NUM + r"\s+(?:indicates?|means?|denotes?|signifies|represents?|stands\s+for|"
+        r"(?:is|was|are|were)\s+(?:used|recorded|entered|given|coded)\s+(?:where|when|if|for|to\s+(?:mean|indicate))|"
+        r"(?:is|was)\s+(?:a\s+)?(?:code|placeholder)\s+for)\s+(?P<label>[^.;\n]+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?P<label>(?:missing|unknown|unrecorded|absent)(?:\s+(?:values?|data|readings?|results?|answers?))?|"
+        r"(?:values?|readings?|results?)\s+not\s+(?:recorded|taken|available|measured))\s+"
+        r"(?:were|was|are|is|have\s+been|has\s+been)\s+(?:coded|recorded|entered|stored|set|given)\s+(?:as|to)\s+"
+        + _CODE_NUM,
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:coded|recorded|entered|set)\s+(?:as|to)\s+" + _CODE_NUM + r"\s+(?:if|when|where)\s+(?P<label>[^.;\n]+)",
+        re.IGNORECASE,
+    ),
+)
+
+
+def free_missing_pairs(text: str) -> list[tuple[str, str]]:
+    """(code, label) of "not recorded" codes stated in sentences (``_FREE_MISSING``), in order."""
+    found: list[tuple[int, str, str]] = []
+    for pattern in _FREE_MISSING:
+        for m in pattern.finditer(text):
+            label = m.group("label").strip()
+            if says_not_taken(label) and all(code != m.group("code") for _, code, _ in found):
+                found.append((m.start(), m.group("code"), label))
+    return [(code, label) for _, code, label in sorted(found)]
+
+
 def is_missing_label(label: str) -> bool:
     """The label says the measurement itself was not recorded ("not recorded", "missing")."""
     return bool(config.MISSING_LABEL_STRICT.search(label)) and not config.MISSING_LABEL_EXCEPT.search(label)
@@ -210,6 +258,10 @@ def split_missing(
     if len(pairs) == 1:
         code, label = pairs[0]
         return ({}, {code: label}) if says_not_taken(label) and _outside(code, stated) else ({}, {})
+    if all(says_not_taken(label) and _outside(code, stated) for code, label in pairs):
+        # Notes on a measurement, every one saying the value was not taken ("999 = not recorded,
+        # 888 = refused"): missing-value codes, however many, never a code list of the measure.
+        return {}, dict(pairs)
     missing = {code: label for code, label in pairs if is_missing_label(label)}
     labels = {code: label for code, label in pairs if code not in missing}
     if len(labels) < config.MISSING_CODE_MIN_CATEGORIES:
@@ -227,6 +279,9 @@ def _stated_range(description: str) -> tuple[float, float] | None:
 
 
 def _unit(description: str) -> str | None:
+    named = _NAMED_UNIT.search(description)
+    if named:
+        return named.group(1)
     for m in _RATIO_UNIT.finditer(description):
         unit = m.group(1)
         parts = {p.lower() for p in re.split(r"/", unit)}
@@ -253,6 +308,8 @@ def _direction(text: str) -> Direction | None:
 
 def _entry(column: str, text: str) -> DictionaryEntry:
     pairs = parse_pairs(text)
+    listed = {code for code, _ in pairs}
+    pairs += [(code, label) for code, label in free_missing_pairs(text) if code not in listed]
     first = re.search(r"[A-Za-z0-9][A-Za-z0-9.+\-]{0,7}\s*=(?!=)", text)
     description = text[: first.start()] if first else text
     date_format = format_from_text(text)
@@ -272,10 +329,29 @@ def _entry(column: str, text: str) -> DictionaryEntry:
     )
 
 
+def _with_missing(entry: DictionaryEntry | None, column: str, notes: list[tuple[str, str]]) -> DictionaryEntry:
+    """``entry`` (or an empty one) with the "not recorded" codes a prose sentence documents for it,
+    when they lie outside the entry's stated range."""
+    if entry is None:
+        entry = DictionaryEntry(column=column, text="", description="")
+    missing = dict(entry.missing)
+    for code, label in notes:
+        if code not in entry.labels and _outside(code, entry.stated_range):
+            missing.setdefault(code, label)
+    return replace(entry, missing=missing)
+
+
 def _entry_start(line: str, by_lower: dict[str, str]) -> tuple[str, str] | None:
     """(column, rest) when the line starts an entry: a column name, then space, ':' or ' -'."""
     if not line or line[0] in " \t":
         return None
+    # A column name with spaces ("Cause Name"), longest first: then two spaces, a tab or ":".
+    lowered = line.lower()
+    for name in sorted((n for n in by_lower if " " in n), key=len, reverse=True):
+        if lowered.startswith(name):
+            rest = line[len(name) :]
+            if rest == "" or rest.startswith(("  ", "\t", ":")):
+                return by_lower[name], rest.lstrip(" \t:")
     m = re.match(r"^['\"`]?([^\s:'\"`]+)['\"`]?\s*(?::|\s-\s|\s–\s|\t|\s)\s*(.*)$", line)
     if m is None:
         return None
@@ -364,7 +440,28 @@ def parse_dictionary(text: str | None, columns: Sequence[str]) -> Dictionary:
             column = by_lower.get(m.group("col").lower())
             if column is not None and column not in statements:
                 statements.append(column)
+    shared: dict[str, str] = {}
+    for line in prose:
+        for sentence in _SENTENCE_END.split(line):
+            notes = [*parse_pairs(sentence), *free_missing_pairs(sentence)]
+            notes = [(code, label) for code, label in notes if says_not_taken(label) and _outside(code, None)]
+            if not notes:
+                continue
+            named = [
+                c
+                for lower, c in by_lower.items()
+                if len(lower) >= 3 and re.search(rf"(?<![\w]){re.escape(lower)}(?![\w])", sentence.lower())
+            ]
+            if named:
+                # "In sbp, 999 indicates the reading was not taken": that column's own code.
+                for column in named:
+                    entries[column] = _with_missing(entries.get(column), column, notes)
+            else:
+                for code, label in notes:
+                    shared.setdefault(code, label)
     return Dictionary(
+        shared_missing=shared,
+        says_aggregate=bool(_SAYS_AGGREGATE.search(prose_text)),
         entries=entries,
         grain_noun=grain_noun,
         grain_text=grain_text,

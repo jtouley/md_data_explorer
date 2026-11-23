@@ -18,10 +18,13 @@ each row one patient?" at upload (``core.patient_rows``), so either answer serve
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import sqlglot
 import structlog
+from sqlglot import exp
 
 from clinical_analytics.contracts.declarations import (
     Declarations,
@@ -30,6 +33,7 @@ from clinical_analytics.contracts.declarations import (
     confirmation_token,
 )
 from clinical_analytics.contracts.errors import ContractError, ContractStoreError
+from clinical_analytics.contracts.semantics import DatasetSemantics, semantics_from_contract, with_declarations
 from clinical_analytics.contracts.service import read_saved_contract
 from clinical_analytics.contracts.store import contract_path
 from clinical_analytics.sql.answer import PatientRowsUnconfirmedError, SqlAnswer, answer_query
@@ -46,6 +50,14 @@ NO_CONTRACT = (
 )
 NOT_STORED = "This dataset is not stored as Parquet yet, so SQL cannot run on it. Upload it again."
 DECLARATIONS_UNREADABLE = "This dataset's saved confirmations can't be read or saved, so SQL can't run on it now."
+AGGREGATE_ROWS = (
+    "Each line of this table counts cases for a group (in {count}), so a count of lines is a count of groups, "
+    "not of patients, and it can't be confirmed as one patient per line. Add up {count} with SUM({count}) instead."
+)
+OPEN_MISSING_CODE = (
+    "{column} holds {value} on some rows, which may mean not recorded ({question}). This answer counts it as a "
+    "real value; answer the question in the cohort details to leave it out."
+)
 CONFIRMATION_STALE = (
     "The dataset changed after you were asked to confirm one row per patient. "
     "Check that each row is still one patient, then confirm again."
@@ -72,14 +84,41 @@ def run_governed_sql(
         SqlRefusedError: the reason the query was not run or its result not shown.
     """
     log = logger.bind(dataset_id=dataset_id)
-    catalog, declared, version = catalog_for_layer(
-        layer, dataset_id=dataset_id, data_dir=data_dir, declarations=declarations
+    version = getattr(layer, "loaded_version", None)
+    source = ((getattr(layer, "config", None) or {}).get("init_params") or {}).get("source_path")
+    if not isinstance(version, str) or not version:
+        raise SqlRefusedError(NO_CONTRACT)
+    if not isinstance(source, str) or not source:
+        raise SqlRefusedError(NOT_STORED)
+    path = contract_path(data_dir, dataset_id, version)
+    if not path.is_file():
+        raise SqlRefusedError(NO_CONTRACT)
+    try:
+        contract = read_saved_contract(path)
+    except ContractError as e:
+        log.warning("governed_sql_contract_unreadable", error_type=type(e).__name__)
+        raise SqlRefusedError("This dataset's data contract can't be read, so SQL cannot be checked against it.") from e
+    try:
+        loaded = declarations.load(dataset_id)
+    except ContractStoreError as e:
+        log.warning("governed_sql_declarations_unreadable", error_type=type(e).__name__)
+        raise SqlRefusedError(DECLARATIONS_UNREADABLE) from e
+    declared = loaded.for_version(version)
+    semantics = _semantics(contract, loaded, version)
+    catalog = SqlCatalog.from_contract(
+        contract, Path(source), declared.levels, declared.missing_codes, declared.date_readings_for(version)
     )
     query = validate_sql(sql, catalog)
+    aggregate = semantics.aggregate if semantics is not None else None
     with SandboxConnection(catalog) as sandbox:
         try:
-            return answer_query(query, sandbox, catalog, confirmed_patient_rows=_confirmed_rows(declared, catalog))
+            answer = answer_query(query, sandbox, catalog, confirmed_patient_rows=_confirmed_rows(declared, catalog))
+            return _with_open_value_notes(answer, query.shown_sql, semantics)
         except PatientRowsUnconfirmedError as e:
+            if aggregate is not None:
+                # Lines of a table of groups are never patients: no confirmation is offered or taken.
+                log.info("governed_sql_aggregate_rows_refused", kind=aggregate.kind)
+                raise SqlRefusedError(AGGREGATE_ROWS.format(count=aggregate.count_column or "the count")) from e
             token = confirmation_token(version, e.key, e.rows)
             if confirm_one_row_per_patient is None:
                 raise PatientRowsUnconfirmedError(e.reason, key=e.key, rows=e.rows, confirmation=token) from e
@@ -93,7 +132,38 @@ def run_governed_sql(
                 log.warning("governed_sql_declarations_unsaved", error_type=type(store_error).__name__)
                 raise SqlRefusedError(DECLARATIONS_UNREADABLE) from store_error
             log.info("governed_sql_patient_grain_confirmed", dataset_version=version)
-            return answer_query(query, sandbox, catalog, confirmed_patient_rows=e.rows)
+            answer = answer_query(query, sandbox, catalog, confirmed_patient_rows=e.rows)
+            return _with_open_value_notes(answer, query.shown_sql, semantics)
+
+
+def _semantics(contract: Any, loaded: Any, version: str) -> DatasetSemantics | None:
+    """The version's semantics with the user's declarations, or None (a contract without them)."""
+    semantics = semantics_from_contract(contract)
+    if semantics is None:
+        return None
+    return with_declarations(semantics.model_copy(update={"dataset_version": version}), loaded)
+
+
+def _with_open_value_notes(answer: SqlAnswer, sql: str, semantics: DatasetSemantics | None) -> SqlAnswer:
+    """``answer`` with a note for every column it reads that holds a value the contract asks about
+    ("Does 99 in phq9 mean not recorded?") and the user has not answered: the value is counted as
+    real, and the answer says so (as the question path holds it)."""
+    if semantics is None:
+        return answer
+    read = {c.name for c in sqlglot.parse_one(sql, read="duckdb").find_all(exp.Column)}
+    notes = [
+        OPEN_MISSING_CODE.format(
+            column=q.column,
+            value=f"{q.value:g}" if isinstance(q.value, int | float) else q.value,
+            question=q.question,
+        )
+        for q in semantics.open_questions
+        if q.kind == "missing_code" and not q.answered and q.column in read
+    ]
+    if not notes:
+        return answer
+    logger.info("governed_sql_open_value_questions", questions=len(notes))
+    return replace(answer, notes=[*answer.notes, *notes])
 
 
 def catalog_for_layer(
@@ -125,7 +195,10 @@ def catalog_for_layer(
     except ContractStoreError as e:
         log.warning("governed_sql_declarations_unreadable", error_type=type(e).__name__)
         raise SqlRefusedError(DECLARATIONS_UNREADABLE) from e
-    return SqlCatalog.from_contract(contract, Path(source), declared.levels, declared.missing_codes), declared, version
+    catalog = SqlCatalog.from_contract(
+        contract, Path(source), declared.levels, declared.missing_codes, declared.date_readings_for(version)
+    )
+    return catalog, declared, version
 
 
 def _confirmed_rows(declared: Declarations, catalog: SqlCatalog) -> int | None:

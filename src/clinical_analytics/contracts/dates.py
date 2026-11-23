@@ -151,6 +151,10 @@ def choose_text_format(series: pl.Series, *, stated: str | None = None) -> DateC
     two-digit-year format that would put a date in the future is a ``century`` ambiguity.
     """
     found = _choose_text_format(series, stated=stated)
+    if isinstance(found, DateChoice) and "%y" in found.format and life_event_named(series.name):
+        # A two-digit birth or death year never settles its century: 03/15/21 is a baby or a
+        # centenarian. Always asked.
+        return DateAmbiguity(series.name, "", "15 March 1945", "15 March 2045", "century", found.format)
     if isinstance(found, DateChoice) and "%y" in found.format:
         parsed = _parse(_present(series), found.format)
         latest = parsed.max()
@@ -247,6 +251,21 @@ def _settle_order(values: pl.Series, name: str, day_first: str, month_first: str
 
 _DATE_NAME_TOKENS: Final = frozenset({"date", "dt", "dttm", "dob", "dod", "datetime", "timestamp", "dte"})
 _TOKEN_SPLIT: Final = re.compile(r"[^a-z0-9]+")
+
+
+_LIFE_EVENT_TOKENS: Final = frozenset({"dob", "dod", "birth", "born", "bday", "birthday", "death", "died", "deceased"})
+
+
+def life_event_named(column: str) -> bool:
+    """A birth or death date column ("dob", "date_of_birth", "deathDate")."""
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", column).lower()
+    tokens = {t for t in _TOKEN_SPLIT.split(spaced) if t}
+    return bool(tokens & _LIFE_EVENT_TOKENS) or "birth" in spaced or "death" in spaced
+
+
+def swap_order(choice_format: str) -> str:
+    """'%d/%m/%y' <-> '%m/%d/%y': the other day/month reading of an order format."""
+    return choice_format.replace("%d", "\0").replace("%m", "%d").replace("\0", "%m")
 
 
 def date_named(column: str) -> bool:

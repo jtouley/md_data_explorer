@@ -1760,8 +1760,8 @@ async function subscribeToQueryStream(
 // ============================================================================
 
 const uploadHandlers = {
-  onFileSelect: (file) => {
-    void runFromDatasetMenu(() => handleFileUpload(file));
+  onFileSelect: (file, options) => {
+    void runFromDatasetMenu(() => handleFileUpload(file, options));
   },
   onLoadSample: () => {
     void runFromDatasetMenu(handleLoadSample);
@@ -1845,16 +1845,24 @@ function askPatientRows(result, name) {
     Boolean(elements.uploadArea?.contains(active));
   const panel = renderPatientRowsQuestion(area, {
     takeFocus,
-    onAnswer: async (oneRowPerPatient) => {
+    countColumns: question.countColumns ?? [],
+    onAnswer: async (oneRowPerPatient, countsCasesIn) => {
       panel.setBusy(true);
       let counts;
       try {
-        const body = await window.clinicalAPI.answerOneRowPerPatient(
-          datasetId,
-          question.confirmation,
-          oneRowPerPatient
-        );
-        counts = body?.counts === 'patients' ? 'patients' : 'rows';
+        const body = countsCasesIn
+          ? await window.clinicalAPI.answerOneRowPerPatient(
+              datasetId,
+              question.confirmation,
+              false,
+              countsCasesIn
+            )
+          : await window.clinicalAPI.answerOneRowPerPatient(
+              datasetId,
+              question.confirmation,
+              oneRowPerPatient
+            );
+        counts = ['patients', 'cases'].includes(body?.counts) ? body.counts : 'rows';
       } catch (error) {
         console.error('One-row-per-patient answer failed:', error?.message);
         panel.setBusy(false);
@@ -1866,7 +1874,7 @@ function askPatientRows(result, name) {
       }
       // Saved; the question on screen may by now be another cohort's (a slow answer): leave it.
       if (state.patientRowsDatasetId !== datasetId) return;
-      const text = patientRowsAnsweredText(counts, name);
+      const text = patientRowsAnsweredText(counts, name, countsCasesIn);
       const hadFocus = area.contains(document.activeElement);
       closePatientRows();
       setDatasetStatus(text, 'ok'); // the status line is a live region: read once
@@ -1914,12 +1922,14 @@ async function handleLoadSample() {
   }
 }
 
-async function handleFileUpload(file) {
+async function handleFileUpload(file, options = {}) {
   if (typeof window.clinicalAPI?.uploadDataset !== 'function') return;
   setDatasetStatus(`Uploading “${file.name}”…`);
 
   try {
-    const raw = await window.clinicalAPI.uploadDataset(file);
+    const raw = options.populationEstimates
+      ? await window.clinicalAPI.uploadDataset(file, undefined, true)
+      : await window.clinicalAPI.uploadDataset(file);
     const result = normalizeUploadResponse(raw);
 
     if (uploadIsUsable(result)) {

@@ -10,6 +10,7 @@ import {
   renderUploadArea,
   uploadIsUsable,
   uploadResultText,
+  POPULATION_ESTIMATES_LABEL,
 } from './uploadPanel.js';
 import { dataCheckStatusNote } from './dataCheckPanel.js';
 
@@ -219,7 +220,7 @@ describe('renderUploadArea', () => {
     Object.defineProperty(input, 'files', { value: [file] });
     input.dispatchEvent(new Event('change'));
 
-    expect(onFileSelect).toHaveBeenCalledWith(file);
+    expect(onFileSelect).toHaveBeenCalledWith(file, { populationEstimates: false });
   });
 
   test('shows upload status text', () => {
@@ -369,7 +370,10 @@ describe('upload unit note (rows, not patients)', () => {
   });
 
   test.each([
-    [{ status: 'pending', confirmation: 'a'.repeat(32) }, { confirmation: 'a'.repeat(32) }],
+    [
+      { status: 'pending', confirmation: 'a'.repeat(32) },
+      { confirmation: 'a'.repeat(32), countColumns: [] },
+    ],
     [null, null],
     [undefined, null],
     [{ status: 'answered', confirmation: 'a'.repeat(32) }, null],
@@ -481,5 +485,21 @@ describe('upload facts from the data contract', () => {
     expect(uploadResultText(result, 'sleep', null)).toBe(
       'The cohort “sleep” is ready. Answers count rows, not patients.'
     );
+  });
+});
+
+describe('public population estimates box (ADR014)', () => {
+  test('ticked before choosing a file, the upload is declared', () => {
+    const container = document.createElement('div');
+    const onFileSelect = vi.fn();
+    renderUploadArea(container, { onFileSelect });
+    const box = container.querySelector('[data-testid="upload-population-estimates"]');
+    expect(box.labels[0].textContent.trim()).toBe(POPULATION_ESTIMATES_LABEL);
+    box.checked = true;
+    const input = container.querySelector('[data-testid="upload-file-input"]');
+    const file = new File(['a,b'], 'rates.csv', { type: 'text/csv' });
+    Object.defineProperty(input, 'files', { value: [file] });
+    input.dispatchEvent(new Event('change'));
+    expect(onFileSelect).toHaveBeenCalledWith(file, { populationEstimates: true });
   });
 });

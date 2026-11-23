@@ -93,7 +93,7 @@ def test_inferSemantics_unnamedKeyWithSequence_keyFromStructure() -> None:
     assert [s.column for s in semantics.sequence_columns] == ["read_order"]
 
 
-def test_inferSemantics_newbornScreening_babyIsPatientMotherGroups() -> None:
+def test_inferSemantics_newbornScreeningTwins_babyIsPatientNoQuestion() -> None:
     # Arrange: newborn hearing screening; twins share a mother
     mothers = [f"M{i // 2 if i < 20 else i:03d}" for i in range(60)]
     df = pl.DataFrame(
@@ -106,7 +106,8 @@ def test_inferSemantics_newbornScreening_babyIsPatientMotherGroups() -> None:
     # Assert
     assert semantics.patient_key_column == "infant_id"
     assert [(g.column, g.role) for g in semantics.grouping_columns] == [("mat_id", "mother")]
-    assert semantics.question("person_role").question == "Is each line one baby or one mother?"
+    # A baby ID unique on every line: each line is one baby, twins share a mother; never asked.
+    assert semantics.question("person_role") is None
 
 
 @pytest.mark.parametrize(

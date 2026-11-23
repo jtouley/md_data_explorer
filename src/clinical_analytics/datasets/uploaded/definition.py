@@ -243,12 +243,24 @@ class UploadedDataset(ClinicalDataset):
                 entry.setdefault("role", col.role)
             if entry:
                 variable_types[name] = entry
-        from clinical_analytics.contracts.semantics import declared_missing_codes
-        from clinical_analytics.core.semantic import DECLARED_MISSING_CODES_KEY
+        from clinical_analytics.contracts.aggregates import LAYER_AGGREGATE_KEY
+        from clinical_analytics.contracts.declarations import FileDeclarationStore
+        from clinical_analytics.contracts.readings import declared_reads, reads_config
+        from clinical_analytics.core.semantic import DECLARED_READS_KEY
 
+        declared = self.semantics(declared=True)
+        # A table of groups (inferred, or declared by the user) answers counts from its count
+        # column (contracts.aggregates); declared public estimates keep ADR014's path.
+        table = declared.aggregate if declared.aggregate is not None and not declared.population_estimates else None
         return {
             **config,
-            DECLARED_MISSING_CODES_KEY: declared_missing_codes(self.semantics(declared=True)),
+            LAYER_AGGREGATE_KEY: table.model_dump(mode="json") if table is not None else None,
+            DECLARED_READS_KEY: reads_config(
+                declared_reads(
+                    FileDeclarationStore(self.storage.upload_dir.parent).load(self.upload_id),
+                    declared.dataset_version,
+                )
+            ),
             "column_mapping": mapping,
             "variable_types": variable_types,
             ROW_KEY_CONFIG_FLAG: patient_id_is_row_key(semantics),

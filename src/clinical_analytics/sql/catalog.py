@@ -53,6 +53,8 @@ class SqlCatalog:
     levels: tuple[LevelMapping, ...] = ()
     # column -> values the user confirmed mean not recorded (ADR017): NULL in the view.
     missing: tuple[tuple[str, tuple[int | float | str, ...]], ...] = ()
+    # column -> (format, century) the user confirmed for a text date column: a DATE in the view.
+    dates: tuple[tuple[str, tuple[str, str | None]], ...] = ()
 
     def column(self, name: str) -> ColumnSpec | None:
         """A column by name, case-insensitive as DuckDB identifiers are."""
@@ -79,13 +81,22 @@ class SqlCatalog:
                 merges.setdefault(mapping.column, []).append(mapping)
         select: list[exp.Expr] = []
         missing = dict(self.missing)
+        dates = dict(self.dates)
         for col in self.columns:
             ref = exp.column(col.name, quoted=True)
             value: exp.Expr = ref
             codes = missing.get(col.name)
             if codes:
-                literals = [exp.Literal.string(str(v)) if isinstance(v, str) else exp.Literal.number(v) for v in codes]
-                value = exp.case().when(exp.In(this=ref.copy(), expressions=literals), exp.Null()).else_(ref.copy())
+                if col.numeric:
+                    numbers = [exp.Literal.number(float(v)) for v in codes if _is_number(v)]
+                    matched: exp.Expr = exp.In(this=exp.cast(ref.copy(), "DOUBLE"), expressions=numbers)
+                else:
+                    matched = exp.In(
+                        this=exp.cast(ref.copy(), "VARCHAR"), expressions=[exp.Literal.string(str(v)) for v in codes]
+                    )
+                value = exp.case().when(matched, exp.Null()).else_(ref.copy())
+            if col.name in dates:
+                value = _date_reading(ref, *dates[col.name])
             if col.logical_type == "string" and merges.get(col.name):
                 case = exp.case()
                 for mapping in merges[col.name]:
@@ -104,6 +115,7 @@ class SqlCatalog:
         parquet_path: Path,
         levels: Iterable[LevelMapping] = (),
         missing: Iterable[Any] = (),
+        dates: Iterable[Any] = (),
     ) -> SqlCatalog:
         """The catalog of the contract's unified object.
 
@@ -132,7 +144,37 @@ class SqlCatalog:
             parquet_path=parquet_path,
             levels=tuple(m for m in levels if m.column in names),
             missing=tuple((c, tuple(v)) for c, v in confirmed.items()),
+            dates=tuple((d.column, (d.format, d.century)) for d in dates if d.column in names),
         )
+
+
+def _is_number(value: object) -> bool:
+    try:
+        float(str(value))
+    except ValueError:
+        return False
+    return True
+
+
+def _date_reading(ref: exp.Column, choice_format: str, century: str | None) -> exp.Expr:
+    """A text column read with the user's confirmed date format (and century), as a DATE."""
+    parsed = exp.cast(exp.func("try_strptime", exp.func("trim", ref.copy()), exp.Literal.string(choice_format)), "DATE")
+    year = exp.func("year", parsed.copy())
+    if century == "1900s":
+        shifted = exp.Sub(
+            this=parsed.copy(), expression=exp.Interval(this=exp.Literal.string("100"), unit=exp.var("YEAR"))
+        )
+        return exp.cast(
+            exp.case().when(exp.GTE(this=year, expression=exp.Literal.number(2000)), shifted).else_(parsed), "DATE"
+        )
+    if century == "2000s":
+        added = exp.Add(
+            this=parsed.copy(), expression=exp.Interval(this=exp.Literal.string("100"), unit=exp.var("YEAR"))
+        )
+        return exp.cast(
+            exp.case().when(exp.LT(this=year, expression=exp.Literal.number(2000)), added).else_(parsed), "DATE"
+        )
+    return parsed
 
 
 def _spec(prop: SchemaProperty, semantics: DatasetSemantics | None) -> ColumnSpec:
