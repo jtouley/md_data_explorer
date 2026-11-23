@@ -21,7 +21,7 @@ Answer: TypeAlias = Literal[
     "count", "share", "mean", "median", "min", "max", "sum", "count_distinct", "top",
     "compare_groups", "odds_ratio", "correlation", "survival", "list_patients", "not_in_table",
 ]  # fmt: skip
-WhichVisit: TypeAlias = Literal["any", "every", "first", "last", "change"]
+WhichVisit: TypeAlias = Literal["any", "every", "none", "first", "last", "change"]
 Period: TypeAlias = Literal["none", "year", "month"]
 ANSWERS: Final = get_args(Answer)
 STATISTICS: Final = {"mean": "AVG", "median": "MEDIAN", "min": "MIN", "max": "MAX", "sum": "SUM"}
@@ -405,7 +405,12 @@ def compile_plan(plan: Plan, context: DatasetContext) -> Compiled:
     per_patient = (plan.count_of == "patients" and context.visit_level) or by_episode
     if by_episode and plan.which_visit in ("first", "last"):
         raise PlanError("first and last are read per patient: count episodes with which_visit any or every.")
-    which = plan.which_visit if context.visit_level else "any"
+    which = plan.which_visit if context.visit_level or plan.which_visit == "none" else "any"
+    if which == "none" and plan.answer not in ("count", "share"):
+        raise PlanRefusedError(
+            "A summary over the patients who never had something is not supported yet: ask how many patients "
+            "never had it, or what share."
+        )
     if which in ("first", "last", "change") and context.order_column is None:
         raise PlanError("Nothing orders a patient's records in this table: use which_visit any or every.")
     used = {c.column for c in (*plan.filters, *plan.numerator)} | {n for n in (plan.measure, plan.group_by) if n}
@@ -466,7 +471,27 @@ def _compile_count(
     unit = _unit(plan, context, per_patient)
     if which == "change":
         raise PlanError("change is for a measure (mean, median ...): for a count use any, every, first or last.")
-    if not per_patient:
+    if which == "none":
+        # "Never": the condition (numerator, else the filters) holds at none of the unit's
+        # records: a per-unit "not any", where a missing value never counts as having it. With a
+        # numerator, the filters say who is counted. Never a "flag is no" filter over records.
+        event = _all(plan.numerator, context) if plan.numerator else where
+        population = where if plan.numerator else None
+        if group is not None:
+            raise PlanError("none applies to conditions, not to a breakdown: use any, first or last with group_by.")
+        if not per_patient:
+            n, source, where = (
+                "COUNT(*)",
+                "unified",
+                _where_tail(population, f"NOT COALESCE({event or 'FALSE'}, FALSE)"),
+            )
+        else:
+            having = f"NOT BOOL_OR(COALESCE({event or 'FALSE'}, FALSE))"
+            if population:
+                having = f"BOOL_OR(COALESCE({population}, FALSE)) AND {having}"
+            source = f"(SELECT {key} FROM unified WHERE {key} IS NOT NULL GROUP BY {key} HAVING {having})"
+            where, n = None, "COUNT(*)"
+    elif not per_patient:
         n, source = "COUNT(*)", "unified"
     elif which == "every":
         if group is not None:
@@ -492,6 +517,7 @@ def _compile_count(
     return Compiled(
         plan=plan, kind="count", sql=sql, unit=unit, per_patient=per_patient, total_sql=total,
         group_column=plan.group_by, filters=plan.filters, columns=used,
+        numerator=plan.numerator if which == "none" else (),
     )  # fmt: skip
 
 
@@ -520,14 +546,17 @@ def _compile_share(
     if which == "change":
         raise PlanError("change is for a measure (mean, median ...): for a share use any, every, first or last.")
     group_sel = f"{group} AS grp, " if group is not None else ""
-    if not per_patient:
+    if not per_patient and which == "none":
+        inner = f"SELECT {group_sel}NOT ({event}) AS e FROM unified{_where(where, recorded)}"
+    elif not per_patient:
         inner = f"SELECT {group_sel}({event}) AS e FROM unified{_where(where, recorded)}"
     elif which in ("first", "last"):
         ranked = _ranked(context, which, _where_tail(_first_last_recorded(plan, plan.numerator), responded))
         inner = f"SELECT {group_sel}({event}) AS e FROM ({ranked}) AS r{_where('_rank = 1', where)}"
         inner = f"SELECT * FROM ({inner}) AS x WHERE e IS NOT NULL"
     else:
-        agg = "BOOL_AND" if which == "every" else "BOOL_OR"
+        # every: BOOL_AND over the recorded records; none: NOT BOOL_OR (never at any record).
+        agg = {"every": "BOOL_AND", "none": "NOT BOOL_OR"}.get(which, "BOOL_OR")
         by = "grp, " if group is not None else ""
         inner = (
             f"SELECT {by}{key}, {agg}(e) AS e FROM (SELECT {group_sel}{key}, ({event}) AS e FROM unified"

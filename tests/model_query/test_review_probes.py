@@ -393,3 +393,50 @@ def test_problems_denominatorPhraseEndsAtItsVerb(cohort):
 
     # Assert
     assert "denominator" not in kinds
+
+
+_NEVER_FORMS = [
+    pytest.param(_reply(filters=[_cond("wheeze", "is", values=["no"])]), id="flag_no_any"),
+    pytest.param(_reply(filters=[_cond("wheeze", "is not", values=["yes"])], which_visit="every"), id="is_not_every"),
+    pytest.param(_reply(numerator=[_cond("wheeze", "is", values=["yes"])], which_visit="none"), id="positive_none"),
+]
+
+
+@pytest.mark.parametrize("reply", _NEVER_FORMS)
+def test_answer_question_never_isNoneOfThePatientsRecords(ask_clinic, reply):
+    # Act: however the model writes "never"
+    answer, _prompts = ask_clinic("How many patients never wheezed?", reply)
+
+    # Assert: patients with no record of wheeze, NOT BOOL_OR per patient (never "= no" over records)
+    expected = tables.shots().group_by("holder_ref").agg((pl.col("wheeze") == "Y").any())["wheeze"].not_().sum()
+    assert answer.status == "answered" and answer.analysis["total_count"] == expected
+    assert "NOT BOOL_OR" in answer.sql and answer.reply["which_visit"] == "none"
+    assert "when none of their shot visits met it" in answer.reading
+
+
+def test_answer_question_neverWithAPopulation_countsWhoNeverHadIt(ask_clinic):
+    # Arrange: the women, and the event they never had
+    reply = _reply(filters=[_cond("sex", "is", values=["female"]), _cond("wheeze", "is", values=["no"])])
+
+    # Act
+    answer, _prompts = ask_clinic("How many women never wheezed?", reply)
+
+    # Assert
+    per = (
+        tables.shots()
+        .group_by("holder_ref")
+        .agg((pl.col("sex") == "F").any().alias("f"), (pl.col("wheeze") == "Y").any().alias("w"))
+    )
+    assert answer.analysis["total_count"] == per.filter(pl.col("f") & ~pl.col("w")).height
+
+
+def test_answer_question_neverShare_isOfPatientsWithNoRecordOfIt(ask_clinic):
+    # Act
+    answer, _prompts = ask_clinic(
+        "What share of patients never wheezed?",
+        _reply(answer="share", numerator=[_cond("wheeze", "is", values=["no"])]),
+    )
+
+    # Assert
+    per = tables.shots().group_by("holder_ref").agg((pl.col("wheeze") == "Y").any())
+    assert answer.analysis["proportion"] == pytest.approx(per["wheeze"].not_().mean())

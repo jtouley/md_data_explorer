@@ -74,15 +74,16 @@ def test_apply_stated_timepointWords_setWhichVisit(clinic, question, model_says,
     assert fixed.which_visit == expected
 
 
-def test_apply_stated_neverOnVisits_readsEveryVisit(clinic):
-    # Arrange: "never wheezed" = not a wheeze at every visit, not "a visit without wheezing"
+def test_apply_stated_neverOnVisits_readsNoneOfTheVisits(clinic):
+    # Arrange: "never wheezed" = a wheeze at none of the visits, not "a visit without wheezing"
     plan = _plan(filters=[_cond("wheeze", "is", values=["no"])], which_visit="any")
 
     # Act
     fixed, _changed = checks.apply_stated(plan, "How many patients never wheezed?", clinic)
 
-    # Assert
-    assert fixed.which_visit == "every"
+    # Assert: the event written positively, at none of the visits
+    assert fixed.which_visit == "none"
+    assert [(c.column, c.op, c.values) for c in fixed.numerator] == [("wheeze", "is", ("yes",))]
 
 
 @pytest.mark.parametrize(

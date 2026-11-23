@@ -90,6 +90,8 @@ def _counted_line(compiled: Compiled, context: DatasetContext) -> str:
         return f"Counted: {compiled.unit}, each once, read at their first {noun} with it recorded."
     if which == "last":
         return f"Counted: {compiled.unit}, each once, read at their latest {noun} with it recorded."
+    if which == "none":
+        return f"Counted: {compiled.unit}, each once, when none of their {nouns} met it."
     if which == "every":
         return f"Counted: {compiled.unit}, each once, when every one of their {nouns} with it recorded met the limits."
     return f"Counted: {compiled.unit}, each once, when any one of their {nouns} met the limits."
@@ -192,6 +194,8 @@ def reading_lines(
         lines.append(_counted_line(compiled, context))
     conditions = [condition_words(c, context) for c in compiled.filters]
     lines += _split("Included:", conditions) if conditions else ["Included: everyone in the file."]
+    if compiled.numerator and compiled.kind == "count":
+        lines += _split("Never:", [condition_words(c, context) for c in compiled.numerator])
     if compiled.numerator and compiled.kind == "share":
         lines += _split("Counted as yes:", [condition_words(c, context) for c in compiled.numerator])
         lines.append("Out of: those with it recorded.")

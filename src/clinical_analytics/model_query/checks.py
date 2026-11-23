@@ -45,7 +45,8 @@ _TIMES: Final[tuple[tuple[WhichVisit, re.Pattern[str], bool], ...]] = (
     ("first", re.compile(r"\b(?:baseline|intake|enrol(?:l)?ment)\b", re.I), False),
     ("first", re.compile(r"\b(?:first|initial|earliest)\b", re.I), True),
     ("last", re.compile(r"\b(?:last|latest|final|most recent)\b", re.I), True),
-    ("every", re.compile(r"\b(?:always|throughout|never)\b", re.I), False),
+    ("every", re.compile(r"\b(?:always|throughout)\b", re.I), False),
+    ("none", re.compile(r"\bnever\b", re.I), False),
     ("any", re.compile(r"\b(?:ever|at least once)\b", re.I), False),
     ("any", re.compile(r"\bat any\b", re.I), True),
 )
@@ -301,7 +302,7 @@ def read_cues(question: str, context: DatasetContext, used: frozenset[str] = fro
 def _expected_time(cues: Cues) -> WhichVisit | None:
     if "change" in cues.times or {"first", "last"} <= cues.times:
         return "change"
-    for which in ("first", "last", "every", "any"):
+    for which in ("first", "last", "none", "every", "any"):
         if which in cues.times:
             return which  # type: ignore[return-value]
     return None
@@ -325,7 +326,7 @@ def _floats(cond: Condition) -> list[float]:
 def _slots_used(plan: Plan) -> tuple[Plan, list[str]]:
     """Every slot the model filled is used: a count's numerator conditions are its limits, and a
     filter repeated as a share's numerator is only the numerator (else the share is 100%)."""
-    if plan.answer == "count" and plan.numerator:
+    if plan.answer == "count" and plan.numerator and plan.which_visit != "none":
         return plan.model_copy(update={"filters": (*plan.filters, *plan.numerator), "numerator": ()}), [
             "numerator->filters"
         ]
@@ -401,9 +402,13 @@ def apply_stated(plan: Plan, question: str, context: DatasetContext) -> tuple[Pl
         elif expected is None and plan.which_visit in ("first", "last", "every"):
             update["which_visit"] = "any"  # a timepoint the question does not state is asked, not assumed
             changed.append(f"which_visit:{plan.which_visit}->any")
-        if cues.never and update.get("which_visit", plan.which_visit) == "any" and _negated(plan, context):
-            update["which_visit"] = "every"
-            changed.append("which_visit:never->every")
+        if cues.never:
+            # "Never had X": X at none of the records, written positively (NOT BOOL_OR), never
+            # "is not X" at every record or "flag = no" over records.
+            positive = _never_positive(plan, context)
+            if positive is not None:
+                update.update(positive)
+                changed.append("which_visit:never->none")
         if plan.answer in ("count", "share"):
             unit = "patients" if cues.persons and not cues.records and not cues.episodes else None
             unit = context.row_nouns if cues.records and not cues.persons and not cues.episodes else unit
@@ -415,10 +420,43 @@ def apply_stated(plan: Plan, question: str, context: DatasetContext) -> tuple[Pl
     return plan.model_copy(update=update), changed
 
 
+def _flip(cond: Condition, context: DatasetContext) -> Condition | None:
+    """The positive form of a negated condition ("is not X" -> "is X"; a flag's "no" -> its
+    "yes"), or None when it has none."""
+    column = context.column(cond.column)
+    if column is None:
+        return None
+    if cond.op == "is not":
+        return cond.model_copy(update={"op": "is"})
+    said = [v for v in (*cond.values, cond.value) if v is not None]
+    if cond.op == "is" and column.kind == "flag" and said:
+        stored = [column.stored(str(v)) for v in said]
+        if all(s is not None and column.negative(s) for s in stored):
+            yes = next((v for v in column.values if not column.negative(v)), None)
+            if yes is not None:
+                return cond.model_copy(update={"values": (column.label(yes),), "value": None})
+    return None
+
+
+def _never_positive(plan: Plan, context: DatasetContext) -> dict[str, object] | None:
+    """For "never": which_visit none with the condition written positively, as the numerator
+    (the event no record may meet); the other conditions say who is counted. None when no
+    condition is negated (a positive one with none is already right)."""
+    conds = list(plan.numerator) or list(plan.filters)
+    for i, cond in enumerate(conds):
+        flipped = _flip(cond, context)
+        if flipped is not None:
+            rest = plan.filters if plan.numerator else tuple(c for j, c in enumerate(conds) if j != i)
+            return {"which_visit": "none", "numerator": (flipped,), "filters": rest}
+    return None
+
+
 def _negated(plan: Plan, context: DatasetContext, named: frozenset[str] = frozenset()) -> bool:
     """The plan excludes something: "is not" a value (not "is not none", a double negative), a
     value that means no, a number of zero, or not recorded. ``named``: values the question names
     itself ("never" as a vaccination status), whose condition is the value, not a negation."""
+    if plan.which_visit == "none":
+        return True  # "never": none of the records meets it
     for cond in (*plan.filters, *plan.numerator):
         column = context.column(cond.column)
         if cond.op == "is" and cond.values and all(str(v).casefold() in named for v in cond.values):

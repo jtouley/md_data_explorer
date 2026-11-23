@@ -91,7 +91,10 @@ examples:
     plan: {answer: mean, count_of: patients, filters: [], numerator: [], measure: wound_area, group_by: [ulcer_kind], period: none, cut_points: [], which_visit: change, totals_by: null, missing: null}
   - table: ulcer
     question: "What share of patients were never infected?"
-    plan: {answer: share, count_of: patients, filters: [], numerator: [{column: wound_infected, op: is, value: null, values: ["no"]}], measure: null, group_by: [], period: none, cut_points: [], which_visit: every, totals_by: null, missing: null}
+    plan: {answer: share, count_of: patients, filters: [], numerator: [{column: wound_infected, op: is, value: null, values: ["yes"]}], measure: null, group_by: [], period: none, cut_points: [], which_visit: none, totals_by: null, missing: null}
+  - table: ulcer
+    question: "How many patients with a venous ulcer never had their wound close?"
+    plan: {answer: count, count_of: patients, filters: [{column: ulcer_kind, op: is, value: null, values: [venous]}], numerator: [{column: closed, op: is, value: null, values: ["yes"]}], measure: null, group_by: [], period: none, cut_points: [], which_visit: none, totals_by: null, missing: null}
   - table: ulcer
     question: "How many visits were there in 2023?"
     plan: {answer: count, count_of: visits, filters: [{column: seen_on, op: on or after, value: "2023-01-01", values: []}, {column: seen_on, op: before, value: "2024-01-01", values: []}], numerator: [], measure: null, group_by: [], period: none, cut_points: [], which_visit: any, totals_by: null, missing: null}
