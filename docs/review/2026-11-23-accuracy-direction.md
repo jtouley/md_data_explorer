@@ -47,7 +47,10 @@ Five independent reviews (failure forensics, a live model probe, architecture, e
    - We report stage-wise metrics and a confidence range rather than a pass/fail on small sets. The realistic target is under 2% wrong.
    - Builders never see sealed content.
 
-## Regression guard (contract inference on 13 files the builder never saw)
+## Regression guard (contract inference on 13 evaluation files)
+
+**Correction (same day):** these 13 files were not blind. Their scoring drove about six fix rounds, so the #155 column below is a tuned score. After name-based rules were removed, the honest figures on these files were: key 9/13 right plus 4 asked (main 8/13), and grain 10/13 (main 4/13). Blind performance is measured only on a held-out set that is used once.
+
 
 | Fact | main | #155 (third check) |
 |---|---|---|
