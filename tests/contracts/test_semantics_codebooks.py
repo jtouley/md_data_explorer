@@ -175,7 +175,7 @@ Code or Value\tValue Description\tCount\tCumulative
 def test_inferSemantics_categoryNamedUnknown_keptAndAskedNeverNulled() -> None:
     # Arrange
     frame = pl.DataFrame(
-        {"case_id": [f"T{i:03d}" for i in range(400)], "LIMB": [1] * 120 + [2] * 100 + [3] * 71 + [9] * 109}
+        {"participant_id": [f"T{i:03d}" for i in range(400)], "LIMB": [1] * 120 + [2] * 100 + [3] * 71 + [9] * 109}
     )
 
     # Act

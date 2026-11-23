@@ -122,12 +122,12 @@ describe('facts from the data contract', () => {
   test('renders each fact as a list item under its hint, in clinical words', () => {
     const p = parts();
     renderFacts(p, [
-      'Each line is one hydrotherapy session; 70 patients (client_ref names the patient) over 1,724 lines.',
+      'Each line is one hydrotherapy session; 58 patients (client_ref names the patient) over 913 lines.',
       '999 in end_weight means not recorded.',
     ]);
     expect(p.hint.textContent).toBe(DATA_FACTS_HINT);
     expect([...p.list.children].map((li) => li.textContent)).toEqual([
-      'Each line is one hydrotherapy session; 70 patients (client_ref names the patient) over 1,724 lines.',
+      'Each line is one hydrotherapy session; 58 patients (client_ref names the patient) over 913 lines.',
       '999 in end_weight means not recorded.',
     ]);
     expect(p.list.classList.contains('hidden')).toBe(false);

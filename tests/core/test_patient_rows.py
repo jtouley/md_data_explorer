@@ -80,9 +80,9 @@ def not_asked(make_semantics: Callable[..., Any]) -> Any:
             id="spss_float_person_id_repeats",
         ),
         pytest.param(
-            _frame(record_code=[f"R{i:04d}" for i in range(N)], **{"Hosp No": [f"H{i % 70:03d}" for i in range(N)]}),
+            _frame(record_code=[f"R{i:04d}" for i in range(N)], **{"Bay No": [f"H{i % 70:03d}" for i in range(N)]}),
             False,
-            id="hosp_no_repeats",
+            id="bay_no_repeats",
         ),
         pytest.param(
             _frame(record_code=[f"R{i:04d}" for i in range(N)], site_id=[f"S{i % 5}" for i in range(N)]),
@@ -163,7 +163,7 @@ def test_questionToken_badCountsOrVersion_notAsked(asked: Any, rows: Any, versio
         ("covid19_admission_hospital", False),
         ("paid", False),
         ("record_code", False),
-        ("Hosp No", True),
+        ("Bay No", True),
         ("Record Number", True),
         ("", False),
     ],

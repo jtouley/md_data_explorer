@@ -68,6 +68,17 @@ _NOUN_STOP: Final = re.compile(
     re.IGNORECASE,
 )
 _MAX_NOUN_WORDS: Final = 4
+# Markup around a dictionary's words (Markdown emphasis, code, links): never part of a noun.
+_MARKUP: Final = re.compile(r"[*_`#>\[\]{}|~]+")
+# English past participles: regular "-ed" forms and common irregular ones (a closed class of the
+# language, not of any file). Irregular forms that are also everyday nouns ("set", "run", "lead")
+# are left out: a noun phrase is never cut at a word that may belong to it.
+_PARTICIPLE: Final = re.compile(
+    r"[a-z]{3,}ed|given|taken|seen|done|drawn|held|made|kept|sent|written|known|shown|grown|"
+    r"brought|bought|caught|taught|thought|found|paid|told"
+)
+# A word of a noun phrase: letters, with an inner hyphen or apostrophe ("follow-up", "child's").
+_WORD: Final = re.compile(r"[A-Za-z][A-Za-z'’\-]*")
 _SAYS_AGGREGATE: Final = re.compile(
     r"\b(?:counts?|number|numbers|totals?|tally|tallies)\s+of\s+[a-z ]+?\s+by\s+[a-z]|"
     r"\b(?:summary|aggregate[d]?|frequency)\s+(?:table|data|counts)\b|\bno\s+(?:patient|person)[- ]level\b",
@@ -368,8 +379,12 @@ def _noun(text: str) -> str:
     """The noun phrase of a grain statement, whole or not at all: "clinic attendance" from "clinic
     attendance that was booked". A phrase longer than ``_MAX_NOUN_WORDS`` is dropped, never cut
     mid-phrase (the line is then a "record")."""
-    words = _NOUN_STOP.sub("", text.strip()).strip(" -").split()
-    return " ".join(words) if len(words) <= _MAX_NOUN_WORDS else ""
+    plain = _MARKUP.sub(" ", text)
+    words = _NOUN_STOP.sub("", plain.strip()).strip(" -").split()
+    # A noun phrase ends before a participle ("dose given to the child" -> "dose").
+    cut = next((i for i, w in enumerate(words) if i > 0 and _PARTICIPLE.fullmatch(w.lower())), len(words))
+    words = [w for w in words[:cut] if _WORD.fullmatch(w)]
+    return " ".join(words) if 0 < len(words) <= _MAX_NOUN_WORDS and len(words) == cut else ""
 
 
 _TABLE_RULE: Final = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$")
@@ -425,6 +440,16 @@ _CENSORED: Final = re.compile(
     r"more\s+than|under|at\s+least|at\s+most)\b|\d\s*\+",
     re.I,
 )
+
+
+def is_explicit_nonresponse(label: str) -> bool:
+    """ "Refused", "Don't know", "Not asked", or a label that is exactly "Missing"/"Not recorded"."""
+    return bool(_EXPLICIT_NONRESPONSE.search(label))
+
+
+def is_nonresponse(label: str) -> bool:
+    """A label that may mean the value is absent ("not applicable", "unknown", "skipped")."""
+    return bool(_NONRESPONSE.search(label)) or is_explicit_nonresponse(label)
 
 
 def _cells(line: str) -> list[str]:

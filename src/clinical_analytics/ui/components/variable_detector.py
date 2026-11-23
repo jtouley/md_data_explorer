@@ -349,9 +349,10 @@ class VariableTypeDetector:
     def ensure_patient_id(cls, df: Any) -> tuple[pl.DataFrame, dict[str, Any]]:
         """Add the app's ID column the way the upload does: from the contract semantics pass.
 
-        The patient key, row key or combination comes from ``contracts.inference`` (structure only:
-        no dictionary here), and ``add_id_columns`` copies it to ``patient_id``, hashes a
-        combination into it, or numbers the rows. Used for stored data that lost its ID column.
+        The patient key comes from ``contracts.inference`` (structure only: no dictionary here),
+        and ``add_id_columns`` copies a settled key to ``patient_id`` or numbers the rows (a
+        line's own ID or a combination never becomes ``patient_id``). Used for stored data that
+        lost its ID column.
 
         Returns:
             (DataFrame, the ``synthetic_id_metadata.patient_id`` record: 'patient_id_source' is

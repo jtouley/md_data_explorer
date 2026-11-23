@@ -94,12 +94,15 @@ COUNT_TOKENS: Final = frozenset(
     {"meds", "medications", "drugs", "children", "visits", "admissions", "events", "episodes", "times", "days",
      "count", "cases", "deaths", "births", "pregnancies", "falls", "doses", "lesions", "nodes", "procedures"}
 )  # fmt: skip
-# The broad conventions for a patient identifier, as a whole name with its separators removed
-# ("Patient_ID", "patientId", "MRN"). In this order when a file has several. Any other key comes
-# from the data dictionary, a user's answer or the structure (a 1..k sequence within it); a name
-# alone never makes one.
+# Published standards' names for a patient identifier, as a whole name with its separators removed
+# ("Patient_ID", "USUBJID", "MRN"), in this order when a file has several: HL7 FHIR Patient.id
+# ("patient_id"); CDISC SDTM USUBJID and SUBJID ("subject_id"); OMOP CDM person_id; the medical
+# record number of health records (MRN); CDISC/clinical-trial participant and study IDs. Any
+# other key comes from the data dictionary, a user's answer or the structure (a 1..k sequence
+# within it); a name alone never makes one.
 PATIENT_KEY_NAMES: Final[tuple[str, ...]] = (
-    "patientid", "subjectid", "personid", "mrn", "studyid", "memberid", "caseid"
+    "patientid", "usubjid", "subjectid", "subjid", "personid", "mrn", "medicalrecordnumber",
+    "participantid", "studyid",
 )  # fmt: skip
 # Whole column names that the app and staging keep as text (an ID of digits is still an ID).
 KEY_COLUMN_NAMES: Final = frozenset({"id", *PATIENT_KEY_NAMES})
@@ -465,6 +468,47 @@ def _noted_code_question(column: str, code: int | float, note: str) -> OpenQuest
     )
 
 
+# Where a measure's applied non-response code was written: its dictionary entry or its header.
+_CODE_LIST_EVIDENCE: Final = ("the data dictionary says so", "the column's header says so")
+
+
+def _inside(code: str, stated: tuple[float, float] | None) -> bool:
+    """A numeric code inside the range the column's own entry states: a value the measure may
+    really take, so the entry contradicts itself and only the user can say which it is."""
+    return stated is not None and _is_number(code) and stated[0] <= float(code) <= stated[1]
+
+
+def _measure_nonresponse(
+    series: pl.Series, labels: Mapping[str, str], stated: tuple[float, float] | None = None
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    """(labels kept, codes applied as missing, codes to ask about) for a code list on a measure.
+
+    A numeric column with many values besides its listed codes is a measure, and a listed code
+    whose label is a non-response ("-9 = not applicable", "-8 = don't know") is never one of its
+    categories: averaged in, it would change every mean. Explicit non-response labels (Refused,
+    Don't know, Not asked, Missing, Not recorded) are applied as missing, unless the code lies
+    inside the column's stated range; any other non-response or not-applicable label, and any
+    non-response code inside the stated range, is asked ("Does -9 in X mean not recorded?"),
+    which holds the column: a value inside the stated range is never blanked without the user.
+    A code list on a coded item (few other values) is left as it is."""
+    from clinical_analytics.contracts.dictionary import is_explicit_nonresponse, is_nonresponse
+
+    others = {str(v) for v in series.drop_nulls().unique().to_list() if not any(_same_code(v, c) for c in labels)}
+    if len(others) < config.MEASURE_MIN_VALUES:
+        return dict(labels), {}, {}
+    kept: dict[str, str] = {}
+    applied: dict[str, str] = {}
+    asked: dict[str, str] = {}
+    for code, label in labels.items():
+        if is_explicit_nonresponse(label) and not _inside(code, stated):
+            applied[code] = label
+        elif is_nonresponse(label):
+            asked[code] = f"{code} = {label}"
+        else:
+            kept[code] = label
+    return (kept if len(kept) >= config.MISSING_CODE_MIN_CATEGORIES else {}), applied, asked
+
+
 def _same_code(a: object, b: object) -> bool:
     try:
         return float(str(a)) == float(str(b))
@@ -749,54 +793,43 @@ def _structural_key(
     """(tentative key, evidence, question) when only the structure is left to go on: always asked.
 
     A repeating ID says lines belong to something, not that it is the patient (a ward, a device
-    and a clinician repeat too). A repeating ID with a few lines per value (``KEY_MIN_SHARE``
-    different values per line or more) and no rival is the tentative key; a line-unique ID nested
-    in a rarely repeating one (a second person on each line: a child and a carer, a donor and a
-    recipient) makes the unique one tentative; two such IDs, the one with more values. With many
-    lines per value there is no tentative key. Nothing in a name settles it.
+    and a clinician repeat too), so "Which column identifies the patient?" is asked with the same
+    options whatever the thresholds: every repeating ID-like column (most values first) and a
+    line-unique ID nested in the one with most values. The thresholds only choose which option is
+    pre-selected (the tentative key, low confidence), and every answer that counts patients is
+    held until the user answers; no threshold changes an applied fact or a number:
+
+    * no tentative key when the column with most values has fewer than ``KEY_MIN_SHARE`` values
+      per line, or ``KEY_RECORD_SHARE`` of its values sit on one line only (record IDs);
+    * the nested line-unique ID when ``KEY_SECOND_PERSON_SHARE`` of the repeating column's values
+      sit on one line (a second person on each line: a child and a carer);
+    * otherwise the repeating column with most values. Nothing in a name settles it.
     """
     rows = df.height
     ids = [c for c in candidates if c.id_like]
     repeating = sorted((c for c in ids if not c.unique), key=lambda c: (-c.distinct, order[c.column]))
     if not repeating:
         return None, "", None
-    top, rivals = repeating[0], [c for c in repeating[1:] if c.distinct >= config.KEY_MIN_SHARE * rows]
-    share = top.distinct / rows
-    if share >= config.KEY_MIN_SHARE and rivals:
-        why = "Each repeats across lines with a few lines per value; nothing in the file says which names the patient."
-        return top, f"{top.column} has the most different values", key_question([top, *rivals], why)
-    if share >= config.KEY_MIN_SHARE:
-        single = _single_line_share(df, top.column)
-        if single >= config.KEY_RECORD_SHARE:
-            # Nearly every value on one line: record IDs with a few repeats (or gaps), not
-            # patients with several lines each. Asked, with no tentative key.
-            why = (
-                f"Nearly all of its {_n(top.distinct)} values sit on one line; nothing in the file says whom it names."
-            )
-            return None, "", key_question([top], why)
-        fine = [c for c in ids if c.unique and _nested(df, c.column, top.column)]
-        if fine and single >= config.KEY_SECOND_PERSON_SHARE:
-            # Most values of the repeating ID sit on one line: each line may be one person, with
-            # the repeating ID naming a second person some lines share.
-            why = (
-                f"{fine[0].column} is on every line once and {top.column} repeats on a few lines; "
-                "each line may be one person, grouped by another."
-            )
-            return fine[0], f"{fine[0].column} is on every line once", key_question([fine[0], top], why)
-        why = (
-            f"Its values repeat across lines ({_n(top.distinct)} values over {_n(rows)} lines); "
-            "nothing in the file says whom it names."
-        )
-        return (
-            top,
-            f"{top.column} is an ID whose values repeat across lines, a few lines each",
-            key_question([top], why),
-        )
-    why = (
-        f"{top.column} has {_n(top.distinct)} different values over {_n(rows)} lines; "
-        "nothing in the file says whom it names."
-    )
-    return None, "", key_question(repeating[:_MAX_KEY_CANDIDATES], why)
+    top = repeating[0]
+    fine = [c for c in ids if c.unique and _nested(df, c.column, top.column)][:1]
+    offered = [*repeating, *fine][:_MAX_KEY_CANDIDATES]
+    single = _single_line_share(df, top.column)
+    tentative: _Candidate | None = None
+    evidence = ""
+    if top.distinct / rows < config.KEY_MIN_SHARE or single >= config.KEY_RECORD_SHARE:
+        tentative = None
+    elif fine and single >= config.KEY_SECOND_PERSON_SHARE:
+        tentative, evidence = fine[0], f"{fine[0].column} is on every line once"
+    else:
+        tentative, evidence = top, f"{top.column} is an ID whose values repeat across lines"
+    options = [tentative, *(c for c in offered if c is not tentative)] if tentative else offered
+    whom = "it names" if len(options) == 1 else "they name"
+    why = f"Nothing in the file says whom {whom} ({_lines_note(options, rows)})."
+    return tentative, evidence, key_question(options, why)
+
+
+def _lines_note(options: Sequence[_Candidate], rows: int) -> str:
+    return "; ".join(f"{c.column}: {_n(c.distinct)} values" for c in options) + f"; {_n(rows)} lines"
 
 
 _ID_TEXT: Final = re.compile(r"\b(?:id|identifier|identifies)\b", re.IGNORECASE)
@@ -816,12 +849,21 @@ def _group_role(column: str, entry: DictionaryEntry | None) -> str:
 def _grouping(
     df: pl.DataFrame, dictionary: Dictionary, key: str, taken: set[str], excluded: set[str]
 ) -> list[GroupingColumn]:
-    """IDs for another role than the patient, by structure: an ID-like column (named as an ID, or
-    one its dictionary entry calls an identifier) with fewer values than half the patients, whose
-    values repeat across several patients. Never a measure."""
+    """Columns for another role than the patient, by structure, never by a list of names.
+
+    * An ID-like column (named as an ID, written like one, or called an identifier by its
+      dictionary entry) with fewer values than half the patients, whose values repeat across
+      several patients: a grouping ID (``is_id``).
+    * Without that, a text column with 3 or more values, fewer than half the patients, each value
+      shared by two or more patients on average, that changes within a patient (so it is not an
+      attribute of the patient): a staff member, a place or a device, perhaps (``confidence``
+      low, ``is_id`` False). Never a measure (a unit), a coded item (labels), a date, or an
+      unlabelled whole number (as likely a score as a code). It changes no number; it describes.
+    """
     from clinical_analytics.core.identifier_rules import can_identify_patients
 
     patients = int(df.get_column(key).drop_nulls().n_unique())
+    repeats = patients < df.get_column(key).drop_nulls().len()
     found: list[GroupingColumn] = []
     for column in df.columns:
         if column in taken or column in excluded or column == key:
@@ -831,9 +873,7 @@ def _grouping(
         said = entry is not None and bool(_ID_TEXT.search(entry.description))
         if entry is not None and (entry.labels or entry.nonresponse):
             continue  # a coded item (its codes have labels) is a category, never an ID
-        if not (id_named(column) or said or id_shaped(df.get_column(column))) or not (
-            dtype == pl.String or dtype.is_integer() or dtype.is_float()
-        ):
+        if not (dtype == pl.String or dtype.is_integer() or dtype.is_float()):
             continue
         series = df.get_column(column)
         distinct = int(series.drop_nulls().n_unique())
@@ -841,25 +881,57 @@ def _grouping(
             continue
         spans = (
             df.lazy()
-            .filter(pl.col(column).is_not_null())
+            .filter(pl.col(column).is_not_null() & pl.col(key).is_not_null())
             .group_by(column)
             .agg(pl.col(key).n_unique().alias("p"))
-            .select(pl.col("p").max())
+            .select(pl.col("p").max().alias("most"), pl.col("p").mean().alias("mean"))
             .collect()
-            .item()
+            .row(0, named=True)
         )
-        if not spans or spans < 2:
+        if not spans["most"] or spans["most"] < 2:
             continue
+        if id_named(column) or said or id_shaped(series):
+            found.append(
+                GroupingColumn(
+                    column=column,
+                    role=_group_role(column, entry),
+                    is_id=True,
+                    source="dictionary" if said else "structure",
+                    evidence=f"its {_n(distinct)} values each repeat across several patients",
+                )
+            )
+            continue
+        has_unit = (entry is not None and entry.unit is not None) or _unit_from_name(column) is not None
+        if dtype != pl.String or has_unit or distinct < 3 or spans["mean"] < 2 or not repeats:
+            continue  # an unlabelled whole number is as likely a score as a code: never guessed
+        if not _varies_within(df, key, column):
+            continue
+        said_role = _ROLE_TEXT.match(entry.description) if entry is not None and entry.description else None
         found.append(
             GroupingColumn(
                 column=column,
-                role=_group_role(column, entry),
-                is_id=True,
-                source="dictionary" if said else "structure",
-                evidence=f"its {_n(distinct)} values each repeat across several patients",
+                role=said_role.group("who").strip().lower() if said_role else "group",
+                is_id=False,
+                confidence="low",
+                source="structure",
+                evidence=f"its {_n(distinct)} values are shared across patients and change within a patient",
             )
         )
     return found
+
+
+def _varies_within(df: pl.DataFrame, key: str, column: str) -> bool:
+    """Some patient's lines hold two or more values of ``column`` (not an attribute of the patient)."""
+    most = (
+        df.lazy()
+        .filter(pl.col(key).is_not_null())
+        .group_by(key)
+        .agg(pl.col(column).drop_nulls().n_unique().alias("k"))
+        .select(pl.col("k").max())
+        .collect()
+        .item()
+    )
+    return bool(most is not None and most >= 2)
 
 
 def _choose_keys(df: pl.DataFrame, dictionary: Dictionary, facts: UploadFacts, excluded: set[str]) -> _Keys:
@@ -1118,10 +1190,14 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
         missing: list[MissingCode] = []
         labels: dict[str, str] = {}
         labels_source: FactSource | None = None
+        measure_notes: dict[str, str] = {}
         if entry is not None and date_fmt is None:
             for code, label in entry.missing.items():
                 typed = _typed_code(code, dtype)
-                if typed is not None:
+                if dtype.is_numeric() and _inside(code, entry.stated_range):
+                    # A value the measure may really take is never blanked without the user.
+                    measure_notes[code] = f"{code} = {label}"
+                elif typed is not None:
                     missing.append(
                         MissingCode(
                             value=typed, label=label, source="dictionary", evidence="the data dictionary says so"
@@ -1135,6 +1211,23 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
             header = code_labels(name)
             if header:
                 labels, labels_source = header, "structure"
+        if labels and date_fmt is None and dtype.is_numeric() and dtype != pl.Boolean:
+            labels, applied, asked_codes = _measure_nonresponse(
+                series, labels, entry.stated_range if entry is not None else None
+            )
+            missing.extend(
+                MissingCode(
+                    value=typed,
+                    label=label,
+                    source=labels_source or "dictionary",
+                    evidence=_CODE_LIST_EVIDENCE[labels_source == "structure"],
+                )
+                for code, label in applied.items()
+                if (typed := _typed_code(code, dtype)) is not None
+                and not any(_same_code(m.value, typed) for m in missing)
+            )
+            measure_notes.update(asked_codes)
+            labels_source = labels_source if labels else None
         if date_fmt is None and dtype.is_numeric() and dtype != pl.Boolean:
             # A code stated in prose ("Coded fields: 99 = unknown", "ages of 90 or over were coded
             # as 99", a portal's description) is asked, never applied: only the column's own
@@ -1144,8 +1237,9 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
                 **dictionary.shared_missing,
                 **dictionary.noted_missing.get(name, {}),
                 **(entry.noted_missing if entry else {}),
+                **measure_notes,
             }
-            own = entry.noted_missing if entry else {}
+            own = {**(entry.noted_missing if entry else {}), **measure_notes}
             for code, note in notes.items():
                 typed = _typed_code(code, dtype)
                 # A shared note never overrides a category of the column's own code list; the
@@ -1255,7 +1349,8 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
     for s in keys.sequences:
         roles[s.column] = "sequence"
     for g in keys.groups:
-        roles[g.column] = "grouping"
+        if g.is_id:  # a low-confidence grouping stays a value: it describes, never keys
+            roles[g.column] = "grouping"
     # A key, a sequence or a grouping column is never asked about "not recorded" values.
     questions = [q for q in questions if not (q.kind == "missing_code" and q.column in roles)]
     for col, role in roles.items():
@@ -1780,41 +1875,30 @@ def add_id_columns(
 ) -> tuple[pl.DataFrame, dict[str, Any], DatasetSemantics]:
     """Add the app's ID column and record it in the semantics as an app column.
 
-    * a patient key or a unique row key column: copied to ``patient_id`` (the file's column stays);
-    * a combination unique on every line: hashed into ``patient_id``;
-    * nothing: lines numbered 1..n in ``row_number``.
+    * a settled patient key: copied to ``patient_id`` (the file's column stays);
+    * no settled key (a tentative one, a line's own ID, a combination of columns, nothing): lines
+      numbered 1..n in ``row_number``, which never names a patient.
 
     A file that already has ``patient_id`` gets nothing added. Returns the frame, the upload's
     ``synthetic_id_metadata.patient_id`` record, and the semantics with ``app_columns`` set.
     """
     from clinical_analytics.core.identifier_rules import REPEATED_ID_COLUMNS_KEY
 
-    repeated = [g.column for g in semantics.grouping_columns]
+    repeated = [g.column for g in semantics.grouping_columns if g.is_id]
     if semantics.population_estimates:
         return _numbered(df, semantics, {"population_estimates": True})
     if PATIENT_ID_COLUMN in df.columns:
         return df, {"patient_id_source": "existing", "patient_id_columns": None}, semantics
-    source_col = semantics.patient_key_column or (
-        semantics.row_key.columns[0] if semantics.row_key.kind == "column" else None
-    )
+    # Only a settled key is copied: a tentative key (asked) or a line's own ID would make the app's
+    # ``patient_id`` look like a patient identifier it is not; lines are numbered instead.
+    key = semantics.patient_key
+    source_col = key.column if key is not None and key.confidence != "low" else None
     if source_col is not None:
         added = AppColumn(column=PATIENT_ID_COLUMN, kind="copy", made_from=(source_col,))
         meta: dict[str, Any] = {"patient_id_source": "single_column", "patient_id_columns": [source_col]}
-        if semantics.patient_key is None:
-            meta[REPEATED_ID_COLUMNS_KEY] = repeated
         return (
             df.with_columns(pl.col(source_col).cast(pl.String).alias(PATIENT_ID_COLUMN)),
             meta,
-            _with_app_column(semantics, added),
-        )
-    if semantics.row_key.kind == "composite":
-        from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
-
-        parts = list(semantics.row_key.columns)
-        added = AppColumn(column=PATIENT_ID_COLUMN, kind="hash", made_from=tuple(parts))
-        return (
-            VariableTypeDetector.create_synthetic_patient_id(df, parts),
-            {"patient_id_source": "composite", "patient_id_columns": parts},
             _with_app_column(semantics, added),
         )
     return _numbered(df, semantics, {REPEATED_ID_COLUMNS_KEY: repeated})

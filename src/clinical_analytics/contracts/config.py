@@ -885,6 +885,9 @@ MISSING_LABEL_NOT_TAKEN: Final = re.compile(
     r"don'?t\s+know|not\s+known)\b",
     re.IGNORECASE,
 )
+# A numeric column with at least this many values besides its listed codes is a measure: its
+# non-response codes are never categories (``inference._measure_nonresponse``).
+MEASURE_MIN_VALUES: Final = 10
 # A codebook keeps at least this many coded categories after its missing codes are taken out.
 MISSING_CODE_MIN_CATEGORIES: Final = 2
 MISSING_LABEL_EXCEPT: Final = re.compile(r"\bother\b", re.IGNORECASE)
@@ -897,16 +900,19 @@ TIME_SINCE_MIN_SHARE: Final = 0.9
 # A repeating column with fewer values than this share of the lines never beats a unique
 # conventionally named patient ID.
 GENERIC_KEY_MIN_SHARE: Final = 0.05
-# A repeating ID that only the structure points to is tentatively the patient key with at least
-# this share of different values per line (a few lines each, at most 5 on average); with fewer
-# (long follow-up, or a site, a device, a ward) "Which column identifies the patient?" is asked.
+# "Which column identifies the patient?" is asked whenever only the structure points to a key.
+# These three shares only choose which option is pre-selected (the tentative key); the options,
+# the hold on every answer that counts patients, and every applied fact are the same whatever
+# their values (tests/contracts/test_semantics_key_thresholds.py moves each by 0.1 either way).
+# No tentative key below one different value per five lines (share = values / lines): beyond a
+# handful of lines per value the column reads as a place, a team or a long series, not a person.
 KEY_MIN_SHARE: Final = 0.2
-# A line-unique ID nested in a repeating ID whose values mostly (this share or more) sit on one
-# line only: each line may be one person grouped by a second person, so the key is asked.
-KEY_SECOND_PERSON_SHARE: Final = 0.5
-# A repeating ID with at least this share of its values on one line only is a record ID with a
-# few repeats, never a tentative patient key (still asked).
+# Nearly one line per value: when nine values in ten sit on a single line, the column names
+# lines (records with a few repeats), not people with several lines, so nothing is pre-selected.
 KEY_RECORD_SHARE: Final = 0.9
+# Most values on one line (more than half): a line-unique ID nested in such a column may be a
+# second person on each line (a child and a carer), so the line-unique one is pre-selected.
+KEY_SECOND_PERSON_SHARE: Final = 0.5
 # "Which column identifies the patient?": its id and the answer that says no column does.
 KEY_QUESTION_ID: Final = "patient_key"
 KEY_ANSWER_NONE: Final = "none of these names the patient"

@@ -83,18 +83,17 @@ def test_ensurePatientId_populationEstimates_rowNumberNotPatientId(
     assert result[ROW_NUMBER_COLUMN].to_list() == list(range(1, df.height + 1))
 
 
-def test_ensurePatientId_uniqueTextColumn_copiedNotRenamed() -> None:
-    # Arrange
+def test_ensurePatientId_uniqueTextColumn_linesNumberedSourceKept() -> None:
+    # Arrange: a line's own ID (no convention, no dictionary) is never the app's patient_id
     df = pl.DataFrame({"record_code": [f"R{i:03d}" for i in range(50)], "sbp": [120.5 + i for i in range(50)]})
 
     # Act
     result, metadata = VariableTypeDetector.ensure_patient_id(df)
 
-    # Assert: the source column stays queryable beside the copy
-    assert metadata["patient_id_source"] == "single_column"
-    assert metadata["patient_id_columns"] == ["record_code"]
-    assert result["patient_id"].to_list() == df["record_code"].to_list()
-    assert_frame_equal(result.drop("patient_id"), df)
+    # Assert: the source column stays queryable; lines are numbered
+    assert metadata["patient_id_source"] == "row_index"
+    assert "patient_id" not in result.columns
+    assert_frame_equal(result.drop(ROW_NUMBER_COLUMN), df)
 
 
 def test_ensurePatientId_rowNumberNameTaken_usesFreeName() -> None:
@@ -203,7 +202,7 @@ def test_findIntervals_boundNames_valueAndBoundsFound(schema: dict[str, pl.DataT
     assert find_intervals(schema) == expected
 
 
-def test_ensurePatientId_compositeKey_hashedAndSourcesKept(
+def test_ensurePatientId_compositeKey_linesNumberedSourcesKept(
     make_population_estimates: Callable[..., pl.DataFrame],
 ) -> None:
     # Arrange: three causes, so cause_name is categorical and the cell key is unique
@@ -212,14 +211,10 @@ def test_ensurePatientId_compositeKey_hashedAndSourcesKept(
     # Act
     result, metadata = VariableTypeDetector.ensure_patient_id(df)
 
-    # Assert
-    assert metadata["patient_id_source"] == "composite"
-    # The place is named twice (a name and a code, one to one): either tells the cells apart, and
-    # the choice depends on the values only, never on column names or order
-    assert metadata["patient_id_columns"] in (["location_name", "cause_name", "sex", "year"],
-                                              ["FIPS", "cause_name", "sex", "year"])  # fmt: skip
-    assert result["patient_id"].n_unique() == df.height
-    assert_frame_equal(result.drop("patient_id"), df)
+    # Assert: a combination tells cells apart; it never names a patient, so nothing is hashed
+    assert metadata["patient_id_source"] == "row_index"
+    assert "patient_id" not in result.columns
+    assert_frame_equal(result.drop(ROW_NUMBER_COLUMN), df)
 
 
 # Frames for the semantics-based row-key rules (ADR017): what tells rows apart decides the note.
@@ -236,6 +231,7 @@ _KEY_FRAMES: dict[str, pl.DataFrame] = {
     "copy_not_named_id": pl.DataFrame({"FIPS": [f"{1000 + i}" for i in range(_ROWS)], "rate": [0.5] * _ROWS}),
     "copy_of_named_id": pl.DataFrame({"MRN": [f"M{i}" for i in range(_ROWS)], "sbp": [120.5] * _ROWS}),
     "existing": pl.DataFrame({"patient_id": [f"P{i}" for i in range(_ROWS)], "sbp": [120.5] * _ROWS}),
+    "settled_key": pl.DataFrame({"person_id": [f"P{i // 2}" for i in range(_ROWS)], "sbp": [120.5] * _ROWS}),
 }
 
 
@@ -380,8 +376,9 @@ def test_canIdentifyPatients_floatColumn_onlyWholeNumbersNamedAsId(series: pl.Se
 @pytest.mark.parametrize(
     ("frame", "expected"),
     [
-        pytest.param("copy_not_named_id", ["patient_id"], id="copy"),
-        pytest.param("composite", ["patient_id"], id="hash"),
+        pytest.param("settled_key", ["patient_id"], id="copy"),
+        pytest.param("copy_not_named_id", ["row_number"], id="row_id_never_copied"),
+        pytest.param("composite", ["row_number"], id="never_hashed"),
         pytest.param("row_index", ["row_number"], id="rows"),
         pytest.param("existing", [], id="existing"),
     ],

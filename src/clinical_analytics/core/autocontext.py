@@ -57,7 +57,7 @@ def _semantic_entity_keys(semantics: Any) -> list[str]:
     keys: list[str] = []
     if semantics.patient_key is not None:
         keys.append(semantics.patient_key.column)
-    for column in (*semantics.row_key.columns, *(g.column for g in semantics.grouping_columns)):
+    for column in (*semantics.row_key.columns, *(g.column for g in semantics.grouping_columns if g.is_id)):
         if column not in keys and semantics.row_key.kind != "composite":
             keys.append(column)
     return keys

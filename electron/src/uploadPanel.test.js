@@ -467,11 +467,11 @@ describe('upload facts from the data contract', () => {
       upload_id: 'u1',
       status: 'ready',
       facts: [
-        'Each line is one splint fitting; 900 patients (MRN names the patient) over 1,260 lines.',
+        'Each line is one splint fitting; 412 patients (owner_ref names the patient) over 637 lines.',
       ],
     });
     expect(uploadResultText(result, 'splints', null)).toBe(
-      'The cohort “splints” is ready. Each line is one splint fitting; 900 patients (MRN names the patient) over 1,260 lines.'
+      'The cohort “splints” is ready. Each line is one splint fitting; 412 patients (owner_ref names the patient) over 637 lines.'
     );
   });
 

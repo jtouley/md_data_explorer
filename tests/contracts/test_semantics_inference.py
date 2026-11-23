@@ -23,7 +23,7 @@ from clinical_analytics.contracts.semantics import describe
 PATIENTS = 40
 
 
-def _rehab(key: str = "person_id", seq: str = "episode_no") -> pl.DataFrame:
+def _rehab(key: str = "person_id", seq: str = "stint_no") -> pl.DataFrame:
     """Hip-fracture rehab: 40 patients with 1-4 episodes each, numbered 1..k within patient."""
     rows: list[dict[str, Any]] = []
     for p in range(PATIENTS):
@@ -55,7 +55,8 @@ def test_inferSemantics_episodeRows_appPatientIdNeverTheKey(make_semantics: Call
         ("Patient_ID", "usual name"),
         ("subjectId", "usual name"),
         ("MRN", "usual name"),
-        ("case_id", "usual name"),
+        ("participant_id", "usual name"),
+        ("USUBJID", "usual name"),
         ("study_id", "usual name"),
         ("kin_ref", "numbers 1, 2, 3"),
         ("enrolee_no", "numbers 1, 2, 3"),
@@ -75,7 +76,7 @@ def test_inferSemantics_patientKey_conventionOrStructureNeverAnyOtherName(key: s
 
 def test_inferSemantics_otherIdNameNoSequenceFewLinesEach_tentativeKeyAsked() -> None:
     # Arrange: an ID that is no convention, repeating 1-4 times, with nothing numbering its lines
-    df = _rehab(key="kin_ref").drop("episode_no")
+    df = _rehab(key="kin_ref").drop("stint_no")
 
     # Act
     semantics = infer_semantics(df)
@@ -87,7 +88,7 @@ def test_inferSemantics_otherIdNameNoSequenceFewLinesEach_tentativeKeyAsked() ->
 
 def test_inferSemantics_dictionaryStatesKey_keyFromDictionary() -> None:
     # Arrange: a glaucoma clinic file whose key has no ID-like name at all
-    df = _rehab(key="eye_owner").rename({"episode_no": "visit_seq"})
+    df = _rehab(key="eye_owner").rename({"stint_no": "reading_order"})
     doc = "GLAUCOMA IOP CLINIC\neye_owner is the patient identifier.\n"
 
     # Act
@@ -136,8 +137,8 @@ def test_inferSemantics_secondPersonOnEachLine_askedWhichColumnIsThePatient() ->
 @pytest.mark.parametrize(
     ("ids", "expected_key", "expected_row_key"),
     [
-        pytest.param([f"C{i:03d}" for i in range(60)], "case_id", ("case_id",), id="all_unique_named"),
-        pytest.param([f"C{i % 20:03d}" for i in range(60)], "case_id", (), id="repeating_named"),
+        pytest.param([f"C{i:03d}" for i in range(60)], "participant_id", ("participant_id",), id="all_unique_named"),
+        pytest.param([f"C{i % 20:03d}" for i in range(60)], "participant_id", (), id="repeating_named"),
         pytest.param([None if i % 3 else f"C{i:03d}" for i in range(60)], None, (), id="mostly_missing"),
     ],
 )
@@ -145,7 +146,7 @@ def test_inferSemantics_cataractCases_uniqueOrRepeating(
     ids: list[str | None], expected_key: str | None, expected_row_key: tuple[str, ...]
 ) -> None:
     # Arrange: cataract surgery registry
-    df = pl.DataFrame({"case_id": ids, "va_logmar": [0.1 * (i % 9) for i in range(60)]})
+    df = pl.DataFrame({"participant_id": ids, "va_logmar": [0.1 * (i % 9) for i in range(60)]})
 
     # Act
     semantics = infer_semantics(df)
@@ -199,7 +200,7 @@ def test_inferSemantics_uniqueUnnamedRowKey_asksIsEachLinePatient() -> None:
 
 
 # --------------------------------------------------------------------------- 3. sequences
-@pytest.mark.parametrize("seq", ["attendance_no", "episode_no", "fitting_seq", "scan_no"])
+@pytest.mark.parametrize("seq", ["attendance_no", "stint_no", "fitting_seq", "plate_no"])
 def test_inferSemantics_sequenceColumn_orderWithinPatientNeverAnId(seq: str) -> None:
     # Arrange
     df = _rehab(seq=seq)
@@ -462,7 +463,7 @@ def test_inferSemantics_everyCodeDecodes_contractEnumMatches(make_contract: Call
         ("peep_cmH2O", "cmH2O"),
         ("ferritin_ng_ml", "ng/mL"),
         ("bmd_g_cm2", "g/cm²"),
-        ("fev1_pct", "%"),
+        ("spirom_ratio_pct", "%"),
         ("urea_mmol_l", "mmol/L"),
         ("infusion_ml_per_h", "mL/h"),
     ],

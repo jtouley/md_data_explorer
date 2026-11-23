@@ -4,7 +4,8 @@ what its columns are called, the order they come in, how its dates are written, 
 of its data dictionary.
 
 Each synthetic table and its dictionary (invented domains: splint fittings, iron infusions, a
-table of falls, a shift-work survey, and a file that only broad name conventions describe) is
+table of falls, a shift-work survey, pack-years with only non-response codes, and a file that
+only broad name conventions describe) is
 transformed by (i) renaming every column to a neutral random token, consistently in the
 dictionary; (ii) reordering the columns; (iii) writing its dates another way; (iv) laying the
 dictionary out as prose, a Markdown table, or a codebook table. The file goes through staging
@@ -154,6 +155,26 @@ def _shift_survey() -> Case:
     return Case("shift_survey", frame, ("One row per participant.",), entries)
 
 
+def _smoking() -> Case:
+    """A measure whose code list holds only non-response codes, outside its values."""
+    n = 140
+    frame = pl.DataFrame(
+        {
+            "smoker_ref": [f"Q{i:04d}" for i in range(n)],
+            "pack": [-9 if i % 5 == 0 else -8 if i % 7 == 0 else 2 + (i * 3) % 55 for i in range(n)],
+            "quit_on": _days(n, date(2020, 6, 18)),
+        }
+    )
+    entries = (
+        Entry("smoker_ref", "Smoker"),
+        Entry(
+            "pack", "Pack-years smoked", not_recorded=(("-9", "not applicable (never smoker)"), ("-8", "don't know"))
+        ),
+        Entry("quit_on", "Date the person stopped smoking"),
+    )
+    return Case("smoking", frame, ("One row per participant.",), entries)
+
+
 def _named_only() -> Case:
     n = 120
     frame = pl.DataFrame(
@@ -169,7 +190,8 @@ def _named_only() -> Case:
     return Case("named_only", frame, named=named)
 
 
-CASES = (_fittings, _infusions, _falls_table, _shift_survey, _named_only)
+CASES = (_fittings, _infusions, _falls_table, _shift_survey, _smoking, _named_only)
+NAMED_FREE = CASES[:-1]
 
 
 # --------------------------------------------------------------------------- transforms
@@ -323,7 +345,7 @@ def test_inferSemantics_renamedReorderedRewrittenRelaidOut_sameMeaningOrAsked(bu
 
 
 @pytest.mark.parametrize("layout", LAYOUTS)
-@pytest.mark.parametrize("build", CASES[:4], ids=[c.__name__.lstrip("_") for c in CASES[:4]])
+@pytest.mark.parametrize("build", NAMED_FREE, ids=[c.__name__.lstrip("_") for c in NAMED_FREE])
 def test_inferSemantics_dictionaryOrStructureCases_identicalUnderEveryTransform(build: Any, layout: str) -> None:
     # Arrange: these files' facts come from their dictionaries and structure only
     case = build()
@@ -354,3 +376,19 @@ def test_inferSemantics_nameOnlyFacts_becomeQuestionsWhenRenamed() -> None:
     assert changed.question("missing_code").column == renamed["stay_days"]
     assert original.columns["hb_g_dl"].unit.value == "g/dL"
     assert changed.columns[renamed["hb_g_dl"]].unit is None
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_inferSemantics_nonresponseCodesOnAMeasure_neverAveragedInAnyLayout(layout: str) -> None:
+    # Arrange
+    case = _smoking()
+
+    # Act
+    semantics, back = _upload(case, layout=layout, writing="%d/%m/%Y", rename=True, reorder=True, seed=11)
+    pack = {old: new for new, old in back.items()}["pack"]
+
+    # Assert: "don't know" is applied as missing; "not applicable" is asked and holds the column
+    assert [str(m.value) for m in semantics.columns[pack].missing_codes] == ["-8"]
+    assert semantics.columns[pack].labels == {}
+    asked = [q for q in semantics.open_questions if q.kind == "missing_code" and q.column == pack]
+    assert [str(q.value) for q in asked] == ["-9"]

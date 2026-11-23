@@ -225,9 +225,9 @@ def test_applySemantics_twoCodesOnOneMeasure_bothMissingMeanTrue(line: str) -> N
 def test_inferSemantics_sharedNoteForAllMeasurements_askedNeverApplied() -> None:
     # Arrange
     frame = pl.DataFrame(
-        {"pt_id": [f"P{i}" for i in range(6)], "alt": [20, 9999, 30, 40, 25, 22], "ast": [18, 25, 9999, 30, 20, 19]}
+        {"tray_ref": [f"P{i}" for i in range(6)], "alt": [20, 9999, 30, 40, 25, 22], "ast": [18, 25, 9999, 30, 20, 19]}
     )
-    doc = "pt_id  Patient identifier\nalt  ALT, U/L\nast  AST, U/L\n\nFor all measurements, 9999 = not recorded.\n"
+    doc = "tray_ref  Patient identifier\nalt  ALT, U/L\nast  AST, U/L\n\nFor all measurements, 9999 = not recorded.\n"
 
     # Act
     semantics = infer_semantics(frame, _facts(doc))
@@ -310,7 +310,7 @@ def test_applyDeclared_centuryAnswer_datesInThe1900s() -> None:
 @pytest.mark.parametrize("column", ["days_of_therapy", "hours_of_sleep"])
 def test_inferSemantics_durationNames_neverTimeSinceSequences(column: str) -> None:
     # Arrange: osteoporosis infusions per visit
-    frame = pl.DataFrame({"pt_id": [f"P{i // 3}" for i in range(60)], column: [(i * 7) % 11 for i in range(60)]})
+    frame = pl.DataFrame({"tray_ref": [f"P{i // 3}" for i in range(60)], column: [(i * 7) % 11 for i in range(60)]})
 
     # Act
     semantics = infer_semantics(frame)
@@ -320,14 +320,19 @@ def test_inferSemantics_durationNames_neverTimeSinceSequences(column: str) -> No
     assert "since" not in semantics.grain.noun
 
 
-def test_inferSemantics_babyUniqueMotherIdsWithBlanks_noQuestion() -> None:
-    # Act
+def test_inferSemantics_uniqueIdAndIdWithBlanks_offeredNeverPreselected() -> None:
+    # Arrange: skin grafts, each with its own donor; a few donors not recorded
     frame = pl.DataFrame(
-        {"infant_id": [f"B{i}" for i in range(60)], "mat_id": [None if i % 10 == 0 else f"M{i}" for i in range(60)]}
+        {"graft_ref": [f"B{i}" for i in range(60)], "donor_ref": [None if i % 10 == 0 else f"M{i}" for i in range(60)]}
     )
 
-    # Assert
-    assert infer_semantics(frame).question("person_role") is None
+    # Act
+    semantics = infer_semantics(frame)
+
+    # Assert: the donor ID with blanks is offered, never pre-selected (each value on one line)
+    asked = semantics.question("patient_key")
+    assert asked is not None and asked.options[:2] == ("donor_ref", "graft_ref")
+    assert semantics.patient_key is None
 
 
 @pytest.mark.parametrize(
@@ -399,18 +404,18 @@ def test_sqlCatalogView_confirmedCodeAndDateReading_readByDuckdb(
     from clinical_analytics.sql.catalog import SqlCatalog
 
     frame = pl.DataFrame(
-        {"pt_id": ["P1", "P2", "P3"], "sbp": [120.0, 999.0, 140.0], "seen": ["03/04/21", "05/06/21", "07/08/21"]}
+        {"tray_ref": ["P1", "P2", "P3"], "sbp": [120.0, 999.0, 140.0], "seen": ["03/04/21", "05/06/21", "07/08/21"]}
     )
     path = tmp_path / "t.parquet"
     frame.write_parquet(path)
     missing = (MissingCodeDeclaration(column="sbp", value=999, missing=True, dataset_version="v1"),)
     dates = (DateReadingDeclaration(column="seen", format="%m/%d/%y", dataset_version="v1"),)
-    catalog = SqlCatalog.from_contract(make_contract(frame, id_column="pt_id"), path, (), missing, dates)
+    catalog = SqlCatalog.from_contract(make_contract(frame, id_column="tray_ref"), path, (), missing, dates)
 
     # Act
     con = duckdb.connect()
     con.execute(catalog.view_sql())
-    rows = con.execute('SELECT sbp, seen FROM "unified" ORDER BY pt_id').fetchall()
+    rows = con.execute('SELECT sbp, seen FROM "unified" ORDER BY tray_ref').fetchall()
 
     # Assert
     assert rows == [(120.0, date(2021, 3, 4)), (None, date(2021, 5, 6)), (140.0, date(2021, 7, 8))]

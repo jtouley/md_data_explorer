@@ -123,6 +123,9 @@ class GroupingColumn(_Model):
     is_id: bool = True
     source: FactSource
     evidence: str = ""
+    # "low" for a column the structure alone suggests groups lines (shared across patients and
+    # changing within one; no ID name or ID-like values): descriptive only, never an entity key.
+    confidence: Confidence = "high"
 
 
 class EpisodeKey(_Model):
@@ -719,9 +722,11 @@ def describe(semantics: DatasetSemantics, *, max_lines: int = 12) -> list[str]:
                 f"{episode.column} names each {episode.noun} of a patient, so {_plural(episode.noun)} can be counted."
             )
     for group in semantics.grouping_columns:
+        by = "" if group.role in ("group", "") else f" by {group.role}"
         if group.is_id:
-            by = "" if group.role in ("group", "") else f" by {group.role}"
             lines.append(f"{group.column} groups lines{by}; it does not name the patient.")
+        elif group.confidence == "low":
+            lines.append(f"{group.column} is shared across patients and changes within one: it may group lines{by}.")
     for name, col in semantics.columns.items():
         if col.date is not None and col.date.format not in (
             "native",

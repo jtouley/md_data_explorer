@@ -18,6 +18,7 @@ from polars.testing import assert_frame_equal
 
 from clinical_analytics.contracts.dates import DateAmbiguity, choose_text_format
 from clinical_analytics.contracts.dictionary import parse_dictionary, parse_pairs
+from clinical_analytics.contracts.holds import open_question_holds
 from clinical_analytics.contracts.inference import UploadFacts, apply_semantics, infer_semantics, names_patient
 from clinical_analytics.contracts.semantics import describe
 
@@ -155,7 +156,8 @@ def test_inferSemantics_attributeOrCountNamedForPatient_neverTheKey(frame: pl.Da
     ("column", "named"),
     [("patient_status", False), ("patient_zip", False), ("num_meds", False), ("number_of_children", False),
      ("Patient_ID", True), ("subjectId", True), ("MRN", True), ("person_id", True),
-     ("kin_ref", False), ("enrolee_no", False), ("carer_id", False)],
+     ("USUBJID", True), ("participant_id", True), ("medical_record_number", True),
+     ("member_id", False), ("case_id", False), ("kin_ref", False), ("enrolee_no", False), ("carer_id", False)],
 )  # fmt: skip
 def test_namesPatient_onlyBroadConventions_neverOtherIdNames(column: str, named: bool) -> None:
     # Act / Assert: any other ID name is settled by the dictionary, the structure or the user
@@ -276,7 +278,7 @@ def test_inferSemantics_ambiguousNameSuffix_noUnit(column: str, values: list[Any
 @pytest.mark.parametrize(
     ("line", "unit"),
     [
-        ("anc  Absolute neutrophil count, x10^9/L", "x10^9/L"),
+        ("plt  Platelets in the pooled bag, x10^9/L", "x10^9/L"),
         ("map  Mean arterial pressure, mmHg", "mmHg"),
         ("onset  Age at onset (years)", "years"),
         ("wait  Minutes from referral to review", "minutes"),
@@ -359,9 +361,15 @@ def test_inferSemantics_repeatingIdsAcrossPatients_groupingByStructure() -> None
     # Act
     semantics = infer_semantics(df, _facts(doc))
 
-    # Assert: an ID-like column repeating across patients groups lines; text and measures do not
-    roles = {g.column: g.role for g in semantics.grouping_columns}
-    assert roles == {"splinter_ref": "splinter", "bay_no": "bay", "kit_id": "kit"}
+    # Assert: an ID-like column repeating across patients groups lines; a text column that changes
+    # within a patient may group them (low confidence, descriptive); a measure never does
+    roles = {g.column: (g.role, g.is_id) for g in semantics.grouping_columns}
+    assert roles == {
+        "splinter_ref": ("splinter", True),
+        "bay_no": ("bay", True),
+        "kit_id": ("kit", True),
+        "orthosis": ("group", False),
+    }
     assert semantics.patient_key_column == "mrn"
 
 
@@ -446,8 +454,8 @@ def test_inferSemantics_scoresAtTwoTimes_pairedByGeneralWordsOrDictionaryBaselin
         {
             "pain_start": [8, 12],
             "pain_48h": [10, 14],
-            "wt_pre_kg": [70.5, 80.0],
-            "wt_post_kg": [68.0, 79.5],
+            "pack_pre_kg": [70.5, 80.0],
+            "pack_post_kg": [68.0, 79.5],
             "itch_entry": [5, 6],
             "itch_w6": [2, 3],
             "scar_a": [1, 2],
@@ -461,7 +469,7 @@ def test_inferSemantics_scoresAtTwoTimes_pairedByGeneralWordsOrDictionaryBaselin
 
     # Assert
     assert (semantics.column("pain_start").timepoint.order, semantics.column("pain_48h").timepoint.order) == (0, 1)
-    assert semantics.column("wt_post_kg").timepoint.paired_with == ("wt_pre_kg",)
+    assert semantics.column("pack_post_kg").timepoint.paired_with == ("pack_pre_kg",)
     assert semantics.column("itch_w6").timepoint.paired_with == ("itch_entry",)
     assert semantics.column("scar_a").timepoint is None
     assert semantics.column("pain_48h").direction is None
@@ -533,3 +541,115 @@ def test_stagingIdNames_oneListWithInference() -> None:
     from clinical_analytics.storage.staging import ID_COLUMN_NAMES
 
     assert ID_COLUMN_NAMES is KEY_COLUMN_NAMES
+
+
+# --------------------------------------------------------------------------- merge check of a1ffe32
+@pytest.mark.parametrize(
+    ("note", "applied", "asked"),
+    [
+        pytest.param("-9 = not applicable (never smoker), -8 = don't know", [-8], [-9], id="na_and_dont_know"),
+        pytest.param("-9 = not applicable, -8 = unknown", [], [-9, -8], id="na_and_unknown"),
+        pytest.param("-9 = refused, -8 = missing", [-9, -8], [], id="both_explicit"),
+    ],
+)
+def test_inferSemantics_nonresponseCodesOnAMeasure_neverCategoriesNeverAveraged(
+    note: str, applied: list[int], asked: list[int]
+) -> None:
+    # Arrange: pack-years of 120 smokers, with two documented non-response codes
+    df = pl.DataFrame(
+        {
+            "smoker_ref": [f"S{i:03d}" for i in range(120)],
+            "pack_years": [-9 if i % 5 == 0 else -8 if i % 7 == 0 else 5 + (i * 3) % 50 for i in range(120)],
+        }
+    )
+    doc = f"pack_years  Pack-years smoked. {note}\n"
+
+    # Act
+    semantics = infer_semantics(df, _facts(doc))
+    column = semantics.column("pack_years")
+    held = open_question_holds(semantics, columns={"pack_years"}, counts_lines=False)
+
+    # Assert: explicit non-response is missing; anything else is asked and holds the column
+    assert column.labels == {}
+    assert sorted(m.value for m in column.missing_codes) == sorted(applied)
+    assert sorted(q.value for q in semantics.open_questions if q.kind == "missing_code") == sorted(asked)
+    assert bool(held) is bool(asked)
+
+
+def test_inferSemantics_codedItemWithUnknown_staysACategory() -> None:
+    # Arrange: a coded item (few values), not a measure
+    df = pl.DataFrame({"brace": [1, 2, 9] * 40})
+
+    # Act
+    column = infer_semantics(df, _facts("brace  Brace worn: 1 = yes, 2 = no, 9 = unknown\n")).column("brace")
+
+    # Assert
+    assert column.labels == {"1": "yes", "2": "no", "9": "unknown"}
+
+
+@pytest.mark.parametrize("column", ["grip_m2", "pain_w4", "score_d7", "mood_y1"])
+def test_inferSemantics_trailingTimepointToken_neverAUnit(column: str) -> None:
+    # Act / Assert: "m2" at the end of a name is month 2, not square metres
+    assert infer_semantics(pl.DataFrame({column: [1.5, 2.5, 3.5]})).column(column).unit is None
+
+
+def test_inferSemantics_areaUnitInsideARatio_kept() -> None:
+    # Act / Assert
+    assert infer_semantics(pl.DataFrame({"bmi_kg_m2": [21.5, 30.0]})).column("bmi_kg_m2").unit.value == "kg/m²"
+
+
+@pytest.mark.parametrize(
+    ("statement", "noun"),
+    [
+        ("One row per **child**.", "child"),
+        ("One row per `dose` given to the child.", "dose"),
+        ("One row per vaccine dose given at the clinic.", "vaccine dose"),
+        ("Each line = one *cast* applied.", "cast"),
+    ],
+)
+def test_parseDictionary_grainStatement_markupStrippedNounOnly(statement: str, noun: str) -> None:
+    # Act / Assert
+    assert parse_dictionary(statement + "\n", ["x"]).grain_noun == noun
+
+
+@pytest.mark.parametrize(
+    ("frame", "column"),
+    [
+        pytest.param(pl.DataFrame({"visit_code": [f"V{i:03d}" for i in range(60)], "x": list(range(60))}), "row_number",
+                     id="row_id_only"),
+        pytest.param(pl.DataFrame({"kennel_ref": [f"K{i % 20:02d}" for i in range(60)], "x": list(range(60))}),
+                     "row_number", id="tentative_key"),
+        pytest.param(pl.DataFrame({"person_id": [f"P{i % 20:02d}" for i in range(60)], "x": list(range(60))}),
+                     "patient_id", id="settled_key"),
+    ],
+)  # fmt: skip
+def test_addIdColumns_keyUnresolved_linesNumberedNeverAPatientId(frame: pl.DataFrame, column: str) -> None:
+    # Act
+    from clinical_analytics.contracts.inference import add_id_columns
+
+    out, _meta, semantics = add_id_columns(frame, infer_semantics(frame))
+
+    # Assert: the app's patient_id exists only for a settled key
+    assert [a.column for a in semantics.app_columns] == [column]
+    assert ("patient_id" in out.columns) is (column == "patient_id")
+
+
+def test_inferSemantics_textCodeSharedAcrossPatients_lowConfidenceGroupingOnly() -> None:
+    # Arrange: hydrotherapy sessions; a pool code changes between a person's sessions
+    rows = [(p, k) for p in range(40) for k in range(3)]
+    df = pl.DataFrame(
+        {
+            "person_id": [f"P{p:03d}" for p, _ in rows],
+            "pool": [("North", "East", "West", "Annex")[(p + k) % 4] for p, k in rows],
+            "sex": [("F", "M")[p % 2] for p, _ in rows],
+            "laps": [10 + (p + 2 * k) % 9 for p, k in rows],
+        }
+    )
+
+    # Act
+    semantics = infer_semantics(df)
+    groups = {g.column: (g.is_id, g.confidence) for g in semantics.grouping_columns}
+
+    # Assert: a shared, changing code groups lines (descriptive); an attribute and a measure do not
+    assert groups == {"pool": (False, "low")}
+    assert semantics.column("pool").role == "value"

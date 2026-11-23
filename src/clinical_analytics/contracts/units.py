@@ -5,12 +5,14 @@ A name ends in a unit when its last tokens are unit atoms and a stem remains bef
 ``grip_kg`` is kilograms, ``urea_mmol_l`` is mmol/L, ``dose_mg_kg_d`` is mg/kg/day. Atoms
 after the first divide it, as written units do. A single atom stands alone only when it cannot
 be read as anything else: one letter (``vitamin_d``), a singular time word (``visit_day``, a day
-number), ``hr`` (a heart rate) or ``min`` (a minimum) is a unit only inside a ratio. Nothing
+number), ``hr`` (a heart rate), ``min`` (a minimum) or a token that reads as a timepoint
+(``m2`` = month 2) is a unit only inside a ratio (``kg_m2``). Nothing
 else is guessed: a dictionary's stated unit always wins (``contracts.dictionary``).
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from typing import Final
 
@@ -39,6 +41,9 @@ ATOMS: Final[dict[str, str]] = {**_MASS, **_AMOUNT, **_VOLUME, **_LENGTH, **_PRE
 _NOT_ALONE: Final = frozenset({"g", "l", "m", "u", "s", "cells", "min", "h", "hr", "d", "day", "wk", "week",
                                "mo", "month", "yr", "year"})  # fmt: skip
 _PER: Final = frozenset({"per"})
+# A token that also reads as a timepoint ("m2" = month 2, "w4", "d7", "y1"): a timepoint at the
+# end of a name, never a unit on its own (an area unit then needs a ratio or the dictionary).
+_TIMEPOINT_LIKE: Final = re.compile(r"^(?:m|mo|w|wk|d|y|yr|t|v)\d{1,3}$")
 
 
 def is_atom(token: str) -> bool:
@@ -67,6 +72,7 @@ def unit_from_tokens(tokens: Sequence[str]) -> str | None:
     if not atoms or len(tail) >= len(tokens):
         return None  # no stem before the unit ("kg" alone, "mg_dl")
     if len(atoms) == 1:
-        return None if atoms[0] in _NOT_ALONE else _written(atoms[0], divisor=False)
+        alone = atoms[0] not in _NOT_ALONE and not _TIMEPOINT_LIKE.match(atoms[0])
+        return _written(atoms[0], divisor=False) if alone else None
     first, *rest = atoms
     return "/".join([_written(first, divisor=False), *(_written(t, divisor=True) for t in rest)])

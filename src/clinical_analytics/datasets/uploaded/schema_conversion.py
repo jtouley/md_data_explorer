@@ -66,6 +66,12 @@ def infer_granularities(df: pl.DataFrame) -> list[str]:
     return granularities
 
 
+def _lines_numbered(synthetic_id_metadata: dict[str, Any] | None) -> bool:
+    """The upload's ID record says lines were numbered (``row_number``), not given a patient ID."""
+    record = (synthetic_id_metadata or {}).get("patient_id") or {}
+    return isinstance(record, dict) and record.get("patient_id_source") == "row_index"
+
+
 def convert_schema(
     variable_mapping: dict[str, Any],
     df: pl.DataFrame,
@@ -114,6 +120,10 @@ def convert_schema(
             elif regen_result.can_regenerate:
                 # Regeneration is validated - downstream will regenerate it
                 # Don't set column_mapping - get_cohort() will regenerate it
+                pass
+            elif patient_id_col == "patient_id" and _lines_numbered(synthetic_id_metadata):
+                # The app numbered the lines instead of adding patient_id (ADR017: it is added only
+                # as a copy of a settled patient key), so no column names the patient yet.
                 pass
             elif regen_result.error_message:
                 # Fail fast: regeneration was expected but validation failed

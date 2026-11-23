@@ -532,12 +532,22 @@ def person_id_named(column: str) -> bool:
     )
 
 
+# Names of a person's identifier this privacy guard refuses on a table declared public. Broader
+# than the contract's key conventions (``inference.PATIENT_KEY_NAMES``) on purpose: the guard only
+# refuses, it never picks a key, so a wider net is the safe side.
+PRIVACY_PERSON_KEY_NAMES: Final = frozenset(
+    {"patient", "patientid", "patientno", "patientnumber", "subject", "subjectid", "subjectno", "subjid",
+     "usubjid", "participant", "participantid", "participantno", "person", "personid", "mrn",
+     "medicalrecordnumber", "studyid", "respondentid", "clientid", "enrolleeid", "memberid", "caseid"}
+)  # fmt: skip
+
+
 def _patient_key_name(joined: str) -> bool:
-    """Named for the patient-ID role (the contract inference's role names, ``names_patient``).
-    A privacy guard on tables declared public: it refuses, it never picks a key."""
+    """Named for a person's identifier (``PRIVACY_PERSON_KEY_NAMES``, or the contract's key
+    conventions). A privacy guard on tables declared public: it refuses, it never picks a key."""
     from clinical_analytics.contracts.inference import names_patient
 
-    return names_patient(joined)
+    return joined in PRIVACY_PERSON_KEY_NAMES or names_patient(joined)
 
 
 def id_named(column: str) -> bool:
