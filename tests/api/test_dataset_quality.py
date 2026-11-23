@@ -109,7 +109,9 @@ def test_uploadDataset_qualityCheckFails_responseSaysNotRun(test_client: TestCli
 
     # Assert: the upload stands, and the failed check is visible rather than silently absent.
     assert body["status"] == "ready"
-    assert body["quality"] == {"status": "not_run", "reason": "the check failed (ContractStoreError)", "summary": []}
+    quality = {k: v for k, v in body["quality"].items() if k != "facts"}
+    assert quality == {"status": "not_run", "reason": "the check failed (ContractStoreError)", "summary": []}
+    assert body["quality"]["facts"] == body["facts"]  # what the file holds is still said
 
 
 def test_uploadDataset_runFailsAfterReportWritten_olderReportNotReturned(test_client: TestClient, monkeypatch):

@@ -2095,6 +2095,25 @@ def get_dataset_by_name(dataset_registry):
 
 
 @pytest.fixture
+def make_semantics() -> Callable[..., Any]:
+    """Factory: the contract semantics (ADR017) of a frame, from the real inference pass.
+
+    ``make_semantics(df, doc=None, add_ids=True, **facts)`` returns the ``DatasetSemantics``
+    (with the app's ID column recorded when ``add_ids``); ``facts`` are ``UploadFacts`` fields
+    (``from_excel``, ``source_format``, ``population_estimates``, ``cohort_key``).
+    """
+    from clinical_analytics.contracts.inference import UploadFacts, add_id_columns, infer_semantics
+
+    def _make(df: pl.DataFrame, doc: str | None = None, add_ids: bool = True, **facts: Any) -> Any:
+        semantics = infer_semantics(df, UploadFacts(doc_context=doc, **facts))
+        if add_ids:
+            _frame, _meta, semantics = add_id_columns(df, semantics)
+        return semantics.model_copy(update={"dataset_version": "v1"})
+
+    return _make
+
+
+@pytest.fixture
 def make_contract() -> Callable[..., OpenDataContractStandard]:
     """Factory: ODCS contract for ``df`` with test defaults (upload u1, version v1, id patient_id).
 

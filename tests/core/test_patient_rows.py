@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
 
@@ -14,13 +15,9 @@ from clinical_analytics.contracts.declarations import (
     MemoryDeclarationStore,
     confirmation_token,
 )
+from clinical_analytics.contracts.inference import id_named
 from clinical_analytics.core.answer_checks import Grain, declared_patient_rows
-from clinical_analytics.core.identifier_rules import (
-    PATIENT_ROWS_ASKABLE_CONFIG_FLAG,
-    REPEATED_ID_COLUMNS_KEY,
-    is_id_name,
-    rows_may_be_patients,
-)
+from clinical_analytics.core.identifier_rules import PATIENT_ROWS_ASKABLE_CONFIG_FLAG, rows_may_be_patients
 from clinical_analytics.core.patient_rows import (
     PatientRowsNotAskedError,
     PatientRowsStaleError,
@@ -29,22 +26,31 @@ from clinical_analytics.core.patient_rows import (
     question_token,
     record_answer,
 )
-from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
 
 N = 120
 DATASET = "ds_rows"
 
 
-def _metadata(version: str = "v1", rows: int = N, **id_info: Any) -> dict[str, Any]:
-    """Upload metadata of a file whose rows are told apart by an unnamed unique column."""
-    info = {"patient_id_source": "single_column", "patient_id_columns": ["record_code"], REPEATED_ID_COLUMNS_KEY: []}
-    info.update(id_info)
-    return {"dataset_version": version, "row_count": rows, "synthetic_id_metadata": {"patient_id": info}}
+def _metadata(version: str = "v1", rows: int = N) -> dict[str, Any]:
+    """Upload metadata of a version: the version and its row count (what the token binds)."""
+    return {"dataset_version": version, "row_count": rows}
 
 
 def _frame(**columns: list[Any]) -> pl.DataFrame:
     base: dict[str, list[Any]] = {"sex": ["female" if i % 2 else "male" for i in range(N)]}
     return pl.DataFrame({**columns, **base})
+
+
+@pytest.fixture
+def asked(make_semantics: Callable[..., Any]) -> Any:
+    """Semantics of a file whose rows are told apart by an unnamed unique column: asked."""
+    return make_semantics(_frame(record_code=[f"R{i:04d}" for i in range(N)]))
+
+
+@pytest.fixture
+def not_asked(make_semantics: Callable[..., Any]) -> Any:
+    """Semantics of visit rows whose person_id repeats: never asked."""
+    return make_semantics(_frame(person_id=[f"P{i % 40:03d}" for i in range(N)]))
 
 
 @pytest.mark.parametrize(
@@ -94,40 +100,38 @@ def _frame(**columns: list[Any]) -> pl.DataFrame:
         ),
     ],
 )
-def test_ensurePatientId_fileShape_askedOnlyWhenNoIdRepeats(df: pl.DataFrame, asked: bool) -> None:
+def test_semantics_fileShape_askedOnlyWhenNoIdRepeats(
+    make_semantics: Callable[..., Any], df: pl.DataFrame, asked: bool
+) -> None:
     # Arrange
     metadata: dict[str, Any] = {"dataset_version": "v1", "row_count": df.height}
 
     # Act
-    _, id_metadata = VariableTypeDetector.ensure_patient_id(df)
-    metadata["synthetic_id_metadata"] = {"patient_id": id_metadata}
+    semantics = make_semantics(df)
 
     # Assert
-    assert rows_may_be_patients(metadata) is asked
-    assert (question_token(metadata) is not None) is asked
+    assert rows_may_be_patients(semantics) is asked
+    assert (question_token(metadata, semantics) is not None) is asked
 
 
 @pytest.mark.parametrize(
-    "id_info",
+    "df",
     [
-        pytest.param({"patient_id_source": "composite", "patient_id_columns": ["a", "b"]}, id="composite"),
-        pytest.param({REPEATED_ID_COLUMNS_KEY: ["person_id"]}, id="an_id_repeats"),
-        pytest.param({REPEATED_ID_COLUMNS_KEY: None}, id="not_recorded"),
-        pytest.param({"patient_id_columns": ["mrn"]}, id="named_patient_key"),
-        pytest.param({"patient_id_source": "existing"}, id="existing_patient_id"),
+        pytest.param(_frame(a=[f"A{i % 12}" for i in range(N)], b=[i // 12 for i in range(N)]), id="composite"),
+        pytest.param(_frame(person_id=[f"P{i % 40:03d}" for i in range(N)]), id="an_id_repeats"),
+        pytest.param(_frame(mrn=[f"M{i:04d}" for i in range(N)]), id="named_patient_key"),
+        pytest.param(_frame(patient_id=[f"P{i:04d}" for i in range(N)]), id="existing_patient_id"),
     ],
 )
-def test_rowsMayBePatients_notAskedShapes_false(id_info: dict[str, Any]) -> None:
+def test_rowsMayBePatients_notAskedShapes_false(make_semantics: Callable[..., Any], df: pl.DataFrame) -> None:
     # Arrange
-    metadata = _metadata(**id_info)
-    if id_info.get(REPEATED_ID_COLUMNS_KEY, []) is None:
-        del metadata["synthetic_id_metadata"]["patient_id"][REPEATED_ID_COLUMNS_KEY]
+    semantics = make_semantics(df)
 
     # Act
-    asked = rows_may_be_patients(metadata)
+    result = rows_may_be_patients(semantics)
 
     # Assert
-    assert asked is False
+    assert result is False
 
 
 @pytest.mark.parametrize(
@@ -138,12 +142,12 @@ def test_rowsMayBePatients_notAskedShapes_false(id_info: dict[str, Any]) -> None
         pytest.param(N, "", id="no_version"),
     ],
 )
-def test_questionToken_badCountsOrVersion_notAsked(rows: Any, version: str) -> None:
+def test_questionToken_badCountsOrVersion_notAsked(asked: Any, rows: Any, version: str) -> None:
     # Arrange
     metadata = _metadata(version=version, rows=rows)
 
     # Act
-    token = question_token(metadata)
+    token = question_token(metadata, asked)
 
     # Assert
     assert token is None
@@ -164,21 +168,21 @@ def test_questionToken_badCountsOrVersion_notAsked(rows: Any, version: str) -> N
         ("", False),
     ],
 )
-def test_isIdName_columnNames_tokenMatchOnly(column: str, expected: bool) -> None:
+def test_idNamed_columnNames_tokenMatchOnly(column: str, expected: bool) -> None:
     # Arrange / Act
-    result = is_id_name(column)
+    result = id_named(column)
 
     # Assert
     assert result is expected
 
 
-def test_recordAnswer_pendingThenYes_storesPatientGrainAndStopsAsking() -> None:
+def test_recordAnswer_pendingThenYes_storesPatientGrainAndStopsAsking(asked: Any) -> None:
     # Arrange
     metadata, store = _metadata(), MemoryDeclarationStore()
-    token = pending_token(metadata, store.load(DATASET))
+    token = pending_token(metadata, asked, store.load(DATASET))
 
     # Act
-    counts = record_answer(DATASET, metadata, store, confirmation=str(token), one_row_per_patient=True)
+    counts = record_answer(DATASET, metadata, asked, store, confirmation=str(token), one_row_per_patient=True)
 
     # Assert: the same declaration governed SQL stores, under the same token
     assert token == confirmation_token("v1", None, N)
@@ -186,40 +190,40 @@ def test_recordAnswer_pendingThenYes_storesPatientGrainAndStopsAsking() -> None:
     assert store.load(DATASET).grain_for("v1") == GrainDeclaration(
         grain="patient", key=None, rows=N, patients=N, dataset_version="v1"
     )
-    assert pending_token(metadata, store.load(DATASET)) is None
-    assert confirmed_patient_rows(metadata, store.load(DATASET))
+    assert pending_token(metadata, asked, store.load(DATASET)) is None
+    assert confirmed_patient_rows(metadata, asked, store.load(DATASET))
 
 
-def test_recordAnswer_yesTwice_sameDeclaration() -> None:
+def test_recordAnswer_yesTwice_sameDeclaration(asked: Any) -> None:
     # Arrange
     metadata, store = _metadata(), MemoryDeclarationStore()
-    token = str(question_token(metadata))
-    record_answer(DATASET, metadata, store, confirmation=token, one_row_per_patient=True)
+    token = str(question_token(metadata, asked))
+    record_answer(DATASET, metadata, asked, store, confirmation=token, one_row_per_patient=True)
     first = store.load(DATASET)
 
     # Act
-    record_answer(DATASET, metadata, store, confirmation=token, one_row_per_patient=True)
+    record_answer(DATASET, metadata, asked, store, confirmation=token, one_row_per_patient=True)
 
     # Assert
     assert store.load(DATASET) == first
 
 
-def test_recordAnswer_noAfterYes_rowsAgainVisitGrainOfOtherVersionKept() -> None:
+def test_recordAnswer_noAfterYes_rowsAgainVisitGrainOfOtherVersionKept(asked: Any) -> None:
     # Arrange
     metadata, store = _metadata(), MemoryDeclarationStore()
-    token = str(question_token(metadata))
+    token = str(question_token(metadata, asked))
     other = GrainDeclaration(key="person_id", rows=10, patients=5, dataset_version="v0")
     store.update(DATASET, lambda d: d.with_grain(other))
-    record_answer(DATASET, metadata, store, confirmation=token, one_row_per_patient=True)
+    record_answer(DATASET, metadata, asked, store, confirmation=token, one_row_per_patient=True)
 
     # Act
-    counts = record_answer(DATASET, metadata, store, confirmation=token, one_row_per_patient=False)
+    counts = record_answer(DATASET, metadata, asked, store, confirmation=token, one_row_per_patient=False)
 
     # Assert
     assert counts == "rows"
     assert store.load(DATASET).grain_for("v1") is None
     assert store.load(DATASET).grain_for("v0") == other
-    assert pending_token(metadata, store.load(DATASET)) == token
+    assert pending_token(metadata, asked, store.load(DATASET)) == token
 
 
 @pytest.mark.parametrize(
@@ -233,41 +237,46 @@ def test_recordAnswer_noAfterYes_rowsAgainVisitGrainOfOtherVersionKept() -> None
         pytest.param("é" * 32, id="non_ascii"),
     ],
 )
-def test_recordAnswer_staleToken_refusedNothingStored(token: str) -> None:
+def test_recordAnswer_staleToken_refusedNothingStored(asked: Any, token: str) -> None:
     # Arrange
     metadata, store = _metadata(), MemoryDeclarationStore()
 
     # Act / Assert
     with pytest.raises(PatientRowsStaleError):
-        record_answer(DATASET, metadata, store, confirmation=token, one_row_per_patient=True)
+        record_answer(DATASET, metadata, asked, store, confirmation=token, one_row_per_patient=True)
     assert store.load(DATASET).grains == ()
 
 
-def test_recordAnswer_overwriteNewVersion_asksAgainOldTokenRefused() -> None:
+def test_recordAnswer_overwriteNewVersion_asksAgainOldTokenRefused(asked: Any) -> None:
     # Arrange: "yes" on v1, then the file is replaced (v2)
     v1, v2, store = _metadata("v1"), _metadata("v2", rows=N + 5), MemoryDeclarationStore()
-    old = str(question_token(v1))
-    record_answer(DATASET, v1, store, confirmation=old, one_row_per_patient=True)
+    old = str(question_token(v1, asked))
+    record_answer(DATASET, v1, asked, store, confirmation=old, one_row_per_patient=True)
 
     # Act
-    pending = pending_token(v2, store.load(DATASET))
+    pending = pending_token(v2, asked, store.load(DATASET))
 
     # Assert: asked again with a new token; v1's answer never reaches v2's rows
     assert pending is not None and pending != old
-    assert not confirmed_patient_rows(v2, store.load(DATASET))
+    assert not confirmed_patient_rows(v2, asked, store.load(DATASET))
     with pytest.raises(PatientRowsStaleError):
-        record_answer(DATASET, v2, store, confirmation=old, one_row_per_patient=True)
+        record_answer(DATASET, v2, asked, store, confirmation=old, one_row_per_patient=True)
     assert store.load(DATASET).grain_for("v2") is None
 
 
-def test_recordAnswer_notAsked_refusedNothingStored() -> None:
+def test_recordAnswer_notAsked_refusedNothingStored(not_asked: Any) -> None:
     # Arrange: IDs repeat, so the question is never offered, whatever token is sent
-    metadata, store = _metadata(**{REPEATED_ID_COLUMNS_KEY: ["person_id"]}), MemoryDeclarationStore()
+    metadata, store = _metadata(), MemoryDeclarationStore()
 
     # Act / Assert
     with pytest.raises(PatientRowsNotAskedError):
         record_answer(
-            DATASET, metadata, store, confirmation=confirmation_token("v1", None, N), one_row_per_patient=True
+            DATASET,
+            metadata,
+            not_asked,
+            store,
+            confirmation=confirmation_token("v1", None, N),
+            one_row_per_patient=True,
         )
     assert store.load(DATASET).grains == ()
 
@@ -310,16 +319,15 @@ def test_declaredPatientRows_storedGrain_onlyAskableVersionAndCount(
     assert result is expected
 
 
-@pytest.mark.parametrize(("source_format", "asked"), [("cdc_wonder", False), ("", True)], ids=["wonder", "other"])
-def test_rowsMayBePatients_publishedExport_neverAsked(source_format: str, asked: bool) -> None:
-    # Arrange: a row key copied from one unique column, no ID-like column repeating
-    from clinical_analytics.core.identifier_rules import REPEATED_ID_COLUMNS_KEY, SOURCE_FORMAT_KEY
-
-    info = {"patient_id_source": "single_column", "patient_id_columns": ["State Code"], REPEATED_ID_COLUMNS_KEY: []}
-    metadata = {"synthetic_id_metadata": {"patient_id": info}, SOURCE_FORMAT_KEY: source_format}
+@pytest.mark.parametrize(("source_format", "expected"), [("cdc_wonder", False), ("", True)], ids=["wonder", "other"])
+def test_rowsMayBePatients_publishedExport_neverAsked(
+    make_semantics: Callable[..., Any], source_format: str, expected: bool
+) -> None:
+    # Arrange: rows told apart by one unique column, no ID-like column repeating
+    df = _frame(**{"State Code": [f"{i:02d}" for i in range(N)]})
 
     # Act
-    result = rows_may_be_patients(metadata)
+    result = rows_may_be_patients(make_semantics(df, source_format=source_format))
 
     # Assert
-    assert result is asked
+    assert result is expected

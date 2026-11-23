@@ -70,6 +70,23 @@ def _declaration_store() -> FileDeclarationStore:
     return FileDeclarationStore(uploads_dir().parent)
 
 
+def _contract_names_patient(storage: UserDatasetStorage, dataset_id: str, version: str | None) -> bool:
+    """Whether the version's contract semantics name a patient key (``semantics_for``). A version
+    without semantics yet is judged by estimate detection alone, as before."""
+    from clinical_analytics.contracts.declarations import MemoryDeclarationStore
+    from clinical_analytics.contracts.errors import ContractError
+    from clinical_analytics.contracts.semantics import semantics_for
+
+    if version is None:
+        return False
+    try:
+        semantics = semantics_for(storage.upload_dir.parent, dataset_id, version, declarations=MemoryDeclarationStore())
+    except ContractError as e:
+        logger.info("aggregate_semantics_unavailable", dataset_id=dataset_id, error_type=type(e).__name__)
+        return False
+    return semantics.patient_key is not None
+
+
 def load_source(storage: UserDatasetStorage, store: FileDeclarationStore, dataset_id: str) -> estimate_join.SourceInput:
     """One uploaded table at its active version, with its declaration and saved choices.
 
@@ -94,8 +111,10 @@ def load_source(storage: UserDatasetStorage, store: FileDeclarationStore, datase
         logger.error("aggregate_declarations_unreadable", dataset_id=dataset_id, error_type=type(e).__name__)
         raise HTTPException(status_code=500, detail="This dataset's declarations can't be read.") from e
     declared = declarations.population_estimates_for(version) is not None
-    # Detection runs only on declared tables: an undeclared table is refused before its rows matter.
-    table = estimates.detect_frame(frame) if declared else None
+    # A file whose contract names a patient (ADR017) holds patient rows: never read as estimates,
+    # whatever was declared. Detection runs only on declared tables without a patient key.
+    names_patient = _contract_names_patient(storage, dataset_id, version)
+    table = estimates.detect_frame(frame) if declared and not names_patient else None
     name = str(metadata.get("dataset_name") or dataset_id)
     return estimate_join.SourceInput(
         dataset_id=dataset_id,

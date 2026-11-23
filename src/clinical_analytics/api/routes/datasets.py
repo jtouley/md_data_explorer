@@ -40,6 +40,7 @@ from clinical_analytics.contracts.errors import (
     InvalidDeclarationKeyError,
 )
 from clinical_analytics.contracts.quality import QualityCheckResult, QualityNotRun, QualityReport
+from clinical_analytics.contracts.semantics import DatasetSemantics
 from clinical_analytics.contracts.service import check_upload
 from clinical_analytics.contracts.store import latest_report
 from clinical_analytics.core.log_redaction import error_fields, text_fingerprint
@@ -55,6 +56,7 @@ from clinical_analytics.ui.storage.user_datasets import (
     USER_FILE_ERRORS,
     UploadSecurityValidator,
     UserDatasetStorage,
+    active_version_id,
     duplicate_name_message,
 )
 
@@ -401,7 +403,54 @@ def get_dataset_quality(dataset_id: str) -> QualityReport:
             status_code=500, detail=f"Could not check this dataset's quality ({type(e).__name__})."
         ) from e
     log.info("dataset_quality_completed", failed=report.failed, warnings=report.warnings)
-    return report
+    return report.model_copy(
+        update={"facts": _facts(_contract_semantics(storage, dataset_id), _upload_declarations(storage, dataset_id))}
+    )
+
+
+class DatasetSemanticsResponse(BaseModel):
+    """The active version's semantics (ADR017) with the user's confirmations applied."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_id: str
+    dataset_version: str
+    semantics: dict[str, Any] = Field(..., description="The contract's semantics section (DatasetSemantics)")
+    facts: list[str] = Field(default_factory=list, description="The key facts in clinical words")
+
+
+@router.get("/datasets/{dataset_id}/semantics", response_model=DatasetSemanticsResponse)
+def get_dataset_semantics(dataset_id: str) -> DatasetSemanticsResponse:
+    """What the active version's file means, read from its data contract (``semantics_for``).
+
+    Raises:
+        HTTPException: 400 bad id, 404 unknown dataset or no semantics yet, 409 while deleting,
+            500 when the contract or declarations can't be read.
+    """
+    from clinical_analytics.contracts.semantics import SemanticsMissingError, describe, semantics_for
+
+    try:
+        validate_dataset_id(dataset_id)
+    except InvalidDatasetIdError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    reject_if_deleting(dataset_id)
+    storage = UserDatasetStorage()
+    version = active_version_id(storage.get_upload_metadata(dataset_id))
+    if version is None:
+        raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
+    try:
+        semantics = semantics_for(storage.upload_dir.parent, dataset_id, version)
+    except SemanticsMissingError as e:
+        raise HTTPException(status_code=404, detail="This cohort's data contract has no semantics yet.") from e
+    except ContractError as e:
+        logger.error("dataset_semantics_failed", dataset_id=dataset_id, **error_fields(e))
+        raise HTTPException(status_code=500, detail="This cohort's data contract can't be read.") from e
+    return DatasetSemanticsResponse(
+        dataset_id=dataset_id,
+        dataset_version=version,
+        semantics=semantics.model_dump(mode="json"),
+        facts=describe(semantics),
+    )
 
 
 # ============================================================================
@@ -448,6 +497,13 @@ class DatasetUploadResponse(BaseModel):
     )
     quality: QualityReport | QualityNotRun | None = Field(
         None, description="This upload's data-quality report, or status 'not_run' with a reason"
+    )
+    facts: list[str] = Field(
+        default_factory=list,
+        description=(
+            "What the file holds, from its data contract's semantics, in clinical words: what one "
+            "line is and how many patients, dates read, values that mean not recorded, open questions"
+        ),
     )
     type_notes: list[str] = Field(
         default_factory=list,
@@ -565,23 +621,51 @@ def _upload_declarations(storage: UserDatasetStorage, upload_id: str) -> Declara
         return Declarations()
 
 
-def _upload_unit_note(storage: UserDatasetStorage, upload_id: str, declarations: Declarations) -> str:
-    """Rows, not patients: said at upload when the stored patient_id is a row key ("" otherwise,
+def _contract_semantics(storage: UserDatasetStorage, upload_id: str) -> DatasetSemantics | None:
+    """The active version's semantics as its contract states them (declarations not applied),
+    or None when the version has no contract with semantics (logged)."""
+    from clinical_analytics.contracts.declarations import MemoryDeclarationStore
+    from clinical_analytics.contracts.semantics import semantics_for
+
+    version = active_version_id(storage.get_upload_metadata(upload_id))
+    if version is None:
+        return None
+    try:
+        return semantics_for(storage.upload_dir.parent, upload_id, version, declarations=MemoryDeclarationStore())
+    except ContractError as e:
+        logger.warning("dataset_semantics_unavailable", upload_id=upload_id, **error_fields(e))
+        return None
+
+
+def _facts(semantics: DatasetSemantics | None, declarations: Declarations) -> list[str]:
+    """The file's key facts in clinical words, with the user's confirmations applied."""
+    from clinical_analytics.contracts.semantics import describe, with_declarations
+
+    return [] if semantics is None else describe(with_declarations(semantics, declarations))
+
+
+def _upload_unit_note(
+    storage: UserDatasetStorage, upload_id: str, semantics: DatasetSemantics | None, declarations: Declarations
+) -> str:
+    """Rows, not patients: said at upload when the contract names no patient key ("" otherwise,
     and "" once the user confirmed this version's rows are one per patient)."""
     from clinical_analytics.core.identifier_rules import row_key_note
     from clinical_analytics.core.patient_rows import confirmed_patient_rows
 
+    if semantics is None:
+        return ""
     metadata = storage.get_upload_metadata(upload_id) or {}
-    return "" if confirmed_patient_rows(metadata, declarations) else row_key_note(metadata)
+    return "" if confirmed_patient_rows(metadata, semantics, declarations) else row_key_note(semantics)
 
 
 def _upload_patient_rows_question(
-    storage: UserDatasetStorage, upload_id: str, declarations: Declarations
+    storage: UserDatasetStorage, upload_id: str, semantics: DatasetSemantics | None, declarations: Declarations
 ) -> OneRowPerPatientQuestion | None:
-    """ "Is each row one patient?" with its token, or None when not asked or already answered yes."""
+    """ "Is each row one patient?" with its token: only when the contract's semantics hold that
+    open question, and it is not answered yes yet."""
     from clinical_analytics.core.patient_rows import pending_token
 
-    token = pending_token(storage.get_upload_metadata(upload_id) or {}, declarations)
+    token = pending_token(storage.get_upload_metadata(upload_id) or {}, semantics, declarations)
     return None if token is None else OneRowPerPatientQuestion(status="pending", confirmation=token)
 
 
@@ -656,18 +740,21 @@ def _upload_response(
     """ "ready" only when no error-level check failed; else "needs_review", naming the checks."""
     failed = _failed_error_checks(quality)
     declarations = _upload_declarations(storage, upload_id)
+    semantics = _contract_semantics(storage, upload_id)
+    facts = _facts(semantics, declarations)
     return DatasetUploadResponse(
         upload_id=upload_id,
         dataset_name=dataset_name,
         status="needs_review" if failed else "ready",
         message=_review_message(failed) if failed else message,
         failed_checks=[c.id for c in failed],
-        quality=quality,
+        quality=quality.model_copy(update={"facts": facts}),
+        facts=facts,
         type_notes=_upload_type_notes(storage, upload_id),
         cohort_notes=_upload_cohort_notes(storage, upload_id),
         sheet_note=_upload_sheet_note(storage, upload_id),
-        unit_note=_upload_unit_note(storage, upload_id, declarations),
-        one_row_per_patient=_upload_patient_rows_question(storage, upload_id, declarations),
+        unit_note=_upload_unit_note(storage, upload_id, semantics, declarations),
+        one_row_per_patient=_upload_patient_rows_question(storage, upload_id, semantics, declarations),
     )
 
 
@@ -727,6 +814,7 @@ def answer_one_row_per_patient(dataset_id: str, answer: OneRowPerPatientAnswer) 
             counts = record_answer(
                 dataset_id,
                 metadata,
+                _contract_semantics(storage, dataset_id),
                 FileDeclarationStore(storage.upload_dir.parent),
                 confirmation=answer.confirmation,
                 one_row_per_patient=answer.one_row_per_patient,

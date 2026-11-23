@@ -16,6 +16,12 @@ import pyarrow as pa
 import structlog
 from ibis.common.exceptions import IbisError
 
+from clinical_analytics.contracts.semantics import (
+    LAYER_CONFIG_KEY,
+    DatasetSemantics,
+    SemanticsMissingError,
+    semantics_for,
+)
 from clinical_analytics.core.dataset import ClinicalDataset, Granularity
 from clinical_analytics.core.identifier_rules import (
     PATIENT_ROWS_ASKABLE_CONFIG_FLAG,
@@ -121,6 +127,7 @@ class UploadedDataset(ClinicalDataset):
         self.data: pl.LazyFrame | None = None
         self._semantic_initialized = False  # Track lazy init
         self._stored: StoredDataset | None = None
+        self._semantics: DatasetSemantics | None = None
 
         # Load metadata. It is external data, normalized at this boundary (the stored file by
         # get_upload_metadata, the probe's dict here) so its dict and list fields are never None.
@@ -171,6 +178,71 @@ class UploadedDataset(ClinicalDataset):
         if self.metadata.get(STORAGE_LAYOUT_KEY) == STORAGE_LAYOUT:
             return stored_path(self.storage, self.metadata[COHORT_PARQUET_KEY]).is_file()
         return _legacy_source_path(self.storage, self.upload_id, self.metadata) is not None
+
+    def semantics(self) -> DatasetSemantics:
+        """The version's semantics from its contract (``contracts.semantics_for``), as inferred at
+        upload; declarations are applied per question by ``answer_checks``. A version stored
+        before contracts held semantics gets the same one inference pass over its stored frame
+        (``contracts.service.stored_semantics``), never a separate guess.
+
+        Raises:
+            ContractError: the contract or its semantics can't be read.
+        """
+        if self._semantics is not None:
+            return self._semantics
+        from clinical_analytics.contracts.declarations import MemoryDeclarationStore
+        from clinical_analytics.contracts.service import stored_semantics
+
+        assert self.metadata is not None
+        version = self.metadata.get("dataset_version")
+        try:
+            if not isinstance(version, str) or not version:
+                raise SemanticsMissingError("no dataset version")
+            self._semantics = semantics_for(
+                self.storage.upload_dir.parent, self.upload_id, version, declarations=MemoryDeclarationStore()
+            )
+        except SemanticsMissingError:
+            if self._stored is None:
+                self.load()
+            assert self._stored is not None
+            frame = self._stored.scan_cohort().collect()
+            self._semantics = stored_semantics(frame, self.metadata)
+            logger.info("semantics_inferred_for_stored_version", upload_id=self.upload_id, dataset_version=version)
+        return self._semantics
+
+    def _semantic_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        """``config`` with the facts the contract's semantics decide: the patient key mapping, the
+        row-key and askable flags, code labels, units and date columns (ADR017)."""
+        semantics = self.semantics()
+        key = semantics.patient_key_column
+        mapping = {s: t for s, t in (config.get("column_mapping") or {}).items() if t != "patient_id"}
+        if key is not None:
+            mapping[key] = "patient_id"
+        variable_types = {
+            k: dict(v) if isinstance(v, dict) else v for k, v in (config.get("variable_types") or {}).items()
+        }
+        for name, col in semantics.columns.items():
+            entry = variable_types.get(name)
+            entry = dict(entry) if isinstance(entry, dict) else {}
+            if col.labels:
+                entry["codebook"] = dict(col.labels)
+                entry.setdefault("type", "categorical")
+            if col.unit is not None:
+                entry["units"] = col.unit.value
+            if col.date is not None:
+                entry["type"] = "datetime"
+            if col.role in ("patient_key", "row_key", "app_added", "grouping", "sequence"):
+                entry.setdefault("role", col.role)
+            if entry:
+                variable_types[name] = entry
+        return {
+            **config,
+            "column_mapping": mapping,
+            "variable_types": variable_types,
+            ROW_KEY_CONFIG_FLAG: patient_id_is_row_key(semantics),
+            PATIENT_ROWS_ASKABLE_CONFIG_FLAG: rows_may_be_patients(semantics),
+            LAYER_CONFIG_KEY: semantics.model_dump(mode="json"),
+        }
 
     def load(self) -> None:
         """Load the typed cohort as a LazyFrame (legacy uploads are converted on first load)."""
@@ -587,6 +659,12 @@ class UploadedDataset(ClinicalDataset):
             self.load()
         stored = self._stored
         assert stored is not None  # load() sets it
+        from clinical_analytics.contracts.errors import ContractError
+
+        try:
+            config = self._semantic_config(config)
+        except ContractError as e:
+            raise SemanticLayerBuildError(f"the data contract could not be read ({type(e).__name__})") from e
         log = logger.bind(
             upload_id=self.upload_id,
             dataset_version=self.metadata.get("dataset_version"),
@@ -652,11 +730,6 @@ class UploadedDataset(ClinicalDataset):
             },
             # Include variable_types metadata for column type detection
             "variable_types": safe_get(self.metadata, "variable_types", {}),
-            # A synthesized patient_id keys rows: answers say "rows", never "patients".
-            ROW_KEY_CONFIG_FLAG: patient_id_is_row_key(self.metadata or {}),
-            # Rows may be confirmed one per patient ("Is each row one patient?"): only then does a
-            # stored confirmation make answers count patients.
-            PATIENT_ROWS_ASKABLE_CONFIG_FLAG: rows_may_be_patients(self.metadata or {}),
         }
         return config
 
@@ -760,9 +833,6 @@ class UploadedDataset(ClinicalDataset):
             },
             # Include variable_types metadata for column type detection
             "variable_types": metadata_dict.get("variable_types", {}),
-            # A synthesized patient_id keys rows: answers say "rows", never "patients".
-            ROW_KEY_CONFIG_FLAG: patient_id_is_row_key(metadata_dict),
-            PATIENT_ROWS_ASKABLE_CONFIG_FLAG: rows_may_be_patients(metadata_dict),
         }
         return config
 
@@ -834,7 +904,7 @@ class UploadedDataset(ClinicalDataset):
             # Datasets loaded from a link: URL, download time, size, SHA-256 (routes/dataset_url.py).
             "source": self.metadata.get("source"),
             # The ID column the upload added (patient_id copied or hashed, or a row number).
-            "added_columns": added_id_columns(self.metadata),
+            "added_columns": added_id_columns(self.semantics()),
         }
 
 

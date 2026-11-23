@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: MIT
 """ "Is each row one patient?": asked once at upload, answered for that dataset version.
 
-When no column is named as a patient ID, the upload keys rows (``patient_id_is_row_key``) and
-every answer counts rows. If the file has a column unique on every row, or nothing that
-identifies a row, and no ID-like column repeats (``identifier_rules.rows_may_be_patients``), the
-upload asks the user whether each row is one patient.
+When no column names a patient, every answer counts rows. The question is asked only when the
+version's contract holds the open question ``rows_are_patients`` (``contracts.inference``: a
+column unique on every row, or nothing, tells rows apart, and no ID-like column repeats); it is
+read with ``identifier_rules.rows_may_be_patients`` from the contract's semantics.
 
 * "Yes" stores the dataset version's one-row-per-patient grain: the same ``GrainDeclaration``
   (grain ``patient``, no ID column, the version's row count) that governed SQL stores when its
@@ -32,6 +32,7 @@ from clinical_analytics.contracts.declarations import (
     GrainDeclaration,
     confirmation_token,
 )
+from clinical_analytics.contracts.semantics import DatasetSemantics
 from clinical_analytics.core.identifier_rules import rows_may_be_patients
 
 logger = structlog.get_logger()
@@ -55,9 +56,10 @@ class PatientRowsStaleError(PatientRowsError):
     """The token is not this version's: asked about other data, or not a token the app gave."""
 
 
-def _asked_about(metadata: Mapping[str, object]) -> tuple[str, int] | None:
-    """(dataset version, row count) the question is asked about, or None when it is not asked."""
-    if not rows_may_be_patients(metadata):
+def _asked_about(metadata: Mapping[str, object], semantics: DatasetSemantics | None) -> tuple[str, int] | None:
+    """(dataset version, row count) the question is asked about, or None when it is not asked
+    (no semantics: the version has no contract yet, so nothing is asked)."""
+    if semantics is None or not rows_may_be_patients(semantics):
         return None
     version, rows = metadata.get("dataset_version"), metadata.get("row_count")
     if not isinstance(version, str) or not version or not isinstance(rows, int) or isinstance(rows, bool) or rows < 1:
@@ -65,15 +67,17 @@ def _asked_about(metadata: Mapping[str, object]) -> tuple[str, int] | None:
     return version, rows
 
 
-def question_token(metadata: Mapping[str, object]) -> str | None:
+def question_token(metadata: Mapping[str, object], semantics: DatasetSemantics | None) -> str | None:
     """The confirmation token of this version's question, or None when it is not asked."""
-    asked = _asked_about(metadata)
+    asked = _asked_about(metadata, semantics)
     return None if asked is None else confirmation_token(asked[0], None, asked[1])
 
 
-def confirmed_patient_rows(metadata: Mapping[str, object], declarations: Declarations) -> bool:
+def confirmed_patient_rows(
+    metadata: Mapping[str, object], semantics: DatasetSemantics | None, declarations: Declarations
+) -> bool:
     """Whether this version's rows were confirmed one per patient (here or by governed SQL)."""
-    asked = _asked_about(metadata)
+    asked = _asked_about(metadata, semantics)
     if asked is None:
         return False
     version, rows = asked
@@ -81,16 +85,19 @@ def confirmed_patient_rows(metadata: Mapping[str, object], declarations: Declara
     return grain is not None and grain.grain == "patient" and grain.key is None and grain.rows == rows
 
 
-def pending_token(metadata: Mapping[str, object], declarations: Declarations) -> str | None:
+def pending_token(
+    metadata: Mapping[str, object], semantics: DatasetSemantics | None, declarations: Declarations
+) -> str | None:
     """The token to show with the question, or None: not asked, or already answered "yes"."""
-    if confirmed_patient_rows(metadata, declarations):
+    if confirmed_patient_rows(metadata, semantics, declarations):
         return None
-    return question_token(metadata)
+    return question_token(metadata, semantics)
 
 
 def record_answer(
     dataset_id: str,
     metadata: Mapping[str, object],
+    semantics: DatasetSemantics | None,
     store: DeclarationStore,
     *,
     confirmation: str,
@@ -107,7 +114,7 @@ def record_answer(
         InvalidDeclarationKeyError: ``dataset_id`` is not a valid key.
     """
     log = logger.bind(dataset_id=dataset_id)
-    asked = _asked_about(metadata)
+    asked = _asked_about(metadata, semantics)
     if asked is None:
         log.info("patient_rows_not_asked")
         raise PatientRowsNotAskedError(NOT_ASKED)
@@ -120,7 +127,7 @@ def record_answer(
         store.update(dataset_id, lambda current: current.with_grain(grain))
         log.info("patient_rows_confirmed", dataset_version=version)
         return "patients"
-    if confirmed_patient_rows(metadata, store.load(dataset_id)):
+    if confirmed_patient_rows(metadata, semantics, store.load(dataset_id)):
         store.update(dataset_id, lambda current: current.without_patient_grain(version))
     log.info("patient_rows_declined", dataset_version=version)
     return "rows"

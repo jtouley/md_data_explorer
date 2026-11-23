@@ -533,9 +533,11 @@ def person_id_named(column: str) -> bool:
 
 
 def _patient_key_name(joined: str) -> bool:
-    from clinical_analytics.core.schema_inference import PATIENT_KEY_NAMES_SPECIFIC
+    """Named for the patient-ID role (the contract inference's role names, ``names_patient``).
+    A privacy guard on tables declared public: it refuses, it never picks a key."""
+    from clinical_analytics.contracts.inference import names_patient
 
-    return joined in PATIENT_KEY_NAMES_SPECIFIC
+    return names_patient(joined)
 
 
 def id_named(column: str) -> bool:
