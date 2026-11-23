@@ -269,7 +269,7 @@ def swap_order(choice_format: str) -> str:
 
 
 def date_named(column: str) -> bool:
-    """'lkw_date', 'DOB', 'admitDt' (case boundary split)."""
+    """'onset_date', 'DOB', 'admitDt' (case boundary split)."""
     spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", column).lower()
     return any(t in _DATE_NAME_TOKENS for t in _TOKEN_SPLIT.split(spaced) if t)
 

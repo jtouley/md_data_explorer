@@ -842,8 +842,11 @@ ESTIMATE_JOIN_PRECISION_SKIPPED: Final = (
 SEMANTICS_PROPERTY: Final = "semantics"
 SEMANTICS_SCHEMA_VERSION: Final = 1
 
-# A date column's values must all fall in these years under its one chosen format.
-DATE_YEAR_MIN: Final = 1880
+# The years a value may fall in to be read as a date (or a column of whole numbers as calendar
+# years), for every reader. 1900: the people in a clinical file kept today were born after it (a
+# few centenarians aside), so an earlier "year" is far more likely a code, a count or a typo
+# than a date. 2100: far enough ahead for planned follow-up, near enough to reject 4-digit codes.
+DATE_YEAR_MIN: Final = 1900
 DATE_YEAR_MAX: Final = 2100
 
 # Values that a file uses for "not recorded" when nothing documents them. One of these counts as
@@ -857,9 +860,9 @@ MISSING_CODE_MIN_ROWS: Final = 3
 MISSING_CODE_MIN_SHARE: Final = 0.005
 MISSING_CODE_GAP: Final = 1.5
 # Undocumented codes are never stored as missing: they are asked about. Names of counts, changes
-# and durations hold real -1, 0 and 99 values (a length of stay of 99 days), so they are not asked.
+# and durations hold real -1, 0 and 99 values (a stay of 99 days), so they are not asked.
 MISSING_CODE_EXEMPT_TOKENS: Final = frozenset(
-    {"change", "chg", "diff", "difference", "delta", "los", "stay", "count", "counts", "num", "number", "n"}
+    {"change", "chg", "diff", "difference", "delta", "stay", "count", "counts", "num", "number", "n"}
 )  # fmt: skip
 # On an exempt name a value is still asked about when it is this many times the largest other
 # value (a length of stay of 999 among stays up to 40 days).
@@ -874,7 +877,7 @@ MISSING_LABEL_STRICT: Final = re.compile(
     r"data\s+not\s+(?:collected|available)|blank)\b",
     re.IGNORECASE,
 )
-# On a lone note beside a measurement ("PHQ-9 total (0-27). 99 = questionnaire not done") these
+# On a lone note beside a measurement ("Grip score (0-40). 77 = sheet not returned") these
 # also say the measurement was not taken, when the code lies outside the measurement's values.
 MISSING_LABEL_NOT_TAKEN: Final = re.compile(
     r"\b(?:not\s+(?:done|assessed|obtained|performed|taken|measured|recorded|available|evaluated|tested|asked)|"
@@ -887,13 +890,26 @@ MISSING_CODE_MIN_CATEGORIES: Final = 2
 MISSING_LABEL_EXCEPT: Final = re.compile(r"\bother\b", re.IGNORECASE)
 
 # A sequence column numbers the rows of each patient 1..k (or 0..k-1) in at least this share of
-# patients with more than one row.
-SEQUENCE_MIN_SHARE: Final = 0.9
-# A column not named for numbering (visit_no, cycle, seq) must number nearly every patient's lines.
-SEQUENCE_UNNAMED_MIN_SHARE: Final = 0.98
-# A repeating ID that names no role is the patient key only with at least this share of distinct
-# values per line (a GBD location_id repeats over thousands of lines; patients repeat a few times).
+# patients with more than one row, whatever it is called.
+SEQUENCE_MIN_SHARE: Final = 0.95
+# A time since an index event ("weeks since start") differs on each line of at least this share.
+TIME_SINCE_MIN_SHARE: Final = 0.9
+# A repeating column with fewer values than this share of the lines never beats a unique
+# conventionally named patient ID.
 GENERIC_KEY_MIN_SHARE: Final = 0.05
+# A repeating ID that only the structure points to is tentatively the patient key with at least
+# this share of different values per line (a few lines each, at most 5 on average); with fewer
+# (long follow-up, or a site, a device, a ward) "Which column identifies the patient?" is asked.
+KEY_MIN_SHARE: Final = 0.2
+# A line-unique ID nested in a repeating ID whose values mostly (this share or more) sit on one
+# line only: each line may be one person grouped by a second person, so the key is asked.
+KEY_SECOND_PERSON_SHARE: Final = 0.5
+# A repeating ID with at least this share of its values on one line only is a record ID with a
+# few repeats, never a tentative patient key (still asked).
+KEY_RECORD_SHARE: Final = 0.9
+# "Which column identifies the patient?": its id and the answer that says no column does.
+KEY_QUESTION_ID: Final = "patient_key"
+KEY_ANSWER_NONE: Final = "none of these names the patient"
 # Day/month order is settled only by at least this many values that one order alone reads, and
 # at least this share of the column (real dates have a day above 12 on about 60% of lines).
 DATE_ORDER_MIN_VALUES: Final = 3
@@ -915,21 +931,24 @@ SUMMARY_RATE_TEXT: Final = re.compile(
 ROWS_QUESTION_ID: Final = "rows_are_patients"
 ROWS_ANSWER_RECORDS: Final = "no, lines are visits, tests or other records"
 
-# Survey weight columns (NHANES WTMEC2YR, WTINT2YR; BRFSS _LLCPWT; "sample_weight", "final_wt").
+# Survey weight columns: the usual published names ("WTxxx" weights of interview or exam samples,
+# "_LLCPWT"-style final weights, "sample_weight", "final_wt", "person_wgt").
 SURVEY_WEIGHT_NAME: Final = re.compile(
     r"^_?(?:wt|wgt)(?:mec|int|sa|pers|fs|final|samp)\w*$|^_?llcpwt\w*$|"
     r"(?:^|_)(?:sample|sampling|survey|final|person|analysis)_?(?:wt|wgt|weight)s?(?:_|$)"
 )
+# A question that asks for a population estimate, which only weights can give (any country).
 SURVEY_NATIONAL_QUESTION: Final = re.compile(
-    r"\b(?:national(?:ly)?|nationwide|national\s+estimates?|in\s+the\s+(?:us|u\.s\.|united\s+states)|"
-    r"u\.s\.?\s+(?:adults|population|children)|americans|weighted|population\s+estimates?|prevalence\s+in\s+the\s+population)\b",
+    r"\b(?:national(?:ly)?|nationwide|country[- ]?wide|weighted|population[- ]level|"
+    r"population\s+estimates?|(?:in|of|across)\s+the\s+(?:whole\s+|general\s+)?(?:population|country)|"
+    r"representative|prevalence\s+in\s+the\s+population)\b",
     re.IGNORECASE,
 )
 SURVEY_NATIONAL_REFUSAL: Final = (
-    "This file is a survey sample. Its counts are of the people in this file, not weighted national estimates, "
-    "so a national figure isn't given. Ask about the people in this file instead."
+    "This file is a survey sample. Its counts are of the people in this file, not weighted population estimates, "
+    "so a population figure isn't given. Ask about the people in this file instead."
 )
-SURVEY_NOTE: Final = "These are counts of the people in this file, not weighted national estimates."
+SURVEY_NOTE: Final = "These are counts of the people in this file, not weighted population estimates."
 
 # Time units a unit column may name (normalised), and days in one of each.
 TIME_UNIT_NAMES: Final = {

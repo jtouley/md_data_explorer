@@ -121,7 +121,7 @@ class DimensionChoice(BaseModel):
 
 
 class MissingCodeDeclaration(BaseModel):
-    """The doctor's answer to "Does 99 in los_days mean not recorded?" on one dataset version.
+    """The doctor's answer to "Does 99 in grip_kg mean not recorded?" on one dataset version.
 
     ``missing`` True: the value is stored as missing wherever answers read the data; False: it is
     a real value (the question is answered and not asked again)."""

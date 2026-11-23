@@ -13,7 +13,9 @@ What a question concerns:
   read the column;
 * the whole table (``aggregate_unsure``, ``total_row``, ``repeated_strata``): every answer, since
   any number read from a table of groups depends on which lines are groups and which totals;
-* what a line is (``rows_are_patients``, ``person_role``): answers that count lines.
+* what a line is (``rows_are_patients``): answers that count lines;
+* which column names the patient (``patient_key``; ``person_role`` in contracts written before
+  it): answers that count lines or read a column it asks about.
 """
 
 from __future__ import annotations
@@ -32,7 +34,10 @@ COLUMN_KINDS: Final = frozenset(
     {"missing_code", "date_order", "date_century", "censored_value", "unit_pair", "unit_missing"}
 )
 TABLE_KINDS: Final = frozenset({"aggregate_unsure", "total_row", "repeated_strata"})
-COUNT_KINDS: Final = frozenset({"rows_are_patients", "person_role"})
+COUNT_KINDS: Final = frozenset({"rows_are_patients"})
+# Which column names the patient: answers that count lines, or read one of the columns asked about
+# (a count of different values of it is a count of patients only if it names them).
+KEY_KINDS: Final = frozenset({"patient_key", "person_role"})
 
 HELD_MESSAGE: Final = "This answer waits for you to answer {count} about this file first: {questions}"
 
@@ -73,6 +78,9 @@ def _holds(question: OpenQuestion, columns: Collection[str] | None, counts_lines
         return True
     if question.kind in COUNT_KINDS:
         return counts_lines
+    if question.kind in KEY_KINDS:
+        asked = {question.column, *question.options}
+        return counts_lines or columns is None or bool(asked & set(columns))
     if question.kind in COLUMN_KINDS:
         return columns is None or question.column in columns
     raise ValueError(f"No hold rule for question kind {question.kind!r}")

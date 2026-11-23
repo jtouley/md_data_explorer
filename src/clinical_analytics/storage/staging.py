@@ -54,7 +54,7 @@ from clinical_analytics.contracts.config import (
     UNRELIABLE_FLAG_SUFFIX,
 )
 from clinical_analytics.contracts.dates import DateAmbiguity, DateChoice, choose_text_format, date_coverage
-from clinical_analytics.contracts.inference import KEY_COLUMN_NAMES
+from clinical_analytics.contracts.inference import KEY_COLUMN_NAMES, key_column_named
 
 logger = structlog.get_logger()
 
@@ -238,7 +238,8 @@ class StagedTable:
 
 
 def is_id_column_name(name: str) -> bool:
-    return name.strip().lower() in ID_COLUMN_NAMES
+    """``id`` or a patient-identifier convention, however written ("Patient_ID", "MRN")."""
+    return key_column_named(name.strip())
 
 
 # --- per-column typing ------------------------------------------------------------------------

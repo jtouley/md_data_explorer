@@ -214,7 +214,10 @@ def test_ensurePatientId_compositeKey_hashedAndSourcesKept(
 
     # Assert
     assert metadata["patient_id_source"] == "composite"
-    assert metadata["patient_id_columns"] == ["location_name", "cause_name", "sex", "year"]
+    # The place is named twice (a name and a code, one to one): either tells the cells apart, and
+    # the choice depends on the values only, never on column names or order
+    assert metadata["patient_id_columns"] in (["location_name", "cause_name", "sex", "year"],
+                                              ["FIPS", "cause_name", "sex", "year"])  # fmt: skip
     assert result["patient_id"].n_unique() == df.height
     assert_frame_equal(result.drop("patient_id"), df)
 
@@ -224,7 +227,7 @@ _ROWS = 30
 _KEY_FRAMES: dict[str, pl.DataFrame] = {
     "composite": pl.DataFrame(
         {
-            "location_name": [f"L{i // 3}" for i in range(_ROWS)],
+            "location_name": [f"Place {i // 3}" for i in range(_ROWS)],
             "sex": [("F", "M", "X")[i % 3] for i in range(_ROWS)],
             "mx": [0.1 * i for i in range(_ROWS)],
         }

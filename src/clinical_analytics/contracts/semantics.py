@@ -45,8 +45,10 @@ logger = structlog.get_logger()
 FactSource: TypeAlias = Literal["structure", "dictionary", "declared", "default"]
 Confidence: TypeAlias = Literal["high", "medium", "low"]
 QuestionKind: TypeAlias = Literal[
-    "rows_are_patients", "person_role", "date_order", "date_century", "missing_code", "repeated_strata",
+    "rows_are_patients", "patient_key", "date_order", "date_century", "missing_code", "repeated_strata",
     "aggregate_unsure", "total_row", "censored_value", "unit_pair", "unit_missing",
+    # Read only: contracts written before "Which column identifies the patient?" asked it this way.
+    "person_role",
 ]  # fmt: skip
 AggregateKind: TypeAlias = Literal["frequency", "estimate"]
 LogicalType: TypeAlias = Literal[
@@ -81,7 +83,7 @@ class PatientKey(_Model):
     """The column that names the patient (the file's own column, never one the app added)."""
 
     column: str = Field(min_length=1)
-    role: str = "patient"  # patient, infant, mother: who the key names
+    role: str = "patient"  # who the key names (contracts written before ADR017's last revision: infant, mother)
     unique: bool  # one row per key value
     confidence: Confidence
     source: FactSource
@@ -112,12 +114,12 @@ class SequenceColumn(_Model):
 
 
 class GroupingColumn(_Model):
-    """A column for a different role than the patient (a mother, a site, a surgeon, a ward)."""
+    """A column for a different role than the patient (a carer, a lab, a fitter, a device)."""
 
     column: str
     role: str
-    # An ID that repeats (site_id, mat_id): lines may share someone, so "Is each line one
-    # patient?" is not asked. False for a staff or place attribute (a ward name).
+    # An ID that repeats across patients (a lab_id, a fitter_ref): it does not name the patient.
+    # False only in contracts written before ADR017's last revision (a name-only attribute).
     is_id: bool = True
     source: FactSource
     evidence: str = ""
@@ -193,8 +195,8 @@ class MissingCode(_Model):
 
 
 class CensoredCode(_Model):
-    """A labelled value that stands for a range, not one value ("80 = 80 years or older", "666 =
-    less than 1 year"): a real value, never missing; an answer that reads its column asks first."""
+    """A labelled value that stands for a range, not one value ("65 = 65 hours or more", "0 = less
+    than 1 hour"): a real value, never missing; an answer that reads its column asks first."""
 
     value: int | float | str
     meaning: str
@@ -213,7 +215,7 @@ class Unit(_Model):
 
 
 class Timepoint(_Model):
-    """One measure taken at several times (``weight_preop_kg`` / ``weight_12m_kg``)."""
+    """One measure taken at several times (``grip_pre_kg`` / ``grip_12m_kg``)."""
 
     measure: str
     timepoint: str
@@ -254,6 +256,9 @@ class OpenQuestion(_Model):
     answered: bool = False
     # The value asked about (a suspected missing-value code), when there is one.
     value: int | float | str | None = None
+    # "Which column identifies the patient?": the number of different values in each option's
+    # column, in the order of ``options``, so an answer can name the patients and their count.
+    option_counts: tuple[int, ...] = ()
 
 
 class DatasetSemantics(_Model):
@@ -412,13 +417,16 @@ def _with_answers(semantics: DatasetSemantics, answers: Any) -> DatasetSemantics
     columns = dict(semantics.columns)
     records = given.get(config.ROWS_QUESTION_ID) == config.ROWS_ANSWER_RECORDS
     questions = []
+    key_update: dict[str, Any] = {}
     for q in semantics.open_questions:
         answer = given.get(q.id)
         settled = answer is not None and answer in q.options
         if q.kind == "aggregate_unsure" and records:
             settled = True
         if q.kind in ("repeated_strata", "person_role", "unit_missing") and settled and answer != q.options[0]:
-            settled = False  # lines that replace each other, or one line per mother: not supported
+            settled = False  # lines that replace each other, or a second person per line: not supported
+        if q.kind == "patient_key" and settled and answer is not None:
+            key_update = _answered_key(semantics, q, answer)
         if q.kind == "total_row" and settled and answer == q.options[0] and aggregate is not None and q.column:
             aggregate = _with_total(aggregate, q.column, str(q.value))
         if q.kind == "unit_pair" and settled and answer == q.options[0] and q.column in columns:
@@ -430,7 +438,49 @@ def _with_answers(semantics: DatasetSemantics, answers: Any) -> DatasetSemantics
     update: dict[str, Any] = {"open_questions": tuple(questions), "aggregate": aggregate, "columns": columns}
     if records and aggregate is not None and aggregate.source != "declared":
         update.update({"aggregate": None, "case_count_column": None})
+    if key_update:
+        update.update(key_update)
+        roles = key_update.pop("_roles")
+        update.pop("_roles", None)
+        update["columns"] = {
+            name: col.model_copy(update={"role": roles[name]}) if name in roles else col
+            for name, col in update["columns"].items()
+        }
     return semantics.model_copy(update=update)
+
+
+def _answered_key(semantics: DatasetSemantics, question: OpenQuestion, answer: str) -> dict[str, Any]:
+    """The answer to "Which column identifies the patient?": that column is the patient key (its
+    number of values from ``option_counts``), or no column names a patient and counts are of lines."""
+    old = semantics.patient_key.column if semantics.patient_key is not None else None
+    roles: dict[str, str] = {old: "value"} if old is not None else {}
+    if answer == config.KEY_ANSWER_NONE or answer not in question.options[: len(question.option_counts)]:
+        grain = semantics.grain.model_copy(
+            update={"one_row_per_patient": False, "patients": None, "source": "declared", "evidence": answer}
+        )
+        return {"patient_key": None, "grain": grain, "_roles": roles}
+    patients = question.option_counts[question.options.index(answer)]
+    unique = patients == semantics.rows
+    key = PatientKey(
+        column=answer,
+        unique=unique,
+        confidence="high",
+        source="declared",
+        evidence="you said it identifies the patient",
+    )
+    grain = semantics.grain.model_copy(
+        update={
+            "kind": "patient" if unique else ("record" if semantics.grain.kind == "patient" else semantics.grain.kind),
+            "noun": "patient" if unique else ("record" if semantics.grain.kind == "patient" else semantics.grain.noun),
+            "one_row_per_patient": unique,
+            "patients": patients,
+            "source": "declared",
+            "evidence": f"you said {answer} identifies the patient",
+        }
+    )
+    roles[answer] = "patient_key"
+    groups = tuple(g for g in semantics.grouping_columns if g.column != answer)
+    return {"patient_key": key, "grain": grain, "grouping_columns": groups, "_roles": roles}
 
 
 def _with_total(aggregate: AggregateInfo, column: str, value: str) -> AggregateInfo:
@@ -624,14 +674,18 @@ def _list(items: list[str]) -> str:
 
 
 def describe(semantics: DatasetSemantics, *, max_lines: int = 12) -> list[str]:
-    """The key facts in clinical words ("Each line is one ED encounter; 700 patients")."""
+    """The key facts in clinical words ("Each line is one clinic attendance; 700 patients")."""
     lines: list[str] = []
     grain, key = semantics.grain, semantics.patient_key
-    if key is not None and grain.patients is not None:
+    if key is not None and grain.patients is not None and key.confidence == "low":
+        lines.append(
+            f"{key.column} may name the patient ({_count(grain.patients, 'different value')} over "
+            f"{_count(grain.rows, 'line')}); you are asked which column does."
+        )
+    elif key is not None and grain.patients is not None:
         if grain.one_row_per_patient:
-            who = key.role if key.role in ("infant", "mother") else "patient"
             lines.append(
-                f"Each line is one {grain.noun}; {_count(grain.patients, who)}, each named by {key.column}."
+                f"Each line is one {grain.noun}; {_count(grain.patients, 'patient')}, each named by {key.column}."
                 if grain.kind != "patient"
                 else f"Each line is one patient; {_count(grain.patients, 'patient')}, each named by {key.column}."
             )
@@ -666,7 +720,8 @@ def describe(semantics: DatasetSemantics, *, max_lines: int = 12) -> list[str]:
             )
     for group in semantics.grouping_columns:
         if group.is_id:
-            lines.append(f"{group.column} groups lines by {group.role}; it does not name the patient.")
+            by = "" if group.role in ("group", "") else f" by {group.role}"
+            lines.append(f"{group.column} groups lines{by}; it does not name the patient.")
     for name, col in semantics.columns.items():
         if col.date is not None and col.date.format not in (
             "native",

@@ -37,12 +37,13 @@ def _one_row_per_record(n: int = N) -> pl.DataFrame:
 
 
 def _visit_rows(n: int = N) -> pl.DataFrame:
-    """Visit-level: a unique visit code, and an ID for another role (a ward) that repeats; nothing
-    names the patient (a person_id would: ADR017 reads it as the patient key)."""
+    """Visit-level: a unique visit code, and an ID that repeats over many lines (20 each); nothing
+    says whom it names, so "Which column identifies the patient?" is asked, never "Is each line
+    one patient?" (a person_id would be the key: ADR017 reads the broad conventions)."""
     return pl.DataFrame(
         {
             "visit_code": [f"V{i:04d}" for i in range(n)],
-            "ward_no": [f"W{i % (n // 2):04d}" for i in range(n)],
+            "ward_no": [f"W{i % (n // 20):04d}" for i in range(n)],
             "sex": ["female" if (i % (n // 2)) % 2 else "male" for i in range(n)],
         }
     )
@@ -254,6 +255,7 @@ def test_sqlConfirmationOnVisitRows_questionsStillCountRows(
     # Act
     unit = _count_unit(upload_id)
 
-    # Assert: the SQL confirmation is stored, but never turns visit rows into patients
+    # Assert: the SQL confirmation is stored, but never turns visit rows into patients: counts of
+    # patients wait for "Which column identifies the patient?"
     assert FileDeclarationStore(uploads_dir().parent).load(upload_id).grains != ()
-    assert unit == "rows"
+    assert unit == "held"

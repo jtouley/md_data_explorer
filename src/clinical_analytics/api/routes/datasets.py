@@ -445,7 +445,7 @@ def _without_answered_questions(report: QualityReport, declarations: Declaration
         if kind in ("repeated_strata", "unit_missing"):
             return given.get(check.id, "").startswith("yes")
         if kind == "person_role":
-            return given.get(check.id) == "one baby"
+            return check.id in given and given[check.id] == "one baby"
         return check.id in given
 
     kept = [c for c in report.checks if not (c.metric == OPEN_QUESTION_METRIC and is_answered(c))]
@@ -908,7 +908,7 @@ def answer_one_row_per_patient(dataset_id: str, answer: OneRowPerPatientAnswer) 
 
 
 class MissingCodeAnswer(BaseModel):
-    """The answer to "Does 99 in los_days mean not recorded?" (an open question of the contract)."""
+    """The answer to "Does 99 in grip_kg mean not recorded?" (an open question of the contract)."""
 
     model_config = ConfigDict(extra="forbid")
 

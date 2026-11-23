@@ -443,7 +443,7 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
     median = series.median() if dtype.is_numeric() and dtype != pl.Boolean else None
     bounds = range_for(column, float(median) if isinstance(median, int | float) else None)
     if semantic is not None and semantic.stated_range is not None:
-        # The dictionary's stated range ("PHQ-9 total score (0-27)") is this column's range.
+        # The dictionary's stated range ("Grip score (0-40)") is this column's range.
         stated = semantic.stated_range
         unit_text = semantic.unit.value if semantic.unit is not None else "as stated"
         bounds = config.PlausibilityRange(

@@ -6,7 +6,7 @@
 const { test, expect } = require('@playwright/test');
 
 const FACTS = [
-  'Each line is one clinic visit; 60 patients (subj names the patient) over 120 lines.',
+  'Each line is one clinic visit; 60 patients (eye_owner names the patient) over 120 lines.',
   "visit_no numbers each patient's visits in order (1 = first).",
   'Dates like April 03, 2021 in vis_date read as 3 April 2021.',
   '999 in iop_mmhg means not recorded (not measured).',
@@ -30,12 +30,12 @@ async function setup(page) {
             : { datasets: [], total: 0 },
         getDataset: async () => ({
           dataset_id: 'ds_iop',
-          tables: [{ name: 'unified', row_count: 120, columns: ['subj'] }],
+          tables: [{ name: 'unified', row_count: 120, columns: ['eye_owner'] }],
           metadata: {},
         }),
         previewDataset: async () => ({
-          columns: ['subj'],
-          rows: [{ subj: 'G000' }],
+          columns: ['eye_owner'],
+          rows: [{ eye_owner: 'G000' }],
           total_rows: 120,
         }),
         listSessions: async () => ({ sessions: [], total: 0 }),
@@ -71,7 +71,7 @@ test.describe('What the file holds', () => {
     await page.locator('[data-testid="upload-file-input"]').setInputFiles({
       name: 'iop.csv',
       mimeType: 'text/csv',
-      buffer: Buffer.from('subj,visit_no\nG000,1\n'),
+      buffer: Buffer.from('eye_owner,exam_no\nG000,1\n'),
     });
 
     const status = page.getByTestId('upload-status');

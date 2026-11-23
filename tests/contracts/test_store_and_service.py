@@ -222,7 +222,7 @@ def test_checkUpload_acceptedPatchInOverlay_labelInContract(tmp_path: Path, load
 def test_checkUploadOrLog_checkFails_returnsVisibleNotRunStatus(tmp_path: Path, make_semantics):
     # Arrange: the semantics' patient key is not a column of the frame, so building the contract fails.
     df = pl.DataFrame({"a": [1, 2]})
-    semantics = make_semantics(pl.DataFrame({"subj": ["S1", "S1", "S2"]}), add_ids=False)
+    semantics = make_semantics(pl.DataFrame({"person_id": ["S1", "S1", "S2"]}), add_ids=False)
 
     # Act
     result = check_upload_or_log(

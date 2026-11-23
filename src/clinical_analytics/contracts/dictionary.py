@@ -2,16 +2,16 @@
 """Read a data dictionary (the upload's documentation text) into per-column facts.
 
 Only columns the data has are read: an entry starts on a line whose first word is a column name
-("SRC_CD    Suspected source of infection:"), and runs over the indented lines under it. The
-lines that belong to no entry are prose, where the file states what a row is ("One row per ED
-encounter", "Unit of observation: patient") and who the patient is ("'subject' = patient").
+("BRACE_TP    Brace worn after the fall:"), and runs over the indented lines under it. The lines
+that belong to no entry are prose, where the file states what a row is ("One row per clinic
+attendance", "Unit of analysis: kennel stay") and who the patient is ("'owner_ref' = patient").
 
 Code labels: a label runs from its code's "=" to the next code of the same list, so commas,
-slashes, "=" and parentheses inside a label stay in it ("2 = AC-T (doxorubicin/cyclophosphamide
-then paclitaxel, q21 days)"). A code list starts after a line start, a comma, a semicolon, a
-colon, a sentence end or an opening parenthesis; a list inside parentheses ends at the
-parenthesis that closes it. One pair alone ("1 = first cycle") is a note, not a code list,
-unless its label says the value was not recorded ("99 = questionnaire not done").
+slashes, "=" and parentheses inside a label stay in it ("2 = splint (thermoplastic/padded, worn
+at night)"). A code list starts after a line start, a comma, a semicolon, a colon, a sentence
+end or an opening parenthesis; a list inside parentheses ends at the parenthesis that closes it.
+One pair alone ("1 = first fitting") is a note, not a code list, unless its label says the value
+was not recorded ("-5 = sheet not returned").
 """
 
 from __future__ import annotations
@@ -23,19 +23,22 @@ from typing import Final, Literal
 
 from clinical_analytics.contracts import config
 from clinical_analytics.contracts.dates import format_from_text
+from clinical_analytics.contracts.units import is_atom
 
 Direction = Literal["lower_is_better", "higher_is_better"]
 
 # "code = label"; a number may also be written "code: label" ("1: Yes 2: No").
-_CODE: Final = re.compile(r"([A-Za-z0-9][A-Za-z0-9.+\-]{0,7})\s*=(?!=)\s*|(?<![\w.:])(\d{1,4})\s*:\s*(?=[A-Za-z])")
+_CODE: Final = re.compile(
+    r"((?<![\w.])-\d{1,5}|[A-Za-z0-9][A-Za-z0-9.+\-]{0,7})\s*=(?!=)\s*|(?<![\w.:])(\d{1,4})\s*:\s*(?=[A-Za-z])"
+)
 _LIST_START: Final = frozenset("\n,;:(.*†‡•")
-_BOUNDARY_ONLY: Final = frozenset({"blank", "blanks", "empty"})  # "blank = not drawn": no code value
+_BOUNDARY_ONLY: Final = frozenset({"blank", "blanks", "empty"})  # "blank = not taken": no code value
 _RANGE: Final = re.compile(r"(?<![\w.^])(-?\d+(?:\.\d+)?)\s*(?:-|–|—|to)\s*(-?\d+(?:\.\d+)?)(?![\w.%/^])")
 _PAREN: Final = re.compile(r"\([^()]*\)")
 _SENTENCE_END: Final = re.compile(r"(?<=[.;!?])\s+(?=[A-Z0-9\-])")
 # The patient must be what the identifier identifies: "patient identifier", "(patient)",
-# "identifies the patient", "identifier of the patient". "Identifier of the surgeon who operated
-# on the patient" names the surgeon.
+# "identifies the patient", "identifier of the patient". "Identifier of the technician who ran
+# the pump for the patient" names the technician.
 _PATIENT_KEY_TEXT: Final = re.compile(
     r"\(\s*patient\s*\)|\bpatient(?:'s)?\s+(?:id|identifier|number|key|record\s+number)\b|"
     r"\bidentif(?:ies|ier)\s+(?:(?:of|for)\s+)?(?:the|each|a)\s+patients?\b|"
@@ -71,9 +74,7 @@ _SAYS_AGGREGATE: Final = re.compile(
     re.IGNORECASE,
 )
 _ONE_PER_PERSON: Final = re.compile(
-    r"\beach\s+(?:woman|patient|person|participant|subject|mother|infant|child)\b[^.]*\bone\b|"
-    r"\bfirst\s+\w+\s+only\b|\bone\s+per\s+(?:woman|patient|person|participant)\b",
-    re.IGNORECASE,
+    r"\bone\s+(?:row|line|record)?\s*per\s+(?:patient|person|participant|subject)\b", re.IGNORECASE
 )
 _REPEATS: Final = re.compile(r"\b(?:more than once|repeat(?:s|ed)?|several (?:rows|times|visits))\b", re.IGNORECASE)
 _DIRECTION: Final = re.compile(
@@ -87,15 +88,15 @@ _WORD_UNIT: Final = re.compile(
     r"percent|%|seconds|mmHg|cmH2O|bpm|beats per minute|breaths per minute|IU|U)(?![\w/])",
     re.IGNORECASE,
 )
-# Clinical units that are not made of unit words ("Kt/V" for dialysis adequacy, "INR").
-_NAMED_UNIT: Final = re.compile(r"(?<![\w/])(Kt/V|INR|MET-min/week|METs|IU/mL)(?![\w/])")
-# A ratio is a unit only when one side is a unit word ("mmol/L", "x10^9/L", "kg/m2"); "Yes/No" is
-# a label set, never a unit.
-_UNIT_PARTS: Final = frozenset(
-    {"mg", "g", "kg", "mcg", "ug", "µg", "ng", "pg", "mmol", "umol", "µmol", "mol", "meq", "l", "dl", "ml", "min",
-     "h", "hr", "day", "d", "wk", "week", "m2", "cm2", "m", "iu", "u", "mu", "copies", "cells", "mm3", "ul", "µl",
-     "s", "sec", "kpa", "mmhg", "beats", "breaths"}
-)  # fmt: skip
+# A unit the dictionary states in so many words, whatever it is ("Units: AU", "unit of measure:
+# points", "expressed as a ratio (A/B)").
+_STATED_UNIT: Final = re.compile(
+    r"\b(?:units?(?:\s+of\s+measure)?|measured\s+in|expressed\s+in)\s*[:=]\s*(?P<unit>[^\s,;()]+)|"
+    r"\bratio\s*\(\s*(?P<ratio>[A-Za-z][\w.\-]*/[A-Za-z][\w.\-]*)\s*\)",
+    re.IGNORECASE,
+)
+# A ratio is a unit only when one side is a unit atom (``contracts.units``: "mmol/L", "x10^9/L",
+# "kg/m2"); "Yes/No" is a label set, never a unit.
 _DATE_WORDS: Final = re.compile(r"\b(?:YYYY|YY|MM|DD|HH|Mon)\b")
 
 
@@ -115,7 +116,7 @@ class DictionaryEntry:
     # were coded as -9"): asked about, never applied (code -> the sentence).
     noted_missing: dict[str, str] = field(default_factory=dict)
     # From a codebook table: a coded item's non-response codes ("7 = Refused"), and labelled values
-    # that stand for a range ("80 = 80 years or older").
+    # that stand for a range ("65 = 65 hours or more").
     nonresponse: dict[str, str] = field(default_factory=dict)
     censored: dict[str, str] = field(default_factory=dict)
 
@@ -242,7 +243,7 @@ def is_missing_label(label: str) -> bool:
 
 
 def says_not_taken(label: str) -> bool:
-    """A note beside a measurement that says it was not taken ("questionnaire not done")."""
+    """A note beside a measurement that says it was not taken ("sheet not returned")."""
     return bool(config.MISSING_LABEL_NOT_TAKEN.search(label)) and not config.MISSING_LABEL_EXCEPT.search(label)
 
 
@@ -291,15 +292,13 @@ def _stated_range(description: str) -> tuple[float, float] | None:
 
 
 def _unit(description: str) -> str | None:
-    named = _NAMED_UNIT.search(description)
-    if named:
-        return named.group(1)
+    stated = _STATED_UNIT.search(description)
+    if stated:
+        return stated.group("unit") or stated.group("ratio")
     for m in _RATIO_UNIT.finditer(description):
         unit = m.group(1)
-        parts = {p.lower() for p in re.split(r"/", unit)}
-        if _DATE_WORDS.search(unit) or not (
-            {p for p in parts if not p.startswith("x10")} & _UNIT_PARTS or "x10" in unit
-        ):
+        parts = {p.lower().replace("µ", "u").replace("μ", "u").rstrip("²") for p in re.split(r"/", unit)}
+        if _DATE_WORDS.search(unit) or not (any(is_atom(p) for p in parts if not p.startswith("x10")) or "x10" in unit):
             continue
         return unit
     word = _WORD_UNIT.search(description)
@@ -327,7 +326,7 @@ def _entry(column: str, text: str) -> DictionaryEntry:
         for code, _label in free_missing_pairs(sentence)
         if code not in listed
     }
-    first = re.search(r"[A-Za-z0-9][A-Za-z0-9.+\-]{0,7}\s*=(?!=)", text)
+    first = re.search(r"-?[A-Za-z0-9][A-Za-z0-9.+\-]{0,7}\s*=(?!=)", text)
     description = text[: first.start()] if first else text
     date_format = format_from_text(text)
     stated = None if date_format else _stated_range(description)
@@ -366,27 +365,11 @@ def _entry_start(line: str, by_lower: dict[str, str]) -> tuple[str, str] | None:
 
 
 def _noun(text: str) -> str:
-    """The noun phrase of a grain statement, whole or not at all: "ED encounter" from "ED
-    encounter that met the alert". A phrase longer than ``_MAX_NOUN_WORDS`` ends at its last word
-    that names what a row is ("emergency department patient visit" -> "patient visit"), never
-    cut mid-phrase; with no such word it is dropped."""
-    from clinical_analytics.contracts.inference import GRAIN_KIND_WORDS
-
+    """The noun phrase of a grain statement, whole or not at all: "clinic attendance" from "clinic
+    attendance that was booked". A phrase longer than ``_MAX_NOUN_WORDS`` is dropped, never cut
+    mid-phrase (the line is then a "record")."""
     words = _NOUN_STOP.sub("", text.strip()).strip(" -").split()
-    named = [w for w in words if w.lower().rstrip("s") in GRAIN_KIND_WORDS or w.lower() in GRAIN_KIND_WORDS]
-    if len(words) <= _MAX_NOUN_WORDS and (not named or words[-1] in named):
-        return " ".join(words)
-    last = next(
-        (
-            i
-            for i in range(len(words) - 1, -1, -1)
-            if words[i].lower().rstrip("s") in GRAIN_KIND_WORDS or words[i].lower() in GRAIN_KIND_WORDS
-        ),
-        None,
-    )
-    if last is None:
-        return ""
-    return " ".join(words[max(0, last - 1) : last + 1])
+    return " ".join(words) if len(words) <= _MAX_NOUN_WORDS else ""
 
 
 _TABLE_RULE: Final = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$")
@@ -419,21 +402,24 @@ _CODEBOOK_HEADER: Final = re.compile(
 )
 _CELL_SPLIT: Final = re.compile(r"\s*\|\s*|\t+|\s{2,}")
 _VARIABLE_LINE: Final = re.compile(
-    r"^\s*(?:variable(?:\s+name)?\s*[:=]\s*)?(?P<name>[A-Za-z_][\w.]*)\s*(?:$|[:\-–]\s+(?P<label>.*))", re.I
+    r"^\s*(?:(?:sas\s+)?variable(?:\s+name)?\s*[:=]\s*)?(?P<name>[A-Za-z_][\w.]*)\s*(?:$|[:\-–]\s+(?P<label>.*))", re.I
 )
 _LABEL_LINE: Final = re.compile(
     r"^\s*(?:sas\s+label|label|english\s+text|question|description)\s*:\s*(?P<text>.+)", re.I
 )
 _RANGE_ROW: Final = re.compile(r"^(-?\d+(?:\.\d+)?)\s*(?:to|-|–|—)\s*(-?\d+(?:\.\d+)?)$")
 _NONRESPONSE: Final = re.compile(
-    r"\b(?:refused|don'?t\s+know|not\s+asked|missing|not\s+ascertained|no\s+answer|unknown|not\s+applicable|"
+    r"\b(?:refused|don['’]?t\s+know|not\s+asked|missing|not\s+ascertained|no\s+answer|unknown|not\s+applicable|"
     r"skipped|legitimate\s+skip)\b",
     re.I,
 )
 _EXPLICIT_NONRESPONSE: Final = re.compile(
-    r"\brefused\b|\bdon'?t\s+know\b|\bdo\s+not\s+know\b|\bnot\s+asked\b|^\s*(?:missing|not\s+recorded)\s*\.?\s*$", re.I
+    r"\brefused\b|\bdon['’]?t\s+know\b|\bdo\s+not\s+know\b|\bnot\s+asked\b|^\s*(?:missing|not\s+recorded)\s*\.?\s*$",
+    re.I,
 )
 _RANGE_OF_VALUES: Final = re.compile(r"range\s+of\s+values?", re.I)
+# A range row whose label restates its own range in brackets ("Number of hours [1-24]").
+_OWN_RANGE: Final = re.compile(r"\[\s*(-?\d+(?:\.\d+)?)\s*(?:-|–|to)\s*(-?\d+(?:\.\d+)?)\s*\]")
 _CENSORED: Final = re.compile(
     r"\b(?:or\s+(?:older|more|over|above|higher|less|fewer|younger)|and\s+(?:over|older|above)|less\s+than|"
     r"more\s+than|under|at\s+least|at\s+most)\b|\d\s*\+",
@@ -448,21 +434,25 @@ def _cells(line: str) -> list[str]:
 def _codebook_entries(text: str, by_lower: dict[str, str]) -> dict[str, DictionaryEntry]:
     """Per-column entries read from codebook tables (labels, the value range, non-response and
     range codes): structured per column, so they apply like a column's own code list. A variable
-    header with a label and no table ("Variable Name: SEQN / Respondent sequence number") gives
+    header with a label and no table ("Variable Name: RESPNO / Respondent sequence number") gives
     an entry of its label."""
     found: dict[str, DictionaryEntry] = {}
     labels: dict[str, str] = {}
     lines = text.splitlines()
     current: str | None = None
+    pending = ""  # a label line before its variable line ("Label: ..." then "SAS Variable Name: ...")
     i = 0
     while i < len(lines):
         line = lines[i]
         header = _VARIABLE_LINE.match(line)
         if header and header.group("name").lower() in by_lower:
             current = by_lower[header.group("name").lower()]
-            labels[current] = (header.group("label") or "").strip()
+            labels[current] = (header.group("label") or "").strip() or pending
+            pending = ""
         elif (labelled := _LABEL_LINE.match(line)) and current is not None and not labels[current]:
             labels[current] = labelled.group("text").strip()
+        elif labelled is not None and current is None:
+            pending = labelled.group("text").strip()
         elif current is not None and _CODEBOOK_HEADER.search(line) and len(_cells(line)) >= 2:
             rows: list[tuple[str, str]] = []
             i += 1
@@ -484,14 +474,17 @@ def _codebook_entry(column: str, label: str, rows: list[tuple[str, str]]) -> Dic
     """A codebook variable's entry. Applied automatically (ADR017 principle A) only what the
     codebook states exactly: its "Range of Values" row, explicit non-response labels ("Refused",
     "Don't know", "Not asked", or exactly "Missing"/"Not recorded"), and on a measure, range codes
-    whose label names the edge of that range ("80 = 80 years of age and over" beside 18 to 79).
-    Any other label that may mean not recorded ("Unknown primary (CUP)", "Not applicable") is a
-    note to ask about; on a coded item it stays a category until answered."""
+    whose label names the edge of that range ("65 = 65 hours or more" beside 0 to 64). Any other
+    label that may mean not recorded ("Unknown side", "Not applicable") is a note to ask about; on
+    a coded item it stays a category until answered."""
     stated: tuple[float, float] | None = None
     coded: dict[str, str] = {}
     for code, description in rows:
         ranged = _RANGE_ROW.match(code)
-        if ranged and _RANGE_OF_VALUES.fullmatch(description.strip()):
+        own = _OWN_RANGE.search(description)
+        if ranged and (
+            _RANGE_OF_VALUES.fullmatch(description.strip()) or (own is not None and own.groups() == ranged.groups())
+        ):
             stated = (float(ranged.group(1)), float(ranged.group(2)))
         elif code != "." and re.fullmatch(r"-?\d+(?:\.\d+)?|[A-Za-z]", code):
             coded[code] = description
@@ -503,17 +496,17 @@ def _codebook_entry(column: str, label: str, rows: list[tuple[str, str]]) -> Dic
         censored = {c: d for c, d in coded.items() if c not in explicit and _at_range_edge(d, stated)}
         return DictionaryEntry(
             column=column, text=label, description=label, missing=explicit, censored=censored, stated_range=stated,
-            unit=_unit(label), noted_missing=asked,
+            unit=_unit(label), noted_missing=asked, direction=_direction(label),
         )  # fmt: skip
     return DictionaryEntry(
         column=column, text=label, description=label, labels=coded if len(coded) >= 2 else {}, nonresponse=explicit,
-        noted_missing=asked,
+        noted_missing=asked, unit=None if coded else _unit(label), direction=_direction(label),
     )  # fmt: skip
 
 
 def _at_range_edge(description: str, stated: tuple[float, float]) -> bool:
-    """ "80 years of age and over" beside 18 to 79, "less than 1 year" beside 1 to 120: a boundary
-    word with a number at the edge of the measure's own range."""
+    """ "65 hours or more" beside 0 to 64, "less than 1 hour" beside 1 to 64: a boundary word with
+    a number at the edge of the measure's own range."""
     if not _CENSORED.search(description):
         return False
     low, high = stated
@@ -521,7 +514,13 @@ def _at_range_edge(description: str, stated: tuple[float, float]) -> bool:
     return any(float(n) in edges for n in re.findall(r"-?\d+(?:\.\d+)?", description))
 
 
-_WEIGHTS: Final = re.compile(r"\b(?:sample|sampling|survey|interview|exam|mec|full\s+sample)\s+weights?\b", re.I)
+# The codebook says weights must be applied to the counts ("Weights must be used to produce
+# estimates", "apply the sampling weight for representative figures"); a passing mention is not.
+_WEIGHTS: Final = re.compile(
+    r"\bweights?\s+(?:must|should|need\s+to|have\s+to)\s+be\s+(?:used|applied)\b|"
+    r"\b(?:use|apply|applying|using)\s+(?:the\s+|a\s+)?(?:\w+\s+){0,2}weights?\b[^.]*\b(?:estimates?|representative)\b",
+    re.IGNORECASE,
+)
 
 
 def parse_dictionary(text: str | None, columns: Sequence[str]) -> Dictionary:

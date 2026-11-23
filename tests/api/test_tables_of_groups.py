@@ -47,8 +47,8 @@ def _fetched(url: str, content: bytes, filename: str) -> FetchedFile:
 def test_loadFromUrl_undeclaredFrequencyTable_recognisedWithCountColumn(
     test_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Arrange: a data.cdc.gov link; its column metadata is the dictionary
-    data_url = "https://data.cdc.gov/api/views/ab12-cd34/rows.csv?accessType=DOWNLOAD"
+    # Arrange: a link to a Socrata portal (an invented host); its column metadata is the dictionary
+    data_url = "https://data.health-portal.example/api/views/ab12-cd34/rows.csv?accessType=DOWNLOAD"
     metadata = {
         "description": "Counts of legionella cases by county, year and sex.",
         "columns": [
@@ -71,7 +71,7 @@ def test_loadFromUrl_undeclaredFrequencyTable_recognisedWithCountColumn(
     semantics = test_client.get(f"/api/datasets/{body['upload_id']}/semantics").json()["semantics"]
 
     # Assert
-    assert calls == [data_url, "https://data.cdc.gov/api/views/ab12-cd34.json"]
+    assert calls == [data_url, "https://data.health-portal.example/api/views/ab12-cd34.json"]
     assert body["status"] == "ready"
     # Recognised and recorded, then asked: the structure alone never applies it (ADR017 principle A)
     assert body["one_row_per_patient"]["count_columns"] == ["Cases"]
@@ -81,15 +81,30 @@ def test_loadFromUrl_undeclaredFrequencyTable_recognisedWithCountColumn(
 
 
 @pytest.mark.parametrize(
-    "url",
+    ("url", "expected"),
     [
-        "https://data.cdc.gov.evil.test/api/views/ab12-cd34/rows.csv",
-        "https://data.cdc.gov/api/views/AB12-CD34x/rows.csv",
-        "https://data.cdc.gov:8443/api/views/ab12-cd34/rows.csv",
-        "https://user@data.cdc.gov/api/views/ab12-cd34/rows.csv",
+        ("https://data.health-portal.example/resource/ab12-cd34.csv", ("data.health-portal.example", "ab12-cd34")),
+        ("https://open.region.example/Health/Clinic-waits/ab12-cd34", ("open.region.example", "ab12-cd34")),
+        ("https://OPEN.region.example:443/api/views/ab12-cd34", ("open.region.example", "ab12-cd34")),
     ],
 )
-def test_socrataDictionary_otherHostOrBadId_notFetched(url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_socrataId_anyPortalHost_hostAndIdFromTheLink(url: str, expected: tuple[str, str]) -> None:
+    # Act / Assert: the metadata is read from the link's own host, never a fixed one
+    assert dataset_url.socrata_id(url) == expected
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://data.health-portal.example/api/views/ab12-cd34/rows.csv",
+        "https://data.health-portal.example/api/views/AB12-CD34x/rows.csv",
+        "https://data.health-portal.example:8443/api/views/ab12-cd34/rows.csv",
+        "https://user@data.health-portal.example/api/views/ab12-cd34/rows.csv",
+        "https://data.health-portal.example/files/2021/ab12-cd34/report.csv",
+        "https://10.0.0.7/api/views/ab12-cd34/rows.csv",
+    ],
+)
+def test_socrataDictionary_notAPortalLinkOrBadId_notFetched(url: str, monkeypatch: pytest.MonkeyPatch) -> None:
     # Arrange
     def never(*_a: Any, **_k: Any) -> Any:
         raise AssertionError("fetched")
@@ -129,12 +144,12 @@ def test_oneRowPerPatient_thirdAnswer_countsCasesFromTheCountColumn(
 
 
 def test_dateReadings_orderAnswered_columnReadAsDates(upload: Callable[..., Any], test_client: TestClient) -> None:
-    # Arrange: newborn screening dates that read either way
+    # Arrange: hearing-screen dates that read either way
     from clinical_analytics.api import dependencies
 
     frame = pl.DataFrame(
         {
-            "infant_id": [f"B{i:03d}" for i in range(200)],
+            "child_ref": [f"B{i:03d}" for i in range(200)],
             "screen_date": ["03/04/21", "05/06/21", "07/08/21", "09/10/21"] * 50,
         }
     )
@@ -285,7 +300,7 @@ def _with_total(label: str) -> pl.DataFrame:
 @pytest.mark.parametrize(
     ("label", "confirm"),
     [
-        pytest.param("All States", None, id="label-and-sums"),
+        pytest.param("All regions", None, id="label-and-sums"),
         pytest.param("Statewide", "yes, it is a total", id="sum-confirmed"),
     ],
 )

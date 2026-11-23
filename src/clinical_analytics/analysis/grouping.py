@@ -54,7 +54,7 @@ def normalised_level(text: str) -> str:
 
 def without_listed_codes(groups: list[tuple[str, ...]], codes: Iterable[object]) -> list[tuple[str, ...]]:
     """``groups`` without a group in which two or more spellings are codes the data dictionary
-    lists as distinct ("NB" and "nb" both in the codebook are two categories, not one)."""
+    lists as distinct ("L" and "l" both in the codebook are two categories, not one)."""
     listed = {str(code) for code in codes}
     return [group for group in groups if sum(1 for spelling in group if spelling in listed) < 2]
 

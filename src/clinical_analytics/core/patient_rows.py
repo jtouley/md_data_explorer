@@ -99,17 +99,19 @@ def pending_token(
 
 
 def count_column_choices(semantics: DatasetSemantics | None) -> list[str]:
-    """Columns a "Each row counts cases for a group" answer may name: numbers named as counts."""
-    from clinical_analytics.contracts.inference import _CASE_COUNT_TOKENS, name_tokens
-
+    """Columns a "Each row counts cases for a group" answer may name: the table's count column if
+    the structure found one, then whole-number value columns (the user picks; a name never decides)."""
     if semantics is None:
         return []
+    found = [semantics.case_count_column] if semantics.case_count_column else []
+    groups = set(semantics.aggregate.strata) if semantics.aggregate is not None else set()
     return [
-        name
-        for name, column in semantics.columns.items()
-        if column.logical_type in ("integer", "number")
-        and column.role == "value"
-        and set(name_tokens(name)) & _CASE_COUNT_TOKENS
+        *found,
+        *(
+            name
+            for name, column in semantics.columns.items()
+            if column.logical_type == "integer" and column.role == "value" and name not in {*found, *groups}
+        ),
     ]
 
 

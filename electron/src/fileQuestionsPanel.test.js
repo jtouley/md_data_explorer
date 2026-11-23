@@ -15,7 +15,7 @@ import {
 /** One synthetic question per kind, shaped as GET /api/datasets/{id}/questions returns it. */
 const KINDS = {
   rows_are_patients: '/one-row-per-patient',
-  person_role: '/answers',
+  patient_key: '/answers',
   missing_code: '/missing-codes',
   date_order: '/date-readings',
   date_century: '/date-readings',

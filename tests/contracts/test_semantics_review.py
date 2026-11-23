@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT
 """Review round for ADR017: inference that would change a number is asked, never guessed.
 
-Synthetic tables only, in new domains: fibromyalgia, lupus nephritis biopsies, melanoma
-treatment, heart surgery, trauma (GCS), pancreatitis length of stay, chest-pain troponin,
-vitamin D clinic, obstetric anaesthesia, cystic fibrosis clinics, notifiable-disease counts.
+Synthetic tables only, in invented domains: fibromyalgia, lupus nephritis biopsies, melanoma
+treatment, valve surgery, burns, pancreatitis stays, chest-pain troponin, vitamin D clinic, hand
+therapy, cystic fibrosis clinics, living-donor transplants, notifiable-disease counts.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from polars.testing import assert_frame_equal
 
 from clinical_analytics.contracts.dates import DateAmbiguity, choose_text_format
 from clinical_analytics.contracts.dictionary import parse_dictionary, parse_pairs
-from clinical_analytics.contracts.inference import UploadFacts, apply_semantics, infer_semantics, person_key_role
+from clinical_analytics.contracts.inference import UploadFacts, apply_semantics, infer_semantics, names_patient
 from clinical_analytics.contracts.semantics import describe
 
 N = 200
@@ -103,9 +103,9 @@ def test_parseDictionary_labelledCodes_categoryUnlessNotRecordedAndTwoLeft(
 
 def test_applySemantics_biopsyNotDone_neverNulled() -> None:
     # Arrange: lupus nephritis; 0 = not done is an answer, so the biopsy rate keeps its zeros
-    df = pl.DataFrame({"pt_id": [f"L{i}" for i in range(N)], "biopsy": [i % 3 == 0 for i in range(N)]}).with_columns(
-        pl.col("biopsy").cast(pl.Int64)
-    )
+    df = pl.DataFrame(
+        {"kidney_ref": [f"L{i}" for i in range(N)], "biopsy": [i % 3 == 0 for i in range(N)]}
+    ).with_columns(pl.col("biopsy").cast(pl.Int64))
 
     # Act
     semantics = infer_semantics(df, _facts("biopsy  Renal biopsy: 0 = not done, 1 = done\n"))
@@ -121,11 +121,11 @@ def test_applySemantics_biopsyNotDone_neverNulled() -> None:
         pytest.param(
             pl.DataFrame(
                 {
-                    "patient_no": [f"P{i}" for i in range(N)],
+                    "patient_id": [f"P{i}" for i in range(N)],
                     "patient_status": [("alive", "dead", "lost")[i % 3] for i in range(N)],
                 }
             ),
-            "patient_no",
+            "patient_id",
             id="status_attribute",
         ),
         pytest.param(
@@ -152,32 +152,33 @@ def test_inferSemantics_attributeOrCountNamedForPatient_neverTheKey(frame: pl.Da
 
 
 @pytest.mark.parametrize(
-    ("column", "role"),
-    [("patient_status", None), ("patient_zip", None), ("num_meds", None), ("number_of_children", None),
-     ("study_no", "patient"), ("pt_id", "patient"), ("subj", "patient"), ("infant_id", "infant")],
+    ("column", "named"),
+    [("patient_status", False), ("patient_zip", False), ("num_meds", False), ("number_of_children", False),
+     ("Patient_ID", True), ("subjectId", True), ("MRN", True), ("person_id", True),
+     ("kin_ref", False), ("enrolee_no", False), ("carer_id", False)],
 )  # fmt: skip
-def test_personKeyRole_names_idWordOrWholeNameOnly(column: str, role: str | None) -> None:
-    # Act / Assert
-    assert person_key_role(column) == role
+def test_namesPatient_onlyBroadConventions_neverOtherIdNames(column: str, named: bool) -> None:
+    # Act / Assert: any other ID name is settled by the dictionary, the structure or the user
+    assert names_patient(column) is named
 
 
-def test_inferSemantics_surgeonSentenceMentionsPatient_surgeonNeverKey() -> None:
-    # Arrange: heart surgery; the sentence about the surgeon mentions the patient
+def test_inferSemantics_technicianSentenceMentionsPatient_technicianNeverKey() -> None:
+    # Arrange: valve surgery; the sentence about the pump technician mentions the patient
     df = pl.DataFrame(
         {
             "mrn": [f"M{i // 2}" for i in range(N)],
-            "surgeon_id": [f"S{i % 6}" for i in range(N)],
+            "pump_tech_id": [f"S{i % 6}" for i in range(N)],
             "bypass_min": [60 + i % 90 for i in range(N)],
         }
     )
-    doc = "surgeon_id  Identifier of the surgeon who operated on the patient\nmrn  Medical record number\n"
+    doc = "pump_tech_id  Pump technician identifier (who ran the bypass for the patient)\nmrn  Medical record number\n"
 
     # Act
     semantics = infer_semantics(df, _facts(doc))
 
-    # Assert
+    # Assert: the role comes from the dictionary's words
     assert semantics.patient_key_column == "mrn"
-    assert ("surgeon_id", "surgeon") in [(g.column, g.role) for g in semantics.grouping_columns]
+    assert ("pump_tech_id", "pump technician") in [(g.column, g.role) for g in semantics.grouping_columns]
 
 
 # --------------------------------------------------------------------------- 5-6. dates stay text when unsure
@@ -214,7 +215,7 @@ def test_inferSemantics_dashedAmbiguousDates_questionExampleInColumnStyle() -> N
 @pytest.mark.parametrize(
     ("column", "values", "asked"),
     [
-        pytest.param("los_days", [3, 5, 99, 99, 99, 4] * 20, False, id="length_of_stay_99s_real"),
+        pytest.param("stay_days", [3, 5, 99, 99, 99, 4] * 20, False, id="stay_99s_real"),
         pytest.param("pain_change", [2, -1, -1, -1, 0, 3] * 20, False, id="change_minus_one_real"),
         pytest.param("trop_ng_l", [4.0, 12.0, 999.0, 999.0, 999.0, 8.0] * 20, True, id="troponin_999_asked"),
     ],
@@ -340,27 +341,27 @@ def test_inferSemantics_integerDateStatedInDictionary_read(column: str, line: st
 
 
 # --------------------------------------------------------------------------- 15. roles
-def test_inferSemantics_staffAndPlaces_groupingNotMeasures() -> None:
-    # Arrange: obstetric anaesthesia
+def test_inferSemantics_repeatingIdsAcrossPatients_groupingByStructure() -> None:
+    # Arrange: hand-therapy sessions; IDs of other roles repeat across many patients
     rows = 120
     df = pl.DataFrame(
         {
             "mrn": [f"M{i // 2}" for i in range(rows)],
-            "anaesthetist": [f"A{i % 5}" for i in range(rows)],
-            "ward": [("L1", "L2", "L3")[i % 3] for i in range(rows)],
-            "room": [f"R{i % 8}" for i in range(rows)],
-            "operator_code": [f"O{i % 4}" for i in range(rows)],
-            "reviewer_initials": [("AB", "CD", "EF")[i % 3] for i in range(rows)],
-            "region": [("N", "S", "E", "W")[i % 4] for i in range(rows)],
+            "splinter_ref": [f"A{i % 5}" for i in range(rows)],
+            "bay_no": [f"R{i % 8}" for i in range(rows)],
+            "kit_id": [f"O{i % 4}" for i in range(rows)],
+            "orthosis": [("thumb", "wrist", "finger")[i % 3] for i in range(rows)],
+            "grip_kg": [20.5 + i % 9 for i in range(rows)],
         }
     )
+    doc = "orthosis  Orthosis worn\nkit_id  Kit identifier\n"
 
     # Act
-    semantics = infer_semantics(df)
+    semantics = infer_semantics(df, _facts(doc))
 
-    # Assert
+    # Assert: an ID-like column repeating across patients groups lines; text and measures do not
     roles = {g.column: g.role for g in semantics.grouping_columns}
-    assert set(roles) >= {"anaesthetist", "ward", "room", "operator_code", "reviewer_initials", "region"}
+    assert roles == {"splinter_ref": "splinter", "bay_no": "bay", "kit_id": "kit"}
     assert semantics.patient_key_column == "mrn"
 
 
@@ -383,16 +384,19 @@ def test_inferSemantics_timeSinceIndexAndEpisodeId_sequenceAndEpisodeKey() -> No
     assert [(e.column, e.within) for e in semantics.episode_keys] == [("admission_id", "mrn")]
 
 
-def test_inferSemantics_uniqueBabyUniqueMother_noBabyOrMotherQuestion() -> None:
-    # Act
+def test_inferSemantics_twoIdsUniqueOnEveryLine_noKeyAskedOnce() -> None:
+    # Arrange: living-donor transplants, a donor and a recipient on each line
     df = pl.DataFrame(
-        {"infant_id": [f"B{i}" for i in range(60)], "mat_id": [f"M{i}" for i in range(60)], "apgar": [9] * 60}
+        {"recipient_ref": [f"B{i}" for i in range(60)], "donor_ref": [f"M{i}" for i in range(60)], "egfr": [60] * 60}
     )
+
+    # Act
     semantics = infer_semantics(df)
 
-    # Assert
-    assert semantics.patient_key_column == "infant_id"
-    assert semantics.question("person_role") is None
+    # Assert: no name decides who the patient is; "Is each line one patient?" is asked
+    assert semantics.patient_key is None
+    assert semantics.question("rows_are_patients") is not None
+    assert semantics.question("patient_key") is None
 
 
 # --------------------------------------------------------------------------- 16. summary tables
@@ -419,34 +423,48 @@ def test_inferSemantics_summaryTable_aggregateGrainSentenceNoPatientQuestion() -
 
 
 @pytest.mark.parametrize(
-    "statement",
+    ("statement", "expected"),
     [
-        "One row per patient visit to the emergency department.",
-        "Each row = one ward round documented by the team on call.",
+        ("One row per hydrotherapy pool session.", "hydrotherapy pool session"),
+        ("Each row = one clinic attendance, documented by the team.", "clinic attendance"),
+        ("One row per weekly multidisciplinary falls clinic attendance.", None),
     ],
 )
-def test_parseDictionary_longGrainStatement_nounIsWholeNeverCut(statement: str) -> None:
+def test_parseDictionary_grainStatement_nounWholeOrNotAtAll(statement: str, expected: str | None) -> None:
     # Act
     noun = parse_dictionary(statement + "\n", ["x"]).grain_noun
 
-    # Assert: ends at a word that names a line, never mid-phrase
-    assert noun in ("patient visit", "ward round")
+    # Assert: the phrase is the dictionary's own, never cut mid-phrase
+    assert noun == expected
 
 
 # --------------------------------------------------------------------------- 17. pairing
-def test_inferSemantics_scoresAtTwoTimesAndEvents_paired() -> None:
-    # Arrange: trauma GCS on admission and at 24 h, weight at admission and discharge
+def test_inferSemantics_scoresAtTwoTimes_pairedByGeneralWordsOrDictionaryBaseline() -> None:
+    # Arrange: burns unit; pain at the start and at 48 h, weight before and after, and a score
+    # whose baseline is named "entry" only the dictionary explains
     df = pl.DataFrame(
-        {"gcs_admit": [8, 12], "gcs_24h": [10, 14], "wt_admit_kg": [70.5, 80.0], "wt_dc_kg": [68.0, 79.5]}
+        {
+            "pain_start": [8, 12],
+            "pain_48h": [10, 14],
+            "wt_pre_kg": [70.5, 80.0],
+            "wt_post_kg": [68.0, 79.5],
+            "itch_entry": [5, 6],
+            "itch_w6": [2, 3],
+            "scar_a": [1, 2],
+            "scar_b": [1, 1],
+        }
     )
+    doc = "itch_entry  Itch score at baseline (0-10)\n"
 
     # Act
-    semantics = infer_semantics(df)
+    semantics = infer_semantics(df, _facts(doc))
 
     # Assert
-    assert (semantics.column("gcs_admit").timepoint.order, semantics.column("gcs_24h").timepoint.order) == (0, 1)
-    assert semantics.column("wt_dc_kg").timepoint.paired_with == ("wt_admit_kg",)
-    assert semantics.column("gcs_24h").direction is None
+    assert (semantics.column("pain_start").timepoint.order, semantics.column("pain_48h").timepoint.order) == (0, 1)
+    assert semantics.column("wt_post_kg").timepoint.paired_with == ("wt_pre_kg",)
+    assert semantics.column("itch_w6").timepoint.paired_with == ("itch_entry",)
+    assert semantics.column("scar_a").timepoint is None
+    assert semantics.column("pain_48h").direction is None
 
 
 # --------------------------------------------------------------------------- 18. case-differing codes
@@ -454,11 +472,11 @@ def test_levelVariantResults_codesListedAsDistinct_notHeld(make_contract: Callab
     # Arrange: lesion site codes differ only in case and the dictionary lists both
     from clinical_analytics.contracts.quality import level_variant_results
 
-    df = pl.DataFrame({"pt_id": [f"P{i}" for i in range(40)], "site": ["L", "l", "R"] * 13 + ["L"]})
+    df = pl.DataFrame({"limb_ref": [f"P{i}" for i in range(40)], "site": ["L", "l", "R"] * 13 + ["L"]})
     semantics = infer_semantics(df, _facts("site  Lesion site: L = left limb, l = lower lip, R = right limb\n"))
 
     # Act
-    results = level_variant_results(df.lazy(), make_contract(df, semantics=semantics, id_column="pt_id"))
+    results = level_variant_results(df.lazy(), make_contract(df, semantics=semantics, id_column="limb_ref"))
 
     # Assert
     assert results == []
@@ -496,7 +514,7 @@ def test_headlessLayer_dateColumn_readWithItsFormat() -> None:
         "review_dates",
         pl.DataFrame(
             {
-                "pt_id": [f"P{i}" for i in range(40)],
+                "attendee_ref": [f"P{i}" for i in range(40)],
                 "seen_date": ["13/04/2021", "25/12/2020", "14/02/2021", "03/04/2021"] * 10,
             }
         ),

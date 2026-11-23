@@ -60,6 +60,7 @@ from clinical_analytics.storage.staging import (
     StagingError,
     describe_sheets,
     detect_header_row,
+    is_id_column_name,
     read_csv_typed,
     read_excel_rows,
     read_excel_typed,
@@ -1468,7 +1469,7 @@ def describe_cohort_build(report: dict[str, Any] | None) -> list[str]:
 
 def _cast_id_columns(df: pl.DataFrame) -> pl.DataFrame:
     """ID-named columns as text, all in one pass (staging already does this for uploads)."""
-    id_cols = [c for c in df.columns if c.lower() in ID_COLUMN_NAMES and df.schema[c] != pl.String]
+    id_cols = [c for c in df.columns if is_id_column_name(c) and df.schema[c] != pl.String]
     return df.with_columns(pl.col(id_cols).cast(pl.Utf8)) if id_cols else df
 
 

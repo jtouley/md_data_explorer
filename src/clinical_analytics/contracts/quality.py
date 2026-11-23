@@ -523,7 +523,7 @@ def level_variant_results(lf: pl.LazyFrame, contract: OpenDataContractStandard) 
     for column in text:
         counts = {row["value"]: row["__n"] for row in levels.get_column(column)[0].to_list()}
         prop = props[column]
-        # Codes the dictionary lists as distinct ("NB", "nb") are categories, never held as one.
+        # Codes the dictionary lists as distinct ("L", "l") are categories, never held as one.
         groups = without_listed_codes(level_variants(list(counts)), (e.value for e in prop.enum or []))
         if not groups:
             continue

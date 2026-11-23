@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from clinical_analytics.api import dependencies
 from clinical_analytics.api.layer_cache import LayerCache
 from clinical_analytics.contracts.config import POPULATION_ESTIMATES_FORM_VALUE
-from clinical_analytics.contracts.holds import COLUMN_KINDS, COUNT_KINDS, TABLE_KINDS, open_question_holds
+from clinical_analytics.contracts.holds import COLUMN_KINDS, COUNT_KINDS, KEY_KINDS, TABLE_KINDS, open_question_holds
 from clinical_analytics.contracts.semantics import (
     LAYER_DECLARED_KEY,
     DatasetSemantics,
@@ -52,7 +52,7 @@ def _asking(kind: str, column: str = "age", answered: bool = False) -> DatasetSe
 
 def test_holdRules_everyQuestionKind_hasOneRule() -> None:
     # Assert: no kind can be added without saying what it holds
-    assert set(KINDS) == COLUMN_KINDS | TABLE_KINDS | COUNT_KINDS
+    assert set(KINDS) == COLUMN_KINDS | TABLE_KINDS | COUNT_KINDS | KEY_KINDS
 
 
 @pytest.mark.parametrize("kind", KINDS)
@@ -80,7 +80,7 @@ def test_questionPath_everyKind_heldNoNumber(kind: str, make_semantic_layer: Cal
     layer = make_semantic_layer(
         data=synthetic_cohort(), config_overrides={LAYER_DECLARED_KEY: _asking(kind).model_dump(mode="json")}
     )
-    question = "how many patients?" if kind in COUNT_KINDS else "average age"
+    question = "how many patients?" if kind in COUNT_KINDS | KEY_KINDS else "average age"
 
     # Act
     result = QueryService(layer).ask(question, dataset_id="ds_q", dataset_version=VERSION)

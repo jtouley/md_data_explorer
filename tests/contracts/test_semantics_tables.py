@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Tables of groups, documented codes and date answers (ADR017, third and fourth review rounds).
 
-Synthetic tables only, in new domains: Lyme disease notifications, legionella counts, hepatitis A
+Synthetic tables only, in new domains: Tick-bite fever notifications, legionella counts, hepatitis A
 outbreak tallies, rheumatology clinic blood pressure, sleep-clinic pack-years, osteoporosis
 infusions, haemodialysis adequacy, newborn screening.
 """
@@ -37,8 +37,8 @@ def _facts(doc: str | None = None) -> UploadFacts:
     return UploadFacts(doc_context=doc)
 
 
-def _lyme(repeat: int = 0, total: bool = False) -> pl.DataFrame:
-    """Lyme disease notifications by state, year and sex, a few strata repeated."""
+def _ticks(repeat: int = 0, total: bool = False) -> pl.DataFrame:
+    """Tick-bite fever notifications by state, year and sex, a few strata repeated."""
     rows = [
         {"state": s, "year": y, "sex": sex, "cases": (i * 7 + y) % 40}
         for i, s in enumerate(STATES)
@@ -50,14 +50,14 @@ def _lyme(repeat: int = 0, total: bool = False) -> pl.DataFrame:
         sums: dict[tuple[int, str], int] = {}
         for r in rows:
             sums[(r["year"], r["sex"])] = sums.get((r["year"], r["sex"]), 0) + r["cases"]
-        rows += [{"state": "United States", "year": y, "sex": sex, "cases": n} for (y, sex), n in sums.items()]
+        rows += [{"state": "All regions", "year": y, "sex": sex, "cases": n} for (y, sex), n in sums.items()]
     return pl.DataFrame(rows)
 
 
 # --------------------------------------------------------------------------- frequency vs estimate
 def test_inferSemantics_frequencyTableWithRepeatedStrata_recognisedAndAsked() -> None:
     # Act
-    semantics = infer_semantics(_lyme(repeat=6))
+    semantics = infer_semantics(_ticks(repeat=6))
 
     # Assert: a real frequency table with a few repeated strata is never rejected
     assert semantics.aggregate is not None
@@ -68,9 +68,9 @@ def test_inferSemantics_frequencyTableWithRepeatedStrata_recognisedAndAsked() ->
 
 
 def test_countCases_countTableWithTotalRows_neverSummedAcrossTheTotal() -> None:
-    # Arrange: lyme counts with a "United States" line per year and sex that is the sum of the states
-    frame = _lyme(total=True)
-    states = _lyme()
+    # Arrange: tick-bite fever counts with a "All regions" line per year and sex that is the sum of the states
+    frame = _ticks(total=True)
+    states = _ticks()
     aggregate = infer_semantics(frame).aggregate
     assert aggregate is not None and aggregate.kind == "frequency"
 
@@ -79,14 +79,14 @@ def test_countCases_countTableWithTotalRows_neverSummedAcrossTheTotal() -> None:
     open_sex = count_cases(frame, aggregate, {"year": [2010]})
 
     # Assert: label and sums agree, so the total line is left out of every sum, never added twice
-    assert aggregate.total_values("state") == ("United States",)
+    assert aggregate.total_values("state") == ("All regions",)
     assert read.total == states.filter((pl.col("year") == 2010) & (pl.col("sex") == "F"))["cases"].sum()
     assert open_sex.total == states.filter(pl.col("year") == 2010)["cases"].sum()
 
 
 def test_countCases_frequencyTable_sumsTheCountColumn() -> None:
     # Arrange
-    frame = _lyme()
+    frame = _ticks()
     aggregate = infer_semantics(frame).aggregate
     assert aggregate is not None
 
@@ -244,7 +244,7 @@ def test_inferSemantics_sharedNoteForAllMeasurements_askedNeverApplied() -> None
     [
         pytest.param("age_years", [40, 999, 999, 999, 55] * 20, [999], id="age_999_asked"),
         pytest.param("pack_years", [10, -9, -8, -9, -8, 20] * 20, [-9, -8], id="two_negative_codes"),
-        pytest.param("los_days", [3, 5, 99, 99, 99, 4] * 20, [], id="stay_99_real"),
+        pytest.param("stay_days", [3, 5, 99, 99, 99, 4] * 20, [], id="stay_99_real"),
     ],
 )
 def test_inferSemantics_undocumentedCodes_askedPerValue(column: str, values: list[int], asked: list[int]) -> None:
@@ -332,9 +332,23 @@ def test_inferSemantics_babyUniqueMotherIdsWithBlanks_noQuestion() -> None:
 
 @pytest.mark.parametrize(
     ("column", "unit"),
-    [("bw_g", "g"), ("ga_d", "days"), ("vitamin_d", None), ("iron_g", None)],
+    [
+        ("spleen_g", None),
+        ("fast_d", None),
+        ("vitamin_d", None),
+        ("iron_g", None),
+        ("albumin_g_l", "g/L"),
+        ("dose_mg_kg_d", "mg/kg/day"),
+        ("drip_ml_per_h", "mL/h"),
+        ("fast_hours", "hours"),
+        ("lesion_mm", "mm"),
+        ("hr", None),
+        ("max_hr", None),
+        ("sbp_min", None),
+        ("visit_day", None),
+    ],
 )
-def test_inferSemantics_singleLetterUnit_onlyAfterAMeasuringStem(column: str, unit: str | None) -> None:
+def test_inferSemantics_unitGrammar_singleLetterOnlyInsideARatio(column: str, unit: str | None) -> None:
     # Act
     found = infer_semantics(pl.DataFrame({column: [3.5, 2.5]})).column(column).unit
 
@@ -342,20 +356,32 @@ def test_inferSemantics_singleLetterUnit_onlyAfterAMeasuringStem(column: str, un
     assert (found.value if found else None) == unit
 
 
-def test_parseDictionary_domainUnit_ktv() -> None:
-    # Act / Assert: haemodialysis adequacy
-    assert parse_dictionary("ktv  Dialysis adequacy (Kt/V)\n", ["ktv"]).entry("ktv").unit == "Kt/V"
-
-
-def test_describe_sequenceNoun_pluralSpelledRight() -> None:
+@pytest.mark.parametrize(
+    ("line", "unit"),
+    [
+        ("tsr  Tumour-stroma reading. Units: AU", "AU"),
+        ("qrisk  Risk index, unit of measure: points", "points"),
+        ("clr  Clearance, expressed as a ratio (Cl/W)", "Cl/W"),
+        ("grade  Grade A/B", None),
+    ],
+)
+def test_parseDictionary_statedUnitOrRatioName_whateverItIs(line: str, unit: str | None) -> None:
     # Arrange
-    rows = [{"mother_ref": f"M{m}", "pregnancy_no": k, "parity": k} for m in range(20) for k in (1, 2)]
+    column = line.split()[0]
+
+    # Act / Assert: the dictionary says it in so many words; nothing is guessed from a named list
+    assert parse_dictionary(line + "\n", [column]).entry(column).unit == unit
+
+
+def test_describe_sequenceWithoutDictionary_linesNeverANounFromTheName() -> None:
+    # Arrange: plasma donors, donations numbered within each donor
+    rows = [{"donor_ref": f"M{m}", "donation_seq": k, "ferritin": 20 + k} for m in range(20) for k in (1, 2)]
 
     # Act
     lines = describe(infer_semantics(pl.DataFrame(rows)))
 
-    # Assert
-    assert not any("pregnancys" in line for line in lines)
+    # Assert: what a line is comes from the dictionary; the name only says it numbers lines
+    assert "donation_seq numbers each patient's lines in order (1 = first)." in lines
 
 
 def test_applySemantics_frameUnchangedWhenNothingDeclared() -> None:

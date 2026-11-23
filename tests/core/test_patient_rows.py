@@ -159,7 +159,7 @@ def test_questionToken_badCountsOrVersion_notAsked(asked: Any, rows: Any, versio
         ("person_id", True),
         ("caseId", True),
         ("Encounter ID", True),
-        ("subject", True),
+        ("subject", False),  # a broad convention is "subject_id"; "subject" alone is asked
         ("covid19_admission_hospital", False),
         ("paid", False),
         ("record_code", False),

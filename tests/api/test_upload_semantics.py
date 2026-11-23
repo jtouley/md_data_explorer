@@ -19,11 +19,11 @@ pytestmark = [pytest.mark.slow, pytest.mark.integration, pytest.mark.usefixtures
 
 MONTHS = ("January", "February", "March", "April", "May", "June")
 DICTIONARY = """GLAUCOMA IOP CLINIC - DATA DICTIONARY
-Row = one clinic visit. subj is the patient identifier.
+Row = one clinic visit. eye_owner is the patient identifier.
 
-subj       Clinic subject
-visit_no   Visit number (1 = first visit)
-vis_date   Visit date
+eye_owner  Clinic subject
+exam_no    Exam number (1 = first exam)
+exam_date   Visit date
 iop_mmhg   Intraocular pressure, mmHg (5-60). 999 = not measured
 drops      Drops prescribed:
              1 = prostaglandin (latanoprost, nightly)
@@ -41,9 +41,9 @@ def _glaucoma() -> pl.DataFrame:
             month = MONTHS[(p + k) % 6]
             rows.append(
                 {
-                    "subj": f"G{p:03d}",
-                    "visit_no": k + 1,
-                    "vis_date": f"{month} {1 + p % 27}, 2022",
+                    "eye_owner": f"G{p:03d}",
+                    "exam_no": k + 1,
+                    "exam_date": f"{month} {1 + p % 27}, 2022",
                     "iop_mmhg": iop,
                     "drops": 1 + p % 3,
                 }
@@ -77,14 +77,16 @@ def test_uploadDataset_visitLevelWithDictionary_readyFactsInClinicalWords(test_c
 
     # Assert: a correct visit-level file is ready, never "needs review" for repeated patient IDs
     assert (body["status"], body["failed_checks"]) == ("ready", [])
-    assert body["facts"][0] == "Each line is one clinic visit; 60 patients (subj names the patient) over 120 lines."
+    assert (
+        body["facts"][0] == "Each line is one clinic visit; 60 patients (eye_owner names the patient) over 120 lines."
+    )
     assert "999 in iop_mmhg means not recorded (not measured)." in body["facts"]
-    assert "visit_no numbers each patient's visits in order (1 = first)." in body["facts"]
+    assert "exam_no numbers each patient's lines in order (1 = first)." in body["facts"]
     assert body["quality"]["facts"] == body["facts"]
     assert body["one_row_per_patient"] is None
-    assert (semantics["patient_key"]["column"], semantics["patient_key"]["source"]) == ("subj", "dictionary")
+    assert (semantics["patient_key"]["column"], semantics["patient_key"]["source"]) == ("eye_owner", "dictionary")
     assert semantics["columns"]["drops"]["labels"]["1"] == "prostaglandin (latanoprost, nightly)"
-    assert semantics["columns"]["vis_date"]["date"]["format"] == "%B %d, %Y"
+    assert semantics["columns"]["exam_date"]["date"]["format"] == "%B %d, %Y"
     for jargon in ("null", "grain", "distinct", "sql"):
         assert jargon not in " ".join(body["facts"]).lower()
 
@@ -103,7 +105,7 @@ def test_uploadDataset_documentedCode_storedAsMissingForEveryReader(test_client:
     # Assert: 999 is not a pressure; dates are dates
     assert view.get_column("iop_mmhg").null_count() == 3
     assert view.get_column("iop_mmhg").max() < 999
-    assert view.schema["vis_date"] == pl.Date
+    assert view.schema["exam_date"] == pl.Date
 
 
 def test_uploadDataset_sameFileTwice_identicalSemantics(test_client: TestClient) -> None:
@@ -151,8 +153,8 @@ def test_governedSqlCatalog_contractSemantics_idIsTheFilesKey(test_client: TestC
     # Act
     catalog = SqlCatalog.from_contract(contract, uploads_dir())
 
-    # Assert: the patient is subj; the app's patient_id copy is restricted, never the ID
-    assert catalog.id_column is not None and catalog.id_column.name == "subj"
+    # Assert: the patient is eye_owner; the app's patient_id copy is restricted, never the ID
+    assert catalog.id_column is not None and catalog.id_column.name == "eye_owner"
     copy = catalog.column("patient_id")
     assert copy is not None and (copy.is_id, copy.phi) == (False, True)
 
@@ -209,7 +211,7 @@ def test_semanticsEndpoint_versionWithoutSemantics_sameReadOnlyPass(test_client:
 
     # Assert: answered from the stored data (no dictionary any more), never a 404; nothing written
     assert response.status_code == 200, response.text
-    assert response.json()["semantics"]["patient_key"]["column"] == "subj"
+    assert response.json()["semantics"]["patient_key"]["column"] == "eye_owner"
     assert "semantics" not in path.read_text()
 
 
@@ -267,7 +269,7 @@ def test_upload_codebookCodedIntegerItem_typedCategoricalNationalQuestionDecline
     with dependencies.lease_semantic_layer(body["upload_id"]) as lease:
         types = lease.layer.config["variable_types"]
         national = QueryService(lease.layer).ask(
-            "what share of us adults sleep well nationally", dataset_id=body["upload_id"], dataset_version="v1"
+            "what share of adults sleep well nationally", dataset_id=body["upload_id"], dataset_version="v1"
         )
     dependencies.invalidate_semantic_layer_cache(body["upload_id"])
 
@@ -275,4 +277,4 @@ def test_upload_codebookCodedIntegerItem_typedCategoricalNationalQuestionDecline
     assert types["SLEEPOK"]["type"] == "categorical"
     assert body["unit_note"] == ""
     assert national.analysis is None
-    assert "not weighted national estimates" in (national.failure_reason or "")
+    assert "not weighted population estimates" in (national.failure_reason or "")

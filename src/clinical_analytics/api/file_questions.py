@@ -231,10 +231,20 @@ def _view(
     elif q.kind == "unit_missing":
         evidence = f"{_lines(int(q.value or 0))} of {column} have no unit."
         answers = generic((f"Those lines are left out of {column}.", "Answers stay on hold until the file is fixed."))
-    elif q.kind == "person_role":
-        evidence = f"The file has {_lines(semantics.rows)}; {column} names a baby on each."
+    elif q.kind == "patient_key":
+        named = q.options[: len(q.option_counts)]
+        counted = "; ".join(f"{c} has {n:,} different values" for c, n in zip(named, q.option_counts, strict=False))
+        evidence = f"The file has {_lines(semantics.rows)}; {counted}."
         answers = generic(
-            ("Counts count babies, one per line.", "Answers stay on hold: counts by mother aren't supported.")
+            (
+                *(f"Counts of patients count the different values of {c}." for c in named),
+                "Counts count lines; no column is read as the patient.",
+            )
+        )
+    elif q.kind == "person_role":
+        evidence = f"The file has {_lines(semantics.rows)}; {column} names a person on each."
+        answers = generic(
+            (f"Counts count the people {column} names, one per line.", "Answers stay on hold: that isn't supported.")
         )
     else:
         raise ValueError(f"No panel view for question kind {q.kind!r}")

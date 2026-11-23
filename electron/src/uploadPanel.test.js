@@ -399,8 +399,8 @@ describe('upload unit note (rows, not patients)', () => {
       sheet_note: sheetNote,
       quality: { status: 'not_run', reason: 'x' },
     });
-    expect(uploadResultText(result, 'sepsis', dataCheckStatusNote(result.quality))).toBe(
-      `${readyHeadline('sepsis')} ${unitNote} ${sheetNote} Data check could not run.`
+    expect(uploadResultText(result, 'splints', dataCheckStatusNote(result.quality))).toBe(
+      `${readyHeadline('splints')} ${unitNote} ${sheetNote} Data check could not run.`
     );
   });
 
@@ -411,8 +411,8 @@ describe('upload unit note (rows, not patients)', () => {
       message: 'Uploaded, but a data check failed: x.',
       unit_note: unitNote,
     });
-    expect(uploadResultText(result, 'sepsis', null)).toBe(
-      `The cohort “sepsis” needs review. Uploaded, but a data check failed: x. ${unitNote}`
+    expect(uploadResultText(result, 'splints', null)).toBe(
+      `The cohort “splints” needs review. Uploaded, but a data check failed: x. ${unitNote}`
     );
   });
 });
@@ -452,13 +452,13 @@ describe('upload facts from the data contract', () => {
       upload_id: 'u1',
       status: 'ready',
       facts: [
-        '  Each line is one clinic visit; 60 patients (subj names the patient) over 120 lines. ',
+        '  Each line is one clinic visit; 60 patients (eye_owner names the patient) over 120 lines. ',
         '',
         3,
       ],
     });
     expect(result.facts).toEqual([
-      'Each line is one clinic visit; 60 patients (subj names the patient) over 120 lines.',
+      'Each line is one clinic visit; 60 patients (eye_owner names the patient) over 120 lines.',
     ]);
   });
 
@@ -467,11 +467,11 @@ describe('upload facts from the data contract', () => {
       upload_id: 'u1',
       status: 'ready',
       facts: [
-        'Each line is one ED encounter; 900 patients (MRN names the patient) over 1,260 lines.',
+        'Each line is one splint fitting; 900 patients (MRN names the patient) over 1,260 lines.',
       ],
     });
-    expect(uploadResultText(result, 'sepsis', null)).toBe(
-      'The cohort “sepsis” is ready. Each line is one ED encounter; 900 patients (MRN names the patient) over 1,260 lines.'
+    expect(uploadResultText(result, 'splints', null)).toBe(
+      'The cohort “splints” is ready. Each line is one splint fitting; 900 patients (MRN names the patient) over 1,260 lines.'
     );
   });
 

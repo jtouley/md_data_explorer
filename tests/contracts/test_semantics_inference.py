@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: MIT
 """The contract's semantics section (ADR017): one inference pass decides what a file means.
 
-Synthetic tables only, in domains the gates and earlier work do not use (hip-fracture rehab,
-glaucoma clinics, cataract surgery, newborn hearing screening, sleep studies, psoriasis
-biologics, cardiac rehab, bone-age films).
+Synthetic tables only, in invented domains (hip-fracture rehab, glaucoma clinics, cataract
+surgery, childhood vaccination, sleep studies, psoriasis biologics, hydrotherapy, bone-age films).
 """
 
 from __future__ import annotations
@@ -24,7 +23,7 @@ from clinical_analytics.contracts.semantics import describe
 PATIENTS = 40
 
 
-def _rehab(key: str = "patient_ref", seq: str = "episode_no") -> pl.DataFrame:
+def _rehab(key: str = "person_id", seq: str = "episode_no") -> pl.DataFrame:
     """Hip-fracture rehab: 40 patients with 1-4 episodes each, numbered 1..k within patient."""
     rows: list[dict[str, Any]] = []
     for p in range(PATIENTS):
@@ -39,24 +38,30 @@ def test_inferSemantics_episodeRows_appPatientIdNeverTheKey(make_semantics: Call
     df = _rehab()
 
     # Act
-    semantics = make_semantics(df)
+    semantics = make_semantics(df, doc="One row per rehab episode.\n")
 
     # Assert: the file's own key stays identified; the app's copy is an app column, never the key
-    assert semantics.patient_key_column == "patient_ref"
+    assert semantics.patient_key_column == "person_id"
     assert semantics.grain.kind == "episode"
     assert semantics.one_row_per_patient is False
-    assert [(a.column, a.kind, a.made_from) for a in semantics.app_columns] == [
-        ("patient_id", "copy", ("patient_ref",))
-    ]
+    assert [(a.column, a.kind, a.made_from) for a in semantics.app_columns] == [("patient_id", "copy", ("person_id",))]
     assert semantics.column("patient_id").role == "app_added"
 
 
-# --------------------------------------------------------------------------- 2. keys by name, words and structure
+# --------------------------------------------------------------------------- 2. keys by convention, words and structure
 @pytest.mark.parametrize(
-    "key",
-    ["subj", "patient_ref", "case_id", "study_no", "PtRef", "member_id"],
+    ("key", "source_evidence"),
+    [
+        ("Patient_ID", "usual name"),
+        ("subjectId", "usual name"),
+        ("MRN", "usual name"),
+        ("case_id", "usual name"),
+        ("study_id", "usual name"),
+        ("kin_ref", "numbers 1, 2, 3"),
+        ("enrolee_no", "numbers 1, 2, 3"),
+    ],
 )
-def test_inferSemantics_patientKeyNames_found(key: str) -> None:
+def test_inferSemantics_patientKey_conventionOrStructureNeverAnyOtherName(key: str, source_evidence: str) -> None:
     # Arrange
     df = _rehab(key=key)
 
@@ -65,6 +70,19 @@ def test_inferSemantics_patientKeyNames_found(key: str) -> None:
 
     # Assert
     assert semantics.patient_key_column == key
+    assert source_evidence in semantics.patient_key.evidence
+
+
+def test_inferSemantics_otherIdNameNoSequenceFewLinesEach_tentativeKeyAsked() -> None:
+    # Arrange: an ID that is no convention, repeating 1-4 times, with nothing numbering its lines
+    df = _rehab(key="kin_ref").drop("episode_no")
+
+    # Act
+    semantics = infer_semantics(df)
+
+    # Assert: the structure points to it tentatively; whether it names the patient is asked
+    assert (semantics.patient_key_column, semantics.patient_key.confidence) == ("kin_ref", "low")
+    assert semantics.question("patient_key").options == ("kin_ref", "none of these names the patient")
 
 
 def test_inferSemantics_dictionaryStatesKey_keyFromDictionary() -> None:
@@ -93,21 +111,26 @@ def test_inferSemantics_unnamedKeyWithSequence_keyFromStructure() -> None:
     assert [s.column for s in semantics.sequence_columns] == ["read_order"]
 
 
-def test_inferSemantics_newbornScreeningTwins_babyIsPatientNoQuestion() -> None:
-    # Arrange: newborn hearing screening; twins share a mother
-    mothers = [f"M{i // 2 if i < 20 else i:03d}" for i in range(60)]
+def test_inferSemantics_secondPersonOnEachLine_askedWhichColumnIsThePatient() -> None:
+    # Arrange: childhood vaccination; siblings share a carer on a few lines
+    carers = [f"M{i // 2 if i < 20 else i:03d}" for i in range(60)]
     df = pl.DataFrame(
-        {"infant_id": [f"B{i:03d}" for i in range(60)], "mat_id": mothers, "oae_pass": [i % 3 > 0 for i in range(60)]}
+        {
+            "child_ref": [f"B{i:03d}" for i in range(60)],
+            "carer_ref": carers,
+            "dose_given": [i % 3 > 0 for i in range(60)],
+        }
     )
 
     # Act
     semantics = infer_semantics(df)
 
-    # Assert
-    assert semantics.patient_key_column == "infant_id"
-    assert [(g.column, g.role) for g in semantics.grouping_columns] == [("mat_id", "mother")]
-    # A baby ID unique on every line: each line is one baby, twins share a mother; never asked.
-    assert semantics.question("person_role") is None
+    # Assert: two person-like IDs, one nested in the other: only the user can say which is the patient
+    question = semantics.question("patient_key")
+    assert question is not None
+    assert question.options == ("child_ref", "carer_ref", "none of these names the patient")
+    assert question.option_counts == (60, 50)
+    assert (semantics.patient_key_column, semantics.patient_key.confidence) == ("child_ref", "low")
 
 
 @pytest.mark.parametrize(
@@ -132,17 +155,35 @@ def test_inferSemantics_cataractCases_uniqueOrRepeating(
     assert tuple(semantics.row_key.columns) == expected_row_key or semantics.row_key.kind == "composite"
 
 
-def test_inferSemantics_siteIdRepeats_groupingNotPatient() -> None:
-    # Arrange: sleep studies at 3 sites; no column names a patient
-    df = pl.DataFrame({"site_id": [f"S{i % 3}" for i in range(60)], "ahi": [5.5 + i for i in range(60)]})
+def test_inferSemantics_onlyIdRepeatsManyLinesEach_askedNeverTheKey() -> None:
+    # Arrange: sleep studies; one ID repeats over 20 lines each, nothing says whom it names
+    df = pl.DataFrame({"lab_id": [f"S{i % 3}" for i in range(60)], "ahi": [5.5 + i for i in range(60)]})
+
+    # Act
+    semantics = infer_semantics(df)
+
+    # Assert: asked, never a patient count of 3
+    assert semantics.patient_key is None
+    assert semantics.question("patient_key").options == ("lab_id", "none of these names the patient")
+    assert semantics.question("rows_are_patients") is None
+
+
+def test_inferSemantics_idRepeatingAcrossPatients_groupingByStructure() -> None:
+    # Arrange: sleep studies at 3 labs, two studies per person
+    df = pl.DataFrame(
+        {
+            "person_id": [f"P{i // 2}" for i in range(60)],
+            "lab_id": [f"S{i % 3}" for i in range(60)],
+            "ahi": [5.5 + i for i in range(60)],
+        }
+    )
 
     # Act
     semantics = infer_semantics(df)
 
     # Assert
-    assert semantics.patient_key is None
-    assert [(g.column, g.role) for g in semantics.grouping_columns] == [("site_id", "site")]
-    assert semantics.question("rows_are_patients") is None
+    assert semantics.patient_key_column == "person_id"
+    assert [(g.column, g.role, g.source) for g in semantics.grouping_columns] == [("lab_id", "lab", "structure")]
 
 
 def test_inferSemantics_uniqueUnnamedRowKey_asksIsEachLinePatient() -> None:
@@ -158,7 +199,7 @@ def test_inferSemantics_uniqueUnnamedRowKey_asksIsEachLinePatient() -> None:
 
 
 # --------------------------------------------------------------------------- 3. sequences
-@pytest.mark.parametrize("seq", ["visit_no", "episode_no", "cycle", "scan_no"])
+@pytest.mark.parametrize("seq", ["attendance_no", "episode_no", "fitting_seq", "scan_no"])
 def test_inferSemantics_sequenceColumn_orderWithinPatientNeverAnId(seq: str) -> None:
     # Arrange
     df = _rehab(seq=seq)
@@ -244,7 +285,7 @@ def test_chooseTextFormat_noSingleFormat_none(values: list[str | None]) -> None:
     ("series", "from_excel", "expected"),
     [
         pytest.param(
-            pl.Series("lkw_date", [20210304, 20191231]), False, date(2021, 3, 4), id="yyyymmdd_int_date_named"
+            pl.Series("onset_date", [20210304, 20191231]), False, date(2021, 3, 4), id="yyyymmdd_int_date_named"
         ),
         pytest.param(pl.Series("surg_date", [44259, 44260]), True, date(2021, 3, 4), id="excel_serial"),
         pytest.param(pl.Series("mrn", [20210304, 20191231]), False, None, id="id_digits_never_dates"),
@@ -269,9 +310,9 @@ def test_chooseNumberFormat_onlyWithEvidence(series: pl.Series, from_excel: bool
 
 
 def test_inferSemantics_ambiguousDateColumn_openQuestionColumnStaysText() -> None:
-    # Arrange: cardiac rehab sessions dated 03/04/21-style, nothing above 12
+    # Arrange: hydrotherapy dated 03/04/21-style, nothing above 12
     df = pl.DataFrame(
-        {"pt_id": [f"P{i % 10}" for i in range(30)], "sess_date": ["03/04/21", "05/06/21", "07/08/21"] * 10}
+        {"client_ref": [f"P{i % 10}" for i in range(30)], "pool_date": ["03/04/21", "05/06/21", "07/08/21"] * 10}
     )
 
     # Act
@@ -280,31 +321,31 @@ def test_inferSemantics_ambiguousDateColumn_openQuestionColumnStaysText() -> Non
 
     # Assert
     question = semantics.question("date_order")
-    assert question is not None and question.column == "sess_date"
+    assert question is not None and question.column == "pool_date"
     assert "3 April 2021 or March 4, 2021" in question.question
-    assert applied.schema["sess_date"] == pl.String
+    assert applied.schema["pool_date"] == pl.String
 
 
 def test_inferSemantics_dictionaryStatesFormat_settlesOrderAndRecordsExample() -> None:
     # Arrange
     df = pl.DataFrame(
-        {"pt_id": [f"P{i % 10}" for i in range(30)], "sess_date": ["03/04/21", "05/06/21", "07/08/21"] * 10}
+        {"client_ref": [f"P{i % 10}" for i in range(30)], "pool_date": ["03/04/21", "05/06/21", "07/08/21"] * 10}
     )
-    doc = "sess_date   Session date, DD/MM/YY\n"
+    doc = "pool_date   Pool date, DD/MM/YY\n"
 
     # Act
     semantics = infer_semantics(df, _facts(doc))
     applied = apply_semantics(df, semantics)
 
     # Assert
-    fmt = semantics.column("sess_date").date
+    fmt = semantics.column("pool_date").date
     assert (fmt.format, fmt.source, fmt.example_in, fmt.example_out) == (
         "%d/%m/%y",
         "dictionary",
         "03/04/21",
         "3 April 2021",
     )
-    assert applied.get_column("sess_date")[0] == date(2021, 4, 3)
+    assert applied.get_column("pool_date")[0] == date(2021, 4, 3)
     assert semantics.question("date_order") is None
 
 
@@ -356,15 +397,15 @@ def test_applySemantics_documentedCodes_storedMissingAndSafeTwice() -> None:
 
 def test_inferSemantics_unknownOtherLabel_isACategoryNotMissing() -> None:
     # Arrange
-    df = pl.DataFrame({"src": [1, 2, 5, 5]})
-    doc = "src  Source: 1 = urinary, 2 = chest, 5 = unknown / other\n"
+    df = pl.DataFrame({"lens": [1, 2, 5, 5]})
+    doc = "lens  Lens type: 1 = monofocal, 2 = toric, 5 = unknown / other\n"
 
     # Act
-    column = infer_semantics(df, _facts(doc)).column("src")
+    column = infer_semantics(df, _facts(doc)).column("lens")
 
     # Assert
     assert column.missing_codes == ()
-    assert column.labels == {"1": "urinary", "2": "chest", "5": "unknown / other"}
+    assert column.labels == {"1": "monofocal", "2": "toric", "5": "unknown / other"}
 
 
 # --------------------------------------------------------------------------- 6. labels
@@ -378,7 +419,7 @@ def test_inferSemantics_unknownOtherLabel_isACategoryNotMissing() -> None:
         ),
         pytest.param("Smoker (1=yes, 2=no)", {"1": "yes", "2": "no"}, id="inside_parentheses"),
         pytest.param("1: Yes 2: No", {"1": "Yes", "2": "No"}, id="colon_space_separated"),
-        pytest.param("Cycle number (1 = first cycle)", {"1": "first cycle"}, id="one_pair_no_stray_paren"),
+        pytest.param("Fitting number (1 = first fitting)", {"1": "first fitting"}, id="one_pair_no_stray_paren"),
     ],
 )
 def test_parsePairs_labelRunsToNextCode(text: str, expected: dict[str, str]) -> None:
@@ -388,7 +429,7 @@ def test_parsePairs_labelRunsToNextCode(text: str, expected: dict[str, str]) -> 
 
 def test_parseDictionary_singleNote_notACodebook() -> None:
     # Act
-    entry = parse_dictionary("cyc   Cycle number (1 = first cycle)\n", ["cyc"]).entry("cyc")
+    entry = parse_dictionary("fit_no   Fitting number (1 = first fitting)\n", ["fit_no"]).entry("fit_no")
 
     # Assert
     assert entry is not None and entry.labels == {}
@@ -396,12 +437,12 @@ def test_parseDictionary_singleNote_notACodebook() -> None:
 
 def test_inferSemantics_everyCodeDecodes_contractEnumMatches(make_contract: Callable[..., Any]) -> None:
     # Arrange
-    df = pl.DataFrame({"pt_id": [f"P{i}" for i in range(9)], "das": [1, 2, 3] * 3})
+    df = pl.DataFrame({"client_ref": [f"P{i}" for i in range(9)], "das": [1, 2, 3] * 3})
     doc = "das  Disease activity:\n  1 = remission (DAS28 < 2.6)\n  2 = low/moderate\n  3 = high, flare\n"
 
     # Act
     semantics = infer_semantics(df, _facts(doc))
-    contract = make_contract(df, semantics=semantics, id_column="pt_id")
+    contract = make_contract(df, semantics=semantics, id_column="client_ref")
 
     # Assert
     enum = next(p.enum for p in contract.schema_[0].properties if p.physicalName == "das")
@@ -416,15 +457,17 @@ def test_inferSemantics_everyCodeDecodes_contractEnumMatches(make_contract: Call
 @pytest.mark.parametrize(
     ("column", "unit"),
     [
-        ("weight_kg", "kg"),
+        ("grip_kg", "kg"),
         ("mtx_mg_wk", "mg/week"),
         ("peep_cmH2O", "cmH2O"),
-        ("crp_ng_ml", "ng/mL"),
+        ("ferritin_ng_ml", "ng/mL"),
         ("bmd_g_cm2", "g/cm²"),
         ("fev1_pct", "%"),
+        ("urea_mmol_l", "mmol/L"),
+        ("infusion_ml_per_h", "mL/h"),
     ],
 )
-def test_inferSemantics_unitFromName(column: str, unit: str) -> None:
+def test_inferSemantics_unitGrammarFromName(column: str, unit: str) -> None:
     # Act
     found = infer_semantics(pl.DataFrame({column: [1.5, 2.5, 3.5]})).column(column).unit
 
@@ -435,7 +478,7 @@ def test_inferSemantics_unitFromName(column: str, unit: str) -> None:
 def test_inferSemantics_pairedMeasures_oneMeasureTwoTimesWithDirection() -> None:
     # Arrange
     df = pl.DataFrame(
-        {"weight_preop_kg": [90.5, 101.0], "weight_12m_kg": [80.0, 85.5], "dlqi_baseline": [12, 9], "dlqi_m6": [4, 3]}
+        {"grip_pre_kg": [30.5, 41.0], "grip_12m_kg": [36.0, 45.5], "dlqi_baseline": [12, 9], "dlqi_m6": [4, 3]}
     )
     doc = "dlqi_baseline  Dermatology Life Quality Index at baseline (0-30); lower is better\n"
 
@@ -443,8 +486,8 @@ def test_inferSemantics_pairedMeasures_oneMeasureTwoTimesWithDirection() -> None
     semantics = infer_semantics(df, _facts(doc))
 
     # Assert
-    pre, post = semantics.column("weight_preop_kg").timepoint, semantics.column("weight_12m_kg").timepoint
-    assert (pre.measure, pre.order, post.order) == ("weight_kg", 0, 1)
+    pre, post = semantics.column("grip_pre_kg").timepoint, semantics.column("grip_12m_kg").timepoint
+    assert (pre.measure, pre.order, post.order) == ("grip_kg", 0, 1)
     assert semantics.column("dlqi_m6").timepoint.paired_with == ("dlqi_baseline",)
     assert semantics.column("dlqi_baseline").direction == "lower_is_better"
 
@@ -455,15 +498,15 @@ def test_buildContract_visitLevelRows_noDuplicateIdCheck(
     make_contract: Callable[..., Any], frame: str, duplicate_rule: bool
 ) -> None:
     # Arrange
-    df = _rehab() if frame == "visits" else _rehab().unique("patient_ref", keep="first", maintain_order=True)
+    df = _rehab() if frame == "visits" else _rehab().unique("person_id", keep="first", maintain_order=True)
     semantics = infer_semantics(df)
 
     # Act
-    contract = make_contract(df, semantics=semantics, id_column="patient_ref")
+    contract = make_contract(df, semantics=semantics, id_column="person_id")
 
     # Assert: repeated patient IDs on a visit-level file are expected, never a failed check
-    rules = [q.id for p in contract.schema_[0].properties if p.physicalName == "patient_ref" for q in p.quality or []]
-    assert ("patient_ref_no_duplicates" in rules) is duplicate_rule
+    rules = [q.id for p in contract.schema_[0].properties if p.physicalName == "person_id" for q in p.quality or []]
+    assert ("person_id_no_duplicates" in rules) is duplicate_rule
 
 
 # --------------------------------------------------------------------------- determinism, read API, words

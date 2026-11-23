@@ -87,40 +87,55 @@ class DatasetFromUrlResponse(DatasetUploadResponse):
     source_recorded: bool = Field(..., description="False if the source could not be saved with the dataset")
 
 
-SOCRATA_HOST: Final[str] = "data.cdc.gov"
-# A Socrata dataset id: two groups of four lower-case letters or digits ("bi63-dtpu").
+# A Socrata dataset id: two groups of four lower-case letters or digits ("ab12-cd34"), in the
+# portal's link forms (``/api/views/<id>/rows.csv``, ``/resource/<id>.csv``, ``/<category>/<name>/<id>``).
 _SOCRATA_ID: Final = re.compile(r"(?<![a-z0-9])([a-z0-9]{4}-[a-z0-9]{4})(?![a-z0-9])")
 _SOCRATA_ID_FULL: Final = re.compile(r"[a-z0-9]{4}-[a-z0-9]{4}")
+_SOCRATA_PATH: Final = re.compile(
+    r"^/(?:api/views/[a-z0-9]{4}-[a-z0-9]{4}(?:/rows\.\w+|\.\w+)?|resource/[a-z0-9]{4}-[a-z0-9]{4}\.\w+|"
+    r"[^/]+/[^/]+/[a-z0-9]{4}-[a-z0-9]{4})/?$"
+)
+_HOST: Final = re.compile(
+    r"^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
+)
 MAX_DICTIONARY_COLUMNS: Final[int] = 500
 
 
-def socrata_id(url: str) -> str | None:
-    """The dataset id of a data.cdc.gov link (``/api/views/<id>/rows.csv``, ``/resource/<id>.csv``,
-    ``/<category>/<name>/<id>``), or None for any other host or a link without one."""
+def socrata_id(url: str) -> tuple[str, str] | None:
+    """(host, dataset id) of a link in a Socrata portal's form, on any host, or None.
+
+    Only an ``https`` link on the default port, with no user name or password, a plain host name
+    and a path in one of the portal's forms; the metadata is then read from the link's own host.
+    """
     parts = urlsplit(url)
-    if (parts.hostname or "").lower() != SOCRATA_HOST or parts.scheme != "https":
-        return None
+    host = (parts.hostname or "").lower()
+    if parts.scheme != "https" or not _HOST.fullmatch(host) or not re.search(r"[a-z]", host.rsplit(".", 1)[-1]):
+        return None  # not https, or not a host name (an address such as 10.0.0.7)
     try:
         port = parts.port
     except ValueError:  # a port that is not a number
         return None
     if port not in (None, 443) or parts.username is not None or parts.password is not None:
         return None
-    found = _SOCRATA_ID.findall(parts.path.lower())
-    return found[-1] if found else None
+    path = parts.path.lower()
+    if not _SOCRATA_PATH.fullmatch(path):
+        return None
+    found = _SOCRATA_ID.findall(path)
+    return (host, found[-1]) if found else None
 
 
 def socrata_dictionary(url: str) -> str | None:
-    """The column names and descriptions of a data.cdc.gov dataset, as dictionary text, or None
-    (another host, no id, or the metadata could not be read: logged, and the file loads without it).
+    """The column names and descriptions of a Socrata dataset, as dictionary text, or None (not a
+    portal link, no id, or the metadata could not be read: logged, and the file loads without it).
 
-    Only ``https://data.cdc.gov/api/views/<id>.json`` is fetched, through the same checked public
-    download as the data, with an id of the exact Socrata form.
+    Only ``https://<the link's host>/api/views/<id>.json`` is fetched, through the same checked
+    public download as the data, with an id of the exact Socrata form.
     """
-    dataset = socrata_id(url)
-    if dataset is None or not _SOCRATA_ID_FULL.fullmatch(dataset):
+    found = socrata_id(url)
+    if found is None or not _SOCRATA_ID_FULL.fullmatch(found[1]):
         return None
-    meta_url = f"https://{SOCRATA_HOST}/api/views/{dataset}.json"
+    host, dataset = found
+    meta_url = f"https://{host}/api/views/{dataset}.json"
     try:
         fetched = fetch_public_file(meta_url, accepted_extensions=frozenset({".json"}))
         document = json.loads(fetched.content)
@@ -130,7 +145,7 @@ def socrata_dictionary(url: str) -> str | None:
     if not isinstance(document, dict) or not isinstance(document.get("columns"), list):
         logger.warning("dataset_url_socrata_metadata_unexpected")
         return None
-    lines = [f"DATA DICTIONARY FROM {SOCRATA_HOST} (dataset {dataset})"]
+    lines = [f"DATA DICTIONARY FROM {host} (dataset {dataset})"]
     about = document.get("description")
     if isinstance(about, str) and about.strip():
         lines.extend(line.strip() for line in about.strip().splitlines() if line.strip())
@@ -213,8 +228,8 @@ async def load_dataset_from_url(request: DatasetFromUrlRequest) -> DatasetFromUr
 
     if chosen_name is None:
         await asyncio.to_thread(_refuse_taken_name, Path(fetched.filename).stem)
-    # A data.cdc.gov (Socrata) link: its column names and descriptions are the data dictionary the
-    # contract inference reads, as for an uploaded ZIP of a table and its dictionary.
+    # A Socrata portal link (any host): its column names and descriptions are the data dictionary
+    # the contract inference reads, as for an uploaded ZIP of a table and its dictionary.
     dictionary = await asyncio.to_thread(socrata_dictionary, fetched.provenance.final_url)
     content, filename = fetched.content, fetched.filename
     if dictionary is not None:
