@@ -335,3 +335,14 @@ def test_read_cues_patientKeysOwnWord_isAPerson(make_query_table):
 
     # Assert
     assert cues.persons is True
+
+
+def test_problems_testNotAskedOnACategory_isFound(cohort):
+    # Arrange: "compare" on a category: no side-by-side reading of a test on it
+    compiled = compile_plan(_plan(answer="compare_groups", measure="stage", group_by="sex"), cohort)
+
+    # Act
+    kinds = [p.kind for p in checks.problems(compiled, "Compare the stages of women and men", cohort)]
+
+    # Assert
+    assert "test_not_asked" in kinds

@@ -412,6 +412,16 @@ def problems(compiled: Compiled, question: str, context: DatasetContext) -> list
                     reason=f"Your question gives no threshold for {column.display}, so I did not pick one.",
                 )
             )
+    if compiled.kind == "test" and not _TEST_WORDS.search(question):
+        found.append(
+            Problem(
+                "test_not_asked",
+                feedback="The question asks for figures side by side, not a statistical test: answer count, share "
+                "or mean with group_by (and the values compared in filters).",
+                reason="Your question does not ask for a statistical test, and I could not read it as figures side "
+                "by side, so I did not answer.",
+            )
+        )
     group = context.column(compiled.group_column or "")
     if group is not None and not compiled.plan.cut_points and compiled.kind != "test" and compiled.plan.answer != "top":
         asked = _PERIOD.search(question) if group.kind == "date" else _BREAKDOWN.search(question)
