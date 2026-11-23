@@ -3,7 +3,7 @@
  * Upload panel helpers (Phase 8) — pure functions + DOM rendering.
  */
 
-import { normalizeQuality } from './dataCheckPanel.js';
+import { normalizeFacts, normalizeQuality } from './dataCheckPanel.js';
 import { normalizePatientRowsQuestion } from './patientRowsPanel.js';
 
 // Mirrors ALLOWED_UPLOAD_EXTENSIONS in api/routes/datasets.py.
@@ -41,6 +41,7 @@ export function normalizeUploadResponse(raw) {
       unit_note: '',
       cohort_notes: [],
       one_row_per_patient: null,
+      facts: [],
     };
   }
   return {
@@ -64,6 +65,8 @@ export function normalizeUploadResponse(raw) {
       : [],
     // "Is each row one patient?" still to answer (null: not asked, or already answered yes).
     one_row_per_patient: normalizePatientRowsQuestion(raw.one_row_per_patient),
+    // What the file holds, from its data contract ("Each line is one visit; 300 patients …").
+    facts: normalizeFacts(raw.facts),
   };
 }
 
@@ -94,6 +97,9 @@ export function uploadResultText(result, name, note, unnamedHeadline = readyHead
   if (result.status !== 'needs_review') {
     return uploadStatusText(
       shown ? readyHeadline(shown) : unnamedHeadline,
+      // What one line is and how many patients: the contract's first fact (the unit note says it
+      // instead when no column names a patient).
+      result.unit_note ? null : result.facts?.[0],
       result.unit_note,
       result.sheet_note,
       ...(result.cohort_notes ?? []),

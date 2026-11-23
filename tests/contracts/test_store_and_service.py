@@ -126,7 +126,7 @@ def test_latestReport_corruptNewest_raisesContractStoreError(tmp_path: Path):
         pytest.param(
             pl.DataFrame({"FIPS": [f"{1000 + i}" for i in range(30)], "rate": [0.5] * 30}),
             None,
-            ("patient_id", "FIPS"),
+            ("patient_id",),
             id="row_copy",
         ),
         pytest.param(

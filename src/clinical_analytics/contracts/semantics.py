@@ -227,15 +227,6 @@ class DatasetSemantics(_Model):
         return next((a for a in self.app_columns if a.column == name), None)
 
 
-# The words a source is said in on screen and in evidence.
-SOURCE_WORDS_BY_SOURCE: Mapping[str, str] = {
-    "structure": "from the file's values",
-    "dictionary": "from the data dictionary",
-    "declared": "as you confirmed",
-    "default": "by default",
-}
-
-
 class SemanticsMissingError(ContractError):
     """The version's contract was written before semantics existed (or has none)."""
 
@@ -369,14 +360,6 @@ def layer_semantics(layer: Any) -> DatasetSemantics | None:
         return DatasetSemantics.model_validate(raw)
     except pydantic.ValidationError as e:
         raise ContractValidationError(f"Layer semantics are invalid ({e.error_count()} errors)") from e
-
-
-def config_semantics(config_dict: Mapping[str, Any]) -> DatasetSemantics | None:
-    """``layer_semantics`` for a config mapping."""
-    raw = config_dict.get(LAYER_CONFIG_KEY)
-    if raw is None:
-        return None
-    return raw if isinstance(raw, DatasetSemantics) else DatasetSemantics.model_validate(raw)
 
 
 # ----------------------------------------------------------------------------- on screen

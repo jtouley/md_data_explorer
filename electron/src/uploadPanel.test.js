@@ -34,6 +34,7 @@ describe('normalizeUploadResponse', () => {
       unit_note: '',
       cohort_notes: [],
       one_row_per_patient: null,
+      facts: [],
     });
     expect(normalizeUploadResponse(undefined)).toEqual({
       upload_id: '',
@@ -46,6 +47,7 @@ describe('normalizeUploadResponse', () => {
       unit_note: '',
       cohort_notes: [],
       one_row_per_patient: null,
+      facts: [],
     });
   });
 });
@@ -436,6 +438,48 @@ describe('upload status line with every note', () => {
     });
     expect(uploadResultText(result, 'trial', null)).toBe(
       'The cohort “trial” needs review. Uploaded, but a data check failed: x. labs: not in the cohort.'
+    );
+  });
+});
+
+describe('upload facts from the data contract', () => {
+  test('keeps non-empty fact lines, trimmed', () => {
+    const result = normalizeUploadResponse({
+      upload_id: 'u1',
+      status: 'ready',
+      facts: [
+        '  Each line is one clinic visit; 60 patients (subj names the patient) over 120 lines. ',
+        '',
+        3,
+      ],
+    });
+    expect(result.facts).toEqual([
+      'Each line is one clinic visit; 60 patients (subj names the patient) over 120 lines.',
+    ]);
+  });
+
+  test('the status line says what one line is after the headline', () => {
+    const result = normalizeUploadResponse({
+      upload_id: 'u1',
+      status: 'ready',
+      facts: [
+        'Each line is one ED encounter; 900 patients (MRN names the patient) over 1,260 lines.',
+      ],
+    });
+    expect(uploadResultText(result, 'sepsis', null)).toBe(
+      'The cohort “sepsis” is ready. Each line is one ED encounter; 900 patients (MRN names the patient) over 1,260 lines.'
+    );
+  });
+
+  test('the unit note replaces the first fact when no column names a patient', () => {
+    const result = normalizeUploadResponse({
+      upload_id: 'u1',
+      status: 'ready',
+      unit_note: 'Answers count rows, not patients.',
+      facts: ['No column names a patient, so counts are of lines (80 lines).'],
+    });
+    expect(uploadResultText(result, 'sleep', null)).toBe(
+      'The cohort “sleep” is ready. Answers count rows, not patients.'
     );
   });
 });

@@ -367,6 +367,22 @@ def person_key_role(column: str) -> str | None:
     return next((PERSON_ROLE_TOKENS[t] for t in tokens if t in PERSON_ROLE_TOKENS), None)
 
 
+# Among several columns named for the patient, the most specific name wins ("patient_id" beside
+# "subject_id"), then a repeating one (visits of a patient), then column order.
+_PATIENT_NAME_RANK: Final[tuple[frozenset[str], ...]] = (
+    frozenset({"patient", "patientid", "patientno", "patientnumber", "pt", "ptid", "pat", "patid"}),
+    frozenset({"subject", "subj", "subjid", "subjectid", "subjectno"}),
+    frozenset({"participant", "participantid", "participantno"}),
+    frozenset({"mrn", "medicalrecordnumber"}),
+)
+
+
+def patient_name_rank(column: str) -> int:
+    """0 for a "patient" name, then subject, participant, MRN; 4 for any other patient word."""
+    tokens = set(name_tokens(column)) | {"".join(name_tokens(column))}
+    return next((rank for rank, words in enumerate(_PATIENT_NAME_RANK) if tokens & words), len(_PATIENT_NAME_RANK))
+
+
 def names_patient(column: str) -> bool:
     """A column named for the patient-ID role (``pt_id``, ``subj``, ``MRN``, ``study_no``)."""
     return person_key_role(column) == "patient"
@@ -716,7 +732,8 @@ def _choose_keys(df: pl.DataFrame, dictionary: Dictionary, facts: UploadFacts, e
         chosen, evidence = by_name[facts.cohort_key], "the tables were joined on it, one patient each"
     if chosen is None:
         named = sorted(
-            (c for c in candidates if c.role == "patient" and free(c)), key=lambda c: (c.unique, order[c.column])
+            (c for c in candidates if c.role == "patient" and free(c)),
+            key=lambda c: (patient_name_rank(c.column), c.unique, order[c.column]),
         )
         if named:
             chosen = named[0]
@@ -1005,9 +1022,9 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
 
 
 def _date_like(column: str) -> bool:
-    from clinical_analytics.contracts.dates import _date_named
+    from clinical_analytics.contracts.dates import date_named
 
-    return _date_named(column)
+    return date_named(column)
 
 
 def _grain(df: pl.DataFrame, dictionary: Dictionary, keys: _Keys, facts: UploadFacts) -> Grain:
@@ -1023,7 +1040,10 @@ def _grain(df: pl.DataFrame, dictionary: Dictionary, keys: _Keys, facts: UploadF
             source="declared" if facts.population_estimates else "structure",
             evidence="rows are estimates for groups",
         )
-    one_per = key is not None and key.unique
+    # One row per patient: no ID repeats among the lines that have one (a missing ID is reported by
+    # the contract's not-null check, not read as a visit).
+    present = df.get_column(key.column).drop_nulls() if key is not None else None
+    one_per = present is not None and present.len() > 0 and patients == present.len()
     if dictionary.grain_noun:
         noun = dictionary.grain_noun
         kind = grain_kind(noun)
@@ -1038,7 +1058,7 @@ def _grain(df: pl.DataFrame, dictionary: Dictionary, keys: _Keys, facts: UploadF
             source="dictionary",
             evidence=f"the data dictionary says “{dictionary.grain_text}”",
         )
-    if key is not None and key.unique:
+    if key is not None and one_per:
         noun = key.role if key.role in ("infant", "mother") else "patient"
         kind = noun
         return Grain(

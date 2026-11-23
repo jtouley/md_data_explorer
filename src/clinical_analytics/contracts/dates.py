@@ -163,7 +163,7 @@ def choose_text_format(series: pl.Series, *, stated: str | None = None) -> DateC
                     return found
     if bool(values.str.contains(r"^\d{8}$").all()):
         parsed = _reads_all(values, YYYYMMDD)
-        if parsed is not None and _date_named(name):
+        if parsed is not None and date_named(name):
             ex_in, ex_out = _example(values, parsed)
             return DateChoice(name, YYYYMMDD, ex_in, ex_out, False, None, "eight digits as year, month, day")
     return None
@@ -215,7 +215,7 @@ _DATE_NAME_TOKENS: Final = frozenset({"date", "dt", "dttm", "dob", "dod", "datet
 _TOKEN_SPLIT: Final = re.compile(r"[^a-z0-9]+")
 
 
-def _date_named(column: str) -> bool:
+def date_named(column: str) -> bool:
     """'lkw_date', 'DOB', 'admitDt' (case boundary split)."""
     spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", column).lower()
     return any(t in _DATE_NAME_TOKENS for t in _TOKEN_SPLIT.split(spaced) if t)
@@ -231,7 +231,7 @@ def choose_number_format(
     """
     if not (series.dtype.is_integer() or series.dtype.is_float()):
         return None
-    if not (_date_named(series.name) or stated is not None):
+    if not (date_named(series.name) or stated is not None):
         return None
     values = series.drop_nulls()
     if values.len() == 0:

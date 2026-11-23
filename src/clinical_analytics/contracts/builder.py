@@ -67,15 +67,13 @@ class ContractInputs:
 
     @classmethod
     def from_semantics(cls, semantics: DatasetSemantics, **fields: Any) -> ContractInputs:
-        """Inputs whose identifier is the semantics' patient key, and whose restricted columns
-        include every app column copied or hashed from IDs (they hold the same values)."""
+        """Inputs whose identifier is the semantics' patient key, and whose restricted columns are
+        the app's copies and hashes of IDs (they hold the same values as an ID or a row key)."""
         copies = tuple(a.column for a in semantics.app_columns if a.kind in ("copy", "hash"))
-        sources = tuple(c for a in semantics.app_columns if a.kind == "copy" for c in a.made_from)
-        restricted = tuple(dict.fromkeys((*copies, *sources)))
         key = semantics.patient_key_column
         return cls(
             id_column=key,
-            id_source_columns=tuple(c for c in restricted if c != key),
+            id_source_columns=tuple(c for c in copies if c != key),
             semantics=semantics,
             **fields,
         )
