@@ -913,6 +913,11 @@ class MissingCodeAnswer(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     column: str = Field(..., min_length=1, max_length=512)
+    # One answer for every column a shared dictionary note asks about ("999 means not recorded for
+    # all measurements"): each must be asked about the same value.
+    also_columns: list[Annotated[str, Field(min_length=1, max_length=512)]] = Field(
+        default_factory=list, max_length=500
+    )
     value: StrictInt | StrictFloat | str = Field(
         ..., description='The value the question asks about (999, 999.0 and "999" are one value)'
     )
@@ -957,28 +962,36 @@ def answer_missing_code(dataset_id: str, answer: MissingCodeAnswer) -> MissingCo
         semantics = _contract_semantics(storage, dataset_id)
         if semantics is None:
             raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
-        asked = next(
-            (
-                q
-                for q in semantics.open_questions
-                if q.kind == "missing_code"
-                and q.column == answer.column
-                and same_value_key(q.value) == same_value_key(answer.value)
-            ),
-            None,
-        )
-        if asked is None or asked.value is None:
-            raise HTTPException(status_code=409, detail="This cohort is not asked about that value.")
-        declaration = MissingCodeDeclaration(
-            column=answer.column,
-            value=asked.value,
-            missing=answer.not_recorded,
-            dataset_version=semantics.dataset_version,
-        )
-        try:
-            FileDeclarationStore(storage.upload_dir.parent).update(
-                dataset_id, lambda current: current.with_missing_code(declaration)
+        declarations = []
+        for column in dict.fromkeys([answer.column, *answer.also_columns]):
+            asked = next(
+                (
+                    q
+                    for q in semantics.open_questions
+                    if q.kind == "missing_code"
+                    and q.column == column
+                    and same_value_key(q.value) == same_value_key(answer.value)
+                ),
+                None,
             )
+            if asked is None or asked.value is None:
+                raise HTTPException(status_code=409, detail="This cohort is not asked about that value.")
+            declarations.append(
+                MissingCodeDeclaration(
+                    column=column,
+                    value=asked.value,
+                    missing=answer.not_recorded,
+                    dataset_version=semantics.dataset_version,
+                )
+            )
+
+        def record(current: Declarations) -> Declarations:
+            for declaration in declarations:
+                current = current.with_missing_code(declaration)
+            return current
+
+        try:
+            FileDeclarationStore(storage.upload_dir.parent).update(dataset_id, record)
         except (ContractStoreError, InvalidDeclarationKeyError) as e:
             logger.error("missing_code_answer_not_saved", dataset_id=dataset_id, **error_fields(e))
             raise HTTPException(status_code=500, detail="The answer couldn’t be stored. Try again.") from e

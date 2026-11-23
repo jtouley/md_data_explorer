@@ -200,6 +200,10 @@ def test_governedSql_frequencyTable_heldThenCountOfLinesNeverConfirmableAsPatien
     )
     refused = test_client.post("/api/queries/sql", json=sql).json()
     forced = test_client.post("/api/queries/sql", json={**sql, "confirm_one_row_per_patient": "a" * 32}).json()
+    summed = test_client.post(
+        "/api/queries/sql",
+        json={"dataset_id": upload_id, "sql": "SELECT Sex, sum(Cases) AS cases FROM unified GROUP BY Sex"},
+    ).json()
 
     # Assert: waits for "Does each line count cases?"; once declared, never confirmable as patients
     assert held["status"] == "held"
@@ -210,6 +214,10 @@ def test_governedSql_frequencyTable_heldThenCountOfLinesNeverConfirmableAsPatien
     assert "SUM(Cases)" in refused["reason"]
     assert forced["status"] == "refused"
     assert forced["needs_confirmation"] is None
+    # The sum it suggests is answered, said to be cases
+    assert summed["status"] == "answered", summed
+    assert sum(r["cases"] for r in summed["rows"]) == frame["Cases"].sum()
+    assert summed["notes"] == ["Each line counts cases for a group: sums of Cases are cases, never patients."]
 
 
 def _troponin() -> pl.DataFrame:

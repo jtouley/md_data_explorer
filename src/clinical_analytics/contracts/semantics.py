@@ -685,7 +685,8 @@ def describe(semantics: DatasetSemantics, *, max_lines: int = 12) -> list[str]:
             codes = ", ".join(f"{c.value} ({c.label})" for c in col.nonresponse_codes)
             lines.append(f"In {name}, {codes} are kept as answers but left out of percentages and averages.")
         if col.unit_column:
-            lines.append(f"{col.unit_column} gives the unit of {name}.")
+            read = f"; every line is read in {col.unit.value}" if col.unit is not None else ""
+            lines.append(f"{col.unit_column} gives the unit of {name}{read}.")
     if semantics.survey_sample:
         lines.append(config.SURVEY_NOTE)
     for q in semantics.open_questions:

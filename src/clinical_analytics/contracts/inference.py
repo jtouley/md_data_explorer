@@ -616,6 +616,25 @@ _TIME_UNITS: Final = frozenset(
      "d", "wk", "mo", "yr", "yrs", "h", "hr", "hrs", "min"}
 )  # fmt: skip
 _UNIT_WORDS: Final = frozenset({"unit", "units", "u", "uom", "scale"})
+_TIME_UNIT_NAMES: Final = {
+    **dict.fromkeys(("day", "days", "d"), "days"),
+    **dict.fromkeys(("week", "weeks", "wk"), "weeks"),
+    **dict.fromkeys(("month", "months", "mo"), "months"),
+    **dict.fromkeys(("year", "years", "yr", "yrs"), "years"),
+    **dict.fromkeys(("hour", "hours", "h", "hr", "hrs"), "hours"),
+    **dict.fromkeys(("minute", "minutes", "min"), "minutes"),
+}
+_TIME_UNIT_DAYS: Final = {
+    "minutes": 1 / 1440, "hours": 1 / 24, "days": 1.0, "weeks": 7.0, "months": 365.25 / 12, "years": 365.25,
+}  # fmt: skip
+
+
+def _unit_days(unit_column: str) -> pl.Expr:
+    """Days in one unit of each line's ``unit_column`` value (null for a value it doesn't name)."""
+    unit = pl.col(unit_column).cast(pl.String).str.strip_chars().str.to_lowercase()
+    return unit.replace_strict(
+        {k: _TIME_UNIT_DAYS[v] for k, v in _TIME_UNIT_NAMES.items()}, default=None, return_dtype=pl.Float64
+    )
 
 
 def _unit_columns(df: pl.DataFrame) -> list[tuple[str, str]]:
@@ -1238,9 +1257,13 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
                 **dictionary.noted_missing.get(name, {}),
                 **(entry.noted_missing if entry else {}),
             }
+            own = entry.noted_missing if entry else {}
             for code, note in notes.items():
                 typed = _typed_code(code, dtype)
-                if not isinstance(typed, int | float) or code in labels or float(typed) not in present:
+                # A shared note never overrides a category of the column's own code list; the
+                # list's own "9 = Unknown primary" is asked about, kept as a category until then.
+                listed = code in labels and code not in own
+                if not isinstance(typed, int | float) or listed or float(typed) not in present:
                     continue
                 if any(_same_code(m.value, typed) for m in missing):
                     continue
@@ -1318,7 +1341,14 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
             )
 
     for value_column, unit_column in _unit_columns(df):
-        columns[value_column] = columns[value_column].model_copy(update={"unit_column": unit_column, "unit": None})
+        # Durations in mixed units are read in one unit, the largest the file uses: an average of
+        # 6 months and 2 years is never 4 (``apply_semantics`` converts every line).
+        units_used = {
+            _TIME_UNIT_NAMES[str(v).strip().lower()] for v in df.get_column(unit_column).drop_nulls().unique()
+        }
+        target = max(units_used, key=lambda unit: _TIME_UNIT_DAYS[unit])
+        unit = Unit(value=target, source="structure")
+        columns[value_column] = columns[value_column].model_copy(update={"unit_column": unit_column, "unit": unit})
     weights = tuple(c for c in df.columns if config.SURVEY_WEIGHT_NAME.search(c.lower()))
     survey = bool(weights) or dictionary.mentions_weights
 
@@ -1818,9 +1848,28 @@ def apply_semantics(df: pl.DataFrame, semantics: DatasetSemantics) -> pl.DataFra
                 expr = parse_expr(name, col.date.format, col.date.has_time, dtype)
         if expr is not None:
             exprs.append(expr)
-    if not exprs:
-        return df
-    return df.lazy().with_columns(exprs).collect()
+    converted = df.lazy().with_columns(exprs).collect() if exprs else df
+    return _in_one_unit(converted, semantics)
+
+
+def _in_one_unit(df: pl.DataFrame, semantics: DatasetSemantics) -> pl.DataFrame:
+    """Durations whose unit is given per line (``unit_column``) converted to the column's one
+    unit, the unit column rewritten to it: safe to run twice (a converted line has factor 1)."""
+    exprs: list[pl.Expr] = []
+    for name, col in semantics.columns.items():
+        unit_column = col.unit_column
+        if unit_column is None or col.unit is None or name not in df.columns or unit_column not in df.columns:
+            continue
+        target = _TIME_UNIT_DAYS[col.unit.value]
+        days = _unit_days(unit_column)
+        exprs += [
+            pl.when(days.is_not_null())
+            .then(pl.col(name).cast(pl.Float64) * days / target)
+            .otherwise(pl.col(name))
+            .alias(name),
+            pl.when(days.is_not_null()).then(pl.lit(col.unit.value)).otherwise(pl.col(unit_column)).alias(unit_column),
+        ]
+    return df.lazy().with_columns(exprs).collect() if exprs else df
 
 
 def add_id_columns(

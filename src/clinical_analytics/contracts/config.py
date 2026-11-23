@@ -374,6 +374,9 @@ ESTIMATE_TOTAL_LEVELS: Final = frozenset(
         "global",
         "world",
         "grand total",
+        "all states",
+        "all regions",
+        "all counties",
     }
 )
 # A level naming a county-like part of a state: the other levels in that column are its totals.

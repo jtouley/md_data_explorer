@@ -430,6 +430,10 @@ _NONRESPONSE: Final = re.compile(
     r"skipped|legitimate\s+skip)\b",
     re.I,
 )
+_EXPLICIT_NONRESPONSE: Final = re.compile(
+    r"\brefused\b|\bdon'?t\s+know\b|\bdo\s+not\s+know\b|\bnot\s+asked\b|^\s*(?:missing|not\s+recorded)\s*\.?\s*$", re.I
+)
+_RANGE_OF_VALUES: Final = re.compile(r"range\s+of\s+values?", re.I)
 _CENSORED: Final = re.compile(
     r"\b(?:or\s+(?:older|more|over|above|higher|less|fewer|younger)|and\s+(?:over|older|above)|less\s+than|"
     r"more\s+than|under|at\s+least|at\s+most)\b|\d\s*\+",
@@ -477,27 +481,44 @@ def _codebook_entries(text: str, by_lower: dict[str, str]) -> dict[str, Dictiona
 
 
 def _codebook_entry(column: str, label: str, rows: list[tuple[str, str]]) -> DictionaryEntry:
+    """A codebook variable's entry. Applied automatically (ADR017 principle A) only what the
+    codebook states exactly: its "Range of Values" row, explicit non-response labels ("Refused",
+    "Don't know", "Not asked", or exactly "Missing"/"Not recorded"), and on a measure, range codes
+    whose label names the edge of that range ("80 = 80 years of age and over" beside 18 to 79).
+    Any other label that may mean not recorded ("Unknown primary (CUP)", "Not applicable") is a
+    note to ask about; on a coded item it stays a category until answered."""
     stated: tuple[float, float] | None = None
     coded: dict[str, str] = {}
     for code, description in rows:
         ranged = _RANGE_ROW.match(code)
-        if ranged and "range" in description.lower():
+        if ranged and _RANGE_OF_VALUES.fullmatch(description.strip()):
             stated = (float(ranged.group(1)), float(ranged.group(2)))
         elif code != "." and re.fullmatch(r"-?\d+(?:\.\d+)?|[A-Za-z]", code):
             coded[code] = description
-    nonresponse = {c: d for c, d in coded.items() if _NONRESPONSE.search(d)}
-    censored = {c: d for c, d in coded.items() if c not in nonresponse and _CENSORED.search(d)}
+    explicit = {c: d for c, d in coded.items() if _EXPLICIT_NONRESPONSE.search(d)}
+    asked = {c: f"{c} = {d}" for c, d in coded.items() if c not in explicit and _NONRESPONSE.search(d)}
     if stated is not None:
-        # A measure ("0 to 79 | Range of Values"): non-response codes are missing values, range
-        # codes are real values; nothing else is a category.
+        # A measure ("0 to 79 | Range of Values"): explicit non-response codes are missing values,
+        # range codes at its edge are real values; nothing else is a category.
+        censored = {c: d for c, d in coded.items() if c not in explicit and _at_range_edge(d, stated)}
         return DictionaryEntry(
-            column=column, text=label, description=label, missing=nonresponse, censored=censored, stated_range=stated,
-            unit=_unit(label),
+            column=column, text=label, description=label, missing=explicit, censored=censored, stated_range=stated,
+            unit=_unit(label), noted_missing=asked,
         )  # fmt: skip
     return DictionaryEntry(
-        column=column, text=label, description=label, labels=coded if len(coded) >= 2 else {}, nonresponse=nonresponse,
-        censored=censored,
+        column=column, text=label, description=label, labels=coded if len(coded) >= 2 else {}, nonresponse=explicit,
+        noted_missing=asked,
     )  # fmt: skip
+
+
+def _at_range_edge(description: str, stated: tuple[float, float]) -> bool:
+    """ "80 years of age and over" beside 18 to 79, "less than 1 year" beside 1 to 120: a boundary
+    word with a number at the edge of the measure's own range."""
+    if not _CENSORED.search(description):
+        return False
+    low, high = stated
+    edges = {low, high, high + 1, low - 1}
+    return any(float(n) in edges for n in re.findall(r"-?\d+(?:\.\d+)?", description))
 
 
 _WEIGHTS: Final = re.compile(r"\b(?:sample|sampling|survey|interview|exam|mec|full\s+sample)\s+weights?\b", re.I)

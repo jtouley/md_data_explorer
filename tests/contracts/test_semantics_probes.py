@@ -376,3 +376,13 @@ def test_inferSemantics_ageGroupPerTenYears_stratumNotRate() -> None:
     # Assert
     assert aggregate is not None and aggregate.kind == "frequency"
     assert "age_group_per_10y" in aggregate.strata
+
+
+@pytest.mark.parametrize("total", ["Overall", "All States"])
+def test_inferSemantics_overallAndAllStates_sameTreatment(total: str) -> None:
+    # Act: label and sums agree for both
+    semantics = infer_semantics(_mumps(total))
+
+    # Assert
+    assert any(total in t.values for t in semantics.aggregate.total_levels)
+    assert _asked(semantics, f"total_row:region:{total}") is None

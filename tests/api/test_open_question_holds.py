@@ -169,7 +169,8 @@ def test_aggregatePath_everyKind_heldNoTable(
         files={"file": ("a.csv", buffer.getvalue(), "text/csv")},
         data={"dataset_name": "AtlasPlus", "population_estimates": POPULATION_ESTIMATES_FORM_VALUE},
     ).json()["upload_id"]
-    monkeypatch.setattr(aggregate, "_version_semantics", lambda *_a, **_k: _asking(kind))
+    dimension = "Geography"  # a key dimension every AtlasPlus question reads
+    monkeypatch.setattr(aggregate, "_version_semantics", lambda *_a, **_k: _asking(kind, column=dimension))
 
     # Act
     body = test_client.post(
@@ -245,3 +246,71 @@ def test_qualityReport_everyKind_listedUntilAnswered(test_client: TestClient, up
     asked = [c["id"] for c in before["checks"] if c["metric"] == "openQuestion"]
     assert "rows_are_patients" in asked
     assert "rows_are_patients" not in [c["id"] for c in after["checks"] if c["metric"] == "openQuestion"]
+
+
+def test_aggregatePath_questionOnAColumnNotRead_answered(
+    test_client: TestClient,
+    isolated_data_home: Path,
+    make_public_table: Callable[..., pl.DataFrame],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Arrange: a missing-code question on a column the estimate question never reads
+    from clinical_analytics.api.routes import aggregate
+
+    buffer = io.BytesIO()
+    make_public_table("atlasplus").write_csv(buffer)
+    upload_id = test_client.post(
+        "/api/datasets/upload",
+        files={"file": ("a.csv", buffer.getvalue(), "text/csv")},
+        data={"dataset_name": "AtlasPlus", "population_estimates": POPULATION_ESTIMATES_FORM_VALUE},
+    ).json()["upload_id"]
+    monkeypatch.setattr(aggregate, "_version_semantics", lambda *_a, **_k: _asking("missing_code", column="no_such"))
+
+    # Act
+    body = test_client.post(
+        "/api/aggregate/questions",
+        json={"dataset_ids": [upload_id], "question": "AtlasPlus syphilis rate in Michigan, 2023"},
+    ).json()
+    dependencies.invalidate_semantic_layer_cache(upload_id)
+
+    # Assert
+    assert "Question of kind" not in body["message"]
+
+
+def test_fileQuestions_sharedNoteOnSeveralColumns_oneQuestionOneAnswer(test_client: TestClient) -> None:
+    # Arrange: one prose note, 9999 present in three lab columns
+    import zipfile
+
+    frame = pl.DataFrame(
+        {
+            "mrn": [f"L{i:03d}" for i in range(300)],
+            "alt": [9999 if i % 30 == 0 else 20 + i % 40 for i in range(300)],
+            "ast": [9999 if i % 25 == 0 else 18 + i % 35 for i in range(300)],
+            "ggt": [9999 if i % 50 == 0 else 30 + i % 60 for i in range(300)],
+        }
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("labs.csv", frame.write_csv())
+        zf.writestr(
+            "dictionary.txt",
+            "mrn  Medical record number (patient identifier)\n\nFor all measurements, 9999 = not recorded.\n",
+        )
+    upload_id = test_client.post(
+        "/api/datasets/upload",
+        files={"file": ("labs.zip", buf.getvalue(), "application/zip")},
+        data={"dataset_name": "labs"},
+    ).json()["upload_id"]
+    listed = test_client.get(f"/api/datasets/{upload_id}/questions").json()["questions"]
+
+    # Act
+    answer = listed[0]["answers"][0]
+    saved = test_client.post(f"/api/datasets/{upload_id}{answer['route']}", json=answer["body"])
+    after = test_client.get(f"/api/datasets/{upload_id}/questions").json()["questions"]
+    dependencies.invalidate_semantic_layer_cache(upload_id)
+
+    # Assert
+    assert [q["id"] for q in listed] == ["shared_missing:9999"]
+    assert "all 3 columns that hold it: alt, ast, ggt" in listed[0]["question"]
+    assert saved.status_code == 200, saved.text
+    assert after == []

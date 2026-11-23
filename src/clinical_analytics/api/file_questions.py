@@ -8,8 +8,9 @@ short note.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Final
 
 import polars as pl
 from pydantic import BaseModel, ConfigDict, Field
@@ -74,13 +75,67 @@ def file_questions(
     data (only counted); ``patient_rows_token`` gives the confirmation token "Is each line one
     patient?" is answered with (None: it can't be answered on this version)."""
     found = []
-    for q in semantics.open_questions:
-        if q.answered:
+    open_questions = [q for q in semantics.open_questions if not q.answered]
+    shared = _shared_notes(open_questions)
+    grouped = {q.id for group in shared.values() for q in group}
+    for q in open_questions:
+        if q.id in grouped:
+            group = next(g for g in shared.values() if q in g)
+            if q is group[0]:
+                found.append(_shared_view(group, frame))
             continue
         view = _view(q, semantics, frame, patient_rows_token)
         if view is not None:
             found.append(view)
     return found
+
+
+_NOTE: Final = re.compile(r'^The data dictionary says "(?P<note>.+?)"\. Does ')
+
+
+def _shared_notes(questions: list[OpenQuestion]) -> dict[tuple[str, str], list[OpenQuestion]]:
+    """Missing-code questions one dictionary note raises on several columns, by (note, value)."""
+    groups: dict[tuple[str, str], list[OpenQuestion]] = {}
+    for q in questions:
+        m = _NOTE.match(q.question)
+        if q.kind == "missing_code" and m is not None and q.column:
+            groups.setdefault((m.group("note"), f"{q.value}"), []).append(q)
+    return {key: group for key, group in groups.items() if len(group) > 1}
+
+
+def _shared_view(group: list[OpenQuestion], frame: pl.LazyFrame) -> FileQuestion:
+    """One question, one answer, for every column a shared note names ("apply to these 4 columns?")."""
+    first = group[0]
+    note = _NOTE.match(first.question)
+    assert note is not None and first.column is not None
+    columns = [q.column or "" for q in group]
+    listed = ", ".join(columns)
+    evidence = (
+        "; ".join(f"{c}: {_lines(_equal_count(frame, c, first.value))}" for c in columns) + f" hold {first.value}."
+    )
+    body = {"column": columns[0], "also_columns": columns[1:], "value": first.value}
+    return FileQuestion(
+        id=f"shared_missing:{first.value}",
+        kind="missing_code",
+        column=None,
+        question=(
+            f'The data dictionary says "{note.group("note")}". Does {first.value} mean not recorded in all '
+            f"{len(columns)} columns that hold it: {listed}?"
+        ),
+        evidence=evidence,
+        answers=[
+            FileQuestionAnswer(
+                label="yes, not recorded in all of them", route="/missing-codes",
+                body={**body, "not_recorded": True},
+                changes=f"Answers leave {first.value} out of {listed}, as not recorded (the file keeps it).",
+            ),
+            FileQuestionAnswer(
+                label="no, a real value in all of them", route="/missing-codes",
+                body={**body, "not_recorded": False},
+                changes=f"Answers count {first.value} in {listed} as a real value.",
+            ),
+        ],
+    )  # fmt: skip
 
 
 def _view(

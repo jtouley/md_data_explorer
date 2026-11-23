@@ -141,7 +141,15 @@ def load_source(
     names_patient = declared and inferred is not None and inferred.patient_key is not None
     table = estimates.detect_frame(frame) if declared and not names_patient else None
     name = str(metadata.get("dataset_name") or dataset_id)
-    holds = open_question_holds(settled, columns=None, counts_lines=False)
+    # What an estimate question reads: the table's key dimensions and its value columns (their
+    # bounds and markers); a question about another column never holds it (contracts.holds).
+    read = (
+        {d.name for d in table.dimensions}
+        | {c for v in table.values for c in (v.name, v.lower, v.upper, v.suppressed, v.unreliable) if c}
+        if table is not None
+        else None
+    )
+    holds = open_question_holds(settled, columns=read, counts_lines=False)
     return estimate_join.SourceInput(
         dataset_id=dataset_id,
         name=name,

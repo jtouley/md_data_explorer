@@ -13,7 +13,7 @@ import pytest
 
 from clinical_analytics.contracts.declarations import Declarations, QuestionAnswer
 from clinical_analytics.contracts.dictionary import parse_dictionary
-from clinical_analytics.contracts.inference import UploadFacts, infer_semantics
+from clinical_analytics.contracts.inference import UploadFacts, apply_semantics, infer_semantics
 from clinical_analytics.contracts.readings import apply_declared, declared_reads
 from clinical_analytics.contracts.semantics import describe, with_declarations
 from clinical_analytics.core.identifier_rules import row_key_note
@@ -123,7 +123,7 @@ def test_inferSemantics_unitColumn_pairedWithItsValue() -> None:
 
     # Assert
     assert semantics.columns["sleep_dur"].unit_column == "sleep_dur_unit"
-    assert semantics.columns["sleep_dur"].unit is None
+    assert semantics.columns["sleep_dur"].unit.value == "years"  # the largest unit the file uses
 
 
 @pytest.mark.parametrize(
@@ -156,3 +156,77 @@ def test_inferSemantics_respondentSequenceNumber_isThePersonKeyNoteAgrees() -> N
     # Assert: the dictionary names the respondent; the unit note says nothing contrary
     assert semantics.patient_key_column == "RESPSEQ"
     assert row_key_note(semantics) == ""
+
+
+# --------------------------------------------------------------------------- round 6: only explicit labels apply
+TUMOUR_CODEBOOK = """Variable Name: PRIMARY
+SAS Label: Primary tumour site
+Code or Value\tValue Description\tCount\tCumulative
+1\tLung\t120\t120
+2\tColorectal\t100\t220
+3\tBreast\t71\t291
+9\tUnknown primary (CUP)\t109\t400
+"""
+
+
+def test_inferSemantics_categoryNamedUnknown_keptAndAskedNeverNulled() -> None:
+    # Arrange
+    frame = pl.DataFrame(
+        {"case_id": [f"T{i:03d}" for i in range(400)], "PRIMARY": [1] * 120 + [2] * 100 + [3] * 71 + [9] * 109}
+    )
+
+    # Act
+    semantics = infer_semantics(frame, UploadFacts(doc_context=TUMOUR_CODEBOOK))
+    read = apply_declared(frame, declared_reads(Declarations(), None, semantics))
+
+    # Assert: "Unknown primary (CUP)" is a category until the user says otherwise
+    assert semantics.columns["PRIMARY"].nonresponse_codes == ()
+    assert semantics.columns["PRIMARY"].labels["9"] == "Unknown primary (CUP)"
+    assert read.filter(pl.col("PRIMARY") == 9).height == 109
+    asked = next(q for q in semantics.open_questions if q.id == "missing_code:PRIMARY:9")
+    assert "Unknown primary (CUP)" in asked.question
+
+
+@pytest.mark.parametrize(
+    ("rows", "range_", "censored"),
+    [
+        pytest.param("1\tLess than 9th grade\n2\tHigh school\n3\tCollege\n", None, {}, id="category-less-than"),
+        pytest.param("12 to 16\tRange of normal values\n17\tAbove normal\n", None, {}, id="clinical-reference-range"),
+        pytest.param(
+            "1 to 120\tRange of Values\n666\tLess than 1 year\n",
+            (1.0, 120.0),
+            {"666": "Less than 1 year"},
+            id="measure-edge",
+        ),
+    ],
+)
+def test_parseDictionary_codebookRangesAndRangeCodes_onlyTheCodebooksOwn(
+    rows: str, range_: tuple[float, float] | None, censored: dict[str, str]
+) -> None:
+    # Arrange
+    text = f"Variable Name: ITEM\nSAS Label: An item\nCode or Value\tValue Description\n{rows}"
+
+    # Act
+    entry = parse_dictionary(text, ["ITEM"]).entry("ITEM")
+
+    # Assert
+    assert entry.stated_range == range_
+    assert entry.censored == censored
+
+
+def test_applySemantics_mixedUnitDurations_readInOneUnitTwiceSafe() -> None:
+    # Arrange: 6 months and 2 years
+    frame = pl.DataFrame(
+        {"pid": ["A", "B", "C", "D"], "dur": [6, 2, 18, 1], "dur_unit": ["months", "years", "months", "years"]}
+    )
+    semantics = infer_semantics(frame)
+
+    # Act
+    once = apply_semantics(frame, semantics)
+    twice = apply_semantics(once, semantics)
+
+    # Assert
+    assert semantics.columns["dur"].unit.value == "years"
+    assert once.get_column("dur").to_list() == pytest.approx([0.5, 2.0, 1.5, 1.0])
+    assert twice.get_column("dur").to_list() == pytest.approx([0.5, 2.0, 1.5, 1.0])
+    assert any("read in years" in line for line in describe(semantics, max_lines=40))
