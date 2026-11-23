@@ -40,20 +40,17 @@ def _residents() -> pl.DataFrame:
 
 
 # --------------------------------------------------------------------------- 1. shared notes
-def test_inferSemantics_sharedNoteCodeInsideRealValues_askedNeverNulled() -> None:
+def test_inferSemantics_sharedNoteCode_askedOnEveryColumnNeverApplied() -> None:
     # Arrange
     facts = UploadFacts(doc_context="resident_id  Resident identifier\n\nCoded fields: 99 = unknown.\n")
 
     # Act
     semantics = infer_semantics(_residents(), facts)
 
-    # Assert: 99 is a real age and a real dose count, so it is asked; on phq9 (0-27) it is applied
-    assert semantics.columns["age"].missing_codes == ()
-    assert semantics.columns["n_meds"].missing_codes == ()
-    assert _asked(semantics, "missing_code:age:99") is not None
-    assert _asked(semantics, "missing_code:n_meds:99") is not None
-    assert [m.value for m in semantics.columns["phq9"].missing_codes] == [99]
-    assert _asked(semantics, "missing_code:phq9:99") is None
+    # Assert: a prose note never applies a code (ADR017 principle A), wherever 99 lies
+    for column in ("age", "n_meds", "phq9"):
+        assert semantics.columns[column].missing_codes == ()
+        assert _asked(semantics, f"missing_code:{column}:99") is not None
 
 
 def test_inferSemantics_columnOwnEntryListsCode_appliedEvenInsideValues() -> None:
@@ -101,16 +98,18 @@ def test_freeMissingPairs_noNotRecordedWords_nothing(text: str) -> None:
     assert free_missing_pairs(text) == []
 
 
-def test_parseDictionary_sentenceNamingColumn_thatColumnsCodeOtherwiseShared() -> None:
+def test_parseDictionary_sentenceNamingColumn_notedForThatColumnOtherwiseShared() -> None:
     # Arrange
-    text = "In grip_kg, a value of 999 indicates the reading was not taken.\nMissing values were coded as -9.\n"
+    named = "In grip_kg, a value of 999 indicates the reading was not taken."
+    text = f"{named}\nMissing values were coded as -9.\n"
 
     # Act
     found = parse_dictionary(text, ["grip_kg", "pinch_kg"])
 
-    # Assert
-    assert found.entry("grip_kg").missing == {"999": "the reading was not taken"}
-    assert found.shared_missing == {"-9": "Missing values"}
+    # Assert: both are recorded as notes to ask about, never as the column's code list
+    assert found.noted_missing == {"grip_kg": {"999": named}}
+    assert found.shared_missing == {"-9": "Missing values were coded as -9."}
+    assert found.entry("grip_kg") is None
 
 
 # --------------------------------------------------------------------------- 3. totals
@@ -124,33 +123,65 @@ def _mumps(total: str) -> pl.DataFrame:
     return pl.DataFrame(rows)
 
 
-@pytest.mark.parametrize(
-    "total", ["Grand Total", "Statewide", "All ages", "Both sexes", "National", "Subtotal", "Total, all regions"]
-)
-def test_inferSemantics_labelledTotalRow_recordedNeverSummed(total: str) -> None:
+@pytest.mark.parametrize("total", ["Grand Total", "All ages", "Both sexes", "National", "Total"])
+def test_inferSemantics_totalLabelAndSumsAgree_leftOutOfSums(total: str) -> None:
     # Arrange
     frame = _mumps(total)
     groups = frame.filter(pl.col("region") != total)
 
     # Act
     semantics = infer_semantics(frame)
-    counted = count_cases(frame, semantics.aggregate, {"year": [2013], "sex": ["Male"]})
+    counted = count_cases(frame, semantics.aggregate, {"year": [2013]})
 
-    # Assert: the answer is the total line's count, never the groups plus their total
+    # Assert: a frequency table; the sum over both sexes leaves the total lines out
+    assert semantics.aggregate.kind == "frequency"
     assert any(total in t.values for t in semantics.aggregate.total_levels)
-    assert counted.total == groups.filter((pl.col("year") == 2013) & (pl.col("sex") == "Male"))["cases"].sum()
+    assert counted.total == groups.filter(pl.col("year") == 2013)["cases"].sum()
 
 
-def test_inferSemantics_unlabelledTotalBySums_recordedAndAsked() -> None:
-    # Arrange: "Health board 9" is the sum of the four regions on every year and sex
-    frame = _mumps("Health board 9")
+@pytest.mark.parametrize("total", ["Statewide", "Health board 9", "Subtotal", "Total, all regions"])
+def test_inferSemantics_totalBySumsAlone_askedNotApplied(total: str) -> None:
+    # Act
+    semantics = infer_semantics(_mumps(total))
+
+    # Assert
+    assert semantics.aggregate.total_levels == ()
+    assert _asked(semantics, f"total_row:region:{total}") is not None
+
+
+@pytest.mark.parametrize("label", ["All other causes", "Knee replacement, total", "Overall"])
+def test_inferSemantics_realCategoryNamedLikeATotal_neverATotal(label: str) -> None:
+    # Arrange: a real category whose counts are not the sum of the others
+    frame = _mumps(label).with_columns(
+        pl.when(pl.col("region") == label).then(pl.lit(2)).otherwise(pl.col("cases")).alias("cases")
+    )
+
+    # Act
+    semantics = infer_semantics(frame)
+    counted = count_cases(frame, semantics.aggregate, {"year": [2013]})
+
+    # Assert: added like every other group ("Overall" is asked about, never applied)
+    assert semantics.aggregate.total_levels == ()
+    assert counted.total == frame.filter(pl.col("year") == 2013)["cases"].sum()
+
+
+def test_inferSemantics_rareLevelEqualToASumInTwoCells_askedNotApplied() -> None:
+    # Arrange: "Ohio" happens to equal the sum of the other two states in its only two cells
+    frame = pl.DataFrame(
+        {
+            "state": ["Utah", "Iowa", "Ohio", "Utah", "Iowa", "Ohio", "Utah", "Iowa"],
+            "year": [2020, 2020, 2020, 2021, 2021, 2021, 2022, 2022],
+            "cases": [20, 28, 48, 1, 3, 4, 7, 9],
+        }
+    )
 
     # Act
     semantics = infer_semantics(frame)
 
     # Assert
-    assert ("region", ("Health board 9",)) in [(t.column, t.values) for t in semantics.aggregate.total_levels]
-    assert _asked(semantics, "total_row:region:Health board 9") is not None
+    assert semantics.aggregate.total_levels == ()
+    assert _asked(semantics, "total_row:state:Ohio") is not None
+    assert count_cases(frame, semantics.aggregate, {"state": ["Ohio"]}).total == 52
 
 
 def test_inferSemantics_frequencyTableWithoutTotals_noTotalFound() -> None:
@@ -266,3 +297,82 @@ def test_inferSemantics_codedTargetColumn_noMeasurementUnit(column: str, values:
 
     # Assert
     assert semantics.columns[column].unit is None
+
+
+# --------------------------------------------------------------------------- round 5: prose is asked
+@pytest.mark.parametrize(
+    ("note", "top_coded"),
+    [
+        pytest.param("Ages of 90 or over were coded as 99 where the exact age is unknown.", True, id="top-code"),
+        pytest.param("Smoking was asked only under age 18; for those, 99 indicates not asked.", False, id="other"),
+    ],
+)
+def test_inferSemantics_proseCodeOnRealValues_askedNeverNulled(note: str, top_coded: bool) -> None:
+    # Arrange: 30 real patients aged 90+ recorded as 99, and real ages up to 89
+    frame = pl.DataFrame(
+        {"mrn": [f"A{i:03d}" for i in range(300)], "age": [99 if i < 30 else 20 + i % 70 for i in range(300)]}
+    )
+    doc = f"mrn  Medical record number\nage  Age in years\n\n{note}\n"
+
+    # Act
+    semantics = infer_semantics(frame, UploadFacts(doc_context=doc))
+
+    # Assert
+    asked = _asked(semantics, "missing_code:age:99")
+    assert semantics.columns["age"].missing_codes == ()
+    assert asked is not None
+    assert any("top-coded" in option for option in asked.options) is top_coded
+
+
+# --------------------------------------------------------------------------- 4. weekly tables
+def test_inferSemantics_weeklyCountTable_weeksAreStrata() -> None:
+    # Arrange: state x MMWR week (1-52) x disease, with cases
+    frame = pl.DataFrame(
+        [
+            {"State": s, "MMWR Week": w, "Disease": d, "Cases": (i + w + j) % 9}
+            for i, s in enumerate(("Ohio", "Utah", "Iowa"))
+            for w in range(1, 53)
+            for j, d in enumerate(("Mumps", "Pertussis"))
+        ]
+    )
+
+    # Act
+    semantics = infer_semantics(frame)
+
+    # Assert
+    assert semantics.aggregate is not None
+    assert "MMWR Week" in semantics.aggregate.strata
+    assert semantics.question("aggregate_unsure") is not None
+
+
+def test_inferSemantics_stackedCopiesOfATable_asked() -> None:
+    # Arrange
+    one = pl.DataFrame(
+        [{"State": s, "Year": y, "Cases": i + y % 5} for i, s in enumerate(("Ohio", "Utah")) for y in range(2010, 2020)]
+    )
+
+    # Act
+    semantics = infer_semantics(pl.concat([one, one, one]))
+
+    # Assert
+    assert semantics.aggregate is None
+    assert semantics.question("aggregate_unsure") is not None
+
+
+# --------------------------------------------------------------------------- 5. a band is not a rate
+def test_inferSemantics_ageGroupPerTenYears_stratumNotRate() -> None:
+    # Arrange
+    frame = pl.DataFrame(
+        [
+            {"region": r, "age_group_per_10y": g, "deaths": 3 + i + g}
+            for i, r in enumerate(REGIONS)
+            for g in (1, 2, 3, 4)
+        ]
+    )
+
+    # Act
+    aggregate = infer_semantics(frame).aggregate
+
+    # Assert
+    assert aggregate is not None and aggregate.kind == "frequency"
+    assert "age_group_per_10y" in aggregate.strata

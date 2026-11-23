@@ -18,7 +18,9 @@ from ibis.common.exceptions import IbisError
 
 from clinical_analytics.contracts.semantics import (
     LAYER_CONFIG_KEY,
+    LAYER_DECLARED_KEY,
     DatasetSemantics,
+    with_declarations,
 )
 from clinical_analytics.core.dataset import ClinicalDataset, Granularity
 from clinical_analytics.core.identifier_rules import (
@@ -234,7 +236,12 @@ class UploadedDataset(ClinicalDataset):
             entry = dict(entry) if isinstance(entry, dict) else {}
             if col.labels:
                 entry["codebook"] = dict(col.labels)
-                entry.setdefault("type", "categorical")
+                # A coded item stored as integers (1 = Yes, 2 = No, 7 = Refused) is a category,
+                # never a continuous measure; a measure with a stated range keeps its type.
+                if col.stated_range is None:
+                    entry["type"] = "categorical"
+                else:
+                    entry.setdefault("type", "categorical")
             if col.unit is not None:
                 entry["units"] = col.unit.value
             if col.date is not None:
@@ -248,19 +255,27 @@ class UploadedDataset(ClinicalDataset):
         from clinical_analytics.contracts.readings import declared_reads, reads_config
         from clinical_analytics.core.semantic import DECLARED_READS_KEY
 
-        declared = self.semantics(declared=True)
-        # A table of groups (inferred, or declared by the user) answers counts from its count
-        # column (contracts.aggregates); declared public estimates keep ADR014's path.
-        table = declared.aggregate if declared.aggregate is not None and not declared.population_estimates else None
+        # One read of the declarations: the layer's reads and its holds see the same answers.
+        loaded = FileDeclarationStore(self.storage.upload_dir.parent).load(self.upload_id)
+        version = self.metadata.get("dataset_version") if self.metadata else None
+        declared = with_declarations(
+            semantics.model_copy(update={"dataset_version": semantics.dataset_version or version}), loaded
+        )
+        # A table of groups the user declared answers counts from its count column
+        # (contracts.aggregates); one only the structure suggests is asked, never applied, and
+        # declared public estimates keep ADR014's path.
+        table = (
+            declared.aggregate
+            if declared.aggregate is not None
+            and declared.aggregate.source == "declared"
+            and not declared.population_estimates
+            else None
+        )
         return {
             **config,
             LAYER_AGGREGATE_KEY: table.model_dump(mode="json") if table is not None else None,
-            DECLARED_READS_KEY: reads_config(
-                declared_reads(
-                    FileDeclarationStore(self.storage.upload_dir.parent).load(self.upload_id),
-                    declared.dataset_version,
-                )
-            ),
+            DECLARED_READS_KEY: reads_config(declared_reads(loaded, declared.dataset_version, declared)),
+            LAYER_DECLARED_KEY: declared.model_dump(mode="json"),
             "column_mapping": mapping,
             "variable_types": variable_types,
             ROW_KEY_CONFIG_FLAG: patient_id_is_row_key(semantics),

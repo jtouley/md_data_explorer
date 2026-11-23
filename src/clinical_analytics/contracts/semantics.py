@@ -46,7 +46,7 @@ FactSource: TypeAlias = Literal["structure", "dictionary", "declared", "default"
 Confidence: TypeAlias = Literal["high", "medium", "low"]
 QuestionKind: TypeAlias = Literal[
     "rows_are_patients", "person_role", "date_order", "date_century", "missing_code", "repeated_strata",
-    "aggregate_unsure", "total_row",
+    "aggregate_unsure", "total_row", "censored_value",
 ]  # fmt: skip
 AggregateKind: TypeAlias = Literal["frequency", "estimate"]
 LogicalType: TypeAlias = Literal[
@@ -192,6 +192,15 @@ class MissingCode(_Model):
     evidence: str = ""
 
 
+class CensoredCode(_Model):
+    """A labelled value that stands for a range, not one value ("80 = 80 years or older", "666 =
+    less than 1 year"): a real value, never missing; an answer that reads its column asks first."""
+
+    value: int | float | str
+    meaning: str
+    source: FactSource
+
+
 class StatedRange(_Model):
     minimum: float
     maximum: float
@@ -226,6 +235,12 @@ class ColumnSemantics(_Model):
     direction: Direction | None = None
     direction_source: FactSource | None = None
     description: str | None = None
+    # Non-response codes of a coded item ("7 = Refused, 9 = Don't know"): kept as categories in
+    # the data, left out of denominators and averages by every reader.
+    nonresponse_codes: tuple[MissingCode, ...] = ()
+    censored_codes: tuple[CensoredCode, ...] = ()
+    # A column holding this column's unit ("dur" with "dur_unit" = months/years).
+    unit_column: str | None = None
 
 
 class OpenQuestion(_Model):
@@ -262,6 +277,9 @@ class DatasetSemantics(_Model):
     # published export (CDC WONDER) has rows of groups, never patients.
     population_estimates: bool = False
     source_format: str = ""
+    # A survey sample: counts are of this file's respondents, never weighted national estimates.
+    survey_sample: bool = False
+    survey_weight_columns: tuple[str, ...] = ()
 
     @property
     def patient_key_column(self) -> str | None:
@@ -323,13 +341,14 @@ def with_declarations(semantics: DatasetSemantics, declarations: Any) -> Dataset
     semantics = _with_missing_answers(semantics, declarations.missing_codes_for(semantics.dataset_version))
     semantics = _with_table_kind(semantics, declarations)
     semantics = _with_date_readings(semantics, declarations.date_readings_for(semantics.dataset_version))
+    semantics = _with_answers(semantics, declarations.answers_for(semantics.dataset_version))
     grain = declarations.grain_for(semantics.dataset_version)
     if grain is None:
         return semantics
     rows = semantics.rows
+    # A grain answers both "Is each line one patient?" and "Does each line count cases?".
     questions = tuple(
-        q.model_copy(update={"answered": True}) if q.kind == "rows_are_patients" else q
-        for q in semantics.open_questions
+        q.model_copy(update={"answered": True}) if q.kind in _TABLE_QUESTIONS else q for q in semantics.open_questions
     )
     if grain.grain == "patient" and grain.rows == rows:
         key = semantics.patient_key
@@ -375,6 +394,44 @@ def with_declarations(semantics: DatasetSemantics, declarations: Any) -> Dataset
             }
         )
     return semantics
+
+
+def _with_answers(semantics: DatasetSemantics, answers: Any) -> DatasetSemantics:
+    """Answers to questions no other declaration holds (``QuestionAnswer``), each one of its
+    question's options; the first option is "yes".
+
+    * "Is each line one patient?" (either answer): settled. "No" also says the lines are records,
+      not groups: the table reading the structure suggested is dropped.
+    * "Is Statewide a total?": yes adds it to the table's total rows.
+    * "Should repeated lines be added together?": yes settles it; no leaves the table held.
+    """
+    if not answers:
+        return semantics
+    given = {a.question_id: a.answer for a in answers}
+    aggregate = semantics.aggregate
+    records = given.get(config.ROWS_QUESTION_ID) == config.ROWS_ANSWER_RECORDS
+    questions = []
+    for q in semantics.open_questions:
+        answer = given.get(q.id)
+        settled = answer is not None and answer in q.options
+        if q.kind == "aggregate_unsure" and records:
+            settled = True
+        if q.kind == "repeated_strata" and settled and answer != q.options[0]:
+            settled = False  # lines that replace each other: no sum can be given
+        if q.kind == "total_row" and settled and answer == q.options[0] and aggregate is not None and q.column:
+            aggregate = _with_total(aggregate, q.column, str(q.value))
+        questions.append(q.model_copy(update={"answered": True}) if settled else q)
+    update: dict[str, Any] = {"open_questions": tuple(questions), "aggregate": aggregate}
+    if records and aggregate is not None and aggregate.source != "declared":
+        update.update({"aggregate": None, "case_count_column": None})
+    return semantics.model_copy(update=update)
+
+
+def _with_total(aggregate: AggregateInfo, column: str, value: str) -> AggregateInfo:
+    levels = {t.column: t.values for t in aggregate.total_levels}
+    levels[column] = tuple(sorted({*levels.get(column, ()), value}))
+    totals = tuple(TotalLevel(column=c, values=v) for c, v in levels.items())
+    return aggregate.model_copy(update={"total_levels": totals})
 
 
 def _same_value(value: object) -> str:
@@ -521,15 +578,19 @@ def semantics_for(data_dir: Path, dataset_id: str, version: str, *, declarations
 
 # Semantic-layer config key that carries the version's semantics (``DatasetSemantics`` as JSON).
 LAYER_CONFIG_KEY = "semantics"
+# The same semantics with the declarations the layer was built with: what every hold reads, so an
+# answer stored while a question runs never releases a hold on a layer built before it.
+LAYER_DECLARED_KEY = "declared_semantics"
 
 
-def layer_semantics(layer: Any) -> DatasetSemantics | None:
+def layer_semantics(layer: Any, *, declared: bool = False) -> DatasetSemantics | None:
     """The semantics a semantic layer was built with (from ``semantics_for``), or None for a layer
-    not built from an uploaded dataset's contract (a built-in dataset)."""
+    not built from an uploaded dataset's contract (a built-in dataset). ``declared``: with the
+    declarations the layer was built with (``LAYER_DECLARED_KEY``)."""
     config_dict = getattr(layer, "config", None)
     if not isinstance(config_dict, Mapping):
         return None  # a stand-in layer (a test double) or no config: no semantics
-    raw = config_dict.get(LAYER_CONFIG_KEY)
+    raw = config_dict.get(LAYER_DECLARED_KEY if declared else LAYER_CONFIG_KEY)
     if raw is None:
         return None
     if isinstance(raw, DatasetSemantics):
@@ -619,6 +680,14 @@ def describe(semantics: DatasetSemantics, *, max_lines: int = 12) -> list[str]:
             paired.setdefault(col.timepoint.measure, []).append(name)
     for measure, names in paired.items():
         lines.append(f"{_list(names)} are one measure ({measure}) at {len(names)} times.")
+    for name, col in semantics.columns.items():
+        if col.nonresponse_codes:
+            codes = ", ".join(f"{c.value} ({c.label})" for c in col.nonresponse_codes)
+            lines.append(f"In {name}, {codes} are kept as answers but left out of percentages and averages.")
+        if col.unit_column:
+            lines.append(f"{col.unit_column} gives the unit of {name}.")
+    if semantics.survey_sample:
+        lines.append(config.SURVEY_NOTE)
     for q in semantics.open_questions:
         if not q.answered:
             lines.append(f"Question for you: {q.question}")

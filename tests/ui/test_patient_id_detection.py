@@ -279,7 +279,7 @@ def test_patientIdIsRowKey_bySemantics_rowsUnlessAPatientKey(
         ),
     ],
 )
-def test_rowKeyNote_rowKey_saysRowsNotPatientsAndHowToFix(
+def test_rowKeyNote_rowKey_countsWaitForAnswerAndHowToFix(
     make_semantics: Callable[..., Any], frame: str, expected_start: str
 ) -> None:
     # Arrange
@@ -290,7 +290,9 @@ def test_rowKeyNote_rowKey_saysRowsNotPatientsAndHowToFix(
 
     # Assert
     assert note.startswith(expected_start)
-    assert "Answers count rows, not patients." in note
+    # Asked "Is each line one patient?": counts wait for it (ADR017 rule B); otherwise rows are counted
+    asked = semantics.question("rows_are_patients") is not None
+    assert ("Counts wait for your answer" if asked else "Answers count rows, not patients.") in note
     assert "add a column with one ID for each patient" in note
 
 

@@ -253,3 +253,26 @@ def test_missingCodeAnswer_valueNotAsked_409NothingStored(test_client: TestClien
 
     # Assert
     assert response.status_code == 409
+
+
+def test_upload_codebookCodedIntegerItem_typedCategoricalNationalQuestionDeclined(test_client: TestClient) -> None:
+    # Arrange: a synthetic wellbeing survey with its SAS-style codebook
+    from clinical_analytics.api import dependencies
+    from clinical_analytics.core.query_service import QueryService
+    from tests.contracts.test_semantics_codebooks import CODEBOOK, _survey
+
+    body = _post_zip_of(test_client, "wellbeing", _survey(), CODEBOOK)
+
+    # Act
+    with dependencies.lease_semantic_layer(body["upload_id"]) as lease:
+        types = lease.layer.config["variable_types"]
+        national = QueryService(lease.layer).ask(
+            "what share of us adults sleep well nationally", dataset_id=body["upload_id"], dataset_version="v1"
+        )
+    dependencies.invalidate_semantic_layer_cache(body["upload_id"])
+
+    # Assert
+    assert types["SLEEPOK"]["type"] == "categorical"
+    assert body["unit_note"] == ""
+    assert national.analysis is None
+    assert "not weighted national estimates" in (national.failure_reason or "")

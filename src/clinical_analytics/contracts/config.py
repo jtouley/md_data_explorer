@@ -371,28 +371,10 @@ ESTIMATE_TOTAL_LEVELS: Final = frozenset(
         "u.s.",
         "usa",
         "national",
-        "nationwide",
-        "statewide",
-        "state total",
-        "countywide",
-        "citywide",
         "global",
         "world",
         "grand total",
-        "subtotal",
-        "sub-total",
-        "sub total",
-        "all persons",
-        "all people",
-        "all patients",
-        "both genders",
-        "total population",
     }
-)
-# Total levels by shape: "Total, all ages", "Region total", "Total (all races)", "Statewide".
-ESTIMATE_TOTAL_PATTERN: Final = re.compile(
-    r"^(?:all\s|(?:grand\s+|sub-?\s?)?total(?:$|\s*[,(:\-])|both\s+sexes\b)|\btotal$|\b(?:state|nation|county|city)wide$",
-    re.IGNORECASE,
 )
 # A level naming a county-like part of a state: the other levels in that column are its totals.
 # Age levels that summarise every age by standardisation (normalised: lowercase, "_" for others).
@@ -925,3 +907,23 @@ SUMMARY_RATE_TEXT: Final = re.compile(
     r"\bprevalence\b|\bproportion\b",
     re.IGNORECASE,
 )
+
+# "Is each line one patient?": its id and the answer that says lines are records (visits, tests).
+ROWS_QUESTION_ID: Final = "rows_are_patients"
+ROWS_ANSWER_RECORDS: Final = "no, lines are visits, tests or other records"
+
+# Survey weight columns (NHANES WTMEC2YR, WTINT2YR; BRFSS _LLCPWT; "sample_weight", "final_wt").
+SURVEY_WEIGHT_NAME: Final = re.compile(
+    r"^_?(?:wt|wgt)(?:mec|int|sa|pers|fs|final|samp)\w*$|^_?llcpwt\w*$|"
+    r"(?:^|_)(?:sample|sampling|survey|final|person|analysis)_?(?:wt|wgt|weight)s?(?:_|$)"
+)
+SURVEY_NATIONAL_QUESTION: Final = re.compile(
+    r"\b(?:national(?:ly)?|nationwide|national\s+estimates?|in\s+the\s+(?:us|u\.s\.|united\s+states)|"
+    r"u\.s\.?\s+(?:adults|population|children)|americans|weighted|population\s+estimates?|prevalence\s+in\s+the\s+population)\b",
+    re.IGNORECASE,
+)
+SURVEY_NATIONAL_REFUSAL: Final = (
+    "This file is a survey sample. Its counts are of the people in this file, not weighted national estimates, "
+    "so a national figure isn't given. Ask about the people in this file instead."
+)
+SURVEY_NOTE: Final = "These are counts of the people in this file, not weighted national estimates."

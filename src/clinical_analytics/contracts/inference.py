@@ -26,7 +26,7 @@ Deterministic: the same table and documentation always give the same semantics.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Final, Literal
@@ -50,6 +50,7 @@ from clinical_analytics.contracts.dictionary import Dictionary, DictionaryEntry,
 from clinical_analytics.contracts.semantics import (
     AggregateInfo,
     AppColumn,
+    CensoredCode,
     ColumnSemantics,
     DatasetSemantics,
     DateFormat,
@@ -610,6 +611,73 @@ def _far_outside(
     return code > max(_float(rest.max()), 0.0) * gap
 
 
+_TIME_UNITS: Final = frozenset(
+    {"day", "days", "week", "weeks", "month", "months", "year", "years", "hour", "hours", "minute", "minutes",
+     "d", "wk", "mo", "yr", "yrs", "h", "hr", "hrs", "min"}
+)  # fmt: skip
+_UNIT_WORDS: Final = frozenset({"unit", "units", "u", "uom", "scale"})
+
+
+def _unit_columns(df: pl.DataFrame) -> list[tuple[str, str]]:
+    """(value column, unit column) pairs: a text column whose values are all time units
+    ("months", "years") gives the unit of the number column it names ("dur" and "dur_unit") or,
+    failing that, of the number column just before it."""
+    pairs = []
+    order = list(df.columns)
+    for i, c in enumerate(order):
+        if df.schema[c] != pl.String:
+            continue
+        values = {str(v).strip().lower() for v in df.get_column(c).drop_nulls().unique().to_list()}
+        if not values or len(values) > 6 or not values <= _TIME_UNITS:
+            continue
+        stem = [t for t in name_tokens(c) if t not in _UNIT_WORDS]
+        numbers = [n for n in order if n != c and df.schema[n].is_numeric()]
+        named = [n for n in numbers if stem and name_tokens(n) == stem]
+        before = [order[i - 1]] if i > 0 and order[i - 1] in numbers else []
+        partners = named or before
+        if partners:
+            pairs.append((partners[0], c))
+    return pairs
+
+
+def _coded(codes: Mapping[str, str], dtype: pl.DataType, present: set[str]) -> tuple[MissingCode, ...]:
+    """A codebook's codes (code -> label) the column holds, typed to the column."""
+    found = []
+    for code, label in codes.items():
+        typed = _typed_code(code, dtype)
+        if typed is not None and (str(typed) in present or code in present):
+            found.append(MissingCode(value=typed, label=label, source="dictionary", evidence="the codebook lists it"))
+    return tuple(found)
+
+
+_TOP_CODE: Final = re.compile(
+    r"\b(?:or|and)\s+(?:over|more|older|above|higher)\b|\d\s*\+|\bat least\b|\btop[- ]?coded\b", re.IGNORECASE
+)
+
+
+def _noted_code_question(column: str, code: int | float, note: str) -> OpenQuestion:
+    """ "Does 99 in age mean not recorded?", quoting the note that states it. A note that the
+    code stands for a range ("90 or over coded as 99") offers that reading: a real value."""
+    options = ["yes, not recorded", "no, it is a real value"]
+    if _TOP_CODE.search(note):
+        options.append("it stands for a value at the top of the range (top-coded): a real value, not missing")
+    return OpenQuestion(
+        id=f"missing_code:{column}:{code}",
+        kind="missing_code",
+        column=column,
+        value=code,
+        question=f'The data dictionary says "{note.strip().rstrip(".")}". Does {code:g} in {column} mean not recorded?',
+        options=tuple(options),
+    )
+
+
+def _same_code(a: object, b: object) -> bool:
+    try:
+        return float(str(a)) == float(str(b))
+    except ValueError:
+        return str(a) == str(b)
+
+
 def _suspect(series: pl.Series, code: float, hits: int, side: str) -> MissingCode:
     value: int | float = int(code) if series.dtype.is_integer() else code
     return MissingCode(value=value, source="structure", evidence=f"{_n(hits)} lines hold {value:g}, {side}")
@@ -711,7 +779,9 @@ class _Candidate:
     named: bool  # named as an ID
 
 
-def _candidates(df: pl.DataFrame, excluded: set[str]) -> list[_Candidate]:
+def _candidates(df: pl.DataFrame, excluded: set[str], stated: Collection[str] = ()) -> list[_Candidate]:
+    """ID-like columns: named as an ID, text with many values, or one the dictionary states is the
+    person's identifier ("Respondent sequence number"), whatever its name."""
     from clinical_analytics.core.identifier_rules import can_identify_patients
 
     rows = df.height
@@ -735,7 +805,7 @@ def _candidates(df: pl.DataFrame, excluded: set[str]) -> list[_Candidate]:
         distinct = int(stats[f"{c}\x00u"]) - (1 if nulls else 0)
         named = id_named(c)
         text_like = df.schema[c] == pl.String and distinct >= max(2, rows // 20)
-        if distinct < 2 or not (named or text_like):
+        if distinct < 2 or not (named or text_like or c in stated):
             continue
         found.append(
             _Candidate(
@@ -836,15 +906,16 @@ def _choose_keys(df: pl.DataFrame, dictionary: Dictionary, facts: UploadFacts, e
     rows = df.height
     # A non-unique ID with two values is a flag or a pair of sites, not patients (unless the
     # dictionary or a patient-role name says it is the patient).
+    stated_entries = [e.column for e in dictionary.entries.values() if e.names_patient_key]
     candidates = [
         c
-        for c in _candidates(df, excluded)
+        for c in _candidates(df, excluded, (*dictionary.key_statements, *stated_entries))
         if (c.unique or c.distinct > 2 or c.role == "patient" or c.column in dictionary.key_statements)
         # A key is on most lines: an ID missing on more than half of them names no one reliably.
         and (c.unique or c.nulls * 2 <= rows)
     ]
     by_name = {c.column: c for c in candidates}
-    stated_names = (*dictionary.key_statements, *(e.column for e in dictionary.entries.values() if e.names_patient_key))
+    stated_names = (*dictionary.key_statements, *stated_entries)
     # A stated key still passes the role filter: a surgeon's or a site's ID is never the patient.
     stated = [c for c in stated_names if c in by_name and by_name[c].group is None and by_name[c].event is None]
     seq_cols = _sequence_columns(df, excluded)
@@ -1157,41 +1228,23 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
             header = code_labels(name)
             if header:
                 labels, labels_source = header, "structure"
-        if dictionary.shared_missing and date_fmt is None and dtype.is_numeric() and dtype != pl.Boolean:
-            # A note for every measurement ("For all measurements, 999 = not recorded") is applied
-            # only where the code lies far outside the column's other values; a code inside them
-            # (a real 99-year-old under "Coded fields: 99 = unknown") is asked about, never nulled.
-            present = set(series.drop_nulls().cast(pl.Float64).unique().to_list())
-            stated = entry.stated_range if entry else None
-            for code, label in dictionary.shared_missing.items():
+        if date_fmt is None and dtype.is_numeric() and dtype != pl.Boolean:
+            # A code stated in prose ("Coded fields: 99 = unknown", "ages of 90 or over were coded
+            # as 99", a portal's description) is asked, never applied: only the column's own
+            # code list applies a code (ADR017).
+            present = {_float(v) for v in series.drop_nulls().cast(pl.Float64).unique().to_list()}
+            notes = {
+                **dictionary.shared_missing,
+                **dictionary.noted_missing.get(name, {}),
+                **(entry.noted_missing if entry else {}),
+            }
+            for code, note in notes.items():
                 typed = _typed_code(code, dtype)
-                if typed is None or code in labels or float(typed) not in present:
+                if not isinstance(typed, int | float) or code in labels or float(typed) not in present:
                     continue
-                if any(str(m.value) == str(typed) for m in missing):
+                if any(_same_code(m.value, typed) for m in missing):
                     continue
-                if _far_outside(series, float(typed), stated):
-                    missing.append(
-                        MissingCode(
-                            value=typed,
-                            label=label,
-                            source="dictionary",
-                            evidence="a note in the data dictionary documents it for every measurement",
-                        )
-                    )
-                else:
-                    questions.append(
-                        OpenQuestion(
-                            id=f"missing_code:{name}:{typed}",
-                            kind="missing_code",
-                            column=name,
-                            value=typed,
-                            question=(
-                                f"The data dictionary says {typed:g} means {label.strip().rstrip('.')}, but "
-                                f"{name} also holds real values near it. Does {typed:g} in {name} mean not recorded?"
-                            ),
-                            options=("yes, not recorded", "no, it is a real value"),
-                        )
-                    )
+                questions.append(_noted_code_question(name, typed, note))
         if not missing and date_fmt is None and not labels:
             # Never stored as missing without the dictionary or the user: asked instead.
             asked = {q.id for q in questions}
@@ -1209,6 +1262,9 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
                     )
                 )
 
+        present_values = (
+            {str(v) for v in series.drop_nulls().cast(pl.String).unique().to_list()} if entry is not None else set()
+        )
         unit: Unit | None = None
         # A coded column ("1 = below target, 2 = in range") or a band of a measure ("sbp_target",
         # "bmi_cat") holds codes, not the measure's unit.
@@ -1239,7 +1295,32 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
             direction=entry.direction if entry else None,
             direction_source="dictionary" if entry is not None and entry.direction else None,
             description=entry.description or None if entry else None,
+            nonresponse_codes=_coded(entry.nonresponse if entry and labels else {}, dtype, present_values),
+            censored_codes=tuple(
+                CensoredCode(value=code.value, meaning=code.label, source="dictionary")
+                for code in _coded(entry.censored if entry else {}, dtype, present_values)
+            ),
         )
+        for censored in columns[name].censored_codes:
+            # A value that stands for a range is a real value; an answer reading it asks first.
+            questions.append(
+                OpenQuestion(
+                    id=f"censored_value:{name}:{censored.value}",
+                    kind="censored_value",
+                    column=name,
+                    value=censored.value,
+                    question=(
+                        f"In {name}, {censored.value} means “{censored.meaning}”. Answers that use {name} would count "
+                        f"those lines as {censored.value}. Is that right for your questions?"
+                    ),
+                    options=(f"yes, use {censored.value} as given", "no, leave those lines out"),
+                )
+            )
+
+    for value_column, unit_column in _unit_columns(df):
+        columns[value_column] = columns[value_column].model_copy(update={"unit_column": unit_column, "unit": None})
+    weights = tuple(c for c in df.columns if config.SURVEY_WEIGHT_NAME.search(c.lower()))
+    survey = bool(weights) or dictionary.mentions_weights
 
     published = facts.population_estimates or bool(facts.source_format)
     # Rows of a published table are estimates for groups: nothing in it is a patient key.
@@ -1283,18 +1364,7 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
             # Looks like a table of groups but not recognised with confidence: asked, never
             # silently read as one line per patient.
             logger.info("summary_table_not_recognised", reason=summary)
-            count_column = _count_columns(df)[0]
-            questions.append(
-                OpenQuestion(
-                    id="aggregate_unsure",
-                    kind="aggregate_unsure",
-                    column=count_column,
-                    question=(
-                        f"Does each line count cases for a group (in {count_column}), rather than describe one patient?"
-                    ),
-                    options=("yes, each line counts cases for a group", "no, each line is about one patient"),
-                )
-            )
+            questions.append(_aggregate_question(_count_columns(df)[0], summary))
     if (
         keys.patient is None
         and not facts.population_estimates
@@ -1306,10 +1376,10 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
         questions.insert(
             0,
             OpenQuestion(
-                id="rows_are_patients",
+                id=config.ROWS_QUESTION_ID,
                 kind="rows_are_patients",
                 question="Is each line one patient?",
-                options=("yes, one patient per line", "no, lines are visits, tests or other records"),
+                options=("yes, one patient per line", config.ROWS_ANSWER_RECORDS),
             ),
         )
     semantics = DatasetSemantics(
@@ -1326,6 +1396,8 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
         open_questions=tuple(questions),
         population_estimates=facts.population_estimates,
         source_format=facts.source_format,
+        survey_sample=survey,
+        survey_weight_columns=weights,
     )
     logger.info(
         "semantics_inferred",
@@ -1354,9 +1426,16 @@ def _human(column: str) -> str:
 
 
 _RATE_TOKENS: Final = frozenset(
-    {"rate", "rates", "pct", "percent", "percentage", "per", "ratio", "crude", "adjusted", "prevalence", "incidence",
+    {"rate", "rates", "pct", "percent", "percentage", "ratio", "crude", "adjusted", "prevalence", "incidence",
      "proportion", "share", "mean", "median"}
 )  # fmt: skip
+_BAND_TOKENS: Final = frozenset({"group", "grp", "band", "cat", "category", "class", "level", "bin"})
+# Time columns are strata whatever their number of values (52 weeks, 20+ years).
+_TIME_TOKENS: Final = frozenset(
+    {"year", "yr", "years", "week", "wk", "weeks", "epiweek", "mmwr", "month", "months", "mo", "quarter", "qtr",
+     "period"}
+)  # fmt: skip
+_TIME_TEXT: Final = re.compile(r"\b(?:week|month|quarter|year)\b", re.IGNORECASE)
 _WHAT_WORDS: Final = ("deaths", "cases", "events", "admissions", "births", "visits", "infections")
 
 
@@ -1385,37 +1464,34 @@ def _count_columns(df: pl.DataFrame) -> list[str]:
     return found
 
 
-def _is_total_label(value: str) -> bool:
-    text = " ".join(value.strip().lower().split())
-    return text in config.ESTIMATE_TOTAL_LEVELS or bool(config.ESTIMATE_TOTAL_PATTERN.search(text))
-
-
 def _total_levels(
     df: pl.DataFrame, strata: Sequence[str], count: str
-) -> tuple[tuple[TotalLevel, ...], tuple[tuple[str, str], ...]]:
-    """(total levels, the ones found only by their sums) of the strata.
+) -> tuple[tuple[TotalLevel, ...], tuple[tuple[str, str, str], ...]]:
+    """(total rows to leave out of sums, (column, value, why) to ask about) of the strata.
 
-    A total is a stratum value that means "all" by its label (``ESTIMATE_TOTAL_LEVELS``,
-    ``ESTIMATE_TOTAL_PATTERN``), or a value whose count equals the sum of the other values of its
-    column on every line that shares its other groups (an unlabelled "Statewide").
+    A value is a total only when two facts agree: its whole label is one of
+    ``ESTIMATE_TOTAL_LEVELS`` ("Total", "All ages", "United States"), and its count is the sum of
+    its column's other values on every line sharing its other groups. A label alone ("All other
+    causes" is not a total label; an "Overall" whose sums disagree) or a sum alone (an unlabelled
+    "Statewide", or a coincidence) is asked, never applied (ADR017).
     """
-    by_label: dict[str, list[str]] = {}
-    by_sum: list[tuple[str, str]] = []
+    applied: dict[str, list[str]] = {}
+    asked: list[tuple[str, str, str]] = []
     for c in strata:
         if not isinstance(df.schema[c], pl.String | pl.Categorical | pl.Enum):
             continue
         levels = [
             v for v in df.get_column(c).cast(pl.String).drop_nulls().unique().sort().to_list() if isinstance(v, str)
         ]
-        labelled = [v for v in levels if _is_total_label(v)]
-        if labelled:
-            by_label[c] = labelled
-        for v in _sum_totals(df, strata, count, c, levels):
-            if v not in labelled:
-                by_label.setdefault(c, []).append(v)
-                by_sum.append((c, v))
-    totals = tuple(TotalLevel(column=c, values=tuple(sorted(vs))) for c, vs in by_label.items())
-    return totals, tuple(by_sum)
+        labelled = {v for v in levels if " ".join(v.lower().split()) in config.ESTIMATE_TOTAL_LEVELS}
+        summed = set(_sum_totals(df, strata, count, c, levels))
+        for v in sorted(labelled & summed):
+            applied.setdefault(c, []).append(v)
+        for v in sorted(labelled - summed):
+            asked.append((c, v, "is named like a total, but its counts are not the sum of the other lines"))
+        for v in sorted(summed - labelled):
+            asked.append((c, v, "holds the sum of the other lines"))
+    return tuple(TotalLevel(column=c, values=tuple(vs)) for c, vs in applied.items()), tuple(asked)
 
 
 def _sum_totals(df: pl.DataFrame, strata: Sequence[str], count: str, column: str, levels: list[str]) -> list[str]:
@@ -1457,14 +1533,18 @@ def _rate_column(df: pl.DataFrame, column: str, dictionary: Dictionary | None) -
     type (an integer "rate_per_100k" or a "%" column is a value, never a group)."""
     if not df.schema[column].is_numeric() or df.schema[column] == pl.Boolean:
         return False
-    if set(name_tokens(column)) & _RATE_TOKENS or config.ESTIMATE_RATE_NAME.search(column.lower()) or "%" in column:
-        return not bool(set(name_tokens(column)) & {"year", "yr"})
+    tokens = set(name_tokens(column))
+    if tokens & _BAND_TOKENS:
+        return False  # "age_group_per_10y" names a band of ages, not a rate
+    if tokens & _RATE_TOKENS or config.ESTIMATE_RATE_NAME.search(column.lower()) or "%" in column:
+        return not bool(tokens & {"year", "yr"})
     entry = dictionary.entry(column) if dictionary is not None else None
     return entry is not None and bool(config.SUMMARY_RATE_TEXT.search(entry.description or entry.text))
 
 
-def _stratum(df: pl.DataFrame, column: str, dates: set[str], loose: bool) -> bool:
-    """A low-cardinality category, a place, a period or a year: never a measure like age or SBP."""
+def _stratum(df: pl.DataFrame, column: str, dates: set[str], loose: bool, dictionary: Dictionary | None = None) -> bool:
+    """A low-cardinality category, a place, or a period (a year, a week, a month: by its name or
+    its dictionary entry, whatever its number of values): never a measure like age or SBP."""
     dtype = df.schema[column]
     series = df.get_column(column)
     if column in dates:
@@ -1476,8 +1556,12 @@ def _stratum(df: pl.DataFrame, column: str, dates: set[str], loose: bool) -> boo
         return False
     distinct = series.n_unique()
     values = series.drop_nulls()
-    year_like = bool(set(name_tokens(column)) & {"year", "yr", "years"}) or (
-        values.len() > 0 and bool(values.is_between(config.DATE_YEAR_MIN, config.DATE_YEAR_MAX).all())
+    entry = dictionary.entry(column) if dictionary is not None else None
+    described = entry is not None and bool(_TIME_TEXT.search(entry.description or entry.text))
+    year_like = (
+        described
+        or bool(set(name_tokens(column)) & _TIME_TOKENS)
+        or (values.len() > 0 and bool(values.is_between(config.DATE_YEAR_MIN, config.DATE_YEAR_MAX).all()))
     )
     return year_like or distinct <= (200 if loose else config.STRATUM_MAX_CODES)
 
@@ -1504,7 +1588,11 @@ def _summary_table(df: pl.DataFrame, dates: set[str], dictionary: Dictionary | N
         return None
     count = counts[0]
     values = [c for c in df.columns if c not in counts and _rate_column(df, c, dictionary)]
-    strata = [c for c in df.columns if c not in counts and c not in values and _stratum(df, c, dates, says_aggregate)]
+    strata = [
+        c
+        for c in df.columns
+        if c not in counts and c not in values and _stratum(df, c, dates, says_aggregate, dictionary)
+    ]
     measures = [c for c in df.columns if c not in counts and c not in values and c not in strata]
     many_valued = [
         c for c in measures if df.schema[c].is_numeric() and df.get_column(c).n_unique() > config.STRATUM_MAX_CODES
@@ -1522,8 +1610,10 @@ def _summary_table(df: pl.DataFrame, dates: set[str], dictionary: Dictionary | N
         # A table of groups has few repeated groups; most lines repeating one are records (a
         # survey with banded answers and a visit count per respondent).
         return f"{repeated:,} of {df.height:,} lines repeat another line's groups, so they may be records, not groups"
-    totals, by_sum = _total_levels(df, strata, count)
-    kind: Literal["frequency", "estimate"] = "estimate" if totals or rates else "frequency"
+    totals, asked_totals = _total_levels(df, strata, count)
+    # Rates or percentages are read, never added; counts with their totals are added up without
+    # the total lines.
+    kind: Literal["frequency", "estimate"] = "estimate" if rates else "frequency"
     tokens = set(name_tokens(count))
     what = next((t for t in _WHAT_WORDS if t in tokens), "cases")
     names = [_human(c) for c in strata]
@@ -1544,25 +1634,25 @@ def _summary_table(df: pl.DataFrame, dates: set[str], dictionary: Dictionary | N
             )
         )
         logger.info("summary_table_repeated_strata", lines=repeated, strata=len(strata))
-    for column, level in by_sum:
+    for column, level, why in asked_totals:
         questions.append(
             OpenQuestion(
                 id=f"total_row:{column}:{level}",
                 kind="total_row",
                 column=column,
                 value=level,
-                question=(
-                    f"The {level} lines in {column} hold the sum of the other {column} lines. "
-                    f"Is {level} a total? Until you answer, it is read as a total and never added to the others."
-                ),
+                question=f"In {column}, {level} {why}. Is {level} a total of the other {column} lines?",
                 options=("yes, it is a total", "no, it is one more group"),
             )
         )
-        logger.info("summary_table_total_by_sum", column=column)
+    if asked_totals:
+        logger.info("summary_table_totals_asked", totals=len(asked_totals))
+    # The structure suggests a table of groups; only the user's answer applies it (ADR017).
+    questions.insert(0, _aggregate_question(count, f"each line seems to count {what} for one {listed}"))
     sentence = (
-        f"Each line counts {what} for one {listed}."
+        f"Each line seems to count {what} for one {listed} (to confirm)."
         if kind == "frequency"
-        else f"Each line gives published {what} for one {listed}, with total lines; lines are read, never added."
+        else f"Each line seems to give published {what} for one {listed} (to confirm); lines are read, never added."
     )
     return _Summary(
         grain=Grain(
@@ -1585,6 +1675,19 @@ def _summary_table(df: pl.DataFrame, dates: set[str], dictionary: Dictionary | N
             evidence=evidence,
         ),
         questions=tuple(questions),
+    )
+
+
+def _aggregate_question(count_column: str, why: str) -> OpenQuestion:
+    return OpenQuestion(
+        id="aggregate_unsure",
+        kind="aggregate_unsure",
+        column=count_column,
+        question=(
+            f"Does each line count cases for a group (in {count_column}), rather than describe one patient? "
+            f"({why[:1].upper()}{why[1:]}.)"
+        ),
+        options=("yes, each line counts cases for a group", "no, each line is about one patient"),
     )
 
 

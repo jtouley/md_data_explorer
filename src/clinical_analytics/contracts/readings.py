@@ -17,6 +17,7 @@ from typing import Any
 import polars as pl
 
 from clinical_analytics.contracts.declarations import Declarations
+from clinical_analytics.contracts.semantics import DatasetSemantics
 
 
 @dataclass(frozen=True)
@@ -30,11 +31,24 @@ class DeclaredReads:
         return bool(self.missing or self.dates)
 
 
-def declared_reads(declarations: Declarations, dataset_version: str | None) -> DeclaredReads:
+def declared_reads(
+    declarations: Declarations, dataset_version: str | None, semantics: DatasetSemantics | None = None
+) -> DeclaredReads:
+    """What every reader applies: confirmed "not recorded" values, date readings, and from the
+    semantics (``semantics``) a coded item's non-response codes ("7 = Refused") and range codes
+    the user chose to leave out: left out of denominators and averages, kept in the stored data."""
     missing: dict[str, list[int | float | str]] = {}
     for answer in declarations.missing_codes_for(dataset_version):
         if answer.missing:
             missing.setdefault(answer.column, []).append(answer.value)
+    if semantics is not None:
+        for name, column in semantics.columns.items():
+            for code in column.nonresponse_codes:
+                missing.setdefault(name, []).append(code.value)
+        left_out = {a.question_id for a in declarations.answers_for(dataset_version) if a.answer.startswith("no")}
+        for question in semantics.open_questions:
+            if question.kind == "censored_value" and question.id in left_out and question.column:
+                missing.setdefault(question.column, []).append(question.value if question.value is not None else "")
     dates: dict[str, tuple[str, str | None]] = {
         d.column: (d.format, d.century) for d in declarations.date_readings_for(dataset_version)
     }

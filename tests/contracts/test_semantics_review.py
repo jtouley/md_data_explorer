@@ -411,10 +411,11 @@ def test_inferSemantics_summaryTable_aggregateGrainSentenceNoPatientQuestion() -
 
     # Assert
     assert semantics.grain.kind == "stratum"
-    assert semantics.grain.sentence == "Each line counts cases for one region, year and category."
+    assert semantics.grain.sentence == "Each line seems to count cases for one region, year and category (to confirm)."
+    assert semantics.question("aggregate_unsure") is not None
     assert semantics.case_count_column == "cases"
     assert semantics.question("rows_are_patients") is None
-    assert describe(semantics)[0].startswith("Each line counts cases for one region, year and category")
+    assert describe(semantics)[0].startswith("Each line seems to count cases for one region, year and category")
 
 
 @pytest.mark.parametrize(
@@ -482,7 +483,7 @@ def test_contractNamesPatient_unreadableContract_fails500(monkeypatch: pytest.Mo
 
     # Act / Assert: a patient file is never read as estimates because its contract was unreadable
     with pytest.raises(HTTPException) as raised:
-        aggregate._contract_names_patient(Storage(), "ds1", "v1", {}, pl.DataFrame({"a": [1]}))  # type: ignore[arg-type]
+        aggregate._version_semantics(Storage(), "ds1", "v1", {}, pl.DataFrame({"a": [1]}))  # type: ignore[arg-type]
     assert raised.value.status_code == 500
 
 

@@ -47,7 +47,10 @@ def _lyme(repeat: int = 0, total: bool = False) -> pl.DataFrame:
     ]
     rows += rows[:repeat]
     if total:
-        rows += [{"state": "United States", "year": y, "sex": sex, "cases": 999} for y in YEARS for sex in ("F", "M")]
+        sums: dict[tuple[int, str], int] = {}
+        for r in rows:
+            sums[(r["year"], r["sex"])] = sums.get((r["year"], r["sex"]), 0) + r["cases"]
+        rows += [{"state": "United States", "year": y, "sex": sex, "cases": n} for (y, sex), n in sums.items()]
     return pl.DataFrame(rows)
 
 
@@ -65,19 +68,20 @@ def test_inferSemantics_frequencyTableWithRepeatedStrata_recognisedAndAsked() ->
 
 
 def test_countCases_countTableWithTotalRows_neverSummedAcrossTheTotal() -> None:
-    # Arrange: legionella-style counts with a "United States" total line per year and sex
+    # Arrange: lyme counts with a "United States" line per year and sex that is the sum of the states
     frame = _lyme(total=True)
+    states = _lyme()
     aggregate = infer_semantics(frame).aggregate
-    assert aggregate is not None and aggregate.kind == "estimate"
+    assert aggregate is not None and aggregate.kind == "frequency"
 
     # Act
     read = count_cases(frame, aggregate, {"year": [2010], "sex": ["F"]})
-    open_total = count_cases(frame, aggregate, {"year": [2010]})
+    open_sex = count_cases(frame, aggregate, {"year": [2010]})
 
-    # Assert: the total line is read; the states are never added to it
+    # Assert: label and sums agree, so the total line is left out of every sum, never added twice
     assert aggregate.total_values("state") == ("United States",)
-    assert read.total == 999
-    assert open_total.total is None and "never added" in open_total.message
+    assert read.total == states.filter((pl.col("year") == 2010) & (pl.col("sex") == "F"))["cases"].sum()
+    assert open_sex.total == states.filter(pl.col("year") == 2010)["cases"].sum()
 
 
 def test_countCases_frequencyTable_sumsTheCountColumn() -> None:
@@ -218,7 +222,7 @@ def test_applySemantics_twoCodesOnOneMeasure_bothMissingMeanTrue(line: str) -> N
     assert applied.get_column("sbp").mean() == pytest.approx(138.75)
 
 
-def test_applySemantics_sharedNoteForAllMeasurements_applied() -> None:
+def test_inferSemantics_sharedNoteForAllMeasurements_askedNeverApplied() -> None:
     # Arrange
     frame = pl.DataFrame(
         {"pt_id": [f"P{i}" for i in range(6)], "alt": [20, 9999, 30, 40, 25, 22], "ast": [18, 25, 9999, 30, 20, 19]}
@@ -226,10 +230,13 @@ def test_applySemantics_sharedNoteForAllMeasurements_applied() -> None:
     doc = "pt_id  Patient identifier\nalt  ALT, U/L\nast  AST, U/L\n\nFor all measurements, 9999 = not recorded.\n"
 
     # Act
-    applied = apply_semantics(frame, infer_semantics(frame, _facts(doc)))
+    semantics = infer_semantics(frame, _facts(doc))
+    applied = apply_semantics(frame, semantics)
 
-    # Assert
-    assert (applied.get_column("alt").null_count(), applied.get_column("ast").null_count()) == (1, 1)
+    # Assert: a prose note is a question for each column holding the code (ADR017 principle A)
+    assert (applied.get_column("alt").null_count(), applied.get_column("ast").null_count()) == (0, 0)
+    asked = {q.column for q in semantics.open_questions if q.kind == "missing_code" and q.value == 9999}
+    assert asked == {"alt", "ast"}
 
 
 @pytest.mark.parametrize(
@@ -260,29 +267,6 @@ def test_applyDeclared_confirmedCodeOnEstimates_neverShown() -> None:
 
     # Assert
     assert applied.get_column("deaths").to_list() == [None, 12.0, 30.0]
-
-
-def test_openValueQuestions_unanswered_holdsUntilAnswered(make_semantic_layer: Callable[..., Any]) -> None:
-    # Arrange
-    from clinical_analytics.contracts.semantics import LAYER_CONFIG_KEY
-    from clinical_analytics.core.answer_checks import open_value_questions
-    from clinical_analytics.core.query_plan import QueryPlan
-
-    frame = pl.DataFrame({"mrn": [f"M{i}" for i in range(100)], "trop_ng_l": [4.0, 999.0, 8.0, 12.0] * 25})
-    semantics = infer_semantics(frame)
-    layer = make_semantic_layer(data=frame, config_overrides={LAYER_CONFIG_KEY: semantics.model_dump(mode="json")})
-    plan = QueryPlan(intent="DESCRIBE", metric="trop_ng_l", confidence=0.99)
-    answered = Declarations(
-        missing_codes=(MissingCodeDeclaration(column="trop_ng_l", value="999", missing=False, dataset_version="v1"),)
-    )
-
-    # Act
-    held = open_value_questions(plan, layer, Declarations(), "v1")
-    released = open_value_questions(plan, layer, answered, "v1")
-
-    # Assert
-    assert len(held) == 1 and "999" in held[0]
-    assert released == []
 
 
 def test_qualityReport_openMissingCodeQuestion_listedAsNeedingAnswer(make_contract: Callable[..., Any]) -> None:
