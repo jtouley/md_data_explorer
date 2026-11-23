@@ -258,3 +258,27 @@ def test_needs_visit_choice_overAllRecordsInContractNoun_poolsWithoutAsking(clin
     # Act / Assert
     assert checks.needs_visit_choice(compiled, "Median systolic pressure over all clinic visits", clinic) is False
     assert checks.needs_visit_choice(compiled, "Median systolic pressure", clinic) is True
+
+
+def test_apply_stated_countWithNumerator_numeratorIsALimit(cohort):
+    # Arrange: a count has no numerator; the model's condition there must not be dropped
+    plan = _plan(filters=[_cond("age", "<", 70)], numerator=[_cond("died_1y", "is", values=["yes"])])
+
+    # Act
+    fixed, changed = checks.apply_stated(plan, "How many patients under 70 died within a year?", cohort)
+
+    # Assert
+    assert [c.column for c in fixed.filters] == ["age", "died_1y"] and fixed.numerator == ()
+    assert "numerator->filters" in changed
+
+
+def test_apply_stated_shareRepeatingItsFilter_keepsItOnlyAsNumerator(cohort):
+    # Arrange: the same condition as filter and numerator would make the share 100%
+    died = _cond("died_1y", "is", values=["yes"])
+    plan = _plan(answer="share", filters=[died], numerator=[died])
+
+    # Act
+    fixed, _changed = checks.apply_stated(plan, "What share of patients died within a year?", cohort)
+
+    # Assert
+    assert fixed.filters == () and [c.column for c in fixed.numerator] == ["died_1y"]

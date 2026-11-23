@@ -51,6 +51,12 @@ _WHEN: Final = re.compile(
     r"\b(?:at|on|during|per|first|last|latest|final|baseline|initial|earliest|recent|every|each|any|all)\b", re.I
 )
 _YEARS: Final = (1900, 2100)
+# Words that ask for a statistical test or model, not side-by-side figures.
+_TEST_WORDS: Final = re.compile(
+    r"\b(?:test\w*|significan\w*|p[- ]?values?|odds|correlat\w*|associat\w*|regression|hazard|survival|"
+    r"time to|kaplan|log[- ]?rank|chi[- ]?square\w*|t-tests?|anova|confidence intervals?|ci|statistic\w*)\b",
+    re.I,
+)
 # Category labels too common as words to say the question names that category.
 _PLAIN_LABELS: Final = frozenset({"other", "unknown", "none", "missing", "yes", "no", "not", "all", "any"})
 
@@ -199,12 +205,50 @@ def _floats(cond: Condition) -> list[float]:
     return [float(v) for v in (cond.value, *cond.values) if isinstance(v, int | float)]
 
 
+def _slots_used(plan: Plan) -> tuple[Plan, list[str]]:
+    """Every slot the model filled is used: a count's numerator conditions are its limits, and a
+    filter repeated as a share's numerator is only the numerator (else the share is 100%)."""
+    if plan.answer == "count" and plan.numerator:
+        return plan.model_copy(update={"filters": (*plan.filters, *plan.numerator), "numerator": ()}), [
+            "numerator->filters"
+        ]
+    if plan.answer == "share" and set(plan.filters) & set(plan.numerator):
+        kept = tuple(c for c in plan.filters if c not in plan.numerator)
+        return plan.model_copy(update={"filters": kept}), ["filter_repeated_in_numerator"]
+    return plan, []
+
+
+def _as_figures(plan: Plan, context: DatasetContext) -> Plan | None:
+    """A test the question does not ask for ("compare A and B") as side-by-side figures: the mean
+    of a number, or the share of a yes/no, in each group. None when there is no such reading."""
+    if plan.answer == "odds_ratio" and plan.numerator:
+        return plan.model_copy(update={"answer": "share"})
+    if plan.answer != "compare_groups" or plan.measure is None:
+        return None
+    column = context.column(plan.measure)
+    if column is None:
+        return None
+    if column.numeric:
+        return plan.model_copy(update={"answer": "mean"})
+    if column.kind == "flag":
+        yes = next((v for v in column.values if not column.negative(v)), None)
+        if yes is not None:
+            event = Condition(column=column.name, op="is", values=(column.label(yes),))
+            return plan.model_copy(update={"answer": "share", "measure": None, "numerator": (event,)})
+    return None
+
+
 def apply_stated(plan: Plan, question: str, context: DatasetContext) -> tuple[Plan, list[str]]:
     """The plan with what the question states explicitly put in force: the comparison said with
     each number, the timepoint, and the unit counted. Returns the plan and what was changed."""
+    plan, changed = _slots_used(plan)
+    if plan.answer in ("compare_groups", "odds_ratio") and not _TEST_WORDS.search(question):
+        figures = _as_figures(plan, context)
+        if figures is not None:
+            changed.append(f"{plan.answer}->{figures.answer}")
+            plan = figures
     used = frozenset({c.column for c in (*plan.filters, *plan.numerator)} | {plan.measure or "", plan.group_by or ""})
     cues = read_cues(question, context, used)
-    changed: list[str] = []
     conditions = {"filters": list(plan.filters), "numerator": list(plan.numerator)}
     for stated in cues.numbers:
         if stated.cmp is None or stated.year:
@@ -279,6 +323,11 @@ def _explained(stated: Stated, compiled: Compiled, context: DatasetContext) -> b
         if years & set(dated) or (compiled.plan.period != "none"):
             return True
     token = _num(stated.value)
+    said = " ".join(
+        str(v) for c in (*compiled.filters, *compiled.numerator) for v in (c.value, *c.values) if isinstance(v, str)
+    )
+    if re.search(rf"(?<!\d){re.escape(token)}(?!\d)", said):
+        return True  # inside a value the plan names ("ward 7", "MCA M2")
     for name in compiled.columns:
         column = context.column(name)
         if column is not None and re.search(rf"(?<!\d){re.escape(token)}(?!\d)", f"{column.name} {column.description}"):
@@ -434,7 +483,7 @@ def matcher_may_answer(question: str, context: DatasetContext, used: frozenset[s
     """Whether the keyword matcher's answer may stand in front of the model: only a question it
     fully reads. One record per patient (no per-patient choice), no number, comparison, negation
     or timepoint, and every category the question names is in the matcher's plan."""
-    if not context.semantics.one_row_per_patient:
+    if not context.semantics.one_row_per_patient or context.aggregate:
         return False
     cues = read_cues(question, context, used)
     if cues.numbers or cues.negated or cues.times:

@@ -22,6 +22,7 @@ Fields:
 - "answer": "count" = how many. "share" = a share, percent, proportion or rate. "mean", "median", "min", "max", "sum" = that summary of "measure".
   "compare_groups" = a test of whether "measure" differs between the groups of "group_by". "odds_ratio" = the odds ratio of the yes/no "numerator" for "group_by". "correlation" = between the numbers "measure" and "group_by". "survival" = time to event: "measure" is the time column, "numerator" the event, "group_by" optional.
   "list_patients" = the question asks to list or identify individual patients.
+  "not_in_table" = the question needs something no column holds (deaths, a population for a rate): set "missing" to the question's words for it. Never answer a different figure instead.
 - "count_of": what a count or a share counts: patients, or the table's records.
 - "filters": every limit the question states, each {"column", "op", "value", "values"}. A category: op "is" or "is not" with "values" from its list. A number: op "<", "<=", ">", ">=" with "value", or "is" with "values". A date: "before" or "on or after" with "value" YYYY-MM-DD. "is missing" / "is recorded" = not recorded / recorded. Add no limit the question does not state.
 - "numerator": for "share", "odds_ratio" and "survival" only: the condition counted, among the records "filters" keep. Otherwise [].
@@ -29,7 +30,10 @@ Fields:
 - "group_by": the column to break the answer down by ("by sex", "for each arm", "A versus B"); otherwise null. A number column needs "cut_points" ([65] = under 65 and 65 or more). A date column needs "period" "year" or "month".
 - "which_visit": when patients have several records: "any" = at any of their records (ever), "every" = at every record (always, never), "first" = at their first record (baseline), "last" = at their latest record, "change" = latest minus first (summaries only). Use "any" unless the question says which.
 
+- "missing": only for "not_in_table"; otherwise null.
+
 Rules:
+- "Compare A and B" asks for the figures side by side (a count, share or mean with "group_by"); use a test only when the question asks for one (significant, p-value, odds ratio, correlation, survival).
 - Use only the columns and values listed for your table.
 - A word that only names what the whole table is about is not a limit.
 - Never compute a number yourself."""

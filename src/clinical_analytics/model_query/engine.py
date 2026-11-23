@@ -24,11 +24,13 @@ import structlog
 from clinical_analytics.model_query import card, checks, present
 from clinical_analytics.model_query.context import DatasetContext
 from clinical_analytics.model_query.examples import Example, similar_examples
-from clinical_analytics.model_query.llm import ModelFn
+from clinical_analytics.model_query.llm import ModelFn, ModelTimedOut
 from clinical_analytics.model_query.plan import (
     LISTING_REASON,
     Compiled,
+    CountColumnUnknownError,
     PlanError,
+    PlanRefusedError,
     compile_plan,
     parse_plan,
     reply_schema,
@@ -44,6 +46,14 @@ logger = structlog.get_logger()
 MODEL_UNAVAILABLE_REASON: Final = (
     "The local language model did not answer, so the question was not answered. "
     "Check that Ollama is running, then ask again."
+)
+MODEL_TIMEOUT_REASON: Final = (
+    "The local model took too long to answer (more than {minutes} minutes), so the question was not answered. "
+    "The computer may be busy: ask again in a moment. The wait can be raised with model_query_timeout_s."
+)
+COUNT_COLUMN_QUESTION: Final = (
+    "Each line of this table counts a group, so counting lines would count groups, not cases. "
+    "Which column holds the number of cases on each line?"
 )
 NO_QUERY_REASON: Final = "I could not turn this question into a query that runs on your data."
 MAX_TEST_ROWS: Final = 2_000_000
@@ -151,6 +161,22 @@ def _ask(
     )
 
 
+def _count_column_ask(
+    question: str, context: DatasetContext, reply: dict[str, Any] | None, attempt: int
+) -> ModelAnswer:
+    """A count on a summary table whose count column the contract does not name: asked, never a
+    count of its lines."""
+    logger.info("model_query_asked", kind="count_column", attempt=attempt)
+    numbers = [c for c in context.columns if c.numeric]
+    return ModelAnswer(
+        "clarify" if numbers else "refused",
+        reason=COUNT_COLUMN_QUESTION,
+        choices=tuple((f"Total of {c.display}", f"{question.rstrip()} (the total of {c.display})") for c in numbers),
+        reply=reply,
+        attempts=attempt,
+    )
+
+
 def _held(
     problem: checks.Problem, compiled: Compiled, context: DatasetContext, reply: dict[str, Any] | None, attempt: int,
     problems: list[str],
@@ -200,6 +226,10 @@ def answer_question(
         payload = model(
             system, user_prompt(question, shots, previous=previous, failed_reply=failed_reply, problem=problem), schema
         )
+        if isinstance(payload, ModelTimedOut):
+            logger.warning("model_query_timed_out", attempt=attempt, timeout_s=payload.timeout_s)
+            reason = MODEL_TIMEOUT_REASON.format(minutes=max(1, round(payload.timeout_s / 60)))
+            return ModelAnswer("unavailable", reason=reason, attempts=attempt)
         if payload is None:
             logger.warning("model_query_unavailable", attempt=attempt)
             return ModelAnswer("unavailable", reason=MODEL_UNAVAILABLE_REASON, attempts=attempt)
@@ -213,6 +243,11 @@ def answer_question(
             if changed:
                 logger.info("model_query_stated_applied", attempt=attempt, changes=changed)
             compiled = compile_plan(plan, context)
+        except PlanRefusedError as e:
+            logger.info("model_query_refused", attempt=attempt, plan_answer=plan.answer)
+            return ModelAnswer("refused", reason=str(e), reply=failed_reply, attempts=attempt)
+        except CountColumnUnknownError:
+            return _count_column_ask(question, context, failed_reply, attempt)
         except PlanError as e:
             problem = str(e)
             problems.append(problem)

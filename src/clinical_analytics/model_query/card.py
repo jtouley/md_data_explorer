@@ -74,6 +74,10 @@ def _split(head: str, parts: list[str]) -> list[str]:
 def _counted_line(compiled: Compiled, context: DatasetContext) -> str:
     noun, nouns = context.row_noun, context.row_nouns
     which = compiled.plan.which_visit
+    if context.aggregate:
+        column = context.column(compiled.measure or "")
+        what = column.display if column is not None else "the count"
+        return f"Counted: the total of the case counts ({what}); each record counts {context.case_noun} for one group."
     if context.semantics.one_row_per_patient:
         return "Counted: patients, one record each."
     if context.patient_key is None:

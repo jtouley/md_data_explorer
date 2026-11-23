@@ -110,3 +110,15 @@ def reply(**slots: Any) -> dict[str, Any]:
 def cond(column: str, op: str, value: Any = None, values: list[Any] | None = None) -> dict[str, Any]:
     """One condition slot of a reply."""
     return {"column": column, "op": op, "value": value, "values": values or []}
+
+
+def injuries() -> pl.DataFrame:
+    """A summary table: road injuries counted per district, year (60 years) and road user. No person."""
+    rows = []
+    for d, district in enumerate(("delta", "ridge", "valley")):
+        for year in range(1965, 2025):
+            for u, user in enumerate(("pedestrian", "cyclist", "driver")):
+                rows.append(
+                    {"district": district, "year": year, "road_user": user, "injury_cases": (d * 7 + year + u * 3) % 40}
+                )
+    return pl.DataFrame(rows)

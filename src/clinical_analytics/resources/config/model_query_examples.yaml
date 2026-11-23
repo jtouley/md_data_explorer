@@ -33,79 +33,98 @@ tables:
       Each record is one patient. Columns: sleep_ref (the patient ID); apnea_index: number; body_mass:
       number kg/m2; loud_snoring: values 'Y', 'N'; pap_begun: values 'Y', 'N'; age_at_test: number.
     columns: [sleep_ref, apnea_index, body_mass, loud_snoring, pap_begun, age_at_test]
+  burns:
+    text: >-
+      Each record counts burn admissions for one district, season and burn cause. n_admits holds how
+      many admissions each record counts: a count adds it up. Columns: district: values 'coast',
+      'hills', 'plain'; season: values 'dry', 'wet'; burn_cause: values 'scald', 'flame', 'contact';
+      n_admits: number.
+    columns: [district, season, burn_cause, n_admits]
 examples:
   - table: lens
     question: "How many patients are in the file?"
-    plan: {answer: count, count_of: patients, filters: [], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any}
+    plan: {answer: count, count_of: patients, filters: [], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any, missing: null}
   - table: lens
     question: "How many women got a toric lens?"
-    plan: {answer: count, count_of: patients, filters: [{column: gender, op: is, value: null, values: [woman]}, {column: lens_model, op: is, value: null, values: [toric]}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any}
+    plan: {answer: count, count_of: patients, filters: [{column: gender, op: is, value: null, values: [woman]}, {column: lens_model, op: is, value: null, values: [toric]}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any, missing: null}
   - table: lens
     question: "Number of patients by lens model"
-    plan: {answer: count, count_of: patients, filters: [], numerator: [], measure: null, group_by: lens_model, period: none, cut_points: [], which_visit: any}
+    plan: {answer: count, count_of: patients, filters: [], numerator: [], measure: null, group_by: lens_model, period: none, cut_points: [], which_visit: any, missing: null}
   - table: lens
     question: "What share of patients over 70 had a surgical problem?"
-    plan: {answer: share, count_of: patients, filters: [{column: yrs_at_op, op: ">", value: 70, values: []}], numerator: [{column: surgical_issue, op: is not, value: null, values: [none]}], measure: null, group_by: null, period: none, cut_points: [], which_visit: any}
+    plan: {answer: share, count_of: patients, filters: [{column: yrs_at_op, op: ">", value: 70, values: []}], numerator: [{column: surgical_issue, op: is not, value: null, values: [none]}], measure: null, group_by: null, period: none, cut_points: [], which_visit: any, missing: null}
   - table: lens
     question: "How many patients had no surgical problem?"
-    plan: {answer: count, count_of: patients, filters: [{column: surgical_issue, op: is, value: null, values: [none]}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any}
+    plan: {answer: count, count_of: patients, filters: [{column: surgical_issue, op: is, value: null, values: [none]}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any, missing: null}
   - table: lens
     question: "Average acuity after surgery for each lens model"
-    plan: {answer: mean, count_of: patients, filters: [], numerator: [], measure: acuity_post, group_by: lens_model, period: none, cut_points: [], which_visit: any}
+    plan: {answer: mean, count_of: patients, filters: [], numerator: [], measure: acuity_post, group_by: lens_model, period: none, cut_points: [], which_visit: any, missing: null}
   - table: lens
     question: "Median age of the men aged 60 to 75"
-    plan: {answer: median, count_of: patients, filters: [{column: gender, op: is, value: null, values: [man]}, {column: yrs_at_op, op: ">=", value: 60, values: []}, {column: yrs_at_op, op: "<=", value: 75, values: []}], numerator: [], measure: yrs_at_op, group_by: null, period: none, cut_points: [], which_visit: any}
+    plan: {answer: median, count_of: patients, filters: [{column: gender, op: is, value: null, values: [man]}, {column: yrs_at_op, op: ">=", value: 60, values: []}, {column: yrs_at_op, op: "<=", value: 75, values: []}], numerator: [], measure: yrs_at_op, group_by: null, period: none, cut_points: [], which_visit: any, missing: null}
   - table: lens
     question: "Under 65 versus 65 and older: how many patients?"
-    plan: {answer: count, count_of: patients, filters: [], numerator: [], measure: null, group_by: yrs_at_op, period: none, cut_points: [65], which_visit: any}
+    plan: {answer: count, count_of: patients, filters: [], numerator: [], measure: null, group_by: yrs_at_op, period: none, cut_points: [65], which_visit: any, missing: null}
   - table: lens
     question: "Operations per year since 2021"
-    plan: {answer: count, count_of: patients, filters: [{column: op_day, op: on or after, value: "2021-01-01", values: []}], numerator: [], measure: null, group_by: op_day, period: year, cut_points: [], which_visit: any}
+    plan: {answer: count, count_of: patients, filters: [{column: op_day, op: on or after, value: "2021-01-01", values: []}], numerator: [], measure: null, group_by: op_day, period: year, cut_points: [], which_visit: any, missing: null}
   - table: lens
     question: "Does acuity after surgery differ between lens models?"
-    plan: {answer: compare_groups, count_of: patients, filters: [], numerator: [], measure: acuity_post, group_by: lens_model, period: none, cut_points: [], which_visit: any}
+    plan: {answer: compare_groups, count_of: patients, filters: [], numerator: [], measure: acuity_post, group_by: lens_model, period: none, cut_points: [], which_visit: any, missing: null}
   - table: lens
     question: "Which patients had a corneal edema?"
-    plan: {answer: list_patients, count_of: patients, filters: [{column: surgical_issue, op: is, value: null, values: [corneal edema]}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any}
+    plan: {answer: list_patients, count_of: patients, filters: [{column: surgical_issue, op: is, value: null, values: [corneal edema]}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any, missing: null}
   - table: ulcer
     question: "How many patients ever had an infected wound?"
-    plan: {answer: count, count_of: patients, filters: [{column: wound_infected, op: is, value: null, values: ["yes"]}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any}
+    plan: {answer: count, count_of: patients, filters: [{column: wound_infected, op: is, value: null, values: ["yes"]}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any, missing: null}
   - table: ulcer
     question: "How many patients had a closed wound at their latest visit?"
-    plan: {answer: count, count_of: patients, filters: [{column: closed, op: is, value: null, values: ["yes"]}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: last}
+    plan: {answer: count, count_of: patients, filters: [{column: closed, op: is, value: null, values: ["yes"]}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: last, missing: null}
   - table: ulcer
     question: "Patients by ulcer kind at their first visit"
-    plan: {answer: count, count_of: patients, filters: [], numerator: [], measure: null, group_by: ulcer_kind, period: none, cut_points: [], which_visit: first}
+    plan: {answer: count, count_of: patients, filters: [], numerator: [], measure: null, group_by: ulcer_kind, period: none, cut_points: [], which_visit: first, missing: null}
   - table: ulcer
     question: "Mean wound area at baseline"
-    plan: {answer: mean, count_of: patients, filters: [], numerator: [], measure: wound_area, group_by: null, period: none, cut_points: [], which_visit: first}
+    plan: {answer: mean, count_of: patients, filters: [], numerator: [], measure: wound_area, group_by: null, period: none, cut_points: [], which_visit: first, missing: null}
   - table: ulcer
     question: "Average change in wound area from the first to the last visit, by ulcer kind"
-    plan: {answer: mean, count_of: patients, filters: [], numerator: [], measure: wound_area, group_by: ulcer_kind, period: none, cut_points: [], which_visit: change}
+    plan: {answer: mean, count_of: patients, filters: [], numerator: [], measure: wound_area, group_by: ulcer_kind, period: none, cut_points: [], which_visit: change, missing: null}
   - table: ulcer
     question: "What share of patients were never infected?"
-    plan: {answer: share, count_of: patients, filters: [], numerator: [{column: wound_infected, op: is, value: null, values: ["no"]}], measure: null, group_by: null, period: none, cut_points: [], which_visit: every}
+    plan: {answer: share, count_of: patients, filters: [], numerator: [{column: wound_infected, op: is, value: null, values: ["no"]}], measure: null, group_by: null, period: none, cut_points: [], which_visit: every, missing: null}
   - table: ulcer
     question: "How many visits were there in 2023?"
-    plan: {answer: count, count_of: visits, filters: [{column: seen_on, op: on or after, value: "2023-01-01", values: []}, {column: seen_on, op: before, value: "2024-01-01", values: []}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any}
+    plan: {answer: count, count_of: visits, filters: [{column: seen_on, op: on or after, value: "2023-01-01", values: []}, {column: seen_on, op: before, value: "2024-01-01", values: []}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any, missing: null}
   - table: ulcer
     question: "Odds ratio of wound closure for each ulcer kind"
-    plan: {answer: odds_ratio, count_of: patients, filters: [], numerator: [{column: closed, op: is, value: null, values: ["yes"]}], measure: null, group_by: ulcer_kind, period: none, cut_points: [], which_visit: any}
+    plan: {answer: odds_ratio, count_of: patients, filters: [], numerator: [{column: closed, op: is, value: null, values: ["yes"]}], measure: null, group_by: ulcer_kind, period: none, cut_points: [], which_visit: any, missing: null}
   - table: blood
     question: "What percentage of transfusion episodes had a reaction?"
-    plan: {answer: share, count_of: episodes, filters: [], numerator: [{column: reacted, op: is, value: null, values: ["Y"]}], measure: null, group_by: null, period: none, cut_points: [], which_visit: any}
+    plan: {answer: share, count_of: episodes, filters: [], numerator: [{column: reacted, op: is, value: null, values: ["Y"]}], measure: null, group_by: null, period: none, cut_points: [], which_visit: any, missing: null}
   - table: blood
     question: "How many patients had a hemoglobin below 7 before a transfusion, at any episode?"
-    plan: {answer: count, count_of: patients, filters: [{column: hb_prior, op: "<", value: 7, values: []}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any}
+    plan: {answer: count, count_of: patients, filters: [{column: hb_prior, op: "<", value: 7, values: []}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any, missing: null}
   - table: blood
     question: "Episodes with 2 or more packs given, by service"
-    plan: {answer: count, count_of: episodes, filters: [{column: packs_given, op: ">=", value: 2, values: []}], numerator: [], measure: null, group_by: service, period: none, cut_points: [], which_visit: any}
+    plan: {answer: count, count_of: episodes, filters: [{column: packs_given, op: ">=", value: 2, values: []}], numerator: [], measure: null, group_by: service, period: none, cut_points: [], which_visit: any, missing: null}
   - table: sleep
     question: "Is body mass correlated with the apnea index?"
-    plan: {answer: correlation, count_of: patients, filters: [], numerator: [], measure: apnea_index, group_by: body_mass, period: none, cut_points: [], which_visit: any}
+    plan: {answer: correlation, count_of: patients, filters: [], numerator: [], measure: apnea_index, group_by: body_mass, period: none, cut_points: [], which_visit: any, missing: null}
   - table: sleep
     question: "What percent of loud snorers started PAP?"
-    plan: {answer: share, count_of: patients, filters: [{column: loud_snoring, op: is, value: null, values: ["Y"]}], numerator: [{column: pap_begun, op: is, value: null, values: ["Y"]}], measure: null, group_by: null, period: none, cut_points: [], which_visit: any}
+    plan: {answer: share, count_of: patients, filters: [{column: loud_snoring, op: is, value: null, values: ["Y"]}], numerator: [{column: pap_begun, op: is, value: null, values: ["Y"]}], measure: null, group_by: null, period: none, cut_points: [], which_visit: any, missing: null}
   - table: sleep
     question: "How many patients have no body mass recorded?"
-    plan: {answer: count, count_of: patients, filters: [{column: body_mass, op: is missing, value: null, values: []}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any}
+    plan: {answer: count, count_of: patients, filters: [{column: body_mass, op: is missing, value: null, values: []}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any, missing: null}
+  - table: lens
+    question: "Compare acuity after surgery between toric and monofocal lenses"
+    plan: {answer: mean, count_of: patients, filters: [{column: lens_model, op: is, value: null, values: [toric, monofocal]}], numerator: [], measure: acuity_post, group_by: lens_model, period: none, cut_points: [], which_visit: any, missing: null}
+  - table: sleep
+    question: "What is the death rate after a positive test?"
+    plan: {answer: not_in_table, count_of: patients, filters: [], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any, missing: "death"}
+  - table: burns
+    question: "How many burn admissions were scalds, by district?"
+    plan: {answer: count, count_of: admissions, filters: [{column: burn_cause, op: is, value: null, values: [scald]}], numerator: [], measure: null, group_by: district, period: none, cut_points: [], which_visit: any, missing: null}
+  - table: burns
+    question: "What share of burn admissions in the wet season were flame burns?"
+    plan: {answer: share, count_of: admissions, filters: [{column: season, op: is, value: null, values: [wet]}], numerator: [{column: burn_cause, op: is, value: null, values: [flame]}], measure: null, group_by: null, period: none, cut_points: [], which_visit: any, missing: null}

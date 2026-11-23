@@ -43,6 +43,14 @@ ModelFn: TypeAlias = Callable[[str, str, dict[str, Any]], Any]
 _warm = threading.Event()
 
 
+class ModelTimedOut:
+    """The reply of a call that ran out of time (the server was there, but slower than the
+    timeout): said as "took too long", never as a hold or a missing server."""
+
+    def __init__(self, timeout_s: float) -> None:
+        self.timeout_s = timeout_s
+
+
 def _client(timeout: float) -> OllamaClient | None:
     """The app's Ollama client at the configured address, or None when that is not this machine.
     The question path refuses another host even when ``ollama_allow_remote_host`` is set: its
@@ -102,6 +110,7 @@ def ollama_model(system: str, user: str, schema: dict[str, Any]) -> Any:
         options={"temperature": 0, "seed": 7, "num_ctx": NUM_CTX, "num_predict": MAX_REPLY_TOKENS},
         keep_alive=KEEP_ALIVE,
     )
+    elapsed = time.perf_counter() - started
     if raw is not None:
         _warm.set()
     else:
@@ -110,11 +119,13 @@ def ollama_model(system: str, user: str, schema: dict[str, Any]) -> Any:
     logger.info(
         "model_query_call",
         model=client.model,
-        latency_ms=round((time.perf_counter() - started) * 1000),
+        latency_ms=round(elapsed * 1000),
         timeout_s=timeout,
         answered=raw is not None,
         parsed=parsed is not None,
     )
+    if raw is None and elapsed >= timeout * 0.98:
+        return ModelTimedOut(timeout)
     if raw is not None and parsed is None:
         # It answered, but not with usable JSON (cut short, or text around it): an attempt that
         # failed and is fed back, not a model that is down.

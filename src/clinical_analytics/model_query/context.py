@@ -33,6 +33,8 @@ MAX_DESCRIPTION_CHARS: Final = 140
 MAX_DISPLAY_WORDS: Final = 8
 
 Kind = Literal["key", "category", "number", "date", "text", "flag"]
+# Grain kinds (ADR017) whose lines are groups, not people: a summary table and published estimates.
+AGGREGATE_GRAIN_KINDS: Final = frozenset({"stratum", "estimate"})
 
 # Stored yes/no spellings (structure, never the question): a column holding only these is a flag.
 _YES: Final = frozenset({"y", "yes", "true", "1", "t"})
@@ -145,8 +147,30 @@ class DatasetContext:
         return plural(self.row_noun)
 
     @property
+    def aggregate(self) -> bool:
+        """Each line counts a group (a summary or published table): counts add up a count column."""
+        sem = self.semantics
+        return sem.case_count_column is not None or sem.grain.kind in AGGREGATE_GRAIN_KINDS
+
+    @property
+    def count_column(self) -> str | None:
+        """The contract's case-count column of a summary table, when the table has it."""
+        name = self.semantics.case_count_column
+        column = self.column(name) if name else None
+        return column.name if column is not None and column.numeric else None
+
+    @property
+    def case_noun(self) -> str:
+        """What a summary table's count column counts ("deaths"), from the contract's grain noun."""
+        noun = self.semantics.grain.noun
+        counted = noun.removeprefix("count of ").strip() if noun.startswith("count of ") else ""
+        return counted or "cases"
+
+    @property
     def units(self) -> tuple[str, ...]:
         """What a count can count here: patients, records (or both on a visit-level table)."""
+        if self.aggregate:
+            return (self.case_noun,)
         if self.semantics.one_row_per_patient:
             return ("patients",)
         if self.patient_key is None:
@@ -312,7 +336,14 @@ def context_text(context: DatasetContext) -> str:
     """The table as the model reads it: what a record is, who the patient is, the columns."""
     sem = context.semantics
     lines = [f"Table: {context.title}" if context.title else "Table:"]
-    if sem.one_row_per_patient:
+    if context.aggregate:
+        counted = (
+            f"{context.count_column} holds how many {context.case_noun} each record counts: a count adds it up."
+            if context.count_column
+            else "No column is known to hold each record's count."
+        )
+        lines.append(f"{sem.grain.sentence or 'Each record counts a group.'} {counted}")
+    elif sem.one_row_per_patient:
         lines.append(f"Each record is one patient ({context.rows} patients). Count patients.")
     elif context.patient_key is not None:
         lines.append(

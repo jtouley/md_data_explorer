@@ -15,11 +15,11 @@ from typing import Any, Final, Literal, TypeAlias, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from clinical_analytics.model_query.context import Column, DatasetContext
+from clinical_analytics.model_query.context import MAX_VALUE_CHARS, Column, DatasetContext
 
 Answer: TypeAlias = Literal[
     "count", "share", "mean", "median", "min", "max", "sum",
-    "compare_groups", "odds_ratio", "correlation", "survival", "list_patients",
+    "compare_groups", "odds_ratio", "correlation", "survival", "list_patients", "not_in_table",
 ]  # fmt: skip
 WhichVisit: TypeAlias = Literal["any", "every", "first", "last", "change"]
 Period: TypeAlias = Literal["none", "year", "month"]
@@ -38,6 +38,16 @@ LISTING_REASON: Final = (
 
 class PlanError(ValueError):
     """The plan cannot be compiled; the message is fed back to the model (never shown raw)."""
+
+
+class PlanRefusedError(PlanError):
+    """The question cannot be answered from this table as asked; the message is for the doctor
+    (no retry: another plan would compute something else)."""
+
+
+class CountColumnUnknownError(PlanError):
+    """A count on a summary table whose case-count column the contract does not name: counting
+    its lines would count groups, so the app asks which column holds the counts."""
 
 
 class _Strict(BaseModel):
@@ -61,6 +71,13 @@ class Plan(_Strict):
     period: Period = "none"
     cut_points: tuple[float, ...] = Field(default=(), max_length=MAX_CUTS)
     which_visit: WhichVisit = "any"
+    missing: str | None = Field(default=None, max_length=60)  # not_in_table: what the table lacks
+
+
+NOT_IN_TABLE_REASON: Final = "This table has no column for {what}, so I can't answer that from this file."
+NOT_IN_TABLE_GENERIC: Final = (
+    "This table doesn't contain what the question asks for, so I can't answer it from this file."
+)
 
 
 def parse_plan(payload: Any) -> Plan:
@@ -90,6 +107,10 @@ def _condition_schema(column: Column) -> dict[str, Any] | None:
         ops, value, values = CATEGORY_OPS, {"type": "null"}, {"type": "array", "items": {"enum": choices}}
     elif column.kind == "number":
         ops, value, values = NUMBER_OPS, _nullable({"type": "number"}), {"type": "array", "items": {"type": "number"}}
+    elif column.kind == "text":
+        # Too many values to list: any value, matched whole and regardless of case.
+        free = {"type": "string", "maxLength": MAX_VALUE_CHARS}
+        ops, value, values = CATEGORY_OPS, {"type": "null"}, {"type": "array", "items": free}
     elif column.kind == "date":
         date = {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
         ops, value, values = DATE_OPS, _nullable(date), {"type": "array", "maxItems": 0}
@@ -127,9 +148,11 @@ def reply_schema(context: DatasetContext) -> dict[str, Any]:
             "period": {"enum": list(get_args(Period))},
             "cut_points": {"type": "array", "items": {"type": "number"}, "maxItems": MAX_CUTS},
             "which_visit": {"enum": list(get_args(WhichVisit))},
+            "missing": _nullable({"type": "string", "maxLength": 60}),
         },
         "required": [
             "answer", "count_of", "filters", "numerator", "measure", "group_by", "period", "cut_points", "which_visit",
+            "missing",
         ],
     }  # fmt: skip
 
@@ -188,6 +211,8 @@ def _column(name: str | None, context: DatasetContext, what: str) -> Column:
 
 
 def _stored(column: Column, said: float | str) -> Any:
+    if column.kind == "text":
+        return str(said)
     if column.kind == "number":
         if isinstance(said, str):
             raise PlanError(f"{column.name} is a number: give a number.")
@@ -214,7 +239,11 @@ def condition_sql(cond: Condition, context: DatasetContext) -> str:
         if not said:
             raise PlanError(f"The condition on {column.name} needs its values.")
         stored = [_stored(column, v) for v in said]
-        sql = f"{ref} IN ({', '.join(literal(v) for v in stored)})"
+        if column.kind == "text":
+            folded = ", ".join(literal(str(v).strip().casefold()) for v in stored)
+            sql = f"lower(trim(CAST({ref} AS VARCHAR))) IN ({folded})"
+        else:
+            sql = f"{ref} IN ({', '.join(literal(v) for v in stored)})"
         return f"NOT ({sql})" if cond.op == "is not" else sql
     if column.kind != "number" or cond.op not in ("<", "<=", ">", ">="):
         raise PlanError(f"{column.name} takes is or is not with its listed values.")
@@ -282,7 +311,9 @@ def compile_plan(plan: Plan, context: DatasetContext) -> Compiled:
         PlanError: the plan uses a column, value or combination the compiler does not support.
     """
     if plan.answer == "list_patients":
-        raise PlanError(LISTING_REASON)
+        raise PlanRefusedError(LISTING_REASON)
+    if plan.answer == "not_in_table":
+        raise PlanRefusedError(NOT_IN_TABLE_REASON.format(what=plan.missing) if plan.missing else NOT_IN_TABLE_GENERIC)
     per_patient = plan.count_of == "patients" and context.visit_level
     which = plan.which_visit if context.visit_level else "any"
     if which in ("first", "last", "change") and context.order_column is None:
@@ -290,6 +321,8 @@ def compile_plan(plan: Plan, context: DatasetContext) -> Compiled:
     used = {c.column for c in (*plan.filters, *plan.numerator)} | {n for n in (plan.measure, plan.group_by) if n}
     for name in used:
         _column(name, context, f"'{name}'")
+    if context.aggregate:
+        return _compile_aggregate(plan, context, frozenset(used))
     if plan.answer in TESTS:
         return _compile_test(plan, context, which, frozenset(used))
     if plan.answer in STATISTICS:
@@ -449,6 +482,49 @@ def _compile_test(plan: Plan, context: DatasetContext, which: WhichVisit, used: 
         plan=plan, kind="test", sql=sql, unit=context.row_nouns, per_patient=False, group_column=group,
         filters=plan.filters, numerator=plan.numerator, measure=plan.measure, columns=used, test_outcome=outcome,
         test_group=group, test_time=time,
+    )  # fmt: skip
+
+
+AGGREGATE_ONLY_TOTALS: Final = (
+    "This table counts groups, not one person per line, so an average or a test over its lines would not "
+    "describe people. Ask for a total, a share of the total, or a breakdown."
+)
+
+
+def _compile_aggregate(plan: Plan, context: DatasetContext, used: frozenset[str]) -> Compiled:
+    """A summary table: every count adds up the contract's case-count column (never counts lines),
+    and a share is part of that total."""
+    if plan.answer not in ("count", "share", "sum"):
+        raise PlanRefusedError(AGGREGATE_ONLY_TOTALS)
+    if plan.answer == "sum":
+        column = _column(plan.measure, context, "measure")
+        if not column.numeric:
+            raise PlanError(f"{column.name} is not a number column.")
+        count = column.name
+    elif context.count_column is None:
+        raise CountColumnUnknownError("This table counts groups, and no column is known to hold the counts.")
+    else:
+        count = context.count_column
+    total = f"SUM({ident(count)})"
+    where = _all(plan.filters, context)
+    group = _group_expr(plan, context)
+    group_sel, tail = (f"{group} AS grp, ", " GROUP BY 1 ORDER BY 1 NULLS LAST") if group is not None else ("", "")
+    unit = context.case_noun
+    if plan.answer == "share" and plan.numerator:
+        event = _all(plan.numerator, context)
+        events = f"SUM(CASE WHEN {event} THEN {ident(count)} ELSE 0 END)"
+        sql = (
+            f"SELECT {group_sel}{events} AS events, {total} AS n, {events} / NULLIF({total}, 0) AS rate "
+            f"FROM unified{_where(where, _recorded(plan.numerator))}{tail}"
+        )
+        kind: Kind = "share"
+    else:
+        sql = f"SELECT {group_sel}{total} AS count FROM unified{_where(where)}{tail}"
+        kind = "count"
+    return Compiled(
+        plan=plan, kind=kind, sql=sql, unit=unit, per_patient=False,
+        total_sql=f"SELECT {total} FROM unified" if kind == "count" else None, group_column=plan.group_by,
+        filters=plan.filters, numerator=plan.numerator if kind == "share" else (), measure=count, columns=used,
     )  # fmt: skip
 
 
