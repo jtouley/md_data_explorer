@@ -282,17 +282,17 @@ def test_stage_true_false_column_isBoolean():
 # --- mixed date formats --------------------------------------------------------------------
 
 
-def test_stage_mixed_date_formats_parsedPerValue():
-    # Arrange: ISO and day-first slashes (31/01 proves day-first)
+def test_stage_mixed_date_formats_keptTextNeverParsedPerValue():
+    # Arrange: ISO and day-first slashes in one column: no ONE format reads every value (ADR017)
     rows = [f"P{i},2023-01-15,50" for i in range(20)] + [f"Q{i},31/01/2023,51" for i in range(20)]
     data = _csv(["patient_id,admit_date,age", *rows])
 
     # Act
     staged = read_csv_typed(data)
 
-    # Assert
-    assert staged.data.schema["admit_date"] == pl.Date
-    assert staged.data["admit_date"].unique().sort().to_list() == [dt.date(2023, 1, 15), dt.date(2023, 1, 31)]
+    # Assert: kept as text, with the values no one format reads counted
+    assert staged.data.schema["admit_date"] == pl.String
+    assert (_note(staged, "admit_date").reason, _note(staged, "admit_date").failed_values) == ("not_dates", 20)
 
 
 def test_stage_unparsed_date_value_keepsColumnText_neverNulled():
@@ -310,16 +310,16 @@ def test_stage_unparsed_date_value_keepsColumnText_neverNulled():
     assert (note.reason, note.failed_values) == ("not_dates", 1)
 
 
-def test_stage_day_first_and_month_first_families_isAmbiguous():
-    # Arrange: "/" settles day-first (13/01), "-" settles month-first (01-13)
+def test_stage_day_first_and_month_first_families_keptText():
+    # Arrange: "/" reads day-first (13/01), "-" month-first (01-13): two formats in one column
     data = _csv(["patient_id,seen", "P1,13/01/2024", "P2,01-13-2024", "P3,02/03/2024"])
 
     # Act
     staged = read_csv_typed(data)
 
-    # Assert
+    # Assert: no one format reads every value, so the column stays text (never per row)
     assert staged.data.schema["seen"] == pl.String
-    assert _note(staged, "seen").reason == "ambiguous_dates"
+    assert _note(staged, "seen").reason == "not_dates"
 
 
 def test_stage_ambiguous_day_month_order_staysText_withNote():

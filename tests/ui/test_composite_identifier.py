@@ -297,45 +297,27 @@ class TestCompositeIdentifierIntegration:
 class TestEnsurePatientIdLogging:
     """Tests for logging in ensure_patient_id."""
 
-    def test_ensure_patient_id_logs_appropriately(self, caplog):
-        """Test that ensure_patient_id logs at appropriate levels."""
-        import logging
-
-        caplog.set_level(logging.INFO)
-
-        # Test with existing patient_id
-        df = pl.DataFrame({"patient_id": ["P1", "P2"], "age": [50, 60]})
-        VariableTypeDetector.ensure_patient_id(df)
-
-        assert any("patient_id already exists in DataFrame" in record.message for record in caplog.records)
-
-        # Test with single column identifier
-        caplog.clear()
-        df2 = pl.DataFrame({"unique_id": ["ID1", "ID2", "ID3"], "age": [50, 60, 70]})
-        VariableTypeDetector.ensure_patient_id(df2)
-
-        assert any("Found single-column identifier" in record.message for record in caplog.records)
-
-        # Test with composite identifier
-        # Use data where no single column is >95% unique, but combination is unique
-        # Need enough rows to ensure combination is unique but individual columns aren't
-        caplog.clear()
-        df3 = pl.DataFrame(
+    def test_ensurePatientId_bySource_recordsHowTheIdWasMade(self):
+        """ensure_patient_id records how the ID was made (the log text is not a contract): an
+        existing patient_id is kept, a unique ID is copied, and a combination is hashed."""
+        # Arrange
+        existing = pl.DataFrame({"patient_id": ["P1", "P2"], "age": [50, 60]})
+        single = pl.DataFrame({"unique_id": ["ID1", "ID2", "ID3"], "age": [50, 60, 70]})
+        combined = pl.DataFrame(
             {
-                "race": ["A", "A", "B", "B", "C", "C"],  # 50% unique
-                "gender": ["M", "F", "X", "M", "F", "X"],  # 50% unique, 3 levels (categorical)
-                "age": [50, 51, 52, 53, 54, 55],  # 100% unique but continuous (not identifier type)
+                "race": ["A", "A", "B", "B", "C", "C"],
+                "gender": ["M", "F", "X", "M", "F", "X"],
+                "age": [50, 51, 52, 53, 54, 55],
             }
         )
-        VariableTypeDetector.ensure_patient_id(df3)
 
-        # Age might be detected as identifier, or composite might be used
-        # Check for either path
-        has_single = any("Found single-column identifier" in record.message for record in caplog.records)
-        has_composite = any("Creating composite row key" in record.message for record in caplog.records)
+        # Act
+        sources = [
+            VariableTypeDetector.ensure_patient_id(df)[1]["patient_id_source"] for df in (existing, single, combined)
+        ]
 
-        # age is a measurement, never an ID: the (race, gender) row key is used
-        assert has_composite and not has_single
+        # Assert: age is a measurement, never an ID: the (race, gender) row key is used
+        assert sources == ["existing", "single_column", "composite"]
 
 
 class TestPatientIdNeverFromMeasurements:

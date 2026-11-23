@@ -93,6 +93,10 @@ class QualityReport(BaseModel):
     not_run: int
     summary: list[str] = Field(default_factory=list, description="Short plain-language lines for the UI")
     checks: list[QualityCheckResult] = Field(default_factory=list)
+    facts: list[str] = Field(
+        default_factory=list,
+        description="What the file holds, from its contract's semantics, in clinical words (added by the API)",
+    )
 
 
 class QualityNotRun(BaseModel):
@@ -103,6 +107,7 @@ class QualityNotRun(BaseModel):
     status: Literal["not_run"] = "not_run"
     reason: str = Field(..., description="Plain-language reason, without file paths or values")
     summary: list[str] = Field(default_factory=list)
+    facts: list[str] = Field(default_factory=list)
 
 
 @dataclass(frozen=True)

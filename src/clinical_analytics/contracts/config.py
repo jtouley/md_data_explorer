@@ -831,3 +831,41 @@ ESTIMATE_JOIN_PRECISION_METHOD: Final = (
 ESTIMATE_JOIN_PRECISION_SKIPPED: Final = (
     "{count} rows without an interval or with an estimate of 0 or below are not ranked."
 )
+
+
+# Semantics section (ADR017).
+# The contract's top-level custom property that holds the dataset's semantics section.
+SEMANTICS_PROPERTY: Final = "semantics"
+SEMANTICS_SCHEMA_VERSION: Final = 1
+
+# A date column's values must all fall in these years under its one chosen format.
+DATE_YEAR_MIN: Final = 1880
+DATE_YEAR_MAX: Final = 2100
+
+# Values that a file uses for "not recorded" when nothing documents them. One of these counts as
+# a missing-value code only when it repeats (MISSING_CODE_MIN_ROWS) and sits far outside the
+# column's other values (MISSING_CODE_GAP times the largest other value, or below 0 in a column
+# whose other values are all 0 or more). A real 99-year-old among patients aged up to 98 is a value.
+MISSING_CODE_CANDIDATES: Final[frozenset[int]] = frozenset(
+    {99, 999, 9999, 99999, 88, 888, 8888, 77, 777, 7777, 98, 998, 9998, -1, -9, -99, -999, -9999}
+)
+MISSING_CODE_MIN_ROWS: Final = 2
+MISSING_CODE_GAP: Final = 1.5
+
+# Words in a dictionary label that say the value was not recorded ("99 = questionnaire not done").
+# A label that also names a real category ("5 = unknown / other") is a category, not a missing code.
+MISSING_LABEL_PATTERN: Final = re.compile(
+    r"\b(?:not\s+(?:done|recorded|known|available|measured|collected|assessed|obtained|tested|asked|"
+    r"reported|performed|stated)|missing|no\s+data|unknown|refused|declined|don'?t\s+know|n/a)\b",
+    re.IGNORECASE,
+)
+MISSING_LABEL_EXCEPT: Final = re.compile(r"\bother\b", re.IGNORECASE)
+
+# A sequence column numbers the rows of each patient 1..k (or 0..k-1) in at least this share of
+# patients with more than one row.
+SEQUENCE_MIN_SHARE: Final = 0.9
+# A column not named for numbering (visit_no, cycle, seq) must number nearly every patient's lines.
+SEQUENCE_UNNAMED_MIN_SHARE: Final = 0.98
+# A repeating ID that names no role is the patient key only with at least this share of distinct
+# values per line (a GBD location_id repeats over thousands of lines; patients repeat a few times).
+GENERIC_KEY_MIN_SHARE: Final = 0.05

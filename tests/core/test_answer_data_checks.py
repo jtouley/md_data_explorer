@@ -27,7 +27,7 @@ from clinical_analytics.contracts.declarations import (
 )
 from clinical_analytics.contracts.errors import ContractStoreError
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
-from clinical_analytics.core.answer_checks import grain_of
+from clinical_analytics.core.answer_checks import grain_of, patient_key
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 from clinical_analytics.core.query_service import (
     CONFIRMATION_NOT_SAVED_REASON,
@@ -35,7 +35,7 @@ from clinical_analytics.core.query_service import (
     QueryService,
 )
 from clinical_analytics.core.result_presentation import present_analysis
-from clinical_analytics.core.schema_inference import SchemaInferenceEngine, patient_key_by_name
+from clinical_analytics.core.schema_inference import SchemaInferenceEngine
 from clinical_analytics.core.semantic import ENTITY_KEY_MISSING_REASON
 
 N = 200
@@ -892,9 +892,20 @@ class TestPatientKeyRanking:
             pytest.param(["patient_id", "id"], id="specific_first"),
         ],
     )
-    def test_patientKeyByName_bothOrders_specificNameWins(self, columns: list[str]) -> None:
+    def test_patientKey_bothOrders_patientNamedKeyWins(
+        self, make_semantic_layer: Any, make_semantics: Any, columns: list[str]
+    ) -> None:
+        # Arrange: the layer carries its contract semantics; "id" repeats too, but patient_id is named for the role
+        frame = pl.DataFrame({"id": [i % 50 for i in range(N)], "patient_id": IDS[:N], "age": [40] * N}).select(
+            *columns, "age"
+        )
+        layer = make_semantic_layer(
+            data=frame,
+            config_overrides={"column_mapping": {}, "semantics": make_semantics(frame).model_dump(mode="json")},
+        )
+
         # Act / Assert
-        assert patient_key_by_name(columns) == "patient_id"
+        assert patient_key(layer) == "patient_id"
 
     @pytest.mark.parametrize(
         "columns",
@@ -903,27 +914,28 @@ class TestPatientKeyRanking:
             pytest.param(["subject_id", "study_id"], id="subject_first"),
         ],
     )
-    def test_patientKeyByName_singleValuedStudyId_neverChosen(self, columns: list[str]) -> None:
+    def test_semantics_singleValuedStudyId_neverChosen(self, make_semantics: Any, columns: list[str]) -> None:
         # Arrange: study_id is the trial's one code on every row
-        distinct = {"study_id": 1, "subject_id": 170}
+        frame = pl.DataFrame({"study_id": ["TRIAL"] * N, "subject_id": IDS[:N]}).select(columns)
 
         # Act / Assert
-        assert patient_key_by_name(columns, distinct=distinct.__getitem__) == "subject_id"
+        assert make_semantics(frame).patient_key_column == "subject_id"
 
-    def test_patientKeyByName_onlySingleValuedCandidate_none(self) -> None:
+    def test_semantics_onlySingleValuedCandidate_none(self, make_semantics: Any) -> None:
         # Act / Assert
-        assert patient_key_by_name(["study_id"], distinct=lambda column: 1) is None
+        assert make_semantics(pl.DataFrame({"study_id": ["TRIAL"] * N, "age": [40] * N})).patient_key is None
 
     @pytest.mark.parametrize(
         "order",
         [pytest.param(("id", "patient_id"), id="row_number_first"), pytest.param(("patient_id", "id"), id="key_first")],
     )
     def test_ask_rowNumberIdBesideRepeatedPatientId_heldOnGrain(
-        self, make_semantic_layer: Any, order: tuple[str, str]
+        self, make_semantic_layer: Any, make_semantics: Any, order: tuple[str, str]
     ) -> None:
         # Arrange: "id" is a unique row number; patient_id repeats (visit rows)
         frame = dupids().with_columns(pl.Series("id", list(range(N)))).select(*order, "age", "died")
-        layer = make_semantic_layer(data=frame, config_overrides={"column_mapping": {}})
+        semantics = make_semantics(frame).model_dump(mode="json")
+        layer = make_semantic_layer(data=frame, config_overrides={"column_mapping": {}, "semantics": semantics})
 
         # Act
         grain = grain_of(layer)
@@ -1249,22 +1261,3 @@ class TestEntityFrequencyNeedsKey:
 
         # Assert: never a row count labelled as patients
         assert result.get("error") == ENTITY_KEY_MISSING_REASON
-
-
-@pytest.mark.parametrize(
-    ("columns", "expected"),
-    [
-        (["op_id", "pt_id", "age"], "pt_id"),
-        (["PatNo", "ward"], "PatNo"),
-        (["SUBJ-NUM", "dose"], "SUBJ-NUM"),
-        (["ptid", "site"], "ptid"),
-        (["person.id", "id"], "person.id"),
-        (["record_no", "id"], "record_no"),
-        (["hosp_mrn", "visit_no"], "hosp_mrn"),
-        (["admission_type_id", "ward"], None),
-        (["code", "value"], None),
-    ],
-)
-def test_patient_key_by_name_personIdNamesInAnyStyle_areFound(columns, expected):
-    # Act / Assert
-    assert patient_key_by_name(columns) == expected

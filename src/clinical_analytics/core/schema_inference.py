@@ -18,7 +18,6 @@ Key Principles:
 """
 
 import re
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -58,84 +57,6 @@ class DictionaryMetadata:
             if key.lower() == col_lower:
                 return value
         return None
-
-
-# Names that say "this column identifies the patient", compared after lower-casing and removing
-# everything but letters and digits, ranked: a specific name wins over a generic one whatever the
-# column order ("id" is often a row number, "study_id" the trial's one code). The patient key is
-# chosen by this role, never by how unique the values are: repeated IDs are visit-level data, not a
-# reason to lose the key (DQ B1).
-PATIENT_KEY_NAMES_SPECIFIC: tuple[str, ...] = (
-    "patientid",
-    "patientno",
-    "patientnumber",
-    "subjectid",
-    "participantid",
-    "mrn",
-    "medicalrecordnumber",
-)
-PATIENT_KEY_NAMES_GENERIC: tuple[str, ...] = ("patient", "subject", "participant", "pid", "studyid", "id")
-PATIENT_KEY_NAMES: frozenset[str] = frozenset(PATIENT_KEY_NAMES_SPECIFIC + PATIENT_KEY_NAMES_GENERIC)
-_PATIENT_KEY_RANK: dict[str, int] = {
-    name: rank for rank, name in enumerate(PATIENT_KEY_NAMES_SPECIFIC + PATIENT_KEY_NAMES_GENERIC)
-}
-
-
-# A name made of a person word and an ID word, in any case and separator style ("pt_id", "PatNo",
-# "SUBJ-NUM", "member_key", "person.id"): a patient key after the exact specific names, before the
-# generic ones. "record" + an ID word ("record_no") ranks just above a bare "id": it can also be a
-# row number.
-_PERSON_WORDS: frozenset[str] = frozenset(
-    {"pt", "pat", "patient", "subj", "subject", "participant", "member", "person", "client", "resident",
-     "individual", "enrollee", "mrn"}
-)  # fmt: skip
-_ID_WORDS: frozenset[str] = frozenset({"id", "no", "nr", "num", "number", "nbr", "key", "code", "ident", "identifier"})
-_PERSON_ID_RANK = len(PATIENT_KEY_NAMES_SPECIFIC)
-_RECORD_ID_RANK = _PATIENT_KEY_RANK["id"] - 1
-# Run-together forms ("ptid", "PATNO", "subjnum").
-_JOINED_PERSON_ID = re.compile(r"^(?:pt|pat|subj|mbr|member|person|client)(?:id|no|nr|num|nbr|key)$")
-_CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
-
-
-def _name_parts(column: str) -> list[str]:
-    return [p for p in re.split(r"[^a-z0-9]+", _CAMEL.sub("_", column).lower()) if p]
-
-
-def _patient_key_rank(column: str) -> float | None:
-    """The rank of a column name for the patient-ID role (lower is better), or None."""
-    exact = _PATIENT_KEY_RANK.get(re.sub(r"[^a-z0-9]", "", column.lower()))
-    if exact is not None:
-        return float(exact)
-    if _JOINED_PERSON_ID.match(re.sub(r"[^a-z0-9]", "", column.lower())):
-        return _PERSON_ID_RANK + 0.5
-    parts = _name_parts(column)
-    if "mrn" in parts:
-        return float(_PATIENT_KEY_RANK["mrn"])
-    if len(parts) >= 2 and parts[-1] in _ID_WORDS:
-        if _PERSON_WORDS & set(parts[:-1]):
-            return _PERSON_ID_RANK + 0.5
-        if (
-            parts[-2] == "record"
-            and parts[-1] in ("id", "no", "nr", "num", "number", "nbr")
-            and (len(parts) == 2 or parts[-3] in ("medical", "health", "patient", "chart"))
-        ):
-            return _RECORD_ID_RANK + 0.5
-    return None
-
-
-def patient_key_by_name(columns: list[str], distinct: Callable[[str], int] | None = None) -> str | None:
-    """The best-ranked column named for the patient-ID role (``PATIENT_KEY_NAMES_SPECIFIC`` before
-    ``PATIENT_KEY_NAMES_GENERIC``; column order breaks ties), or None.
-
-    ``distinct(column)`` gives a column's number of distinct values: a column with one value
-    (a trial's study_id on every row) is never the patient key, since counting it would say 1
-    patient. Without it, names alone decide.
-    """
-    ranked = sorted((rank, i, col) for i, col in enumerate(columns) if (rank := _patient_key_rank(col)) is not None)
-    for _rank, _index, col in ranked:
-        if distinct is None or distinct(col) > 1:
-            return col
-    return None
 
 
 @dataclass
@@ -234,60 +155,26 @@ class InferredSchema:
 
 
 def extract_codebooks_from_docs(doc_text: str) -> dict[str, dict[str, str]]:
-    """
-    Extract codebooks from documentation text.
+    """Codebooks from documentation lines "Name: 1: Value1, 2: Value2" (names normalized).
 
-    Parses patterns like "1: Biktarvy, 2: Symtuza" or "1: Yes 2: No" from documentation
-    and matches them to column names.
-
-    Args:
-        doc_text: Documentation text containing codebook patterns
-
-    Returns:
-        Dict mapping column names to codebooks: {column_name: {"1": "Biktarvy", "2": "Symtuza"}}
+    The pairs are read by the one dictionary label parser (``contracts.dictionary.parse_pairs``):
+    a label runs to the next code. Fewer than two codes on a line is a note, not a codebook.
 
     Example:
-        >>> text = "Current Regimen: 1: Biktarvy, 2: Symtuza"
-        >>> codebooks = extract_codebooks_from_docs(text)
-        >>> codebooks["current_regimen"]
+        >>> extract_codebooks_from_docs("Current Regimen: 1: Biktarvy, 2: Symtuza")["current_regimen"]
         {'1': 'Biktarvy', '2': 'Symtuza'}
     """
+    from clinical_analytics.contracts.dictionary import parse_pairs
+
     codebooks: dict[str, dict[str, str]] = {}
-
-    # Pattern to find codebook patterns: "ColumnName: 1: Value1, 2: Value2" or "ColumnName: 1: Value1 2: Value2"
-    # Match column name followed by colon and then code:value pairs on same line or next line
-    # Pattern: column_name : code:value pairs (stops at newline or end of codebook pattern)
-    pattern = r"^([A-Za-z_][A-Za-z0-9_\s]*?)\s*:\s*((?:\d+\s*:\s*[A-Za-z\s/]+(?:,\s*|\s+))*\d+\s*:\s*[A-Za-z\s/]+)"
-
-    # Process line by line to avoid cross-line matching
-    for line in doc_text.split("\n"):
-        line = line.strip()
-        if not line:
+    for raw in doc_text.split("\n"):
+        line = raw.strip()
+        match = re.match(r"^([A-Za-z_][A-Za-z0-9_\s]*?)\s*:\s*(\d.*)$", line)
+        if match is None:
             continue
-
-        match = re.match(pattern, line, re.IGNORECASE)
-        if match:
-            col_name_raw = match.group(1).strip()
-            codebook_text = match.group(2).strip()
-
-            # Normalize column name (lowercase, replace spaces with underscores)
-            col_name = re.sub(r"\s+", "_", col_name_raw.lower())
-
-            # Extract code:value pairs from codebook_text with pattern "1: Biktarvy, 2: Symtuza"
-            codebook: dict[str, str] = {}
-
-            # Pattern for code:value pairs (handles comma-separated and space-separated)
-            code_value_pattern = r"(\d+)\s*:\s*([A-Za-z\s/]+?)(?=\s*\d+\s*:|,|$)"
-
-            for code_match in re.finditer(code_value_pattern, codebook_text):
-                code = code_match.group(1).strip()
-                value = code_match.group(2).strip().rstrip(",").strip()
-                if code and value:
-                    codebook[code] = value
-
-            if codebook:
-                codebooks[col_name] = codebook
-
+        pairs = dict(parse_pairs(match.group(2)))
+        if len(pairs) >= 2:
+            codebooks[re.sub(r"\s+", "_", match.group(1).strip().lower())] = pairs
     return codebooks
 
 
@@ -312,20 +199,6 @@ class SchemaInferenceEngine:
     """
 
     # Pattern keywords for different column types
-    PATIENT_ID_PATTERNS: set[str] = {
-        "patient_id",
-        "patientid",
-        "patient",
-        "id",
-        "subject_id",
-        "subjectid",
-        "subject",
-        "mrn",
-        "study_id",
-        "studyid",
-        "participant_id",
-    }
-
     OUTCOME_PATTERNS: set[str] = {
         "outcome",
         "death",
@@ -365,13 +238,16 @@ class SchemaInferenceEngine:
         """Initialize schema inference engine."""
         pass
 
-    def infer_schema(self, df: pl.DataFrame, doc_context: str | None = None) -> InferredSchema:
+    def infer_schema(self, df: pl.DataFrame, doc_context: str | None = None, semantics: Any = None) -> InferredSchema:
         """
         Infer complete schema from Polars DataFrame.
 
         Args:
             df: Raw Polars DataFrame to analyze
             doc_context: Optional documentation context text (extracted from PDF/Markdown/text files)
+            semantics: The version's ``DatasetSemantics`` (the contract). The patient ID column is
+                its patient key; without it, the one semantics pass runs on ``df`` (structure and
+                ``doc_context``). Never chosen here by name.
 
         Returns:
             InferredSchema with all detected columns and confidence scores
@@ -383,18 +259,24 @@ class SchemaInferenceEngine:
         """
         schema = InferredSchema()
 
-        # 1. Detect patient ID column (highest priority)
-        schema.patient_id_column, conf = self._detect_patient_id(df)
-        if schema.patient_id_column:
-            schema.confidence_scores["patient_id"] = conf
+        # 1. The patient ID column: the contract semantics' patient key (ADR017)
+        if semantics is None:
+            from clinical_analytics.contracts.inference import UploadFacts, infer_semantics
+
+            semantics = infer_semantics(df, UploadFacts(doc_context=doc_context))
+        key = semantics.patient_key
+        if key is not None and key.column in df.columns:
+            schema.patient_id_column = key.column
+            schema.confidence_scores["patient_id"] = {"high": 0.95, "medium": 0.7, "low": 0.5}[key.confidence]
 
         # 2. Detect outcome columns (binary variables with clinical names)
         schema.outcome_columns = self._detect_outcomes(df)
         for col in schema.outcome_columns:
             schema.confidence_scores[f"outcome_{col}"] = 0.8  # Default confidence
 
-        # 3. Detect time columns (dates, numeric time values)
-        schema.time_columns = self._detect_time_columns(df)
+        # 3. Detect time columns (dates, numeric time values); the semantics' date columns first
+        dated = [c for c, col in semantics.columns.items() if col.date is not None and c in df.columns]
+        schema.time_columns = [*dated, *(c for c in self._detect_time_columns(df) if c not in dated)]
 
         # 4. Detect event columns (binary, often paired with time columns)
         schema.event_columns = self._detect_event_columns(df)
@@ -432,86 +314,18 @@ class SchemaInferenceEngine:
                 # Create empty DictionaryMetadata if parsing fails
                 dict_metadata = DictionaryMetadata()
 
-            # Extract codebooks from doc_context
+            # Codebooks: the semantics' labels (the data dictionary, read once), then "Name: 1: a, 2: b" lines
             codebooks = extract_codebooks_from_docs(doc_context)
             if codebooks:
                 dict_metadata.codebooks.update(codebooks)
+            dict_metadata.codebooks.update(
+                {c: dict(col.labels) for c, col in semantics.columns.items() if col.labels_source == "dictionary"}
+            )
 
             # Attach to schema
             schema.dictionary_metadata = dict_metadata
 
         return schema
-
-    def _detect_patient_id(self, df: pl.DataFrame) -> tuple[str | None, float]:
-        """
-        Detect patient ID column using Polars operations.
-
-        Strategy:
-        1. A column named for the role (``PATIENT_KEY_NAMES``) is the key, unique or not: repeated
-           IDs mean visit-level rows, which the contract's exact duplicate check reports and
-           answers hold on until the grain is confirmed
-        2. Otherwise a name containing an ID pattern, if its values are over 90% unique
-        3. Otherwise the most unique column with no nulls, if over 95% unique
-
-        Steps 2 and 3 take only columns that may name patients (``can_identify_patients``:
-        integers or text, never a float, fractional or measurement column), and never the row
-        number added for a dataset without an identifier.
-
-        Args:
-            df: Polars DataFrame
-
-        Returns:
-            Tuple of (column_name, confidence_score)
-        """
-        # By role first: an ID-named column is the key whether or not its values repeat. The
-        # exact duplicate check runs on it later (contract), so repeats are reported, not hidden.
-        named = patient_key_by_name(
-            list(df.columns), distinct=lambda c: df[c].drop_nulls().n_unique() if df.height > 1 else 2
-        )
-        if named is not None:
-            complete = df[named].null_count() == 0 and df[named].n_unique() == df.height
-            return named, 0.95 if complete else 0.6
-
-        from clinical_analytics.core.identifier_rules import ROW_NUMBER_COLUMN, can_identify_patients
-
-        eligible = [c for c in df.columns if c.lstrip("_") != ROW_NUMBER_COLUMN and can_identify_patients(df[c])]
-        for col in eligible:
-            col_lower = col.lower()
-
-            # Check name patterns
-            if any(pattern in col_lower for pattern in self.PATIENT_ID_PATTERNS):
-                # Verify high uniqueness
-                unique_count = df[col].n_unique()
-                total_count = df.height
-                uniqueness_ratio = unique_count / total_count if total_count > 0 else 0
-
-                # Check for nulls
-                null_count = df[col].null_count()
-
-                if uniqueness_ratio > 0.95 and null_count == 0:
-                    return col, 0.95
-                elif uniqueness_ratio > 0.9:
-                    return col, 0.85
-
-        # Fallback: highest cardinality column with no nulls
-        best_col = None
-        best_ratio = 0.0
-
-        for col in eligible:
-            unique_count = df[col].n_unique()
-            total_count = df.height
-            null_count = df[col].null_count()
-
-            uniqueness_ratio = unique_count / total_count if total_count > 0 else 0
-
-            if null_count == 0 and uniqueness_ratio > best_ratio:
-                best_ratio = uniqueness_ratio
-                best_col = col
-
-        if best_ratio > 0.95:
-            return best_col, 0.7  # Lower confidence for fallback
-
-        return None, 0.0
 
     def _detect_outcomes(self, df: pl.DataFrame) -> list[str]:
         """

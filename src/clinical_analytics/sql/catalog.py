@@ -2,8 +2,10 @@
 """What a governed query may read: the columns of the dataset's contract, and where they are.
 
 The contract (``contracts/<upload_id>/<version>.odcs.yaml``) is the only schema: a column that is
-not one of its properties does not exist for SQL, and its identifier and PHI tags decide where a
-column may appear. The rows are the stored Parquet of the same version (written by ``storage``),
+not one of its properties does not exist for SQL. The patient identifier is the contract
+semantics' patient key (ADR017; ``contracts.semantics``); app columns copied from it and PHI-tagged
+properties are coarsen-only. A contract written before semantics existed falls back to its
+identifier and PHI tags. The rows are the stored Parquet of the same version (written by ``storage``),
 with the dataset's confirmed level merges applied, so SQL sees the same levels as the intent path.
 """
 
@@ -20,6 +22,7 @@ from sqlglot import exp
 from clinical_analytics.contracts.config import UNIFIED_OBJECT_NAME
 from clinical_analytics.contracts.declarations import LevelMapping
 from clinical_analytics.contracts.quality import is_id_property, is_restricted_property
+from clinical_analytics.contracts.semantics import DatasetSemantics, semantics_from_contract
 from clinical_analytics.sql.errors import SqlRefusedError
 from clinical_analytics.sql.render import render
 
@@ -99,7 +102,8 @@ class SqlCatalog:
         unified = next((o for o in contract.schema_ or [] if o.name == UNIFIED_OBJECT_NAME), None)
         if unified is None or not unified.properties:
             raise SqlRefusedError("This dataset's data contract lists no columns, so SQL cannot be checked against it.")
-        columns = tuple(_spec(p) for p in unified.properties)
+        semantics = semantics_from_contract(contract)
+        columns = tuple(_spec(p, semantics) for p in unified.properties)
         folded = [c.name.casefold() for c in columns]
         if len(set(folded)) < len(folded):
             # DuckDB names are case-insensitive: it reads the second of "Age" and "age" as
@@ -111,11 +115,21 @@ class SqlCatalog:
         return cls(columns=columns, parquet_path=parquet_path, levels=tuple(m for m in levels if m.column in names))
 
 
-def _spec(prop: SchemaProperty) -> ColumnSpec:
+def _spec(prop: SchemaProperty, semantics: DatasetSemantics | None) -> ColumnSpec:
     name = prop.physicalName or prop.name
     if not name:
         raise SqlRefusedError("This dataset's data contract has a column without a name.")
-    # The same rules as the quality report's, so the two never disagree on what is an ID or PHI.
+    if semantics is not None:
+        # The ID is the semantics' patient key; a copy or hash the app made of an ID is as
+        # restricted as the ID, and a PHI tag still makes a column coarsen-only.
+        app = semantics.app_column(name)
+        return ColumnSpec(
+            name=name,
+            logical_type=str(prop.logicalType or "string"),
+            is_id=name == semantics.patient_key_column,
+            phi=is_restricted_property(prop) or (app is not None and app.kind in ("copy", "hash")),
+        )
+    # Legacy contract: the same rules as the quality report's, so the two never disagree.
     return ColumnSpec(
         name=name,
         logical_type=str(prop.logicalType or "string"),

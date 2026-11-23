@@ -23,7 +23,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import polars as pl
 import pydantic
@@ -35,6 +35,9 @@ from clinical_analytics.contracts import config
 from clinical_analytics.contracts.errors import ContractValidationError
 from clinical_analytics.core.identifier_rules import Interval, find_intervals
 from clinical_analytics.core.metadata_patch import ResolvedColumnMetadata, ResolvedDatasetMetadata
+
+if TYPE_CHECKING:
+    from clinical_analytics.contracts.semantics import ColumnSemantics, DatasetSemantics
 
 _SLUG_STRIP = re.compile(r"[^A-Za-z0-9]+")
 _INT_CODE = re.compile(r"^-?\d+$")
@@ -58,6 +61,22 @@ class ContractInputs:
     tags: tuple[str, ...] = ()
     created_at: datetime | None = None
     extra_custom_properties: dict[str, Any] = field(default_factory=dict)
+    # The version's semantics (ADR017): stored in the contract, and the source of the ID column,
+    # the grain, code labels, stated ranges and units below.
+    semantics: DatasetSemantics | None = None
+
+    @classmethod
+    def from_semantics(cls, semantics: DatasetSemantics, **fields: Any) -> ContractInputs:
+        """Inputs whose identifier is the semantics' patient key, and whose restricted columns are
+        the app's copies and hashes of IDs (they hold the same values as an ID or a row key)."""
+        copies = tuple(a.column for a in semantics.app_columns if a.kind in ("copy", "hash"))
+        key = semantics.patient_key_column
+        return cls(
+            id_column=key,
+            id_source_columns=tuple(c for c in copies if c != key),
+            semantics=semantics,
+            **fields,
+        )
 
 
 def logical_type(dtype: pl.DataType) -> str:
@@ -237,9 +256,12 @@ def _typed_code(code: str, dtype: pl.DataType) -> int | float | str | None:
     return None
 
 
-def column_codebook(column: str, meta: ResolvedColumnMetadata | None) -> dict[str, str]:
-    """Header codebook, overridden per code by dictionary/accepted-patch codebook entries."""
-    codebook = dict(code_labels(column))
+def column_codebook(
+    column: str, meta: ResolvedColumnMetadata | None, semantic: ColumnSemantics | None = None
+) -> dict[str, str]:
+    """Code labels from the semantics (data dictionary, else header), overridden per code by
+    accepted-patch codebook entries. Without semantics, the header codebook."""
+    codebook = dict(semantic.labels) if semantic is not None else dict(code_labels(column))
     if meta is not None and meta.codebook:
         codebook.update({str(k): v for k, v in meta.codebook.items()})
     return codebook
@@ -291,11 +313,12 @@ def _censored_rule(name: str) -> dict[str, Any]:
     }
 
 
-def _id_rules(name: str) -> list[dict[str, Any]]:
-    """Identifier rules. The exact duplicate check always runs; a repeat is reported, and answers
-    ask whether rows are visits before counting patients. Wording and severity do not depend on
-    the data, so a tiny table's report (every count hidden) does not tell whether IDs repeat."""
-    return [
+def _id_rules(name: str, repeats_expected: bool = False) -> list[dict[str, Any]]:
+    """Identifier rules. The exact duplicate check runs unless the semantics say rows are not one
+    per patient (visits, encounters, cycles): there a repeated patient ID is expected, never a
+    failed check. Wording and severity do not depend on the data, so a tiny table's report
+    (every count hidden) does not tell whether IDs repeat."""
+    rules = [
         {
             "id": f"{name}_not_null",
             "type": "library",
@@ -315,6 +338,7 @@ def _id_rules(name: str) -> list[dict[str, Any]]:
             "description": "One row per identifier; repeats mean rows may be visits, confirmed before counting",
         },
     ]
+    return rules[:1] if repeats_expected else rules
 
 
 def _unidentified_id_rules() -> list[dict[str, Any]]:
@@ -345,6 +369,7 @@ def _unidentified_id_rules() -> list[dict[str, Any]]:
 
 def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs) -> dict[str, Any]:
     meta = inputs.resolved.columns.get(column) if inputs.resolved else None
+    semantic = inputs.semantics.column(column) if inputs.semantics is not None else None
     dtype = series.dtype
     is_id = column == inputs.id_column
     prop: dict[str, Any] = {
@@ -364,6 +389,8 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
         custom.append(_custom("variableKind", classify_variable(series)))
     if meta and meta.unit:
         custom.append(_custom("unit", meta.unit))
+    elif semantic is not None and semantic.unit is not None:
+        custom.append(_custom("unit", semantic.unit.value))
     if meta and meta.semantic_type:
         custom.append(_custom("clinicalSemanticType", meta.semantic_type.value))
 
@@ -379,7 +406,8 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
         else:
             prop.update({"primaryKey": True, "primaryKeyPosition": 1, "unique": True})
         prop["criticalDataElement"] = True
-        quality.extend(_id_rules(name))
+        repeats_expected = inputs.semantics is not None and not inputs.semantics.one_row_per_patient
+        quality.extend(_id_rules(name, repeats_expected=repeats_expected))
     else:
         quality.append(_missing_rule(name))
         if dtype == pl.String and is_numeric_text(series):
@@ -388,7 +416,7 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
         prop["classification"] = "restricted"
         prop["tags"] = ["phi"]
 
-    codebook = column_codebook(column, meta)
+    codebook = column_codebook(column, meta, semantic)
     typed = [(_typed_code(code, dtype), label) for code, label in codebook.items()]
     enum = [{"value": value, "label": label} for value, label in typed if value is not None]
     if enum and not is_id and dtype != pl.Boolean:
@@ -407,11 +435,21 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
                 "description": "Values must be codes the codebook documents",
             }
         )
-        if code_labels(column):
+        if semantic is not None and semantic.labels_source == "dictionary":
+            prop["transformDescription"] = "Codebook from the data dictionary"
+        elif code_labels(column):
             prop["transformDescription"] = "Codebook decoded from the column header"
 
     median = series.median() if dtype.is_numeric() and dtype != pl.Boolean else None
     bounds = range_for(column, float(median) if isinstance(median, int | float) else None)
+    if semantic is not None and semantic.stated_range is not None:
+        # The dictionary's stated range ("PHQ-9 total score (0-27)") is this column's range.
+        stated = semantic.stated_range
+        unit_text = semantic.unit.value if semantic.unit is not None else "as stated"
+        bounds = config.PlausibilityRange(
+            variable=column, aliases=frozenset(), minimum=stated.minimum, maximum=stated.maximum,
+            unit=unit_text, source="data dictionary",
+        )  # fmt: skip
     # Codes are not measurements ("Age 1: young 2: old"): a coded column gets no range check.
     if bounds is None and not is_id and "enum" not in prop and dtype.is_numeric() and dtype != pl.Boolean:
         if series.null_count() < series.len() and classify_variable(series) == "continuous":
@@ -435,8 +473,13 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
     return prop
 
 
-def _granularity(df: pl.DataFrame, id_column: str | None) -> str:
-    """The grain the data shows: one row per identifier, or several (rows may be visits)."""
+def _granularity(df: pl.DataFrame, id_column: str | None, semantics: DatasetSemantics | None = None) -> str:
+    """The grain: the semantics' clinical noun, else what the data shows (one row per identifier,
+    or several: rows may be visits)."""
+    if semantics is not None:
+        grain = semantics.grain
+        per = f"; {id_column} names the patient" if id_column else "; no column names a patient"
+        return f"One row per {grain.noun}{per}"
     if id_column is None:
         return "One row per record as uploaded; no identifier column"
     present = df.get_column(id_column).drop_nulls()
@@ -469,6 +512,12 @@ def build_contract(df: pl.DataFrame, inputs: ContractInputs) -> OpenDataContract
     if inputs.source_file_sha256:
         custom.append(_custom("sourceFileSha256", inputs.source_file_sha256))
     custom.extend(_custom(k, v) for k, v in inputs.extra_custom_properties.items())
+    if inputs.semantics is not None:
+        from clinical_analytics.contracts.semantics import semantics_property
+
+        custom.append(
+            semantics_property(inputs.semantics.model_copy(update={"dataset_version": inputs.dataset_version}))
+        )
 
     document: dict[str, Any] = {
         "apiVersion": config.ODCS_API_VERSION,
@@ -489,7 +538,7 @@ def build_contract(df: pl.DataFrame, inputs: ContractInputs) -> OpenDataContract
                 "name": config.UNIFIED_OBJECT_NAME,
                 "physicalName": config.UNIFIED_OBJECT_NAME,
                 "logicalType": "object",
-                "dataGranularityDescription": _granularity(df, inputs.id_column),
+                "dataGranularityDescription": _granularity(df, inputs.id_column, inputs.semantics),
                 "quality": [
                     *([] if inputs.id_column else _unidentified_id_rules()),
                     *(_interval_rule(interval, names) for interval in find_intervals(df.schema)),

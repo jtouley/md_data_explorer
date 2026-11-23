@@ -41,7 +41,6 @@ from clinical_analytics.core.identifier_rules import PATIENT_ROWS_ASKABLE_CONFIG
 from clinical_analytics.core.plan_values import plan_values
 from clinical_analytics.core.query_plan import QueryPlan
 from clinical_analytics.core.result_presentation import AMOUNT, DataNote, counted_note, text_note
-from clinical_analytics.core.schema_inference import patient_key_by_name
 
 logger = structlog.get_logger(__name__)
 
@@ -94,17 +93,23 @@ class Findings:
 
 
 def patient_key(layer: Any) -> str | None:
-    """The base view's patient key: the column mapped to ``patient_id``, else the best-ranked
-    column named for it that holds more than one value."""
+    """The base view's patient key: the contract semantics' patient key (ADR017) for an uploaded
+    dataset; for a built-in dataset configured by hand, the column its config maps to
+    ``patient_id``. Never chosen by name: no key means n counts rows."""
+    from clinical_analytics.contracts.semantics import layer_semantics
+
     config = getattr(layer, "config", None) or {}
     if config.get(ROW_KEY_CONFIG_FLAG):
-        return None  # the upload synthesized patient_id: it keys rows, so n counts rows
+        return None  # no column names a patient: n counts rows
     columns = list(layer.get_base_view().columns)
+    semantics = layer_semantics(layer)
+    if semantics is not None:
+        key = semantics.patient_key_column
+        return key if key in columns else None
     mapping = config.get("column_mapping") or {}
     if "patient_id" in mapping.values() and "patient_id" in columns:
         return "patient_id"
-    rows = layer._base_count(None)
-    return patient_key_by_name(columns, distinct=lambda column: layer._base_count(column) if rows > 1 else 2)
+    return None
 
 
 def grain_of(layer: Any) -> Grain:

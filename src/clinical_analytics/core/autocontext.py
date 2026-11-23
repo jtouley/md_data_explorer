@@ -51,6 +51,33 @@ class AutoContext:
     relationships: list[Any] | None = None
 
 
+def _semantic_entity_keys(semantics: Any) -> list[str]:
+    """Entity keys from the contract's semantics (ADR017): the patient key, then the row key,
+    then grouping columns. Sequence and app columns are never entity keys."""
+    keys: list[str] = []
+    if semantics.patient_key is not None:
+        keys.append(semantics.patient_key.column)
+    for column in (*semantics.row_key.columns, *(g.column for g in semantics.grouping_columns)):
+        if column not in keys and semantics.row_key.kind != "composite":
+            keys.append(column)
+    return keys
+
+
+def _semantic_dtype(column: Any) -> Literal["numeric", "categorical", "datetime", "id", "coded"] | None:
+    """A column's context type from its semantics, or None to fall back to the schema."""
+    if column is None:
+        return None
+    if column.role in ("patient_key", "row_key", "grouping", "app_added"):
+        return "id"
+    if column.date is not None:
+        return "datetime"
+    if column.labels:
+        return "coded"
+    if column.logical_type in ("integer", "number"):
+        return "numeric"
+    return None
+
+
 def _extract_entity_keys(inferred_schema: Any) -> list[str]:
     """
     Extract entity keys from inferred schema with deterministic ranking.
@@ -212,6 +239,7 @@ def _build_column_contexts(
     inferred_schema: Any,
     query_terms: list[str] | None = None,
     resolved_metadata: Any = None,
+    semantics: Any = None,
 ) -> list[ColumnContext]:
     """
     Build column contexts from semantic layer and schema.
@@ -245,8 +273,12 @@ def _build_column_contexts(
         # Determine dtype
         dtype: Literal["numeric", "categorical", "datetime", "id", "coded"] = "categorical"  # default
 
-        # Check schema first (most reliable)
-        if col_name == inferred_schema.patient_id_column or "id" in col_name.lower():
+        semantic_column = semantics.column(col_name) if semantics is not None else None
+        semantic_dtype = _semantic_dtype(semantic_column)
+        # The contract's semantics first (ADR017), then the schema
+        if semantic_dtype is not None:
+            dtype = semantic_dtype
+        elif semantics is None and (col_name == inferred_schema.patient_id_column or "id" in col_name.lower()):
             dtype = "id"
         elif col_name in inferred_schema.continuous_columns:
             dtype = "numeric"
@@ -281,14 +313,18 @@ def _build_column_contexts(
 
         # Get codebook from metadata
         codebook = None
-        if col_metadata and "codebook" in col_metadata:
+        if semantic_column is not None and semantic_column.labels:
+            codebook = dict(semantic_column.labels)
+        elif col_metadata and "codebook" in col_metadata:
             codebook = col_metadata["codebook"]
         elif inferred_schema.dictionary_metadata:
             codebook = inferred_schema.dictionary_metadata.codebooks.get(col_name)
 
         # Get units from metadata or column name
         units = None
-        if col_metadata and "units" in col_metadata:
+        if semantic_column is not None and semantic_column.unit is not None:
+            units = semantic_column.unit.value
+        elif col_metadata and "units" in col_metadata:
             units = col_metadata["units"]
         else:
             # Try to extract from column name using column_parser
@@ -536,15 +572,21 @@ def build_autocontext(
     Returns:
         AutoContext pack with schema context (enriched if resolved_metadata provided)
     """
+    from clinical_analytics.contracts.semantics import layer_semantics
+
     # Reconstruct inferred_schema if not provided
     if inferred_schema is None:
         inferred_schema = _reconstruct_inferred_schema_from_semantic_layer(semantic_layer)
+    # An uploaded dataset's layer carries its contract semantics: keys and types come from it.
+    semantics = layer_semantics(semantic_layer)
 
     # Step 1: Extract entity keys (deterministic ranking)
-    entity_keys = _extract_entity_keys(inferred_schema)
+    entity_keys = _semantic_entity_keys(semantics) if semantics is not None else _extract_entity_keys(inferred_schema)
 
     # Step 2: Build column catalog (with resolved metadata enrichment if available)
-    column_contexts = _build_column_contexts(semantic_layer, inferred_schema, query_terms, resolved_metadata)
+    column_contexts = _build_column_contexts(
+        semantic_layer, inferred_schema, query_terms, resolved_metadata, semantics=semantics
+    )
 
     # Step 3: Filter columns by relevance if query_terms provided
     if query_terms:

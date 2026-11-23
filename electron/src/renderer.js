@@ -61,6 +61,8 @@ import {
 import {
   dataCheckNeedsReview,
   dataCheckStatusNote,
+  normalizeFacts,
+  renderFacts,
   normalizeQuality,
   renderDataCheck,
 } from './dataCheckPanel.js';
@@ -103,6 +105,8 @@ const elements = {
   datasetOverviewSummary: document.getElementById('dataset-overview-summary'),
   dataCheckSection: document.getElementById('data-check-section'),
   dataCheckHint: document.getElementById('data-check-hint'),
+  dataFactsHint: document.getElementById('data-facts-hint'),
+  dataFactsList: document.getElementById('data-facts-list'),
   dataCheckList: document.getElementById('data-check-list'),
   datasetPreviewHead: document.getElementById('dataset-preview-head'),
   datasetPreviewBody: document.getElementById('dataset-preview-body'),
@@ -969,11 +973,19 @@ async function loadDataCheck(datasetId) {
     return;
   }
   const parts = { hint: dataCheckHint, list: dataCheckList };
+  const factParts =
+    elements.dataFactsHint && elements.dataFactsList
+      ? { hint: elements.dataFactsHint, list: elements.dataFactsList }
+      : null;
   dataCheckSection.classList.remove('hidden');
   renderDataCheck(parts, 'loading');
+  if (factParts) renderFacts(factParts, []);
   let check;
+  let facts = [];
   try {
-    check = normalizeQuality(await window.clinicalAPI.getDatasetQuality(datasetId));
+    const raw = await window.clinicalAPI.getDatasetQuality(datasetId);
+    check = normalizeQuality(raw);
+    facts = normalizeFacts(raw?.facts);
   } catch (error) {
     check = {
       status: 'not_run',
@@ -981,6 +993,7 @@ async function loadDataCheck(datasetId) {
     };
   }
   if (datasetId !== state.currentDatasetId) return;
+  if (factParts) renderFacts(factParts, facts);
   renderDataCheck(parts, check);
 }
 

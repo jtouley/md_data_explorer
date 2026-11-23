@@ -22,12 +22,7 @@ from typing import Any
 
 import polars as pl
 
-from clinical_analytics.core.identifier_rules import (
-    REPEATED_ID_COLUMNS_KEY,
-    ROW_NUMBER_COLUMN,
-    can_identify_patients,
-    repeated_id_columns,
-)
+from clinical_analytics.core.identifier_rules import can_identify_patients
 
 logger = logging.getLogger(__name__)
 
@@ -361,107 +356,21 @@ class VariableTypeDetector:
 
     @classmethod
     def ensure_patient_id(cls, df: Any) -> tuple[pl.DataFrame, dict[str, Any]]:
-        """
-        Ensure the DataFrame has a patient_id column, or a row number when nothing identifies rows.
+        """Add the app's ID column the way the upload does: from the contract semantics pass.
 
-        In order:
-        - An existing 'patient_id' column is kept.
-        - Else the most unique identifier column (integers or text, never a measurement) is
-          copied to 'patient_id'; the source column stays, so it can still be queried.
-        - Else a combination of columns unique on every row is hashed into 'patient_id'
-          (source 'composite'). It is a row key (location x cause x sex x year), not a patient:
-          answers on it count rows.
-        - Else a row number column (``ROW_NUMBER_COLUMN``, 1..n) is added and no 'patient_id'
-          exists (source 'row_index'): answers count rows.
-
-        Args:
-            df: DataFrame (pandas or polars - converted internally)
+        The patient key, row key or combination comes from ``contracts.inference`` (structure only:
+        no dictionary here), and ``add_id_columns`` copies it to ``patient_id``, hashes a
+        combination into it, or numbers the rows. Used for stored data that lost its ID column.
 
         Returns:
-            Tuple of (DataFrame, metadata dict)
-            Metadata includes:
-            - 'patient_id_source': 'existing' | 'single_column' | 'composite' | 'row_index'
-            - 'patient_id_columns': list of source columns (None for 'existing' and 'row_index')
-            - 'row_number_column': the added row number column ('row_index' only)
-            - 'repeated_id_columns': ID-like columns whose values repeat ('single_column' row
-              keys and 'row_index' only; ``identifier_rules.rows_may_be_patients``)
+            (DataFrame, the ``synthetic_id_metadata.patient_id`` record: 'patient_id_source' is
+            'existing' | 'single_column' | 'composite' | 'row_index', 'patient_id_columns', and
+            'row_number_column' for 'row_index')
         """
-        df = _ensure_polars_df(df)
-        from clinical_analytics.core.type_aliases import OptionalList, OptionalStr
+        from clinical_analytics.contracts.inference import add_id_columns, infer_semantics
 
-        metadata: dict[str, OptionalStr | OptionalList] = {"patient_id_source": None, "patient_id_columns": None}
-        n_rows = df.height
-
-        logger.debug(f"ensure_patient_id: Starting with {n_rows} rows, {df.width} columns")
-
-        # CONDITION 1: Check if patient_id already exists
-        if "patient_id" in df.columns:
-            logger.info("patient_id already exists in DataFrame")
-            metadata["patient_id_source"] = "existing"
-            return df, metadata  # Early return - no synthetic ID needed
-
-        # CONDITION 2a: a column named as a patient ID (subject_id, MRN, ...) is the patient key,
-        # even when it repeats: repeats are visits, which the grain check asks the user to
-        # confirm. Never a row key, so answers count its distinct values as patients.
-        from clinical_analytics.core.schema_inference import patient_key_by_name
-
-        eligible = [col for col in df.columns if not _is_measurement(df, col)]
-
-        # A column empty on most rows identifies few of them: never the patient key.
-        def usable_distinct(col: str) -> int:
-            series = df.get_column(col)
-            return series.drop_nulls().n_unique() if series.null_count() * 2 <= series.len() else 0
-
-        named = patient_key_by_name(eligible, distinct=usable_distinct)
-        if named is not None:
-            logger.info("Found a column named as a patient ID; copied to patient_id")
-            metadata["patient_id_source"] = "single_column"
-            metadata["patient_id_columns"] = [named]
-            return df.with_columns(pl.col(named).alias("patient_id")), metadata
-
-        # CONDITION 2b: an identifier column not named as a patient ID keys rows, so it must be
-        # unique on every row (no repeats, no empty values), like a composite key.
-        logger.debug("No existing patient_id, searching for single-column identifier...")
-        variable_info = cls.detect_all_variables(df)
-        best_id_col = None
-        best_uniqueness = 0.0
-
-        for col, info in variable_info.items():
-            if info["type"] == "identifier" and not _is_measurement(df, col):
-                series = df.get_column(col)
-                if series.null_count() or series.n_unique() != n_rows:
-                    continue
-                uniqueness = info["metadata"].get("uniqueness", 0)
-                if uniqueness > best_uniqueness:
-                    best_uniqueness = uniqueness
-                    best_id_col = col
-
-        # ID-like columns that repeat: recorded for the row keys that may ask "Is each row one
-        # patient?" (identifier_rules.rows_may_be_patients); any one of them means it is not asked.
-        identifier_columns = [col for col, info in variable_info.items() if info["type"] == "identifier"]
-
-        # Copied, never renamed: the source column stays queryable under its own name.
-        if best_id_col:
-            logger.info(f"Found single-column identifier with {best_uniqueness * 100:.1f}% uniqueness")
-            metadata["patient_id_source"] = "single_column"
-            metadata["patient_id_columns"] = [best_id_col]
-            metadata[REPEATED_ID_COLUMNS_KEY] = repeated_id_columns(df, identifier_columns)
-            return df.with_columns(pl.col(best_id_col).alias("patient_id")), metadata
-
-        # CONDITION 3: a combination unique on every row: a synthesized row key
-        composite_cols = cls.find_composite_identifier_candidates(df)
-        if composite_cols:
-            logger.info(f"Creating composite row key from {len(composite_cols)} columns ({n_rows} rows)")
-            metadata["patient_id_source"] = "composite"
-            metadata["patient_id_columns"] = composite_cols
-            return cls.create_synthetic_patient_id(df, composite_cols), metadata
-
-        # CONDITION 4: Nothing identifies a row: number the rows (unit "rows", not "patients")
-        row_column = ROW_NUMBER_COLUMN
-        while row_column in df.columns:
-            row_column = f"_{row_column}"
-        logger.info(f"No identifier among {df.width} columns; added row number column for {n_rows} rows")
-        metadata["patient_id_source"] = "row_index"
-        metadata["row_number_column"] = row_column
-        metadata[REPEATED_ID_COLUMNS_KEY] = repeated_id_columns(df, identifier_columns)
-        return df.with_row_index(row_column, offset=1).with_columns(pl.col(row_column).cast(pl.Int64)), metadata
+        frame = _ensure_polars_df(df)
+        semantics = infer_semantics(frame)
+        with_id, metadata, _semantics = add_id_columns(frame, semantics)
+        logger.info("ensure_patient_id source=%s", metadata["patient_id_source"])
+        return with_id, metadata

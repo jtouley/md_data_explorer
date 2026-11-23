@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import datetime as dt
 import io
 
 import openpyxl
@@ -18,7 +17,7 @@ def _mixed_dates_csv() -> bytes:
     return ("\n".join(["patient_id,admit_date,age", *rows]) + "\n").encode()
 
 
-def test_uploadDataset_mixedDateFormats_readyThenQueryable(test_client: TestClient, isolated_data_home):
+def test_uploadDataset_mixedDateFormats_readyTextKeptAndSaid(test_client: TestClient, isolated_data_home):
     # Arrange
     from clinical_analytics.api import dependencies
 
@@ -38,7 +37,9 @@ def test_uploadDataset_mixedDateFormats_readyThenQueryable(test_client: TestClie
     assert body["cohort_notes"] == []  # single table: nothing left out of the cohort
     assert frame.height == 200
     assert frame.schema["age"] == pl.Int64
-    assert frame["admit_date"].unique().to_list() == [dt.date(2023, 1, 15)]
+    # Two date formats in one column: never read per row (ADR017); kept as text, and said
+    assert frame.schema["admit_date"] == pl.String
+    assert any("admit_date" in note for note in body["type_notes"])
     dependencies.invalidate_semantic_layer_cache(body["upload_id"])
 
 
