@@ -182,15 +182,24 @@ def test_inferSemantics_sequenceColumn_orderWithinPatientNeverAnId(seq: str) -> 
             datetime(2021, 3, 4, 10, 5),
             id="iso_datetime",
         ),
-        pytest.param(["13/04/2021", "03/04/2021"], "%d/%m/%Y", date(2021, 4, 13), id="day_first"),
-        pytest.param(["04/13/2021", "04/03/2021"], "%m/%d/%Y", date(2021, 4, 13), id="month_first"),
+        pytest.param(
+            ["13/04/2021", "03/04/2021", "25/12/2020", "14/02/2021"], "%d/%m/%Y", date(2021, 4, 13), id="day_first"
+        ),
+        pytest.param(
+            ["04/13/2021", "04/03/2021", "12/25/2020", "02/14/2021"], "%m/%d/%Y", date(2021, 4, 13), id="month_first"
+        ),
         pytest.param(["04.03.2021", "13.03.2021"], "%d.%m.%Y", date(2021, 3, 4), id="dotted"),
-        pytest.param(["13/04/21", "03/04/21"], "%d/%m/%y", date(2021, 4, 13), id="two_digit_year"),
+        pytest.param(
+            ["13/04/21", "03/04/21", "25/12/20", "14/02/21"], "%d/%m/%y", date(2021, 4, 13), id="two_digit_year"
+        ),
         pytest.param(["20210304", "20211231"], "%Y%m%d", date(2021, 3, 4), id="yyyymmdd_text"),
         pytest.param(["March 4, 2021", "Dec 31, 2020"], "%B %d, %Y", date(2021, 3, 4), id="month_name_first"),
         pytest.param(["7 March 2019", "7 Mar 2019"], "%d %B %Y", date(2019, 3, 7), id="day_month_name"),
         pytest.param(
-            ["03/14/2021 14:05", "03/04/2021 09:00"], "%m/%d/%Y %H:%M", datetime(2021, 3, 14, 14, 5), id="us_datetime"
+            ["03/14/2021 14:05", "03/04/2021 09:00", "12/25/2020 08:00", "02/14/2021 10:30"],
+            "%m/%d/%Y %H:%M",
+            datetime(2021, 3, 14, 14, 5),
+            id="us_datetime",
         ),
     ],
 )
@@ -300,33 +309,36 @@ def test_inferSemantics_dictionaryStatesFormat_settlesOrderAndRecordsExample() -
 
 # --------------------------------------------------------------------------- 5. missing-value codes
 @pytest.mark.parametrize(
-    ("column", "values", "expected"),
+    ("column", "values", "asked"),
     [
-        pytest.param("end_weight", [70.5, 80.0, 999.0, 999.0, 65.0], [999], id="undocumented_999_far_above"),
-        pytest.param("age", [40, 98, 99, 99, 60], [], id="real_99_year_olds"),
-        pytest.param("anc_count", [3, 4, 999, 5, 6], [], id="single_999_is_an_entry_error"),
-        pytest.param("pain_score", [3, -1, -1, 0, 7], [-1], id="minus_one_in_nonnegative"),
-        pytest.param("pain_score", [None, None, None, None, None], [], id="all_empty"),
+        pytest.param("end_weight", [70.5, 80.0, 999.0, 999.0, 999.0, 65.0], 999.0, id="undocumented_999_far_above"),
+        pytest.param("age", [40, 98, 99, 99, 99, 60], None, id="real_99_year_olds"),
+        pytest.param("anc_count", [3, 4, 999, 5, 6], None, id="single_999_is_an_entry_error"),
+        pytest.param("pain_score", [3, -1, -1, -1, 0, 7], -1, id="minus_one_in_nonnegative"),
+        pytest.param("pain_score", [None, None, None, None, None], None, id="all_empty"),
     ],
 )
-def test_inferSemantics_sentinels_onlyFarOutsideAndRepeated(
-    column: str, values: list[Any], expected: list[Any]
-) -> None:
+def test_inferSemantics_undocumentedSentinels_askedNeverNulled(column: str, values: list[Any], asked: Any) -> None:
     # Arrange
     df = pl.DataFrame({column: values}, schema={column: pl.Float64 if isinstance(values[0], float) else pl.Int64})
 
     # Act
-    codes = [m.value for m in infer_semantics(df).column(column).missing_codes]
+    semantics = infer_semantics(df)
+    applied = apply_semantics(df, semantics)
 
-    # Assert
-    assert codes == expected
+    # Assert: an undocumented code is a question, and the values stay as they are
+    question = semantics.question("missing_code")
+    assert (question.value if question else None) == asked
+    assert semantics.column(column).missing_codes == ()
+    assert_frame_equal(applied, df)
 
 
 def test_applySemantics_documentedCodes_storedMissingAndSafeTwice() -> None:
-    # Arrange: psoriasis biologics; the dictionary documents 99 and "unknown"
-    df = pl.DataFrame({"pasi": [3, 99, 12, 99], "smoker": ["yes", "unknown", "no", "yes"]})
+    # Arrange: psoriasis biologics; the dictionary documents 99 (outside 0-72) and a "not recorded" code
+    df = pl.DataFrame({"pasi": [3, 99, 12, 99], "smoker": ["Y", "NR", "N", "Y"]})
     doc = (
-        "pasi     PASI score (0-72). 99 = not assessed at this visit\nsmoker   Smoking: yes, no, unknown = not asked\n"
+        "pasi     PASI score (0-72). 99 = not assessed at this visit\n"
+        "smoker   Smoking: Y = smoker, N = non-smoker, NR = not recorded\n"
     )
 
     # Act
@@ -335,7 +347,7 @@ def test_applySemantics_documentedCodes_storedMissingAndSafeTwice() -> None:
     twice = apply_semantics(once, semantics)
 
     # Assert
-    expected = pl.DataFrame({"pasi": [3, None, 12, None], "smoker": ["yes", None, "no", "yes"]})
+    expected = pl.DataFrame({"pasi": [3, None, 12, None], "smoker": ["Y", None, "N", "Y"]})
     assert_frame_equal(once, expected)
     assert_frame_equal(twice, once)
     assert semantics.column("pasi").stated_range.maximum == 72

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+import polars as pl
 import structlog
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -70,20 +71,34 @@ def _declaration_store() -> FileDeclarationStore:
     return FileDeclarationStore(uploads_dir().parent)
 
 
-def _contract_names_patient(storage: UserDatasetStorage, dataset_id: str, version: str | None) -> bool:
-    """Whether the version's contract semantics name a patient key (``semantics_for``). A version
-    without semantics yet is judged by estimate detection alone, as before."""
+def _contract_names_patient(
+    storage: UserDatasetStorage, dataset_id: str, version: str | None, metadata: dict[str, Any], frame: pl.DataFrame
+) -> bool:
+    """Whether the version's semantics name a patient key (``version_semantics``: the contract's,
+    or the same pass over the stored frame for a version stored before ADR017).
+
+    Raises:
+        HTTPException: 500 when the contract can't be read: a patient file must never be read as
+            estimates because its contract could not be checked.
+    """
     from clinical_analytics.contracts.declarations import MemoryDeclarationStore
     from clinical_analytics.contracts.errors import ContractError
-    from clinical_analytics.contracts.semantics import semantics_for
+    from clinical_analytics.contracts.service import version_semantics
 
     if version is None:
         return False
     try:
-        semantics = semantics_for(storage.upload_dir.parent, dataset_id, version, declarations=MemoryDeclarationStore())
+        semantics = version_semantics(
+            storage.upload_dir.parent,
+            dataset_id,
+            version,
+            metadata=metadata,
+            stored_frame=lambda: frame,
+            declarations=MemoryDeclarationStore(),
+        )
     except ContractError as e:
-        logger.info("aggregate_semantics_unavailable", dataset_id=dataset_id, error_type=type(e).__name__)
-        return False
+        logger.error("aggregate_semantics_unreadable", dataset_id=dataset_id, error_type=type(e).__name__)
+        raise HTTPException(status_code=500, detail="This dataset's data contract can't be read.") from e
     return semantics.patient_key is not None
 
 
@@ -113,7 +128,7 @@ def load_source(storage: UserDatasetStorage, store: FileDeclarationStore, datase
     declared = declarations.population_estimates_for(version) is not None
     # A file whose contract names a patient (ADR017) holds patient rows: never read as estimates,
     # whatever was declared. Detection runs only on declared tables without a patient key.
-    names_patient = _contract_names_patient(storage, dataset_id, version)
+    names_patient = declared and _contract_names_patient(storage, dataset_id, version, metadata, frame)
     table = estimates.detect_frame(frame) if declared and not names_patient else None
     name = str(metadata.get("dataset_name") or dataset_id)
     return estimate_join.SourceInput(

@@ -125,7 +125,7 @@ def catalog_for_layer(
     except ContractStoreError as e:
         log.warning("governed_sql_declarations_unreadable", error_type=type(e).__name__)
         raise SqlRefusedError(DECLARATIONS_UNREADABLE) from e
-    return SqlCatalog.from_contract(contract, Path(source), declared.levels), declared, version
+    return SqlCatalog.from_contract(contract, Path(source), declared.levels, declared.missing_codes), declared, version
 
 
 def _confirmed_rows(declared: Declarations, catalog: SqlCatalog) -> int | None:

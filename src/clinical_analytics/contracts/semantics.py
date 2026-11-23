@@ -44,7 +44,7 @@ logger = structlog.get_logger()
 
 FactSource: TypeAlias = Literal["structure", "dictionary", "declared", "default"]
 Confidence: TypeAlias = Literal["high", "medium", "low"]
-QuestionKind: TypeAlias = Literal["rows_are_patients", "person_role", "date_order"]
+QuestionKind: TypeAlias = Literal["rows_are_patients", "person_role", "date_order", "date_century", "missing_code"]
 LogicalType: TypeAlias = Literal[
     "string", "integer", "number", "boolean", "date", "timestamp", "time", "array", "object"
 ]
@@ -68,6 +68,9 @@ class Grain(_Model):
     patients: int | None = Field(default=None, ge=0)
     source: FactSource
     evidence: str = ""
+    # A whole sentence when a noun can't say it ("Each line counts cases for one region, year and
+    # category."), for a summary table.
+    sentence: str | None = None
 
 
 class PatientKey(_Model):
@@ -97,15 +100,31 @@ class SequenceColumn(_Model):
     within: str
     start: int = 1
     noun: str = "row"  # what it numbers: visit, cycle, scan, episode
+    # "order": numbers each patient's lines 1..k; "time_since_index": the time since a start
+    # (weeks since enrolment), different on each line of a patient.
+    kind: Literal["order", "time_since_index"] = "order"
     source: FactSource
     evidence: str = ""
 
 
 class GroupingColumn(_Model):
-    """An ID that repeats for a different role than the patient (a mother, a site, a surgeon)."""
+    """A column for a different role than the patient (a mother, a site, a surgeon, a ward)."""
 
     column: str
     role: str
+    # An ID that repeats (site_id, mat_id): lines may share someone, so "Is each line one
+    # patient?" is not asked. False for a staff or place attribute (a ward name).
+    is_id: bool = True
+    source: FactSource
+    evidence: str = ""
+
+
+class EpisodeKey(_Model):
+    """An ID of an episode within one patient (an admission within an MRN): episodes can be counted."""
+
+    column: str
+    within: str
+    noun: str = "episode"
     source: FactSource
     evidence: str = ""
 
@@ -184,6 +203,8 @@ class OpenQuestion(_Model):
     column: str | None = None
     options: tuple[str, ...] = ()
     answered: bool = False
+    # The value asked about (a suspected missing-value code), when there is one.
+    value: int | float | str | None = None
 
 
 class DatasetSemantics(_Model):
@@ -195,6 +216,9 @@ class DatasetSemantics(_Model):
     row_key: RowKey = RowKey(kind="none")
     sequence_columns: tuple[SequenceColumn, ...] = ()
     grouping_columns: tuple[GroupingColumn, ...] = ()
+    episode_keys: tuple[EpisodeKey, ...] = ()
+    # A summary table's count column (the cases each line counts), or None.
+    case_count_column: str | None = None
     app_columns: tuple[AppColumn, ...] = ()
     columns: dict[str, ColumnSemantics] = Field(default_factory=dict)
     open_questions: tuple[OpenQuestion, ...] = ()
@@ -258,7 +282,10 @@ def with_declarations(semantics: DatasetSemantics, declarations: Any) -> Dataset
       column (if one) becomes the patient key; "Is each line one patient?" is answered.
     * A visit grain naming a key: that key is the patient key, rows are visits of it.
     """
-    grain = declarations.grain_for(semantics.dataset_version) if declarations is not None else None
+    if declarations is None:
+        return semantics
+    semantics = _with_missing_answers(semantics, declarations.missing_codes_for(semantics.dataset_version))
+    grain = declarations.grain_for(semantics.dataset_version)
     if grain is None:
         return semantics
     rows = semantics.rows
@@ -310,6 +337,39 @@ def with_declarations(semantics: DatasetSemantics, declarations: Any) -> Dataset
             }
         )
     return semantics
+
+
+def _with_missing_answers(semantics: DatasetSemantics, answers: Any) -> DatasetSemantics:
+    """Confirmed "not recorded" values become declared missing codes; every answered question is
+    marked answered (a "no" keeps the value as a real value)."""
+    if not answers:
+        return semantics
+    by_key = {(a.column, str(a.value)): a for a in answers}
+    columns = dict(semantics.columns)
+    for answer in answers:
+        column = columns.get(answer.column)
+        if column is None or not answer.missing:
+            continue
+        if all(str(m.value) != str(answer.value) for m in column.missing_codes):
+            code = MissingCode(value=answer.value, source="declared", evidence="you confirmed it means not recorded")
+            columns[answer.column] = column.model_copy(update={"missing_codes": (*column.missing_codes, code)})
+    questions = tuple(
+        q.model_copy(update={"answered": True})
+        if q.kind == "missing_code" and (q.column, str(q.value)) in by_key
+        else q
+        for q in semantics.open_questions
+    )
+    return semantics.model_copy(update={"columns": columns, "open_questions": questions})
+
+
+def declared_missing_codes(semantics: DatasetSemantics) -> dict[str, tuple[int | float | str, ...]]:
+    """column -> values the user confirmed mean not recorded (applied where answers read data;
+    the typed Parquet was written before the question was answered)."""
+    return {
+        name: tuple(m.value for m in col.missing_codes if m.source == "declared")
+        for name, col in semantics.columns.items()
+        if any(m.source == "declared" for m in col.missing_codes)
+    }
 
 
 def semantics_for(data_dir: Path, dataset_id: str, version: str, *, declarations: Any = None) -> DatasetSemantics:
@@ -388,6 +448,8 @@ def describe(semantics: DatasetSemantics, *, max_lines: int = 12) -> list[str]:
                 f"Each line is one {grain.noun}; {_count(grain.patients, 'patient')} "
                 f"({key.column} names the patient) over {_count(grain.rows, 'line')}."
             )
+    elif grain.sentence:
+        lines.append(f"{grain.sentence[:-1]} ({_count(grain.rows, 'line')}).")
     elif semantics.population_estimates or grain.kind == "estimate":
         lines.append(f"Each line is one published estimate for a group; {_count(grain.rows, 'line')}.")
     else:
@@ -400,10 +462,17 @@ def describe(semantics: DatasetSemantics, *, max_lines: int = 12) -> list[str]:
             + (" You can confirm that each line is one patient." if rows_q is not None and not rows_q.answered else "")
         )
     for seq in semantics.sequence_columns:
+        if seq.kind == "time_since_index":
+            lines.append(f"{seq.column} is the time of each line ({seq.noun}), different on each line of a patient.")
+            continue
         start = "1" if seq.start == 1 else str(seq.start)
         lines.append(f"{seq.column} numbers each patient's {seq.noun}s in order ({start} = first).")
+    for episode in semantics.episode_keys:
+        if episode.column not in semantics.row_key.columns:
+            lines.append(f"{episode.column} names each {episode.noun} of a patient, so {episode.noun}s can be counted.")
     for group in semantics.grouping_columns:
-        lines.append(f"{group.column} groups lines by {group.role}; it does not name the patient.")
+        if group.is_id:
+            lines.append(f"{group.column} groups lines by {group.role}; it does not name the patient.")
     for name, col in semantics.columns.items():
         if col.date is not None and col.date.format not in (
             "native",
@@ -415,7 +484,8 @@ def describe(semantics: DatasetSemantics, *, max_lines: int = 12) -> list[str]:
     for name, col in semantics.columns.items():
         for code in col.missing_codes:
             why = "" if code.label in ("not recorded", "") else f" ({code.label})"
-            lines.append(f"{code.value} in {name} means not recorded{why}.")
+            shown = f"{code.value:g}" if isinstance(code.value, float) else str(code.value)
+            lines.append(f"{shown} in {name} means not recorded{why}.")
     paired: dict[str, list[str]] = {}
     for name, col in semantics.columns.items():
         if col.timepoint is not None:

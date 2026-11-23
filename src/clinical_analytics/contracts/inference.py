@@ -52,6 +52,7 @@ from clinical_analytics.contracts.semantics import (
     ColumnSemantics,
     DatasetSemantics,
     DateFormat,
+    EpisodeKey,
     FactSource,
     Grain,
     GroupingColumn,
@@ -73,9 +74,23 @@ ROW_NUMBER_COLUMN: Final = "row_number"
 # Name tokens, after splitting on anything but letters and digits and at a case change.
 _SPLIT: Final = re.compile(r"[^a-z0-9]+")
 _CAMEL: Final = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
-ID_TOKENS: Final = frozenset(
-    {"id", "ids", "identifier", "mrn", "mr", "uuid", "guid", "no", "nr", "num", "number", "ref", "key"}
-)
+ID_TOKENS: Final = frozenset({"id", "ids", "identifier", "mrn", "uuid", "guid", "ref", "key"})
+# Number words name an ID only as the name's last word ("study_no", "Hosp No"); first, they name a
+# count ("num_meds", "number_of_children").
+ID_NUMBER_TOKENS: Final = frozenset({"no", "nr", "num", "number"})
+# Words that make a name a count or an attribute of someone, never their ID ("patient_status",
+# "patient_zip", "num_visits"), unless the name ends in an ID word.
+ATTRIBUTE_TOKENS: Final = frozenset(
+    {"status", "zip", "zipcode", "postcode", "postal", "name", "names", "type", "sex", "gender", "age", "dob",
+     "race", "ethnicity", "state", "city", "address", "phone", "email", "weight", "height", "score", "group",
+     "class", "category", "count", "total", "outcome", "flag", "initials", "language", "insurance"}
+)  # fmt: skip
+COUNT_TOKENS: Final = frozenset(
+    {"meds", "medications", "drugs", "children", "visits", "admissions", "events", "episodes", "times", "days",
+     "count", "cases", "deaths", "births", "pregnancies", "falls", "doses", "lesions", "nodes", "procedures"}
+)  # fmt: skip
+# Whole column names that the app and staging treat as an ID (kept as text by staging).
+KEY_COLUMN_NAMES: Final = frozenset({"patient_id", "patientid", "subject_id", "subjectid", "id", "mrn", "study_id"})
 # Who an ID names. Strong patient words name the patient on their own ("subj", "MRN"); weak ones
 # only beside an ID word ("pt_id", "case_id", "member_id", "study_no"): "PT" alone is a lab test,
 # "case" alone a case-control flag.
@@ -147,6 +162,19 @@ GROUP_ROLE_TOKENS: Final[Mapping[str, str]] = {
     "district": "district",
     "region": "region",
     "school": "school",
+    "anaesthetist": "anaesthetist",
+    "anesthetist": "anaesthetist",
+    "operator": "operator",
+    "reviewer": "reviewer",
+    "reader": "reader",
+    "rater": "rater",
+    "room": "room",
+    "bed": "bed",
+    "theatre": "theatre",
+    "theater": "theatre",
+    "consultant": "consultant",
+    "midwife": "midwife",
+    "therapist": "therapist",
     # Dimensions of published tables (GBD, CDC): an ID for a place, a cause or a year names no one.
     "location": "place",
     "loc": "place",
@@ -255,42 +283,46 @@ _TIMEPOINT_RANK: Final[Mapping[str, int]] = {
     "init": 0,
     "first": 0,
     "admit": 0,
+    "admission": 0,
+    "arrival": 0,
+    "adm": 0,
     "start": 0,
     "intake": 0,
-    "post": 9000,
-    "postop": 9000,
-    "after": 9000,
-    "discharge": 9500,
-    "dc": 9500,
-    "end": 9900,
-    "final": 9900,
-    "last": 9900,
-    "exit": 9900,
-    "followup": 5000,
-    "fu": 5000,
+    "post": 900000,
+    "postop": 900000,
+    "after": 900000,
+    "discharge": 950000,
+    "dc": 950000,
+    "end": 990000,
+    "final": 990000,
+    "last": 990000,
+    "exit": 990000,
+    "followup": 500000,
+    "fu": 500000,
 }
 _TIME_NUMBER: Final = re.compile(
     r"^(?:(?P<pre>m|mo|month|w|wk|week|d|day|y|yr|year|t|v|visit)(?P<n1>\d{1,3})|(?P<n2>\d{1,3})(?P<post>m|mo|mos|w|wk|wks|d|y|yr|h|hr))$"
 )
+# Hours per unit of a numbered timepoint ("m6" = 6 months, "24h" = 24 hours), so all times order.
 _TIME_DAYS: Final[Mapping[str, int]] = {
-    "m": 30,
-    "mo": 30,
-    "mos": 30,
-    "month": 30,
-    "w": 7,
-    "wk": 7,
-    "wks": 7,
-    "week": 7,
-    "d": 1,
-    "day": 1,
-    "y": 365,
-    "yr": 365,
-    "year": 365,
-    "t": 1,
-    "v": 1,
-    "visit": 1,
-    "h": 0,
-    "hr": 0,
+    "m": 720,
+    "mo": 720,
+    "mos": 720,
+    "month": 720,
+    "w": 168,
+    "wk": 168,
+    "wks": 168,
+    "week": 168,
+    "d": 24,
+    "day": 24,
+    "y": 8760,
+    "yr": 8760,
+    "year": 8760,
+    "t": 24,
+    "v": 24,
+    "visit": 24,
+    "h": 1,
+    "hr": 1,
 }
 # Units written as the last name tokens ("_kg", "_mg_wk", "_cmH2O", "_ng_ml", "_g_cm2", "_pct").
 _NAME_UNITS: Final[Mapping[tuple[str, ...], str]] = {
@@ -316,22 +348,16 @@ _NAME_UNITS: Final[Mapping[tuple[str, ...], str]] = {
     ("cm", "h2o"): "cmH2O",
     ("mmhg",): "mmHg",
     ("kg",): "kg",
-    ("g",): "g",
     ("mg",): "mg",
     ("mcg",): "mcg",
     ("ug",): "µg",
     ("pct",): "%",
     ("percent",): "%",
     ("ml",): "mL",
-    ("l",): "L",
     ("cm",): "cm",
     ("mm",): "mm",
-    ("min",): "minutes",
-    ("mins",): "minutes",
     ("hr",): "hours",
     ("hrs",): "hours",
-    ("h",): "hours",
-    ("d",): "days",
     ("days",): "days",
     ("wk",): "weeks",
     ("wks",): "weeks",
@@ -344,7 +370,6 @@ _NAME_UNITS: Final[Mapping[tuple[str, ...], str]] = {
     ("copies",): "copies/mL",
     ("lbs",): "lb",
     ("lb",): "lb",
-    ("in",): "in",
     ("iu",): "IU",
 }
 _EXAMPLE_DAY: Final = datetime(2021, 4, 3, 14, 5)
@@ -356,15 +381,42 @@ def name_tokens(column: str) -> list[str]:
     return [t for t in _SPLIT.split(_CAMEL.sub("_", column).lower()) if t]
 
 
+def has_id_word(column: str) -> bool:
+    """An ID word anywhere ("pt_id", "PtRef", "operator_code"), or a number word last ("study_no")."""
+    tokens = name_tokens(column)
+    return bool(tokens) and (any(t in ID_TOKENS for t in tokens) or tokens[-1] in ID_NUMBER_TOKENS)
+
+
+def _attribute_named(tokens: list[str]) -> bool:
+    """A count or an attribute of someone ("patient_status", "num_meds"), unless it ends in an ID word."""
+    if tokens and (tokens[-1] in ID_TOKENS or tokens[-1] in ID_NUMBER_TOKENS):
+        return False
+    return any(t in ATTRIBUTE_TOKENS or t in COUNT_TOKENS for t in tokens) or (
+        bool(tokens) and tokens[0] in ID_NUMBER_TOKENS
+    )
+
+
 def person_key_role(column: str) -> str | None:
-    """'patient' for a name of the patient-ID role, 'infant'/'mother' for another person, else None."""
+    """'patient' for a name of the patient-ID role, 'infant'/'mother' for another person, else None.
+
+    A patient word names the key when it is the whole name ("subj", "MRN", "patient") or comes with
+    an ID word ("pt_id", "patient_ref", "case_id", "study_no"); never beside an attribute or count
+    word ("patient_status", "patient_zip", "num_patients").
+    """
     tokens = name_tokens(column)
     joined = "".join(tokens)
-    if joined in PATIENT_ROLE_TOKENS or any(t in PATIENT_ROLE_TOKENS for t in tokens):
+    if not tokens or _attribute_named(tokens):
+        return None
+    with_id = has_id_word(column)
+    if joined in PATIENT_ROLE_TOKENS or (
+        any(t in PATIENT_ROLE_TOKENS for t in tokens) and (with_id or len(tokens) == 1)
+    ):
         return "patient"
-    if any(t in WEAK_PATIENT_TOKENS for t in tokens) and any(t in ID_TOKENS for t in tokens):
+    if any(t in WEAK_PATIENT_TOKENS for t in tokens) and with_id:
         return "patient"
-    return next((PERSON_ROLE_TOKENS[t] for t in tokens if t in PERSON_ROLE_TOKENS), None)
+    if any(t in PERSON_ROLE_TOKENS for t in tokens) and (with_id or len(tokens) == 1):
+        return next(PERSON_ROLE_TOKENS[t] for t in tokens if t in PERSON_ROLE_TOKENS)
+    return None
 
 
 # Among several columns named for the patient, the most specific name wins ("patient_id" beside
@@ -397,7 +449,9 @@ def _event_word(column: str) -> str | None:
 
 
 def id_named(column: str) -> bool:
-    return any(t in ID_TOKENS for t in name_tokens(column)) or person_key_role(column) is not None
+    """Named as an ID of someone or something: an ID word (not a count or attribute), or a person role."""
+    tokens = name_tokens(column)
+    return (has_id_word(column) and not _attribute_named(tokens)) or person_key_role(column) is not None
 
 
 def grain_kind(noun: str) -> str:
@@ -459,20 +513,53 @@ def _date_format(choice: DateChoice, source: FactSource) -> DateFormat:
 
 # ----------------------------------------------------------------------------- per column
 def _typed_code(code: str, dtype: pl.DataType) -> int | float | str | None:
+    """A dictionary code as a value of the column's type (99 for Int64, 99.0 for Float64, "99"
+    for text), or None when the column can't hold it."""
     if dtype == pl.String:
         return code
     if dtype.is_integer() and re.fullmatch(r"-?\d+", code):
         return int(code)
     if dtype.is_float() and re.fullmatch(r"-?\d+(?:\.\d+)?", code):
-        value = float(code)
-        return int(value) if value.is_integer() else value
+        return float(code)
     return None
+
+
+def _holds_years(series: pl.Series, unit: str) -> bool:
+    """A "years" name unit on a column of calendar years ("birth_yr" = 1957) is not a unit."""
+    if unit != "years" or not series.dtype.is_numeric():
+        return False
+    values = series.drop_nulls()
+    return values.len() > 0 and bool(values.is_between(config.DATE_YEAR_MIN, config.DATE_YEAR_MAX).all())
+
+
+def _date_question(name: str, found: DateAmbiguity) -> OpenQuestion:
+    """The clinician's question for a date column that stays text, with a worked example written
+    in the column's own style on a fixed day (never a row's value)."""
+    if found.kind == "century":
+        example = datetime(1945, 3, 15).strftime(found.format.replace("%B", "%b"))
+        return OpenQuestion(
+            id=f"date_century:{name}",
+            kind="date_century",
+            column=name,
+            question=f"In {name}, does {example} mean 15 March 1945 or 15 March 2045?",
+            options=("1900s (15 March 1945)", "2000s (15 March 2045)"),
+        )
+    example = _EXAMPLE_DAY.strftime(found.format.replace("%B", "%b"))
+    return OpenQuestion(
+        id=f"date_order:{name}",
+        kind="date_order",
+        column=name,
+        question=f"In {name}, does {example} mean 3 April 2021 or March 4, 2021?",
+        options=("day first (3 April)", "month first (March 4)"),
+    )
 
 
 def _undocumented_missing(series: pl.Series, stated: tuple[float, float] | None) -> MissingCode | None:
     """One repeated value from ``MISSING_CODE_CANDIDATES`` far outside the column's other values."""
     if not series.dtype.is_numeric() or series.dtype == pl.Boolean:
         return None
+    if set(name_tokens(series.name)) & config.MISSING_CODE_EXEMPT_TOKENS:
+        return None  # a count, change or duration: -1, 0 and 99 are real values there
     values = series.drop_nulls()
     if values.len() < 3:
         return None
@@ -483,7 +570,11 @@ def _undocumented_missing(series: pl.Series, stated: tuple[float, float] | None)
             continue
         hits = int((floats == candidate).sum())
         rest = floats.filter(floats != candidate)
-        if hits < config.MISSING_CODE_MIN_ROWS or rest.len() == 0:
+        if (
+            hits < config.MISSING_CODE_MIN_ROWS
+            or hits < config.MISSING_CODE_MIN_SHARE * values.len()
+            or rest.len() == 0
+        ):
             continue
         if candidate < 0:
             far = _float(rest.min()) >= 0
@@ -496,6 +587,14 @@ def _undocumented_missing(series: pl.Series, stated: tuple[float, float] | None)
             side = "below every other value" if candidate < 0 else "far above every other value"
             return MissingCode(value=value, source="structure", evidence=f"{_n(hits)} lines hold {value:g}, {side}")
     return None
+
+
+def _is_number(value: object) -> bool:
+    try:
+        float(str(value))
+    except ValueError:
+        return False
+    return True
 
 
 def _float(value: object) -> float:
@@ -681,6 +780,7 @@ class _Keys:
     sequences: tuple[SequenceColumn, ...] = ()
     groups: tuple[GroupingColumn, ...] = ()
     question: OpenQuestion | None = None
+    episodes: tuple[EpisodeKey, ...] = ()
 
 
 def _seq_noun(column: str, fallback: str) -> str:
@@ -709,7 +809,8 @@ def _choose_keys(df: pl.DataFrame, dictionary: Dictionary, facts: UploadFacts, e
     ]
     by_name = {c.column: c for c in candidates}
     stated_names = (*dictionary.key_statements, *(e.column for e in dictionary.entries.values() if e.names_patient_key))
-    stated = [c for c in stated_names if c in by_name]
+    # A stated key still passes the role filter: a surgeon's or a site's ID is never the patient.
+    stated = [c for c in stated_names if c in by_name and by_name[c].group is None and by_name[c].event is None]
     seq_cols = _sequence_columns(df, excluded)
     keys = _Keys()
     chosen: _Candidate | None = None
@@ -722,6 +823,9 @@ def _choose_keys(df: pl.DataFrame, dictionary: Dictionary, facts: UploadFacts, e
     def nested(c: _Candidate) -> list[tuple[str, int]]:
         return [] if c.unique else _sequence_within(df, c.column, [s for s in seq_cols if s != c.column])
 
+    # Times since an index event are sequences of their own kind (``_time_since``), never order numbers.
+    seq_cols = [s for s in seq_cols if not _time_since_named(s)]
+
     def free(c: _Candidate) -> bool:
         return c.group is None and c.event is None
 
@@ -731,10 +835,12 @@ def _choose_keys(df: pl.DataFrame, dictionary: Dictionary, facts: UploadFacts, e
     elif facts.cohort_key is not None and facts.cohort_key in by_name:
         chosen, evidence = by_name[facts.cohort_key], "the tables were joined on it, one patient each"
     if chosen is None:
-        named = sorted(
-            (c for c in candidates if c.role == "patient" and free(c)),
-            key=lambda c: (patient_name_rank(c.column), c.unique, order[c.column]),
-        )
+        named = [c for c in candidates if c.role == "patient" and free(c)]
+        if any(c.unique for c in named):
+            # A repeating column with few values never beats a unique patient ID.
+            floor = max(3, config.GENERIC_KEY_MIN_SHARE * rows)
+            named = [c for c in named if c.unique or c.distinct >= floor]
+        named = sorted(named, key=lambda c: (patient_name_rank(c.column), c.unique, order[c.column]))
         if named:
             chosen = named[0]
             evidence = f"{chosen.column} is named for the patient"
@@ -755,7 +861,9 @@ def _choose_keys(df: pl.DataFrame, dictionary: Dictionary, facts: UploadFacts, e
         )
         infants = [c for c in people if c.role == "infant"]
         mothers = [c for c in people if c.role == "mother"]
-        if infants and mothers:
+        if infants and any(not c.unique for c in mothers):
+            # A mother ID repeats beside a baby ID: twins, or one line per mother? Only the
+            # clinician can say; the baby is the tentative patient.
             chosen = next((c for c in infants if c.unique), infants[0])
             confidence = "medium"
             evidence = f"{chosen.column} names a baby on every line; {mothers[0].column} repeats for a mother"
@@ -766,6 +874,9 @@ def _choose_keys(df: pl.DataFrame, dictionary: Dictionary, facts: UploadFacts, e
                 column=chosen.column,
                 options=("one baby", "one mother"),
             )
+        elif infants:
+            chosen = next((c for c in infants if c.unique), infants[0])
+            evidence = f"{chosen.column} names a baby"
         elif people:
             chosen = people[0]
             confidence = "medium"
@@ -833,10 +944,104 @@ def _choose_keys(df: pl.DataFrame, dictionary: Dictionary, facts: UploadFacts, e
             continue  # a dimension of the table (sex, year, state), not an ID for a role
         role = c.group or (c.role if c.role not in (None, "patient") else None) or "group"
         groups.append(
-            GroupingColumn(column=c.column, role=role, source="structure", evidence="its values repeat across lines")
+            GroupingColumn(
+                column=c.column, role=role, is_id=c.named, source="structure", evidence="its values repeat across lines"
+            )
         )
+    grouped = {g.column for g in groups} | seq_names | set(keys.row.columns)
+    if keys.patient is not None:
+        grouped.add(keys.patient.column)
+    for column in df.columns:
+        # Staff and places (an anaesthetist, a ward, a room, a region) group lines; never measures.
+        place = _group_role(column)
+        if place is None or column in grouped or column in excluded or place == "category":
+            continue
+        # A yes/no flag named like a role ("hosp": admitted to hospital, Y/N) is not a grouping.
+        if (df.schema[column] == pl.String or df.schema[column].is_integer()) and df.get_column(
+            column
+        ).drop_nulls().n_unique() >= 3:
+            groups.append(
+                GroupingColumn(column=column, role=place, is_id=False, source="structure", evidence="named for a role")
+            )
     keys.groups = tuple(groups)
+    if keys.patient is not None:
+        keys.episodes = _episode_keys(df, keys.patient.column, [c for c in candidates if c.event is not None])
+        keys.sequences = (*keys.sequences, *_time_since(df, keys.patient.column, excluded | grouped))
     return keys
+
+
+_SINCE_TOKENS: Final = frozenset({"since", "from", "post", "after", "of"})
+_TIME_UNIT_TOKENS: Final = frozenset({"day", "days", "week", "weeks", "wk", "wks", "month", "months", "hour", "hours"})
+
+
+def _time_since_named(column: str) -> bool:
+    tokens = set(name_tokens(column))
+    return bool(tokens & _SINCE_TOKENS and tokens & _TIME_UNIT_TOKENS)
+
+
+def _time_since(df: pl.DataFrame, key: str, excluded: set[str]) -> tuple[SequenceColumn, ...]:
+    """Integer times since an index event ("weeks_since_start", "day_of_admission") that differ on
+    each line of a patient: when the line was taken, in order (a sequence, never a measure)."""
+    found: list[SequenceColumn] = []
+    for column in df.columns:
+        tokens = name_tokens(column)
+        if column == key or column in excluded or not df.schema[column].is_integer():
+            continue
+        if not _time_since_named(column):
+            continue
+        g = (
+            df.lazy()
+            .filter(pl.col(key).is_not_null())
+            .group_by(key)
+            .agg(pl.len().alias("n"), pl.col(column).n_unique().alias("u"), pl.col(column).null_count().alias("z"))
+            .filter(pl.col("n") > 1)
+            .select(pl.len().alias("groups"), ((pl.col("u") == pl.col("n")) & (pl.col("z") == 0)).sum().alias("ok"))
+            .collect()
+            .row(0, named=True)
+        )
+        if g["groups"] and g["ok"] / g["groups"] >= config.SEQUENCE_MIN_SHARE:
+            unit = next(t for t in tokens if t in _TIME_UNIT_TOKENS).rstrip("s")
+            found.append(
+                SequenceColumn(
+                    column=column,
+                    within=key,
+                    start=0,
+                    noun=f"{unit} since the start",
+                    kind="time_since_index",
+                    source="structure",
+                    evidence=f"it differs on each line of a {key}: the time each line was taken",
+                )
+            )
+    return tuple(found)
+
+
+def _episode_keys(df: pl.DataFrame, key: str, events: Sequence[_Candidate]) -> tuple[EpisodeKey, ...]:
+    """IDs of episodes nested within one patient (an admission ID within an MRN): every episode
+    value belongs to exactly one patient, so episodes can be counted."""
+    found: list[EpisodeKey] = []
+    for c in events:
+        if c.column == key or not c.named:
+            continue
+        most = (
+            df.lazy()
+            .filter(pl.col(c.column).is_not_null())
+            .group_by(c.column)
+            .agg(pl.col(key).n_unique().alias("p"))
+            .select(pl.col("p").max())
+            .collect()
+            .item()
+        )
+        if most == 1:
+            found.append(
+                EpisodeKey(
+                    column=c.column,
+                    within=key,
+                    noun=c.event or "episode",
+                    source="structure",
+                    evidence=f"each value belongs to one {key}",
+                )
+            )
+    return tuple(found)
 
 
 # ----------------------------------------------------------------------------- the pass
@@ -877,19 +1082,15 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
                 )
                 logical = "timestamp" if found.has_time else "date"
             elif isinstance(found, DateAmbiguity):
-                ex_in, _ = _synthetic_example("%d/%m/%y", False)
-                questions.append(
-                    OpenQuestion(
-                        id=f"date_order:{name}",
-                        kind="date_order",
-                        column=name,
-                        question=f"In {name}, does {ex_in} mean 3 April 2021 or March 4, 2021?",
-                        options=("day first (3 April)", "month first (March 4)"),
-                    )
-                )
+                questions.append(_date_question(name, found))
         elif dtype.is_numeric():
+            # The dictionary saying the column is a date ("Date of first contact") counts like a name.
+            said_date = entry is not None and bool(re.search(r"\bdates?\b", entry.description, re.IGNORECASE))
             choice = choose_number_format(
-                series, from_excel=facts.from_excel, stated=entry.date_format if entry else None
+                series,
+                from_excel=facts.from_excel,
+                stated=entry.date_format if entry else None,
+                date_hint=said_date,
             )
             if choice is not None:
                 date_fmt = _date_format(
@@ -902,7 +1103,7 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
         missing: list[MissingCode] = []
         labels: dict[str, str] = {}
         labels_source: FactSource | None = None
-        if entry is not None:
+        if entry is not None and date_fmt is None:
             for code, label in entry.missing.items():
                 typed = _typed_code(code, dtype)
                 if typed is not None:
@@ -919,15 +1120,25 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
             header = code_labels(name)
             if header:
                 labels, labels_source = header, "structure"
-        if not missing and date_fmt is None and name not in labels and not labels:
-            found_code = _undocumented_missing(series, entry.stated_range if entry else None)
-            if found_code is not None:
-                missing.append(found_code)
+        if not missing and date_fmt is None and not labels:
+            # Never stored as missing without the dictionary or the user: asked instead.
+            suspect = _undocumented_missing(series, entry.stated_range if entry else None)
+            if suspect is not None:
+                questions.append(
+                    OpenQuestion(
+                        id=f"missing_code:{name}:{suspect.value}",
+                        kind="missing_code",
+                        column=name,
+                        value=suspect.value,
+                        question=f"Does {suspect.value:g} in {name} mean not recorded?",
+                        options=("yes, not recorded", "no, it is a real value"),
+                    )
+                )
 
         unit: Unit | None = None
         if entry is not None and entry.unit:
             unit = Unit(value=entry.unit, source="dictionary")
-        elif date_fmt is None and (from_name := _unit_from_name(name)):
+        elif date_fmt is None and (from_name := _unit_from_name(name)) and not _holds_years(series, from_name):
             unit = Unit(value=from_name, source="structure")
         columns[name] = ColumnSemantics(
             logical_type=logical,
@@ -977,12 +1188,18 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
             )
 
     grain = _grain(df, dictionary, keys, facts)
+    case_count: str | None = None
+    if keys.patient is None and not published and not any(g.is_id for g in keys.groups):
+        summary = _summary_table(df, date_columns)
+        if summary is not None:
+            grain, case_count = summary
     if (
         keys.patient is None
         and not facts.population_estimates
         and not facts.source_format
         and keys.row.kind in ("column", "none")
-        and not keys.groups
+        and not any(g.is_id for g in keys.groups)
+        and grain.kind != "stratum"
     ):
         questions.insert(
             0,
@@ -1000,6 +1217,8 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
         row_key=keys.row,
         sequence_columns=keys.sequences,
         grouping_columns=keys.groups,
+        episode_keys=keys.episodes,
+        case_count_column=case_count,
         columns=columns,
         open_questions=tuple(questions),
         population_estimates=facts.population_estimates,
@@ -1019,6 +1238,68 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
         open_questions=len(questions),
     )
     return semantics
+
+
+_CASE_COUNT_TOKENS: Final = frozenset(
+    {"count", "counts", "n", "cases", "deaths", "events", "number", "total", "freq", "frequency", "admissions",
+     "births", "patients", "visits", "infections", "hospitalizations", "hospitalisations"}
+)  # fmt: skip
+
+
+def _human(column: str) -> str:
+    return " ".join(name_tokens(column)) or column
+
+
+def _summary_table(df: pl.DataFrame, dates: set[str]) -> tuple[Grain, str] | None:
+    """A table of counts for strata (region x year x category with a count column, no person ID):
+    each line counts cases for one combination. Returns the grain and the count column, or None."""
+    if df.height < 2:
+        return None
+    counts = [
+        c
+        for c in df.columns
+        if df.schema[c].is_integer()
+        and set(name_tokens(c)) & _CASE_COUNT_TOKENS
+        and _float(df.get_column(c).drop_nulls().min() or 0) >= 0
+    ]
+    if not counts:
+        return None
+    count = counts[0]
+    strata = [
+        c
+        for c in df.columns
+        if c != count
+        and c not in counts
+        and (
+            df.schema[c] == pl.String
+            or c in dates
+            or (df.schema[c].is_integer() and df.get_column(c).n_unique() <= 200)
+        )
+    ]
+    if not strata or not any(df.schema[c] == pl.String for c in strata):
+        return None
+    if bool(df.select(pl.struct(strata).is_duplicated().any()).item()):
+        return None
+    tokens = set(name_tokens(count))
+    what = next(
+        (t for t in ("deaths", "cases", "events", "admissions", "births", "visits", "infections") if t in tokens),
+        "cases",
+    )
+    names = [_human(c) for c in strata]
+    listed = names[0] if len(names) == 1 else ", ".join(names[:-1]) + f" and {names[-1]}"
+    sentence = f"Each line counts {what} for one {listed}."
+    return (
+        Grain(
+            kind="stratum",
+            noun=f"count of {what}",
+            one_row_per_patient=False,
+            rows=df.height,
+            source="structure",
+            evidence=f"{count} counts {what}; {listed} are unique together on every line",
+            sentence=sentence,
+        ),
+        count,
+    )
 
 
 def _date_like(column: str) -> bool:
@@ -1133,8 +1414,12 @@ def apply_semantics(df: pl.DataFrame, semantics: DatasetSemantics) -> pl.DataFra
         dtype = df.schema[name]
         expr: pl.Expr | None = None
         if col.missing_codes and not dtype.is_temporal():
-            values = [m.value for m in col.missing_codes]
-            expr = pl.when(pl.col(name).is_in(values)).then(None).otherwise(pl.col(name)).alias(name)
+            # Codes as the column's own type: an integer 99 against a Float64 column, or the reverse.
+            codes = pl.Series([str(m.value) for m in col.missing_codes]).cast(dtype, strict=False).drop_nulls()
+            if dtype.is_numeric() and codes.len() < len(col.missing_codes):
+                codes = pl.Series([float(m.value) for m in col.missing_codes if _is_number(m.value)]).cast(dtype)
+            if codes.len():
+                expr = pl.when(pl.col(name).is_in(codes.implode())).then(None).otherwise(pl.col(name)).alias(name)
         if col.date is not None and col.date.format != NATIVE and not dtype.is_temporal():
             from clinical_analytics.contracts.dates import parse_expr
 
@@ -1180,11 +1465,12 @@ def add_id_columns(
             _with_app_column(semantics, added),
         )
     if semantics.row_key.kind == "composite":
+        from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
+
         parts = list(semantics.row_key.columns)
-        key = pl.concat_str([pl.col(c).cast(pl.String).fill_null("") for c in parts], separator="|")
         added = AppColumn(column=PATIENT_ID_COLUMN, kind="hash", made_from=tuple(parts))
         return (
-            df.with_columns(key.hash(seed=0).cast(pl.String).alias(PATIENT_ID_COLUMN)),
+            VariableTypeDetector.create_synthetic_patient_id(df, parts),
             {"patient_id_source": "composite", "patient_id_columns": parts},
             _with_app_column(semantics, added),
         )

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -66,6 +67,36 @@ def stored_semantics(df: pl.DataFrame, metadata: dict[str, Any]) -> DatasetSeman
         for c in added
     )
     return semantics.model_copy(update={"app_columns": apps})
+
+
+def version_semantics(
+    data_dir: Path,
+    dataset_id: str,
+    version: str,
+    *,
+    metadata: dict[str, Any],
+    stored_frame: Callable[[], pl.DataFrame],
+    declarations: Any = None,
+) -> DatasetSemantics:
+    """``semantics_for``, or for a version stored before its contract held semantics, the same
+    inference pass over its stored frame (``stored_semantics``), read-only. Every reader (the
+    semantic layer, the upload response, ``GET /semantics``, aggregate) uses this, so they agree.
+
+    ``declarations``: a ``DeclarationStore``; default the file store in ``data_dir``.
+
+    Raises:
+        ContractError: the contract or the declarations can't be read (never hidden).
+    """
+    from clinical_analytics.contracts.declarations import FileDeclarationStore
+    from clinical_analytics.contracts.semantics import SemanticsMissingError, semantics_for, with_declarations
+
+    store = declarations if declarations is not None else FileDeclarationStore(data_dir)
+    try:
+        return semantics_for(data_dir, dataset_id, version, declarations=store)
+    except SemanticsMissingError:
+        logger.info("semantics_inferred_for_stored_version", dataset_id=dataset_id, dataset_version=version)
+        inferred = stored_semantics(stored_frame(), metadata).model_copy(update={"dataset_version": version})
+        return with_declarations(inferred, store.load(dataset_id))
 
 
 def accepted_patch_ids(patches: list[Patch]) -> tuple[str, ...]:

@@ -82,12 +82,22 @@ class DateChoice:
 
 @dataclass(frozen=True)
 class DateAmbiguity:
-    """Both day/month orders read every value and disagree: only the clinician can say."""
+    """What the values can't settle, so the column stays text and the clinician is asked.
+
+    * ``order``: both day/month orders read every value and disagree, or too few values settle
+      the order (one 13/01 among a hundred dates that read either way);
+    * ``century``: a two-digit year that reads as a future date (``03/15/45`` as 2045).
+
+    ``format``: the reading asked about (the day-first one for an order question), for the
+    question's worked example in the column's own style.
+    """
 
     column: str
     example: str
     day_first: str
     month_first: str
+    kind: Literal["order", "century"] = "order"
+    format: str = "%d/%m/%y"
 
 
 def spoken(value: date | datetime) -> str:
@@ -137,8 +147,22 @@ def choose_text_format(series: pl.Series, *, stated: str | None = None) -> DateC
     """The single format that reads every value of a text column, or why there is none.
 
     ``stated``: a strptime pattern a dictionary gives for the column; it is used when it reads
-    every value, and settles day/month order. Returns None when the column is not dates.
+    every value, and settles day/month order. Returns None when the column is not dates. A
+    two-digit-year format that would put a date in the future is a ``century`` ambiguity.
     """
+    found = _choose_text_format(series, stated=stated)
+    if isinstance(found, DateChoice) and "%y" in found.format:
+        parsed = _parse(_present(series), found.format)
+        latest = parsed.max()
+        today = date.today()
+        if isinstance(latest, date) and (latest.date() if isinstance(latest, datetime) else latest) > today:
+            later = parsed.filter(parsed.cast(pl.Date) > today)[0]
+            century = later.replace(year=later.year - 100)
+            return DateAmbiguity(series.name, "", spoken(century), spoken(later), "century", found.format)
+    return found
+
+
+def _choose_text_format(series: pl.Series, *, stated: str | None = None) -> DateChoice | DateAmbiguity | None:
     if series.dtype != pl.String:
         return None
     values = _present(series)
@@ -198,17 +222,27 @@ def _settle_order(values: pl.Series, name: str, day_first: str, month_first: str
         differ = (dmy != mdy).fill_null(False)
         if bool(differ.any()):
             index = int(differ.arg_true()[0])
-            return DateAmbiguity(name, str(values[index]), spoken(dmy[index]), spoken(mdy[index]))
+            return DateAmbiguity(name, str(values[index]), spoken(dmy[index]), spoken(mdy[index]), "order", day_first)
         ex_in, ex_out = _example(values, dmy)
         return DateChoice(
             name, day_first, ex_in, ex_out, has_time, "day_first", "every value reads the same either way"
         )
+    # Several values must settle the order, and a fair share of them: one 13/01/2021 among a
+    # hundred dates that read either way could be a typing slip, not the file's convention.
+    settled_by = int(_parse(values, month_first if dmy is not None else day_first).null_count())
+    if (
+        settled_by < min(config.DATE_ORDER_MIN_VALUES, max(1, values.len() // 2))  # a 2-value column: 1
+        or settled_by < config.DATE_ORDER_MIN_SHARE * values.len()
+    ):
+        chosen = dmy if dmy is not None else mdy
+        assert chosen is not None
+        return DateAmbiguity(name, str(values[0]), spoken(chosen[0]), spoken(chosen[0]), "order", day_first)
     if dmy is not None:
         ex_in, ex_out = _example(values, dmy, dmy.dt.day() <= 12)
-        return DateChoice(name, day_first, ex_in, ex_out, has_time, "day_first", "some first numbers are above 12")
+        return DateChoice(name, day_first, ex_in, ex_out, has_time, "day_first", "many first numbers are above 12")
     assert mdy is not None
     ex_in, ex_out = _example(values, mdy, mdy.dt.day() <= 12)
-    return DateChoice(name, month_first, ex_in, ex_out, has_time, "month_first", "some second numbers are above 12")
+    return DateChoice(name, month_first, ex_in, ex_out, has_time, "month_first", "many second numbers are above 12")
 
 
 _DATE_NAME_TOKENS: Final = frozenset({"date", "dt", "dttm", "dob", "dod", "datetime", "timestamp", "dte"})
@@ -222,7 +256,7 @@ def date_named(column: str) -> bool:
 
 
 def choose_number_format(
-    series: pl.Series, *, from_excel: bool = False, stated: str | None = None
+    series: pl.Series, *, from_excel: bool = False, stated: str | None = None, date_hint: bool = False
 ) -> DateChoice | None:
     """Numbers that are dates: ``YYYYMMDD`` integers, or Excel serial day numbers from a workbook.
 
@@ -231,7 +265,7 @@ def choose_number_format(
     """
     if not (series.dtype.is_integer() or series.dtype.is_float()):
         return None
-    if not (date_named(series.name) or stated is not None):
+    if not (date_named(series.name) or stated is not None or date_hint):
         return None
     values = series.drop_nulls()
     if values.len() == 0:

@@ -120,6 +120,20 @@ class DimensionChoice(BaseModel):
     dataset_version: str | None = None
 
 
+class MissingCodeDeclaration(BaseModel):
+    """The doctor's answer to "Does 99 in los_days mean not recorded?" on one dataset version.
+
+    ``missing`` True: the value is stored as missing wherever answers read the data; False: it is
+    a real value (the question is answered and not asked again)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    column: str = Field(min_length=1)
+    value: int | float | str
+    missing: bool
+    dataset_version: str | None = None
+
+
 class Declarations(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -129,6 +143,7 @@ class Declarations(BaseModel):
     levels: tuple[LevelMapping, ...] = ()
     population_estimates: PopulationEstimatesDeclaration | None = None
     choices: tuple[DimensionChoice, ...] = ()
+    missing_codes: tuple[MissingCodeDeclaration, ...] = ()
 
     @model_validator(mode="before")
     @classmethod
@@ -194,6 +209,22 @@ class Declarations(BaseModel):
         """column -> chosen level, for the choices made on ``dataset_version``."""
         return {c.column: c.value for c in self.choices if c.dataset_version == dataset_version}
 
+    def with_missing_code(self, answer: MissingCodeDeclaration) -> Declarations:
+        """These declarations with ``answer`` as the answer for its column and value on its version."""
+        kept = tuple(
+            m
+            for m in self.missing_codes
+            if not (
+                m.column == answer.column
+                and str(m.value) == str(answer.value)
+                and m.dataset_version == answer.dataset_version
+            )
+        )
+        return self.model_copy(update={"missing_codes": (*kept, answer)})
+
+    def missing_codes_for(self, dataset_version: str | None) -> tuple[MissingCodeDeclaration, ...]:
+        return tuple(m for m in self.missing_codes if m.dataset_version == dataset_version)
+
     def for_version(self, dataset_version: str | None) -> Declarations:
         """Only what was confirmed on ``dataset_version``: all a question on that version reads."""
         grain = self.grain_for(dataset_version)
@@ -202,6 +233,7 @@ class Declarations(BaseModel):
             levels=self.levels_for(dataset_version),
             population_estimates=self.population_estimates_for(dataset_version),
             choices=tuple(c for c in self.choices if c.dataset_version == dataset_version),
+            missing_codes=self.missing_codes_for(dataset_version),
         )
 
 

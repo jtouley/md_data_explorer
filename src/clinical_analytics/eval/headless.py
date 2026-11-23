@@ -55,7 +55,7 @@ def layer_for(dataset_id: str, workspace: Path | None = None) -> SemanticLayer:
     """Semantic layer backed by a per-process CSV copy of the dataset."""
     if dataset_id in _LAYERS:
         return _LAYERS[dataset_id]
-    from clinical_analytics.contracts.inference import infer_semantics
+    from clinical_analytics.contracts.inference import apply_semantics, infer_semantics
     from clinical_analytics.contracts.semantics import LAYER_CONFIG_KEY
     from clinical_analytics.core.identifier_rules import (
         PATIENT_ROWS_ASKABLE_CONFIG_FLAG,
@@ -64,11 +64,13 @@ def layer_for(dataset_id: str, workspace: Path | None = None) -> SemanticLayer:
         rows_may_be_patients,
     )
 
+    # The same one semantics pass an upload runs (ADR017), applied before the data is written, as
+    # the upload applies it to the typed Parquet: the patient key is never guessed here.
     frame = frame_for(dataset_id, workspace)
+    semantics = infer_semantics(frame)
+    frame = apply_semantics(frame, semantics)
     csv_path = _cache_dir() / f"{dataset_id}.csv"
     frame.write_csv(csv_path)
-    # The same one semantics pass an upload runs (ADR017): the patient key is never guessed here.
-    semantics = infer_semantics(frame)
     config: dict[str, Any] = {
         "init_params": {"source_path": str(csv_path), "source_format": "csv"},
         "column_mapping": {},

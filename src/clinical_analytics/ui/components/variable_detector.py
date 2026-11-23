@@ -188,7 +188,7 @@ class VariableTypeDetector:
         return results
 
     @classmethod
-    def suggest_schema_mapping(cls, df: Any) -> dict[str, str | None | dict[str, Any]]:
+    def suggest_schema_mapping(cls, df: Any, semantics: Any = None) -> dict[str, str | None | dict[str, Any]]:
         """
         Suggest mapping to UnifiedCohort schema based on DATA characteristics.
 
@@ -214,33 +214,24 @@ class VariableTypeDetector:
 
         suggestions: dict[str, OptionalStr | dict[str, Any]] = {"patient_id": None, "outcome": None, "time_zero": None}
 
-        # Check for patient_id - use ensure_patient_id logic but return original column name for suggestions
-        if "patient_id" in df.columns:
+        # The patient ID: the contract semantics' key (the version's, when given), else the same
+        # one inference pass the upload runs; a combination of columns is a synthetic row key.
+        from clinical_analytics.contracts.inference import infer_semantics
+
+        frame = _ensure_polars_df(df)
+        found = semantics if semantics is not None else infer_semantics(frame)
+        if "patient_id" in frame.columns:
             suggestions["patient_id"] = "patient_id"
-        else:
-            # Try to find single column identifier first
-            best_id_col = None
-            best_uniqueness = 0.0
-
-            for col, info in variable_info.items():
-                if info["type"] == "identifier":
-                    uniqueness = info["metadata"].get("uniqueness", 0)
-                    if uniqueness > best_uniqueness:
-                        best_uniqueness = uniqueness
-                        best_id_col = col
-
-            if best_id_col:
-                suggestions["patient_id"] = best_id_col
-            else:
-                # Try composite identifier (a row key: answers on it count rows)
-                df_polars = _ensure_polars_df(df)
-                composite_cols = cls.find_composite_identifier_candidates(df_polars)
-                if composite_cols:
-                    suggestions["patient_id"] = "patient_id"  # Synthetic ID
-                    suggestions["_patient_id_metadata"] = {
-                        "patient_id_source": "composite",
-                        "patient_id_columns": composite_cols,
-                    }
+        elif found.patient_key is not None:
+            suggestions["patient_id"] = found.patient_key.column
+        elif found.row_key.kind == "column":
+            suggestions["patient_id"] = found.row_key.columns[0]
+        elif found.row_key.kind == "composite":
+            suggestions["patient_id"] = "patient_id"  # Synthetic ID: a row key, answers count rows
+            suggestions["_patient_id_metadata"] = {
+                "patient_id_source": "composite",
+                "patient_id_columns": list(found.row_key.columns),
+            }
 
         # Find best outcome candidate among binary columns: the canonical name wins (mirrors the
         # patient_id check above), then numeric columns (the schema requires a numeric 0/1 outcome,

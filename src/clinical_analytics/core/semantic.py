@@ -618,6 +618,10 @@ def _validate_table_identifier(name: str) -> str:
     return name
 
 
+# Layer config key: column -> values the user confirmed mean not recorded (contracts.semantics).
+DECLARED_MISSING_CODES_KEY = "declared_missing_codes"
+
+
 class SemanticLayer:
     """
     Base semantic layer class that generates SQL dynamically from config.
@@ -883,6 +887,13 @@ class SemanticLayer:
     def _view_over(self, raw: Any) -> Any:
         """The semantic view's columns over ``raw`` (the source table, or it with row positions)."""
         mutations = {}
+
+        # 0. Values the user confirmed mean "not recorded" (ADR017): missing for every answer.
+        for column, values in (self.config.get(DECLARED_MISSING_CODES_KEY) or {}).items():
+            if column in raw.columns and values:
+                mutations[column] = (
+                    raw[column].isin(list(values)).ifelse(ibis.null().cast(raw[column].type()), raw[column])
+                )
 
         # 1. Build outcome columns from config
         outcomes = self.config.get("outcomes", {})

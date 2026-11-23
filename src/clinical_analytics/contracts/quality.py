@@ -503,7 +503,7 @@ def level_variant_results(lf: pl.LazyFrame, contract: OpenDataContractStandard) 
     A warning at upload; a question that groups or limits on such a level is held until the
     doctor confirms the spellings are one. The message names up to four of the spellings.
     """
-    from clinical_analytics.analysis.grouping import level_variants
+    from clinical_analytics.analysis.grouping import level_variants, without_listed_codes
 
     if not contract.schema_:
         return []
@@ -522,10 +522,11 @@ def level_variant_results(lf: pl.LazyFrame, contract: OpenDataContractStandard) 
     results = []
     for column in text:
         counts = {row["value"]: row["__n"] for row in levels.get_column(column)[0].to_list()}
-        groups = level_variants(list(counts))
+        prop = props[column]
+        # Codes the dictionary lists as distinct ("NB", "nb") are categories, never held as one.
+        groups = without_listed_codes(level_variants(list(counts)), (e.value for e in prop.enum or []))
         if not groups:
             continue
-        prop = props[column]
         named = [s for group in groups for s in group]
         example = f" (for example {', '.join(named[:4])})"
         results.append(
