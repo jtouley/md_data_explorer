@@ -181,6 +181,15 @@ def test_compile_plan_labelValue_isStoredCode(clinic):
         pytest.param({"filters": [_cond("pt_ref", "is", values=["H001"])]}, "not the ID", id="patient_key"),
         pytest.param({"answer": "mean", "measure": "sex"}, "not a number column", id="mean_of_category"),
         pytest.param({"answer": "share"}, "numerator", id="share_without_numerator"),
+        pytest.param(
+            {
+                "answer": "share",
+                "filters": [_cond("smoker", "is", values=["yes"])],
+                "numerator": [_cond("smoker", "is", values=["yes"])],
+            },
+            "both filters and numerator",
+            id="share_of_its_own_filter",
+        ),  # fmt: skip
         pytest.param({"group_by": "arm", "which_visit": "every"}, "not to a breakdown", id="every_breakdown"),
         pytest.param({"answer": "list_patients"}, "does not list", id="listing"),
     ],

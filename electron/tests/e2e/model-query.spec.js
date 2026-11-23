@@ -50,8 +50,8 @@ test.describe('Model-written query path (live API, mocked model)', () => {
       mimeType: 'text/csv',
       buffer: makeVisitsCsv(),
     });
-    // Visit-level rows: the upload is kept and its repeated patient IDs are pointed out.
-    await expect(page.locator('[data-testid="upload-status"]')).toContainText('Uploaded');
+    // Visit-level rows: the upload is kept and says what one line is (the contract, ADR017).
+    await expect(page.locator('[data-testid="upload-status"]')).toContainText('is ready');
     await expect(page.locator('#query-input')).toBeEnabled();
 
     // "came back": words that match no column or value. The question is still answered.
@@ -73,9 +73,7 @@ test.describe('Model-written query path (live API, mocked model)', () => {
 
     // The reading card in clinical words, always visible: the unit, the visit, the limits.
     const reading = card.locator('[data-testid="answer-reading"]');
-    await expect(reading).toContainText(
-      'Counted: patients, each once, when any one of their'
-    );
+    await expect(reading).toContainText('Counted: patients, each once, when any one of their');
     await expect(reading).toContainText('at least 65');
     await expect(reading).not.toContainText('age_years');
 

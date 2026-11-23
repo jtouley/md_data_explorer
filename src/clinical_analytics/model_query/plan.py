@@ -340,6 +340,14 @@ def _compile_count(
 def _compile_share(
     plan: Plan, context: DatasetContext, which: WhichVisit, per_patient: bool, used: frozenset[str]
 ) -> Compiled:
+    shared = sorted({c.column for c in plan.numerator} & {c.column for c in plan.filters})
+    if shared:
+        # The same column limiting both the records and the counted event makes the share 100%
+        # or 0% whatever the data says.
+        raise PlanError(
+            f"{', '.join(shared)} is in both filters and numerator: put the condition counted only in numerator, "
+            "and keep in filters only the records the share is out of."
+        )
     if not plan.numerator:
         if plan.group_by is not None:
             return _compile_count(plan.model_copy(update={"answer": "count"}), context, which, per_patient, used)

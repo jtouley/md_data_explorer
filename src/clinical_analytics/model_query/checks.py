@@ -152,7 +152,13 @@ def read_cues(question: str, context: DatasetContext, used: frozenset[str] = fro
         which for which, pattern in _TIMES if any(m.group(0).casefold() not in own for m in pattern.finditer(text))
     )
     records_word = context.row_noun.split()[-1]
-    records = re.compile(rf"\b(?:{re.escape(records_word)}|{re.escape(plural(records_word))}|records?)\b", re.I)
+    noun = rf"(?:{re.escape(records_word)}|{re.escape(plural(records_word))}|records?)"
+    records = re.compile(rf"\b{noun}\b", re.I)
+    # "over all encounters", "across every visit": every record, in the contract's own noun.
+    if context.visit_level and re.search(
+        rf"\b(?:all|every|each|across)(?: of)?(?: their| the)?(?: \w+)? {noun}\b", text, re.I
+    ):
+        times = times | {"every"}
     # A records noun inside a timepoint phrase ("at their latest visit") says when, not what is
     # counted.
     counted_records = [m for m in records.finditer(text) if not _WHEN.search(" ".join(text[: m.start()].split()[-3:]))]

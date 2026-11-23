@@ -249,3 +249,12 @@ def test_apply_stated_reAskedChoiceTimepoint_keepsTheUnit(clinic):
 
     # Assert
     assert (fixed.count_of, fixed.which_visit) == ("patients", "last")
+
+
+def test_needs_visit_choice_overAllRecordsInContractNoun_poolsWithoutAsking(clinic):
+    # Arrange: a summary over every visit, said with the contract's own noun for a record
+    compiled = compile_plan(_plan(answer="median", measure="systolic_mmhg"), clinic)
+
+    # Act / Assert
+    assert checks.needs_visit_choice(compiled, "Median systolic pressure over all clinic visits", clinic) is False
+    assert checks.needs_visit_choice(compiled, "Median systolic pressure", clinic) is True

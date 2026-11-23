@@ -101,8 +101,11 @@ def _analysis(
 
 
 def _numbers(analysis: dict[str, Any]) -> list[float]:
-    """The numbers an analysis would show, without any group's label (never a row value)."""
-    keys = ("total_count", "proportion", "events", "n_used", "mean", "median", "min", "max", "sum", "non_null_count")
+    """The numbers an analysis would show, without any group's label. A minimum or a maximum is
+    one record's value, so it is never logged."""
+    if analysis.get("statistic") in ("min", "max"):
+        return []
+    keys = ("total_count", "proportion", "events", "n_used", "mean", "median", "sum", "non_null_count")
     found = [float(analysis[k]) for k in keys if isinstance(analysis.get(k), int | float)]
     for row in analysis.get("group_counts") or analysis.get("groups") or []:
         found += [float(v) for k, v in row.items() if k in ("count", "rate", "value", "n", "events") and v is not None]
@@ -117,12 +120,14 @@ def _log_would_have(
         frame, total = _run(compiled, open_sandbox)
         numbers = _numbers(_analysis(compiled, frame, total, context, question))
     except (SqlRunError, SqlRefusedError, PlanError) as e:
-        logger.info("model_query_held_answer", why=why, answer=compiled.plan.answer, ran=False, error=type(e).__name__)
+        logger.info(
+            "model_query_held_answer", why=why, plan_answer=compiled.plan.answer, ran=False, error_type=type(e).__name__
+        )
         return
     logger.info(
         "model_query_held_answer",
         why=why,
-        answer=compiled.plan.answer,
+        plan_answer=compiled.plan.answer,
         which_visit=compiled.plan.which_visit,
         count_of=compiled.unit,
         ran=True,
@@ -250,7 +255,7 @@ def answer_question(
         else:
             lines = card.reading_lines(compiled, context, analysis, total)
             reading = card.reading(lines)
-            logger.info("model_query_answered", attempt=attempt, answer=plan.answer, kind=analysis.get("type"))
+            logger.info("model_query_answered", attempt=attempt, plan_answer=plan.answer, kind=analysis.get("type"))
             return ModelAnswer(
                 "answered",
                 analysis={**analysis, "sql": compiled.sql, "reading": reading},
