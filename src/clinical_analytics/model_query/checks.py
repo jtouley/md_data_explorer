@@ -51,6 +51,14 @@ _WHEN: Final = re.compile(
     r"\b(?:at|on|during|per|first|last|latest|final|baseline|initial|earliest|recent|every|each|any|all)\b", re.I
 )
 _YEARS: Final = (1900, 2100)
+# Words that ask for a breakdown ("by sex", "per arm", "each district", "A versus B"), and the
+# period words a breakdown by date needs. "each patient's" names a timepoint, not a breakdown.
+_BREAKDOWN: Final = re.compile(
+    r"\b(?:by|per|each|for each|across|versus|vs|compared?|comparing|between|breakdown|broken down|split|"
+    r"distribution|stratified|grouped|among the)\b(?! patient'?s?\b)",
+    re.I,
+)
+_PERIOD: Final = re.compile(r"\b(?:years?|yearly|annual\w*|months?|monthly|quarters?|over time|trend\w*)\b", re.I)
 # Words that ask for a statistical test or model, not side-by-side figures.
 _TEST_WORDS: Final = re.compile(
     r"\b(?:test\w*|significan\w*|p[- ]?values?|odds|correlat\w*|associat\w*|regression|hazard|survival|"
@@ -370,6 +378,18 @@ def problems(compiled: Compiled, question: str, context: DatasetContext) -> list
                     reason=f"Your question gives no threshold for {column.display}, so I did not pick one.",
                 )
             )
+    group = context.column(compiled.group_column or "")
+    if group is not None and not compiled.plan.cut_points and compiled.kind != "test":
+        asked = _PERIOD.search(question) if group.kind == "date" else _BREAKDOWN.search(question)
+        if not asked:
+            found.append(
+                Problem(
+                    "group_invented",
+                    feedback="The question does not ask for a breakdown: set group_by null (and period none).",
+                    reason=f"My reading broke the answer down by {group.display}, which your question does not ask "
+                    "for, so I did not answer.",
+                )
+            )
     if compiled.group_column is None and cues.negated != _negated(compiled.plan, context):
         found.append(
             Problem(
@@ -462,6 +482,8 @@ def needs_visit_choice(compiled: Compiled, question: str, context: DatasetContex
     cues = read_cues(question, context, compiled.columns)
     if _expected_time(cues) is not None or _time_by_column(compiled.plan, context, "first"):
         return False
+    if compiled.kind == "statistic" and cues.records and not cues.persons:
+        return False  # a summary over the records the question names ("sessions longer than ...")
     return bool(visit_columns(compiled))
 
 

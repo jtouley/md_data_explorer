@@ -282,3 +282,31 @@ def test_apply_stated_shareRepeatingItsFilter_keepsItOnlyAsNumerator(cohort):
 
     # Assert
     assert fixed.filters == () and [c.column for c in fixed.numerator] == ["died_1y"]
+
+
+@pytest.mark.parametrize(
+    ("question", "group_by", "found"),
+    [
+        pytest.param("Average FEV1 at surgery", "stage", True, id="breakdown_invented"),
+        pytest.param("Average FEV1 by stage", "stage", False, id="by"),
+        pytest.param("Average FEV1 for each stage", "stage", False, id="for_each"),
+        pytest.param("Average FEV1 in stage I versus stage III", "stage", False, id="versus"),
+    ],
+)
+def test_problems_breakdownNotAsked_isFound(cohort, question, group_by, found):
+    # Arrange
+    compiled = compile_plan(_plan(answer="mean", measure="fev_pct", group_by=group_by), cohort)
+
+    # Act
+    kinds = [p.kind for p in checks.problems(compiled, question, cohort)]
+
+    # Assert
+    assert ("group_invented" in kinds) is found
+
+
+def test_needs_visit_choice_summaryOverNamedRecords_poolsWithoutAsking(clinic):
+    # Arrange
+    compiled = compile_plan(_plan(answer="mean", measure="systolic_mmhg", count_of="clinic visits"), clinic)
+
+    # Act / Assert: the question names the records it summarises
+    assert checks.needs_visit_choice(compiled, "Mean systolic pressure in clinic visits of smokers", clinic) is False
