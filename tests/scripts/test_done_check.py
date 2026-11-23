@@ -1,0 +1,87 @@
+"""Tests for scripts/done_check.py (make done-check summary)."""
+
+import pytest
+
+from scripts import done_check
+
+PYTEST_TAIL = "\x1b[32m===== 120 passed, 3 skipped in 41.20s =====\x1b[0m\n"
+MUTATION_FAIL = (
+    "mutation-changed: FAIL: 8/9 killed, 1 unkilled\n"
+    "  clinical_analytics.core.x: 9 mutants: 8 killed, 1 survived\n"
+    "    survived: clinical_analytics.core.x.x_f__mutmut_3  (mutmut show clinical_analytics.core.x.x_f__mutmut_3)\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("step", "rc", "output", "result", "detail"),
+    [
+        ("check-fast", 0, "lint ok\n✅ All fast checks passed!\n", "PASS", "✅ All fast checks passed!"),
+        (
+            "check-fast",
+            2,
+            "make[1]: *** [Makefile:9: lint] Error 1\n",
+            "FAIL",
+            "make[1]: *** [Makefile:9: lint] Error 1",
+        ),
+        ("test-fast", 0, "collected\n" + PYTEST_TAIL, "PASS", "120 passed, 3 skipped in 41.20s"),
+        ("test-fast", 2, "", "FAIL", "exit 2"),
+        ("mutation-changed", 0, "mutation-changed: SKIP: no mutable src module changed\n", "SKIP", None),
+        ("mutation-changed", 1, MUTATION_FAIL, "FAIL", "mutation-changed: FAIL: 8/9 killed, 1 unkilled"),
+        ("pr-size", 0, "pr-size: 10 added non-test lines (warn above 1500, fail above 3000)\n", "PASS", None),
+    ],
+    ids=["check_pass", "check_fail", "tests_pass", "tests_no_output", "mutation_skip", "mutation_fail", "size_ok"],
+)
+def test_classify_stepOutput_resultAndKeyLine(step, rc, output, result, detail):
+    # Act
+    outcome = done_check.classify(step, rc, output)
+
+    # Assert
+    assert outcome.result == result
+    assert outcome.detail == (detail or output.strip())
+
+
+def test_classify_mutationFailure_keepsUnkilledMutantsAsNotes():
+    # Act
+    outcome = done_check.classify("mutation-changed", 1, "noise\n" + MUTATION_FAIL)
+
+    # Assert
+    assert outcome.notes == tuple(MUTATION_FAIL.splitlines()[1:])
+
+
+def test_main_oneStepFails_runsEveryStepAndReportsOverallFail(capsys):
+    # Arrange
+    outputs = {
+        "check-fast": (0, "✅ All fast checks passed!\n"),
+        "test-fast": (0, PYTEST_TAIL),
+        "mutation-changed": (1, MUTATION_FAIL),
+        "pr-size": (0, "pr-size: 10 added non-test lines\n"),
+    }
+    calls: list[str] = []
+
+    def runner(make, step, extra):
+        calls.append(step)
+        return outputs[step]
+
+    # Act
+    rc = done_check.main(["--base", "origin/main"], runner=runner)
+
+    # Assert
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert calls == list(done_check.STEPS)
+    assert "Overall: **FAIL**" in out
+    assert "| `make mutation-changed` | FAIL | mutation-changed: FAIL: 8/9 killed, 1 unkilled |" in out
+    assert "survived: clinical_analytics.core.x.x_f__mutmut_3" in out
+
+
+def test_main_allPassOrSkip_exitsZero(capsys):
+    # Arrange
+    def runner(make, step, extra):
+        return 0, "mutation-changed: SKIP: nothing\n" if step == "mutation-changed" else "ok\n"
+
+    # Act
+    rc = done_check.main([], runner=runner)
+
+    # Assert
+    assert rc == 0
+    assert "Overall: **PASS**" in capsys.readouterr().out

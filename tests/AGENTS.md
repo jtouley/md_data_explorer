@@ -39,6 +39,7 @@
 - ❌ **FORBIDDEN** to run `pytest` directly
 - ❌ **FORBIDDEN** to run `uv run pytest` directly
 - ❌ **FORBIDDEN** to commit without running `make check-fast`
+- ✅ **MUST** pass `make done-check` before a PR is handed over for review
 
 ### Rule 4: Test Isolation Is MANDATORY
 - ✅ **MUST** use AAA pattern (Arrange-Act-Assert) with clear separation
