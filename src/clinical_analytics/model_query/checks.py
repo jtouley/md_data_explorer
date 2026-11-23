@@ -74,7 +74,7 @@ _DENOMINATOR: Final = re.compile(
 # The denominator phrase ends where its clause's verb or relative word starts ("the women who
 # died": "women").
 _CLAUSE_END: Final = re.compile(
-    r"\b(?:who|that|which|whose|were|was|are|is|had|have|has|did|got|with|in|at|by|on)\b.*", re.I
+    r"\b(?:who|that|which|whose|were|was|are|is|had|have|has|did|got|with|in|at|by|on|\w{2,}(?:ed|ing))\b.*", re.I
 )
 _TIME_UNITS: Final = frozenset({"day", "week", "month", "year", "hour", "minute", "second"})
 # Glue words that never name a column, and the everyday words for the sexes a dictionary labels.

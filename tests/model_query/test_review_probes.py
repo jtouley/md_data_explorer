@@ -379,3 +379,15 @@ def test_answer_question_durationWithUnitColumn_comparedInTheStatedUnit(make_que
 
     # Assert: 30 months, 3 years and 40 months are over 2 years
     assert answer.analysis["total_count"] == 3
+
+
+def test_problems_denominatorPhraseEndsAtItsVerb(cohort):
+    # Arrange: "the share of our patients died ...": the verb is the event, not the denominator
+    _catalog, context = cohort
+    compiled = compile_plan(parse_plan(_reply(answer="share", numerator=[_DIED])), context)
+
+    # Act
+    kinds = [p.kind for p in checks.problems(compiled, "What share of our patients died within a year?", context)]
+
+    # Assert
+    assert "denominator" not in kinds
