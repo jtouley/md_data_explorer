@@ -127,6 +127,11 @@ class AsyncQueryResult:
     # answers it. Empty for a plain hold.
     choices: list[dict[str, str]] = field(default_factory=list)
     open_questions: list[str] = field(default_factory=list)
+    # What a confirmed answer stores as a verified plan (model_query.verified): never sent out.
+    question: str | None = None
+    dataset_id: str | None = None
+    dataset_version: str | None = None
+    model_reply: dict[str, Any] | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
 
@@ -262,6 +267,9 @@ class AsyncQueryService:
             self._queries[query_id] = AsyncQueryResult(
                 query_id=query_id,
                 status="pending",
+                question=query,
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
             )
             self._events[query_id] = []
 
@@ -312,6 +320,7 @@ class AsyncQueryService:
         self._queries[query_id].plan_line = plan_line
         self._queries[query_id].plan_hash = result.plan_hash
         self._queries[query_id].choices = list(result.choices)
+        self._queries[query_id].model_reply = result.model_reply if result.analysis is not None else None
         self._queries[query_id].completed_at = datetime.now(UTC)
 
         if result.requires_confirmation:
@@ -755,6 +764,20 @@ class AsyncQueryService:
             ),
             completed_at=datetime.now(UTC),
         )
+
+    def verify(self, query_id: str) -> bool:
+        """Keep a model-written answer the user confirmed as a verified plan for its dataset
+        (``model_query.verified``: the question masked, the plan; never reused as an answer).
+        False when the query is unknown, unanswered or not model-written."""
+        from clinical_analytics.model_query import verified
+
+        found = self._queries.get(query_id)
+        if found is None or found.status != "completed" or not found.model_reply or not found.dataset_id:
+            return False
+        verified.save(
+            uploads_dir().parent, found.dataset_id, found.dataset_version, found.question or "", found.model_reply
+        )
+        return True
 
     async def get_result(self, query_id: str) -> AsyncQueryResult | None:
         """

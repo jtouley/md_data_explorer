@@ -191,7 +191,7 @@ class NLQueryConfigDefaults:
     model_query_timeout_s: float = 300.0
     model_query_cold_timeout_s: float = 900.0
     model_query_budget_s: float = 1200.0  # all attempts of one question
-    model_query_max_attempts: int = 3
+    model_query_max_attempts: int = 2
     # Open semantic layers (datasets) the API keeps, and the DuckDB memory they share: a
     # percentage of RAM or a size ("60%", "8GB"), split evenly, so each layer gets
     # budget / cache size. Threads are per layer; 0 = half the CPUs.

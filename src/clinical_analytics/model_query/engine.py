@@ -24,7 +24,7 @@ from typing import Any, Final, Literal
 import polars as pl
 import structlog
 
-from clinical_analytics.model_query import card, checks, present
+from clinical_analytics.model_query import card, checks, linking, present
 from clinical_analytics.model_query.context import DatasetContext
 from clinical_analytics.model_query.examples import Example, similar_examples
 from clinical_analytics.model_query.llm import MAX_REPLY_TOKENS, NUM_CTX, ModelFn, ModelTimedOut
@@ -58,6 +58,7 @@ MODEL_TIMEOUT_REASON: Final = (
     "The computer may be busy: ask again in a moment. The wait can be raised with model_query_timeout_s."
 )
 VALUE_NOT_FOUND_QUESTION: Final = "I can't find '{said}' in {column}. Did you mean one of these?"
+NEAR_VALUE_QUESTION: Final = "I can't find '{said}' in your data. Did you mean one of these?"
 MAX_DISTINCT_CHECKED: Final = 20_000
 # ADR015: a number from fewer than this many records can be one person's value; never logged.
 MIN_LOGGED_N: Final = 11
@@ -196,7 +197,9 @@ def _ask(
     return ModelAnswer(
         "clarify" if ask.choices else "refused",
         reason=ask.reason,
-        choices=tuple((label, f"{question.rstrip()} {words}") for label, words in ask.choices),
+        choices=tuple(
+            (label, words if ask.rewrites else f"{question.rstrip()} {words}") for label, words in ask.choices
+        ),
         sql=compiled.sql,
         reading=card.reading(card.reading_lines(compiled, context)),
         reply=reply,
@@ -231,6 +234,28 @@ def _value_ask(
                 tuple((stored[n], f"({column.display}: {stored[n]})") for n in near),
             )
     return None
+
+
+def _near_value_ask(links: list[linking.Link], compiled: Compiled, question: str) -> checks.Ask | None:
+    """A phrase of the question close to a value of the table but not one, that the plan does
+    not resolve: asked, offering the nearest values (never guessed)."""
+    used: dict[str, set[str]] = {}
+    for cond in (*compiled.filters, *compiled.numerator):
+        used.setdefault(cond.column, set()).update(
+            str(v).casefold() for v in (*cond.values, cond.value) if v is not None
+        )
+    misses = linking.unresolved(links, used)
+    if not misses:
+        return None
+    said = misses[0].said
+    options = [m for m in misses if m.said == said]
+    pattern = re.compile(re.escape(said), re.I)
+    return checks.Ask(
+        "near_value",
+        NEAR_VALUE_QUESTION.format(said=said),
+        tuple((o.label, pattern.sub(o.label, question, count=1)) for o in options),
+        rewrites=True,
+    )
 
 
 def _ties_ask(
@@ -335,10 +360,11 @@ def answer_question(
     *,
     model: ModelFn,
     open_sandbox: Callable[[], SandboxConnection],
-    max_attempts: int = 3,
+    max_attempts: int = 2,
     previous: Sequence[tuple[str, dict[str, Any]]] = (),
     examples: Sequence[Example] | None = None,
     budget_s: float | None = None,
+    verified: Sequence[tuple[str, dict[str, Any]]] = (),
 ) -> ModelAnswer:
     """Ask the model for a plan, check it, run it; feed a failure back for a bounded number of
     retries.
@@ -361,6 +387,8 @@ def answer_question(
     system, schema = parts
     # A follow-up ("now only the women") keeps what the earlier questions said.
     asked = " ".join([*(q for q, _reply in previous), question])
+    links = linking.link_values(question, context)
+    value_hints = linking.hints(links, context)
     problems: list[str] = []
     problem: str | None = None
     failed_reply: dict[str, Any] | None = None
@@ -370,9 +398,11 @@ def answer_question(
             logger.warning("model_query_budget_spent", attempt=attempt, budget_s=budget_s)
             reason = MODEL_TIMEOUT_REASON.format(minutes=max(1, round(budget_s / 60)))
             return ModelAnswer("unavailable", reason=reason, attempts=attempt - 1, problems=tuple(problems))
-        payload = model(
-            system, user_prompt(question, shots, previous=previous, failed_reply=failed_reply, problem=problem), schema
-        )
+        user = user_prompt(
+            question, shots, previous=previous, failed_reply=failed_reply, problem=problem, hints=value_hints,
+            verified=verified,
+        )  # fmt: skip
+        payload = model(system, user, schema)
         if isinstance(payload, ModelTimedOut):
             logger.warning("model_query_timed_out", attempt=attempt, timeout_s=payload.timeout_s)
             reason = MODEL_TIMEOUT_REASON.format(minutes=max(1, round(payload.timeout_s / 60)))
@@ -432,7 +462,13 @@ def answer_question(
                     once = compile_plan(compiled.plan.model_copy(update={"which_visit": "first"}), context)
                     compiled = replace(once, constant=True)
             if ask is None:
+                ask = _near_value_ask(links, compiled, question)
+            if ask is None:
                 ask = _value_ask(compiled, context, open_sandbox, question)
+                if ask is not None and attempt < max_attempts:
+                    # An execution fact: the value is not in the column. Said once, precisely.
+                    near = ", ".join(f"'{label}'" for label, _q in ask.choices) or "none close"
+                    raise PlanError(f"{ask.reason.split('.')[0]}. Its nearest values are {near}; use one of them.")
             if ask is None:
                 ask = _ties_ask(compiled, context, open_sandbox) or _suspect_total_ask(compiled, context)
             if ask is not None:

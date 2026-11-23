@@ -63,6 +63,7 @@ class Column:
     # of denominators and averages (the contract's ``nonresponse_codes``).
     nonresponse: dict[str, str] = field(default_factory=dict)
     unit_column: str | None = None  # a column holding this column's unit (months/years)
+    top: tuple[Any, ...] = ()  # the stored values, most frequent first (shown in the prompt)
 
     def label(self, value: Any) -> str:
         """What a stored value means in words: its dictionary label, yes/no for a flag, or itself."""
@@ -303,6 +304,7 @@ def build_context(
         distinct, low, high = int(stats[0] or 0), stats[1], stats[2]
         col = semantics.column(spec.name)
         values: tuple[Any, ...] = ()
+        top: tuple[Any, ...] = ()
         is_listable = spec.logical_type not in ("date", "timestamp") and not spec.is_id
         if (
             is_listable
@@ -310,18 +312,22 @@ def build_context(
             and (spec.logical_type not in ("integer", "number") or (col is not None and col.labels) or distinct <= 2)
         ):
             listed = sandbox.run_model_sql(
-                f"SELECT DISTINCT {ident} AS v FROM unified WHERE {ident} IS NOT NULL ORDER BY 1"
-            ).get_column("v")
-            values = tuple(v for v in listed.to_list() if len(_text(v)) <= MAX_VALUE_CHARS)
+                f"SELECT {ident} AS v, COUNT(*) AS c FROM unified WHERE {ident} IS NOT NULL GROUP BY 1 ORDER BY 1"
+            )
+            kept = [(v, c) for v, c in listed.iter_rows() if len(_text(v)) <= MAX_VALUE_CHARS]
+            values = tuple(v for v, _c in kept)
+            # The prompt shows the most frequent first (the reply schema still allows every value).
+            top = tuple(v for v, _c in sorted(kept, key=lambda vc: -vc[1]))
         kind = _kind(spec.name, spec.logical_type, distinct, values, semantics)
         if spec.phi and kind in ("category", "flag"):
-            kind, values = "text", ()  # a restricted column's values never reach the prompt or schema
+            kind, values, top = "text", (), ()  # a restricted column's values never reach the prompt or schema
         columns.append(
             Column(
                 name=spec.name,
                 kind=kind,
                 logical_type=spec.logical_type,
                 values=values if kind in ("category", "flag") else (),
+                top=top if kind in ("category", "flag") else (),
                 labels=dict(col.labels) if col is not None else {},
                 low=low if kind in ("number", "date") else None,
                 high=high if kind in ("number", "date") else None,
@@ -364,26 +370,48 @@ def _counts_sql(semantics: DatasetSemantics, names: set[str]) -> str:
 
 
 def _value_list(column: Column) -> str:
-    shown = column.choices()[:MAX_PROMPT_VALUES]
-    more = len(column.choices()) - len(shown)
+    ordered = tuple(dict.fromkeys(column.label(v) for v in column.top)) or column.choices()
+    shown = ordered[:MAX_PROMPT_VALUES]
+    more = len(ordered) - len(shown)
     return ", ".join(f"'{v}'" for v in shown) + (f" (+{more} more)" if more > 0 else "")
 
 
-def column_line(column: Column, context: DatasetContext) -> str:
-    """One line of the table description the model reads."""
+def role(column: Column, context: DatasetContext) -> str:
+    """What the column is for, from the contract: patient key, record key, count column, time,
+    measure or category."""
     if column.name == context.patient_key:
-        head = f"{column.name}: the patient ID (counts patients; never a filter)"
+        return "patient key"
+    if column.kind == "key":
+        return "record key"
+    if column.name == context.count_column:
+        return "count column"
+    if column.kind == "date" or column.is_sequence:
+        return "time"
+    if column.kind == "number":
+        return "measure"
+    return "category"
+
+
+def column_line(column: Column, context: DatasetContext) -> str:
+    """One annotated line of the table the model reads: name [role, unit]: what it holds (the
+    labels of its codes and its most frequent values), and the dictionary's description."""
+    tags = [role(column, context)] + ([column.unit] if column.unit and column.kind == "number" else [])
+    name = f"{column.name} [{', '.join(tags)}]"
+    if column.name == context.patient_key:
+        head = f"{name}: counts patients; never a filter"
     elif column.kind == "key":
-        head = f"{column.name}: the ID of one {context.row_noun}"
+        head = f"{name}: the ID of one {context.row_noun}"
+    elif column.name == context.count_column:
+        head = f"{name}: how many {context.case_noun} each record counts; a count adds it up"
     elif column.kind in ("category", "flag"):
-        head = f"{column.name}: values {_value_list(column)}"
+        head = f"{name}: values {_value_list(column)}"
     elif column.kind == "number":
         span = f" {_short(column.low)} to {_short(column.high)}" if column.low is not None else ""
-        head = f"{column.name}: number{span}" + (f" {column.unit}" if column.unit else "")
+        head = f"{name}: number{span}"
     elif column.kind == "date":
-        head = f"{column.name}: date" + (f" {_short(column.low)} to {_short(column.high)}" if column.low else "")
+        head = f"{name}: date" + (f" {_short(column.low)} to {_short(column.high)}" if column.low else "")
     else:
-        head = f"{column.name}: text"
+        head = f"{name}: text (any value; too many to list)"
     if column.is_sequence:
         head += f" (numbers each patient's {plural(context.row_noun)} in order)"
     if column.nonresponse:

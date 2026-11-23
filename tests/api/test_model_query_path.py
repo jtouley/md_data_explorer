@@ -179,3 +179,36 @@ def test_ask_statisticalTest_isRoutedToTheStatisticsCode(ask_cohort):
     # Assert: computed by analysis.compute, not statistics written in SQL
     assert result.analysis is not None and result.analysis["type"] == "predictor"
     assert result.sql is not None and "AVG" not in result.sql
+
+
+def test_verify_answeredModelQuestion_keepsItsPlanMasked():
+    # Arrange: an answered model-written question, as the service records it
+    from clinical_analytics.api.services.query_service import AsyncQueryResult
+    from clinical_analytics.model_query import verified
+
+    service = AsyncQueryService()
+    plan = _plan(filters=[_cond("stage", "is", values=["III"])])
+    service._queries["qry_1"] = AsyncQueryResult(
+        query_id="qry_1", status="completed", question="How many stage III patients?", dataset_id="ds_a",
+        dataset_version="v1", model_reply=plan,
+    )  # fmt: skip
+
+    # Act
+    saved = service.verify("qry_1")
+
+    # Assert: stored for its dataset, the question masked
+    stored = verified._load(uploads_dir().parent, "ds_a")
+    assert saved is True and stored[0]["plan"] == plan
+    assert stored[0]["masked"] == "How many <column> <value> patients?"
+
+
+def test_verify_unansweredOrUnknown_isNotKept(test_client):
+    # Arrange
+    from clinical_analytics.api.services.query_service import AsyncQueryResult
+
+    service = AsyncQueryService()
+    service._queries["qry_2"] = AsyncQueryResult(query_id="qry_2", status="failed", question="q", dataset_id="ds_a")
+
+    # Act / Assert
+    assert service.verify("qry_2") is False
+    assert test_client.post("/api/queries/qry_unknown/verify").status_code == 404

@@ -173,12 +173,12 @@ def test_answer_question_textValueNotHeld_asksWithNearestValues(make_query_table
     )
     ask = make_model_ask(make_query_table(frame))
 
-    # Act
-    answer, _prompts = ask(
-        "How many cases on ward 77?", tables.reply(filters=[_cond("ward", "is", values=["ward 77"])])
-    )
+    # Act: the model keeps the value after the one repair
+    reply = tables.reply(filters=[_cond("ward", "is", values=["ward 77"])])
+    answer, prompts = ask("How many cases on ward 77?", reply, reply)
 
-    # Assert: asked, never a zero from a value the column does not hold
+    # Assert: the fact fed back once (with the nearest values), then asked; never a zero
+    assert "Its nearest values are 'Ward 7'" in prompts[1]
     assert answer.status == "clarify" and answer.analysis is None
     assert answer.reason.startswith("I can't find 'ward 77'")
     assert answer.choices[0][0] == "Ward 7"

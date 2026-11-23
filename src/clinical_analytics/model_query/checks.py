@@ -156,6 +156,7 @@ class Ask:
     reason: str
     choices: tuple[tuple[str, str], ...] = field(default_factory=tuple)
     questions: tuple[str, ...] = ()  # ids of the contract's open questions it waits on
+    rewrites: bool = False  # each choice is the whole question to ask instead (not words to add)
 
 
 def _mentioned_labels(question: str, context: DatasetContext) -> list[tuple[str, str, tuple[int, int]]]:

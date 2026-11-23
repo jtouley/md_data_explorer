@@ -290,6 +290,26 @@ async def generate_sse_events(
         yield f"data: {json.dumps(error_data)}\n\n"
 
 
+@router.post("/queries/{query_id}/verify", status_code=status.HTTP_204_NO_CONTENT)
+async def verify_query_result(
+    query_id: Annotated[str, Path(..., description="Query ID of the answer the user confirmed")],
+) -> None:
+    """The user confirms a model-written answer: its plan is kept (the question masked) as a worked
+    example for similar questions on the same dataset. A stored plan is never reused as an answer.
+
+    Raises:
+        HTTPException: 404 if the query is unknown; 409 if it is not a model-written answer.
+    """
+    found = await find_query_result(query_id)
+    if found is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Query '{query_id}' not found")
+    service, _result = found
+    if not service.verify(query_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Only an answered, model-written question can be confirmed."
+        )
+
+
 @router.get("/queries/{query_id}/stream")
 async def stream_query_events(
     query_id: Annotated[str, Path(..., description="Query ID to stream")],

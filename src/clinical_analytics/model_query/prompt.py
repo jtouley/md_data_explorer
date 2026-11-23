@@ -51,6 +51,8 @@ def user_prompt(
     previous: Sequence[tuple[str, dict[str, Any]]] = (),
     failed_reply: dict[str, Any] | None = None,
     problem: str | None = None,
+    hints: Sequence[str] = (),
+    verified: Sequence[tuple[str, dict[str, Any]]] = (),
 ) -> str:
     """Examples, then the conversation so far, the question, and a failed attempt's feedback.
 
@@ -66,7 +68,12 @@ def user_prompt(
             '("now only the women", "and by year?"), repeat the last reply with that change.'
         )
         parts += [f"Question: {asked}\nReply: {json.dumps(reply)}" for asked, reply in previous]
+    if verified:
+        parts.append("Questions on your table whose replies the user confirmed (worked examples, not this answer):")
+        parts += [f"Question: {asked}\nReply: {json.dumps(reply)}" for asked, reply in verified]
     parts.append(f"Now your table.\nQuestion: {question}")
+    if hints:
+        parts.append("Values your question names (from the table):\n" + "\n".join(hints))
     if problem:
         if failed_reply is not None:
             parts.append(f"Your last reply was: {json.dumps(failed_reply)}")

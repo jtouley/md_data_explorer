@@ -58,6 +58,7 @@ from clinical_analytics.model_query.context import DatasetContext, build_context
 from clinical_analytics.model_query.engine import answer_question
 from clinical_analytics.model_query.llm import ModelFn, model_available, ollama_model
 from clinical_analytics.model_query.present import has_value
+from clinical_analytics.model_query.verified import similar as verified_plans
 from clinical_analytics.sql.catalog import SqlCatalog
 from clinical_analytics.sql.errors import SqlRefusedError
 from clinical_analytics.sql.sandbox import SandboxConnection
@@ -378,7 +379,7 @@ class QueryService:
                 plan=None, issues=[{"message": survey, "severity": "error"}], result=None, confidence=0.0,
                 run_key=None, context=None, failure_reason=survey,
             )  # fmt: skip
-        return self._ask_model(question, model_path, conversation_history)
+        return self._ask_model(question, model_path, conversation_history, dataset_id)
 
     @staticmethod
     def _matcher_answers(question: str, fast: QueryResult, context: DatasetContext) -> bool:
@@ -617,7 +618,11 @@ class QueryService:
         return text if isinstance(text, str) and text.strip() else None
 
     def _ask_model(
-        self, question: str, path: "_ModelPath", conversation_history: list[dict[str, Any]] | None
+        self,
+        question: str,
+        path: "_ModelPath",
+        conversation_history: list[dict[str, Any]] | None,
+        dataset_id: str | None = None,
     ) -> QueryResult:
         """Answer with a query the local model writes (``model_query.engine``)."""
         previous = [
@@ -636,6 +641,10 @@ class QueryService:
             max_attempts=nl_query_config.MODEL_QUERY_MAX_ATTEMPTS,
             previous=previous,
             budget_s=nl_query_config.MODEL_QUERY_BUDGET_S,
+            # Confirmed plans of similar questions on this dataset, as prior turns (never reused).
+            verified=verified_plans(self.data_dir, dataset_id, question, path.context)
+            if self.data_dir is not None and dataset_id
+            else (),
         )
         base = QueryResult(plan=None, issues=[], result=None, confidence=0.0, run_key=None, context=None)
         base.sql, base.reading, base.model_reply = answer.sql, answer.reading, answer.reply

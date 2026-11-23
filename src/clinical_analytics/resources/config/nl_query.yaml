@@ -100,13 +100,13 @@ enable_sql_queries: false
 # sandbox and shows the SQL and a reading card. The keyword matcher only answers first when it
 # fully reads the question (ADR016). The timeout is per model call; the first call after the
 # model loads gets the cold timeout (an 8B model on 4 CPU cores can take 6 minutes to load and
-# answer). The app warms the model at start. Attempts include error-feedback retries; the budget is
+# answer). The app warms the model at start. Attempts: the plan and at most one repair on an execution fact (a binding error, a value the column does not hold); an empty result is never an error. The budget is
 # the whole question's time with the model, past which no new attempt starts ("took too long").
 enable_model_queries: true
 model_query_timeout_s: 300.0
 model_query_cold_timeout_s: 900.0
 model_query_budget_s: 1200.0
-model_query_max_attempts: 3
+model_query_max_attempts: 2
 
 # ADR004: Feature Flags for Surgical Rollback
 # Enable/disable each phase independently for operational safety
