@@ -150,6 +150,32 @@ export function buildAnswerPlan(planLine) {
 }
 
 /**
+ * How a model-written answer was computed: its one-sentence reading, always visible, and the SQL
+ * that ran, one click away. Text only (textContent): the SQL is shown, never interpreted.
+ * @param {{ reading?: string, sql?: string }} result
+ * @returns {HTMLElement | null}
+ */
+export function buildAnswerMethod(result) {
+  if (!result.reading && !result.sql) return null;
+  const wrap = el('div', 'answer-method');
+  wrap.dataset.testid = 'answer-method';
+  if (result.reading) {
+    const reading = el('p', 'answer-reading', result.reading);
+    reading.dataset.testid = 'answer-reading';
+    wrap.appendChild(reading);
+  }
+  if (result.sql) {
+    const details = el('details', 'answer-sql');
+    details.dataset.testid = 'answer-sql';
+    const code = el('pre', 'answer-sql-text');
+    code.appendChild(el('code', '', result.sql));
+    details.append(el('summary', '', 'Show the SQL'), code);
+    wrap.appendChild(details);
+  }
+  return wrap;
+}
+
+/**
  * Mark a table frame while columns are out of view to the right (edge fade and hint).
  * @param {HTMLElement} frame
  * @param {HTMLElement} scroller
@@ -285,6 +311,8 @@ export function renderAnswerCard(result, opts = {}) {
     const plan = buildAnswerPlan(result.planLine);
     if (plan) card.appendChild(plan);
   }
+  const method = buildAnswerMethod(result);
+  if (method) card.appendChild(method);
   if (result.claim && notes) card.appendChild(el('p', 'result-notes', notes));
 
   let tableHasHidden = false;
@@ -329,7 +357,10 @@ export function renderAnswerCard(result, opts = {}) {
  *   onReject: (card: HTMLElement) => void }} handlers
  * @returns {HTMLElement}
  */
-export function buildHeldCard(held, { columns = [], onConfirm, onReject }) {
+export function buildHeldCard(held, { columns = [], onConfirm, onReject, onChoose }) {
+  if (Array.isArray(held.choices) && held.choices.length) {
+    return buildChoiceCard(held, { onChoose, onReject });
+  }
   const card = el('div', 'result-card result-card-confirm');
   card.setAttribute('data-testid', 'result-confirm-card');
 
@@ -383,6 +414,38 @@ export function buildHeldCard(held, { columns = [], onConfirm, onReject }) {
   card.appendChild(actions);
   card.appendChild(el('p', 'result-card-note hidden'));
 
+  return card;
+}
+
+/**
+ * A question back to the user: the app found a real ambiguity that changes the number, and
+ * offers concrete choices. Choosing one asks that choice's question.
+ * @param {Object} held result from buildConfirmationHoldPresentation, with choices
+ * @param {{ onChoose?: (card: HTMLElement, choice: { label: string, question: string }) => void,
+ *   onReject: (card: HTMLElement) => void }} handlers
+ * @returns {HTMLElement}
+ */
+export function buildChoiceCard(held, { onChoose, onReject }) {
+  const card = el('div', 'result-card result-card-confirm result-card-choice');
+  card.dataset.testid = 'choice-card';
+  const label = el('h3', 'state-label state-label--held');
+  label.innerHTML = `${icon('clock')}<span>One thing to settle first</span>`;
+  card.appendChild(label);
+  if (held.failureReason) card.appendChild(el('p', 'held-reason', held.failureReason));
+  const actions = el('div', 'result-confirm-actions');
+  held.choices.forEach((choice) => {
+    const button = el('button', 'btn btn-secondary btn-choice', choice.label);
+    button.type = 'button';
+    button.dataset.testid = 'choice-button';
+    button.addEventListener('click', () => onChoose?.(card, choice));
+    actions.appendChild(button);
+  });
+  const rejectBtn = el('button', 'btn btn-secondary btn-reject', 'Rephrase my question');
+  rejectBtn.type = 'button';
+  rejectBtn.addEventListener('click', () => onReject(card));
+  actions.appendChild(rejectBtn);
+  card.appendChild(actions);
+  card.appendChild(el('p', 'result-card-note hidden'));
   return card;
 }
 

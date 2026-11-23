@@ -1532,3 +1532,61 @@ describe('upload refused for having no data rows', () => {
     expect(plainFailureMessage(`[HTTP 400] ${detail}`, { context: 'upload' })).toBe(detail);
   });
 });
+
+describe('model-written answers: the method and the choices', () => {
+  it('buildQueryCompletedPresentation_sqlAndReading_carriesThem_andDropsThePlanLine', () => {
+    // Arrange
+    const preview = {
+      claim: 'Total count: 48 patients.',
+      sql: 'SELECT COUNT(*) AS count FROM unified',
+      reading: 'Counted patients. ',
+    };
+
+    // Act
+    const { result } = buildQueryCompletedPresentation(
+      'unknown',
+      preview,
+      null,
+      'Counted patients.'
+    );
+
+    // Assert: the reading says what was computed; the matcher's plan line is not parsed for it
+    expect(result.sql).toBe(preview.sql);
+    expect(result.reading).toBe('Counted patients.');
+    expect(result.planLine).toBeUndefined();
+  });
+
+  it.each([
+    ['null', null],
+    ['blank', '  '],
+    ['a number', 3],
+  ])('buildQueryCompletedPresentation_sqlIs%s_keepsThePlanLine', (_name, sql) => {
+    // Act
+    const { result } = buildQueryCompletedPresentation(
+      'count',
+      { claim: 'Total count: 3.', sql, reading: sql },
+      null,
+      'COUNT · outcome none'
+    );
+
+    // Assert
+    expect(result.sql).toBeUndefined();
+    expect(result.reading).toBeUndefined();
+    expect(result.planLine).toBe('COUNT · outcome none');
+  });
+
+  it('buildConfirmationHoldPresentation_choices_keepsOnlyWellFormedOnes', () => {
+    // Arrange
+    const data = {
+      failure_reason: 'Ever or always?',
+      choices: [{ label: 'Ever', question: 'q ever' }, { label: 'Broken' }, 'text', null],
+    };
+
+    // Act
+    const { result } = buildConfirmationHoldPresentation(data, 'q');
+
+    // Assert
+    expect(result.choices).toEqual([{ label: 'Ever', question: 'q ever' }]);
+    expect(buildConfirmationHoldPresentation({}, 'q').result.choices).toBeUndefined();
+  });
+});

@@ -16,7 +16,7 @@ from clinical_analytics.contracts.declarations import FileDeclarationStore
 from clinical_analytics.core import nl_query_config
 from clinical_analytics.core.data_home import uploads_dir
 from clinical_analytics.sql.answer import PatientRowsUnconfirmedError
-from clinical_analytics.sql.errors import SqlRefusedError
+from clinical_analytics.sql.errors import SqlHeldError, SqlRefusedError
 from clinical_analytics.sql.sandbox import SqlBusyError
 from clinical_analytics.sql.service import run_governed_sql
 from clinical_analytics.storage.dataset_deletion import InvalidDatasetIdError, validate_dataset_id
@@ -57,6 +57,16 @@ def run_sql_query(request: SqlQueryRequest) -> SqlQueryResult:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=e.reason, headers={"Retry-After": "5"}
             ) from e
+        except SqlHeldError as e:
+            log.info("governed_sql_waits_for_answers", questions=len(e.questions))
+            return SqlQueryResult(
+                status="held",
+                sql=None,
+                reason=e.reason,
+                needs_confirmation=None,
+                confirmation=None,
+                open_questions=list(e.questions),
+            )
         except PatientRowsUnconfirmedError as e:
             log.info("governed_sql_needs_patient_grain")
             return SqlQueryResult(

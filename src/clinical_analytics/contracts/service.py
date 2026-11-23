@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ from clinical_analytics.contracts import config
 from clinical_analytics.contracts.builder import ContractInputs, build_contract
 from clinical_analytics.contracts.errors import ContractDamagedError, ContractError, ContractValidationError
 from clinical_analytics.contracts.quality import QualityNotRun, QualityReport, run_quality
+from clinical_analytics.contracts.semantics import DatasetSemantics
 from clinical_analytics.contracts.store import contract_path, read_contract, write_contract, write_report
 from clinical_analytics.core.log_redaction import error_fields
 from clinical_analytics.core.metadata_patch import (
@@ -32,34 +34,69 @@ DAMAGED_CONTRACT_REASON = "the saved data contract for this version is damaged"
 Patch = MetadataPatch | ExclusionPatternPatch | RelationshipPatch
 
 
-def id_column_from_metadata(metadata: dict[str, Any]) -> str | None:
-    """The column schema inference (or the upload wizard) mapped to ``patient_id``.
+def stored_semantics(df: pl.DataFrame, metadata: dict[str, Any]) -> DatasetSemantics:
+    """Semantics for a stored version whose contract has none (written before ADR017, or never
+    built): the one inference pass (``contracts.inference``) over the stored frame without the
+    columns the app added, with the upload's documentation, and the app columns recorded from
+    the upload's ``synthetic_id_metadata``. Never stored over an existing contract."""
+    from clinical_analytics.contracts.inference import UploadFacts, infer_semantics
+    from clinical_analytics.contracts.semantics import AppColumn
+    from clinical_analytics.core.identifier_rules import SOURCE_FORMAT_KEY, added_id_columns_from_metadata
 
-    None when the upload synthesized patient_id as a row key (``patient_id_is_row_key``): it
-    names rows, not patients, so the contract states no patient ID and governed SQL asks the
-    user to confirm one row per patient instead of calling its counts patients.
-    """
-    from clinical_analytics.core.identifier_rules import patient_id_is_row_key
-
-    if patient_id_is_row_key(metadata):
-        return None
-    mapping = (metadata.get("inferred_schema") or {}).get("column_mapping") or {}
-    return next((col for col, role in mapping.items() if role == "patient_id"), None)
-
-
-def id_source_columns_from_metadata(metadata: dict[str, Any]) -> tuple[str, ...]:
-    """The column a patient ID was copied from (``patient_id_source`` 'single_column' and a
-    patient key, not a row key): it holds the same IDs, so the contract restricts it like the ID."""
-    from clinical_analytics.core.identifier_rules import patient_id_is_row_key
-
+    added = [c for c in added_id_columns_from_metadata(metadata) if c in df.columns]
     synthetic = metadata.get("synthetic_id_metadata")
     info = synthetic.get("patient_id") if isinstance(synthetic, dict) else None
-    if not isinstance(info, dict) or info.get("patient_id_source") != "single_column":
-        return ()
-    if patient_id_is_row_key(metadata):
-        return ()
-    columns = info.get("patient_id_columns")
-    return tuple(str(c) for c in columns) if isinstance(columns, list) else ()
+    info = info if isinstance(info, dict) else {}
+    semantics = infer_semantics(
+        df.drop(added),
+        UploadFacts(
+            doc_context=metadata.get("doc_context"),
+            source_format=str(metadata.get(SOURCE_FORMAT_KEY) or ""),
+            population_estimates=metadata.get("population_estimates") is True
+            or info.get("population_estimates") is True,
+        ),
+    )
+    source = info.get("patient_id_source")
+    made_from = tuple(str(c) for c in info.get("patient_id_columns") or [])
+    apps = tuple(
+        AppColumn(
+            column=c,
+            kind="row_number" if source == "row_index" else ("hash" if source == "composite" else "copy"),
+            made_from=made_from,
+        )
+        for c in added
+    )
+    return semantics.model_copy(update={"app_columns": apps})
+
+
+def version_semantics(
+    data_dir: Path,
+    dataset_id: str,
+    version: str,
+    *,
+    metadata: dict[str, Any],
+    stored_frame: Callable[[], pl.DataFrame],
+    declarations: Any = None,
+) -> DatasetSemantics:
+    """``semantics_for``, or for a version stored before its contract held semantics, the same
+    inference pass over its stored frame (``stored_semantics``), read-only. Every reader (the
+    semantic layer, the upload response, ``GET /semantics``, aggregate) uses this, so they agree.
+
+    ``declarations``: a ``DeclarationStore``; default the file store in ``data_dir``.
+
+    Raises:
+        ContractError: the contract or the declarations can't be read (never hidden).
+    """
+    from clinical_analytics.contracts.declarations import FileDeclarationStore
+    from clinical_analytics.contracts.semantics import SemanticsMissingError, semantics_for, with_declarations
+
+    store = declarations if declarations is not None else FileDeclarationStore(data_dir)
+    try:
+        return semantics_for(data_dir, dataset_id, version, declarations=store)
+    except SemanticsMissingError:
+        logger.info("semantics_inferred_for_stored_version", dataset_id=dataset_id, dataset_version=version)
+        inferred = stored_semantics(stored_frame(), metadata).model_copy(update={"dataset_version": version})
+        return with_declarations(inferred, store.load(dataset_id))
 
 
 def accepted_patch_ids(patches: list[Patch]) -> tuple[str, ...]:
@@ -68,11 +105,11 @@ def accepted_patch_ids(patches: list[Patch]) -> tuple[str, ...]:
     return tuple(sorted(pid for pid, p in latest.items() if p.status == PatchStatus.ACCEPTED))
 
 
-def _resolve(df: pl.DataFrame, patches: list[Patch]) -> ResolvedDatasetMetadata:
+def _resolve(df: pl.DataFrame, patches: list[Patch], semantics: DatasetSemantics) -> ResolvedDatasetMetadata:
     from clinical_analytics.core.metadata_resolver import resolve_metadata
     from clinical_analytics.core.schema_inference import SchemaInferenceEngine
 
-    return resolve_metadata(SchemaInferenceEngine().infer_schema(df), patches)
+    return resolve_metadata(SchemaInferenceEngine().infer_schema(df, semantics=semantics), patches)
 
 
 def read_saved_contract(path: Path) -> OpenDataContractStandard:
@@ -132,6 +169,50 @@ def population_estimates_properties(metadata: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def write_version_contract(
+    data_dir: Path,
+    df: pl.DataFrame,
+    *,
+    upload_id: str,
+    dataset_version: str,
+    metadata: dict[str, Any],
+    semantics: DatasetSemantics | None = None,
+    overlay_dir: Path | None = None,
+) -> tuple[OpenDataContractStandard, bool]:
+    """The version's contract: the saved one, or one built now (with ``semantics``, else the
+    stored-version inference) and written. Returns (contract, written by this call).
+
+    Raises:
+        ContractError: building, storing or reading the contract failed.
+    """
+    path = contract_path(data_dir, upload_id, dataset_version)
+    if path.exists():
+        return read_saved_contract(path), False
+    patches: list[Patch] = []
+    if overlay_dir is not None:
+        from clinical_analytics.core.overlay_store import OverlayStore
+
+        patches = OverlayStore(base_dir=overlay_dir).load_patches(upload_id, dataset_version)
+    accepted = accepted_patch_ids(patches)
+    version_semantics = (semantics or stored_semantics(df, metadata)).model_copy(
+        update={"dataset_version": dataset_version}
+    )
+    inputs = ContractInputs.from_semantics(
+        version_semantics,
+        upload_id=upload_id,
+        dataset_version=dataset_version,
+        dataset_name=str(metadata.get("dataset_name") or upload_id),
+        source_file_sha256=metadata.get("source_file_sha256"),
+        resolved=_resolve(df, patches, version_semantics) if accepted else None,
+        accepted_patch_ids=accepted,
+        extra_custom_properties=population_estimates_properties(metadata),
+    )
+    contract = build_contract(df, inputs)
+    if not write_contract(data_dir, upload_id, dataset_version, contract):
+        return read_saved_contract(path), False  # another writer won; its contract is the version's
+    return contract, True
+
+
 def check_upload(
     data_dir: Path,
     df: pl.DataFrame,
@@ -141,6 +222,7 @@ def check_upload(
     metadata: dict[str, Any],
     overlay_dir: Path | None = None,
     run_at: datetime | None = None,
+    semantics: DatasetSemantics | None = None,
 ) -> QualityReport:
     """Write the version's contract if it has none, check ``df`` against it, store the report.
 
@@ -154,30 +236,15 @@ def check_upload(
         ContractError: building, storing or compiling the contract failed.
     """
     log = logger.bind(upload_id=upload_id, dataset_version=dataset_version)
-    path = contract_path(data_dir, upload_id, dataset_version)
-    if path.exists():
-        contract = read_saved_contract(path)
-    else:
-        patches: list[Patch] = []
-        if overlay_dir is not None:
-            from clinical_analytics.core.overlay_store import OverlayStore
-
-            patches = OverlayStore(base_dir=overlay_dir).load_patches(upload_id, dataset_version)
-        accepted = accepted_patch_ids(patches)
-        inputs = ContractInputs(
-            upload_id=upload_id,
-            dataset_version=dataset_version,
-            dataset_name=str(metadata.get("dataset_name") or upload_id),
-            id_column=id_column_from_metadata(metadata),
-            id_source_columns=id_source_columns_from_metadata(metadata),
-            source_file_sha256=metadata.get("source_file_sha256"),
-            resolved=_resolve(df, patches) if accepted else None,
-            accepted_patch_ids=accepted,
-            extra_custom_properties=population_estimates_properties(metadata),
-        )
-        contract = build_contract(df, inputs)
-        if not write_contract(data_dir, upload_id, dataset_version, contract):
-            contract = read_saved_contract(path)  # another writer won; its contract is the version's
+    contract, _ = write_version_contract(
+        data_dir,
+        df,
+        upload_id=upload_id,
+        dataset_version=dataset_version,
+        metadata=metadata,
+        semantics=semantics,
+        overlay_dir=overlay_dir,
+    )
     previous = _previous_contract(data_dir, upload_id, metadata, dataset_version)
     report = run_quality(df.lazy(), contract, run_at=run_at, data_version=dataset_version, previous_contract=previous)
     write_report(data_dir, report)
@@ -193,6 +260,7 @@ def check_upload_or_log(
     dataset_version: str,
     metadata: dict[str, Any],
     overlay_dir: Path | None = None,
+    semantics: DatasetSemantics | None = None,
 ) -> QualityReport | QualityNotRun:
     """``check_upload`` for the upload path: a failure is logged and returned as not run, not raised.
 
@@ -207,6 +275,7 @@ def check_upload_or_log(
             dataset_version=dataset_version,
             metadata=metadata,
             overlay_dir=overlay_dir,
+            semantics=semantics,
         )
     except ContractDamagedError as e:
         logger.error(

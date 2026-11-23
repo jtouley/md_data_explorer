@@ -1,0 +1,71 @@
+# Golden samples for the model-written query path (src/clinical_analytics/model_query).
+#
+# Each sample replays plan replies in the shape the local model gives (the slots of
+# plan.reply_schema) through the real check-compile-execute layer on a synthetic table from
+# tests/model_query/tables.py: no model runs here. `oracle` names a Polars oracle in the test
+# module that recomputes the expected value independently; `status` is the expected outcome.
+#
+# Fields:
+#   table:    shots | cohort
+#   replies:  the model's replies in order (more than one: the first was fed back)
+#   status:   answered | clarify | refused
+#   oracle:   (answered) the oracle of the answer's headline value
+#   reading:  lines the reading card must contain
+samples:
+  - id: cohort-total
+    table: cohort
+    question: How many patients are in this file?
+    replies: [{answer: count, count_of: patients, filters: [], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any}]
+    status: answered
+    oracle: cohort_total
+    reading: ["Counted: patients, one record each.", "Included: everyone in the file."]
+  - id: cohort-under-65-inverted
+    table: cohort
+    question: How many patients are under 65?
+    replies: [{answer: count, count_of: patients, filters: [{column: age, op: ">=", value: 65, values: []}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any}]
+    status: answered
+    oracle: cohort_under_65
+    reading: ["Included: age in years at surgery under 65 years."]
+  - id: cohort-not-died-share
+    table: cohort
+    question: What share of stage III patients did not die within a year?
+    replies: [{answer: share, count_of: patients, filters: [{column: stage, op: is, value: null, values: [III]}], numerator: [{column: died_1y, op: is, value: null, values: ["no"]}], measure: null, group_by: null, period: none, cut_points: [], which_visit: any}]
+    status: answered
+    oracle: cohort_stage3_alive_share
+  - id: cohort-dropped-threshold-fed-back
+    table: cohort
+    question: How many patients over 70 have stage II?
+    replies:
+      - {answer: count, count_of: patients, filters: [{column: stage, op: is, value: null, values: [II]}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any}
+      - {answer: count, count_of: patients, filters: [{column: stage, op: is, value: null, values: [II]}, {column: age, op: ">", value: 70, values: []}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any}
+    status: answered
+    oracle: cohort_over70_stage2
+  - id: shots-latest-extract
+    table: shots
+    question: How many patients are on each extract at their latest shot visit?
+    replies: [{answer: count, count_of: patients, filters: [], numerator: [], measure: null, group_by: extract, period: none, cut_points: [], which_visit: any}]
+    status: answered
+    oracle: shots_latest_extract
+    reading: ["Counted: patients, each once, read at their latest shot visit with it recorded."]
+  - id: shots-never-wheezed
+    table: shots
+    question: How many patients never wheezed?
+    replies: [{answer: count, count_of: patients, filters: [{column: wheeze, op: is, value: null, values: ["no"]}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any}]
+    status: answered
+    oracle: shots_never_wheezed
+  - id: shots-baseline-ige
+    table: shots
+    question: Average IgE level at baseline?
+    replies: [{answer: mean, count_of: patients, filters: [], numerator: [], measure: ige_kul, group_by: null, period: none, cut_points: [], which_visit: any}]
+    status: answered
+    oracle: shots_baseline_ige
+  - id: shots-visit-unstated-asks
+    table: shots
+    question: How many patients wheeze?
+    replies: [{answer: count, count_of: patients, filters: [{column: wheeze, op: is, value: null, values: ["yes"]}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: last}]
+    status: clarify
+  - id: shots-unit-unstated-asks
+    table: shots
+    question: What share wheezed at the latest visit?
+    replies: [{answer: share, count_of: patients, filters: [], numerator: [{column: wheeze, op: is, value: null, values: ["yes"]}], measure: null, group_by: null, period: none, cut_points: [], which_visit: last}]
+    status: clarify

@@ -43,6 +43,7 @@ NOT_IBIS: dict[str, tuple[str, ...]] = {
     "*": ("duckdb_con.sql(", "duckdb.sql("),
     "storage/datastore.py": ("self.list_tables(",),  # DataStore.list_tables: raw SHOW TABLES
     "core/multi_table_handler.py": ("self.tables",),  # dict of Polars frames
+    "model_query/examples.py": ("pool.tables",),  # the example pool's made-up table texts (a dict)
 }
 
 

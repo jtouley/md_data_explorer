@@ -93,6 +93,10 @@ class QualityReport(BaseModel):
     not_run: int
     summary: list[str] = Field(default_factory=list, description="Short plain-language lines for the UI")
     checks: list[QualityCheckResult] = Field(default_factory=list)
+    facts: list[str] = Field(
+        default_factory=list,
+        description="What the file holds, from its contract's semantics, in clinical words (added by the API)",
+    )
 
 
 class QualityNotRun(BaseModel):
@@ -103,6 +107,7 @@ class QualityNotRun(BaseModel):
     status: Literal["not_run"] = "not_run"
     reason: str = Field(..., description="Plain-language reason, without file paths or values")
     summary: list[str] = Field(default_factory=list)
+    facts: list[str] = Field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -498,7 +503,7 @@ def level_variant_results(lf: pl.LazyFrame, contract: OpenDataContractStandard) 
     A warning at upload; a question that groups or limits on such a level is held until the
     doctor confirms the spellings are one. The message names up to four of the spellings.
     """
-    from clinical_analytics.analysis.grouping import level_variants
+    from clinical_analytics.analysis.grouping import level_variants, without_listed_codes
 
     if not contract.schema_:
         return []
@@ -517,10 +522,11 @@ def level_variant_results(lf: pl.LazyFrame, contract: OpenDataContractStandard) 
     results = []
     for column in text:
         counts = {row["value"]: row["__n"] for row in levels.get_column(column)[0].to_list()}
-        groups = level_variants(list(counts))
+        prop = props[column]
+        # Codes the dictionary lists as distinct ("NB", "nb") are categories, never held as one.
+        groups = without_listed_codes(level_variants(list(counts)), (e.value for e in prop.enum or []))
         if not groups:
             continue
-        prop = props[column]
         named = [s for group in groups for s in group]
         example = f" (for example {', '.join(named[:4])})"
         results.append(
@@ -542,6 +548,35 @@ def level_variant_results(lf: pl.LazyFrame, contract: OpenDataContractStandard) 
     return results
 
 
+OPEN_QUESTION_METRIC = "openQuestion"
+
+
+def open_question_results(contract: OpenDataContractStandard) -> list[QualityCheckResult]:
+    """Every open question of the contract's semantics, of any kind ("Does 999 in trop_ng_l mean
+    not recorded?", "Is each line one patient?"): listed as needing an answer, never reported as
+    "no problems" (ADR017)."""
+    from clinical_analytics.contracts.semantics import semantics_from_contract
+
+    semantics = semantics_from_contract(contract)
+    if semantics is None:
+        return []
+    return [
+        QualityCheckResult(
+            id=f"{question.id}",
+            column=question.column,
+            metric=OPEN_QUESTION_METRIC,
+            dimension="validity",
+            severity="warning",
+            status="warning",
+            count=None,
+            percent=None,
+            message=f"Needs your answer: {question.question} Answers that depend on it wait until then.",
+        )
+        for question in semantics.open_questions
+        if not question.answered
+    ]
+
+
 def run_quality(
     lf: pl.LazyFrame,
     contract: OpenDataContractStandard,
@@ -560,7 +595,11 @@ def run_quality(
     schema = lf.collect_schema()
     checks = compile_contract(contract, schema)
     typed_by = previous_contract if previous_contract is not None else contract
-    extra = [*type_results(typed_by, schema, data_version), *level_variant_results(lf, contract)]
+    extra = [
+        *type_results(typed_by, schema, data_version),
+        *level_variant_results(lf, contract),
+        *open_question_results(contract),
+    ]
     report = report_from_counts(contract, checks, measure(lf, checks), run_at=run_at, extra=extra)
     logger.info(
         "quality_run_completed",

@@ -12,11 +12,12 @@ Types are decided over the whole file, column by column, never from a sample:
   null only in a column whose other values are all numbers or all dates, and the count is
   reported (``missing_tokens``). A column that stays text keeps every value: ``None`` or ``-``
   can be a real category level.
-* Dates are parsed per value against a fixed list of formats. Day-first and month-first dates
-  are only used when some value settles the order (a day above 12), and the same order must
-  hold for every separator; otherwise the column stays text. A value that matches no format
-  keeps the whole column as text (``not_dates``), the same rule as for numbers: nothing is
-  silently turned into a missing value.
+* Dates are read with ONE format per column, the one that reads every value with a plausible
+  year (``contracts.dates``; never a different format per row). Day-first and month-first dates
+  are only used when some value settles the order (a day above 12); otherwise the column stays
+  text (``ambiguous_dates``) and the contract asks which order the file uses. Mostly dates that
+  no one format reads keep the whole column as text (``not_dates``), the same rule as for
+  numbers: nothing is silently turned into a missing value.
 * A column that cannot take a type stays text, and only that column: a note says which column
   and why (``ColumnTypeNote``). Nothing falls back to "every column is text".
 
@@ -52,11 +53,14 @@ from clinical_analytics.contracts.config import (
     SUPPRESSED_FLAG_SUFFIX,
     UNRELIABLE_FLAG_SUFFIX,
 )
+from clinical_analytics.contracts.dates import DateAmbiguity, DateChoice, choose_text_format, date_coverage
+from clinical_analytics.contracts.inference import KEY_COLUMN_NAMES
 
 logger = structlog.get_logger()
 
-# Columns stored as text whatever they hold (avoids integer overflow, keeps joins consistent).
-ID_COLUMN_NAMES: Final = frozenset({"patient_id", "patientid", "subject_id", "subjectid", "id", "mrn", "study_id"})
+# Columns stored as text whatever they hold (avoids integer overflow, keeps joins consistent): the
+# one list of whole ID column names, kept with the inference's other name rules.
+ID_COLUMN_NAMES: Final = KEY_COLUMN_NAMES
 
 # A column is reported as "numeric with some text" when at least this share is numeric.
 NUMERIC_NOTE_SHARE: Final = 0.5
@@ -167,19 +171,6 @@ _DIGITS_RE: Final = r"^\d+$"
 _CENSORED_RE: Final = re.compile(r"^\s*[<>≤≥]=?\s*[+-]?(\d+\.?\d*|\.\d+)\s*$")
 _NUMBER_RE: Final = re.compile(_FLOAT_RE)
 
-# Unambiguous formats, tried first, in this order.
-_ISO_DATE_FORMATS: Final = ("%Y-%m-%d", "%Y/%m/%d", "%d-%b-%Y", "%d %b %Y", "%d.%m.%Y")
-_DATETIME_FORMATS: Final = (
-    "%Y-%m-%d %H:%M:%S%.f",
-    "%Y-%m-%dT%H:%M:%S%.f",
-    "%Y-%m-%d %H:%M:%S",
-    "%Y-%m-%dT%H:%M:%S",
-    "%Y-%m-%d %H:%M",
-    "%Y-%m-%dT%H:%M",
-)
-# Order-ambiguous families: (day-first, month-first).
-_AMBIGUOUS_FAMILIES: Final = (("%d/%m/%Y", "%m/%d/%Y"), ("%d-%m-%Y", "%m-%d-%Y"))
-
 
 class StagingError(ValueError):
     """The upload cannot be staged as given (a structural problem the user must fix)."""
@@ -242,6 +233,8 @@ class StagedTable:
     table_notes: tuple[str, ...] = ()
     # The published export the file was read as ("cdc_wonder"), or "" for any other file.
     source_format: str = ""
+    # The one format each date column was read with (``contracts.dates``), for the contract.
+    dates: tuple[DateChoice, ...] = ()
 
 
 def is_id_column_name(name: str) -> bool:
@@ -256,6 +249,7 @@ class _ColumnPlan:
     expr: pl.Expr
     dtype: pl.DataType
     notes: tuple[ColumnTypeNote, ...] = ()
+    date: DateChoice | None = None  # the one format a date column was read with
 
 
 def _clean(col: str) -> pl.Expr:
@@ -280,46 +274,20 @@ def _clean_tokens(col: str) -> pl.Expr:
     return pl.when(_is_missing_token(cleaned)).then(None).otherwise(cleaned)
 
 
-def _parse_dates(s: pl.Series) -> tuple[pl.Series | None, NoteReason | None]:
-    """Parse a trimmed text series as Date/Datetime, or say why not (None when nothing parses)."""
-    parsed_dt = [s.str.strptime(pl.Datetime("us"), fmt, strict=False) for fmt in _DATETIME_FORMATS]
-    parsed_date = [s.str.strptime(pl.Date, fmt, strict=False) for fmt in _ISO_DATE_FORMATS]
-
-    settled: set[str] = set()  # orders that some separator family settled ("dmy", "mdy")
-    for day_first, month_first in _AMBIGUOUS_FAMILIES:
-        dmy = s.str.strptime(pl.Date, day_first, strict=False)
-        mdy = s.str.strptime(pl.Date, month_first, strict=False)
-        only_dmy = int((dmy.is_not_null() & mdy.is_null()).sum())
-        only_mdy = int((mdy.is_not_null() & dmy.is_null()).sum())
-        disagree = int((dmy.is_not_null() & mdy.is_not_null() & (dmy != mdy)).sum())
-        if only_dmy and only_mdy:
-            return None, "ambiguous_dates"  # both orders are in the column
-        if only_dmy:
-            parsed_date.append(dmy)
-            settled.add("dmy")
-        elif only_mdy:
-            parsed_date.append(mdy)
-            settled.add("mdy")
-        elif disagree:
-            return None, "ambiguous_dates"  # nothing settles the order
-        else:
-            parsed_date.append(dmy)  # every value reads the same either way
-    if len(settled) > 1:
-        return None, "ambiguous_dates"  # "/" reads day-first, "-" month-first: two conventions
-
-    as_date = pl.select(pl.coalesce(parsed_date)).to_series()
-    as_dt = pl.select(pl.coalesce(parsed_dt)).to_series()
-    if as_dt.is_not_null().any():
-        combined = pl.select(pl.coalesce([as_dt, as_date.cast(pl.Datetime("us"))])).to_series()
-    else:
-        combined = as_date
-    if not combined.is_not_null().any():
-        return None, None
-    return combined, None
+def _parse_dates(s: pl.Series) -> tuple[pl.Series | None, NoteReason | None, DateChoice | None]:
+    """Read a trimmed text series as dates with ONE format chosen over every value
+    (``contracts.dates.choose_text_format``), or say why not (None, None, None: not dates)."""
+    found = choose_text_format(s)
+    if isinstance(found, DateAmbiguity):
+        return None, "ambiguous_dates", None
+    if found is None:
+        return None, None, None
+    dtype: pl.Datetime | pl.Date = pl.Datetime("us") if found.has_time else pl.Date()
+    return s.str.strip_chars().str.strptime(dtype, found.format, strict=False), None, found
 
 
 def _plan_column(df: pl.DataFrame, col: str) -> _ColumnPlan:
-    s = df.select(_clean(col)).to_series()
+    s = df.select(_clean(col)).to_series().alias(col)
     non_null = s.drop_nulls()
     n = non_null.len()
     text = _ColumnPlan(pl.col(col), pl.String())
@@ -360,16 +328,17 @@ def _plan_column(df: pl.DataFrame, col: str) -> _ColumnPlan:
     if bool(is_float.all()):
         return typed(_clean_tokens(col).cast(pl.Float64), pl.Float64())
 
-    parsed, why_not = _parse_dates(s.set(_token_mask(s).fill_null(False), None) if tokens else s)
+    parsed, why_not, choice = _parse_dates(s.set(_token_mask(s).fill_null(False), None) if tokens else s)
     if why_not is not None:
         return text_with(why_not, 0)
     if parsed is not None:
-        failed = values.len() - int(parsed.is_not_null().sum())
-        if failed:
-            # Same rule as numbers: an unparsed value keeps the column as text, so no value is
-            # silently stored as missing (and the original text stays queryable).
-            return text_with("not_dates", failed)
-        return typed(pl.lit(parsed).alias(col), parsed.dtype)
+        plan = typed(pl.lit(parsed).alias(col), parsed.dtype)
+        return _ColumnPlan(plan.expr, plan.dtype, plan.notes, choice)
+    covered = date_coverage(values)
+    if covered and covered * 2 >= values.len():
+        # Mostly dates, but no one format reads them all: kept as text, so no value is silently
+        # stored as missing (and the original text stays queryable).
+        return text_with("not_dates", values.len() - covered)
 
     numeric = int(is_float.sum())
     if numeric / n >= NUMERIC_NOTE_SHARE:
@@ -377,10 +346,11 @@ def _plan_column(df: pl.DataFrame, col: str) -> _ColumnPlan:
     return text
 
 
-def _type_columns(df: pl.DataFrame) -> tuple[pl.DataFrame, list[ColumnTypeNote]]:
+def _type_columns(df: pl.DataFrame) -> tuple[pl.DataFrame, list[ColumnTypeNote], tuple[DateChoice, ...]]:
     plans = {col: _plan_column(df, col) for col in df.columns}
     typed = df.with_columns([plan.expr.alias(col) for col, plan in plans.items()])
-    return typed, [note for plan in plans.values() for note in plan.notes]
+    dates = tuple(plan.date for plan in plans.values() if plan.date is not None)
+    return typed, [note for plan in plans.values() for note in plan.notes], dates
 
 
 def settle_shared_column_types(
@@ -448,7 +418,7 @@ def _units_row(df: pl.DataFrame) -> dict[str, str] | None:
     has_id_column = any(is_id_column_name(c) for c in df.columns)
     if not has_id_column and not any(_is_unit(v) for v in filled.values()):
         return None
-    rest, _ = _type_columns(df.slice(1))
+    rest, _, _ = _type_columns(df.slice(1))
     typed_cols = {c for c, t in rest.schema.items() if t.is_numeric() or t.is_temporal()}
     if not set(filled) <= typed_cols:
         return None
@@ -677,13 +647,15 @@ def stage_text_frame(
     body = df.slice(1) if units else df
     first_data_row = header_row_number + (2 if units else 1)
     _reject_empty_rows(body, first_data_row)
-    typed, notes = _type_columns(split_source_flags(unpack_intervals(body), public=public, source_words=source_words))
+    typed, notes, dates = _type_columns(
+        split_source_flags(unpack_intervals(body), public=public, source_words=source_words)
+    )
     log = logger.bind(rows=typed.height, columns=typed.width)
     for note in notes:
         log.info("staging_column_note", column_index=df.columns.index(note.column), reason=note.reason)
     if units:
         log.info("staging_units_row_kept", unit_columns=len(units))
-    return StagedTable(data=typed, notes=tuple(notes), units=units or {})
+    return StagedTable(data=typed, notes=tuple(notes), units=units or {}, dates=dates)
 
 
 def _name_blank_headers(df: pl.DataFrame) -> pl.DataFrame:

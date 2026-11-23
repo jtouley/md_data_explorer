@@ -18,12 +18,16 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+import polars as pl
 import structlog
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from clinical_analytics.contracts.declarations import DimensionChoice, FileDeclarationStore
 from clinical_analytics.contracts.errors import ContractStoreError, InvalidDeclarationKeyError
+from clinical_analytics.contracts.holds import Hold, held_message, open_question_holds
+from clinical_analytics.contracts.readings import apply_declared, declared_reads
+from clinical_analytics.contracts.semantics import DatasetSemantics, with_declarations
 from clinical_analytics.core import estimate_join, estimates
 from clinical_analytics.core.data_home import uploads_dir
 from clinical_analytics.storage.dataset_deletion import InvalidDatasetIdError, validate_dataset_id
@@ -70,8 +74,41 @@ def _declaration_store() -> FileDeclarationStore:
     return FileDeclarationStore(uploads_dir().parent)
 
 
-def load_source(storage: UserDatasetStorage, store: FileDeclarationStore, dataset_id: str) -> estimate_join.SourceInput:
-    """One uploaded table at its active version, with its declaration and saved choices.
+def _version_semantics(
+    storage: UserDatasetStorage, dataset_id: str, version: str | None, metadata: dict[str, Any], frame: pl.DataFrame
+) -> DatasetSemantics | None:
+    """The version's semantics as inferred (``version_semantics``: the contract's, or the same pass
+    over the stored frame for a version stored before ADR017); None without a version.
+
+    Raises:
+        HTTPException: 500 when the contract can't be read: a patient file must never be read as
+            estimates because its contract could not be checked.
+    """
+    from clinical_analytics.contracts.declarations import MemoryDeclarationStore
+    from clinical_analytics.contracts.errors import ContractError
+    from clinical_analytics.contracts.service import version_semantics
+
+    if version is None:
+        return None
+    try:
+        return version_semantics(
+            storage.upload_dir.parent,
+            dataset_id,
+            version,
+            metadata=metadata,
+            stored_frame=lambda: frame,
+            declarations=MemoryDeclarationStore(),
+        )
+    except ContractError as e:
+        logger.error("aggregate_semantics_unreadable", dataset_id=dataset_id, error_type=type(e).__name__)
+        raise HTTPException(status_code=500, detail="This dataset's data contract can't be read.") from e
+
+
+def load_source(
+    storage: UserDatasetStorage, store: FileDeclarationStore, dataset_id: str
+) -> tuple[estimate_join.SourceInput, list[Hold]]:
+    """One uploaded table at its active version, with its declaration and saved choices, and the
+    open questions any answer from it waits on (read with the same declarations as its frame).
 
     Raises:
         HTTPException: 400 for a malformed id, 404 for an unknown dataset, 500 when its data or
@@ -86,17 +123,33 @@ def load_source(storage: UserDatasetStorage, store: FileDeclarationStore, datase
         raise HTTPException(status_code=404, detail=f"Dataset {dataset_id} not found")
     version = active_version_id(metadata)
     try:
-        frame = storage.stored_dataset(dataset_id, metadata).scan_cohort().collect()
         declarations = store.load(dataset_id)
+        # The stored data as every reader sees it: confirmed "not recorded" values and date
+        # readings applied (contracts.readings), never the raw Parquet values.
+        raw = storage.stored_dataset(dataset_id, metadata).scan_cohort().collect()
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=f"Dataset {dataset_id} has no stored data") from e
     except (ContractStoreError, InvalidDeclarationKeyError) as e:
         logger.error("aggregate_declarations_unreadable", dataset_id=dataset_id, error_type=type(e).__name__)
         raise HTTPException(status_code=500, detail="This dataset's declarations can't be read.") from e
     declared = declarations.population_estimates_for(version) is not None
-    # Detection runs only on declared tables: an undeclared table is refused before its rows matter.
-    table = estimates.detect_frame(frame) if declared else None
+    inferred = _version_semantics(storage, dataset_id, version, metadata, raw)
+    settled = with_declarations(inferred, declarations) if inferred is not None else None
+    frame = apply_declared(raw, declared_reads(declarations, version, settled))
+    # A file whose contract names a patient (ADR017) holds patient rows: never read as estimates,
+    # whatever was declared. Detection runs only on declared tables without a patient key.
+    names_patient = declared and inferred is not None and inferred.patient_key is not None
+    table = estimates.detect_frame(frame) if declared and not names_patient else None
     name = str(metadata.get("dataset_name") or dataset_id)
+    # What an estimate question reads: the table's key dimensions and its value columns (their
+    # bounds and markers); a question about another column never holds it (contracts.holds).
+    read = (
+        {d.name for d in table.dimensions}
+        | {c for v in table.values for c in (v.name, v.lower, v.upper, v.suppressed, v.unreliable) if c}
+        if table is not None
+        else None
+    )
+    holds = open_question_holds(settled, columns=read, counts_lines=False)
     return estimate_join.SourceInput(
         dataset_id=dataset_id,
         name=name,
@@ -105,7 +158,7 @@ def load_source(storage: UserDatasetStorage, store: FileDeclarationStore, datase
         declared=declared,
         saved_choices=declarations.choices_for(version),
         version=version,
-    )
+    ), holds
 
 
 def _check_choices(sources: list[estimate_join.SourceInput], choices: dict[str, dict[str, ChoiceValue]]) -> None:
@@ -158,7 +211,14 @@ def ask_aggregate(request: AggregateQuestionRequest) -> AggregateAnswerResponse:
     log = logger.bind(tables=len(request.dataset_ids), question_length=len(request.question))
     storage = UserDatasetStorage()
     store = _declaration_store()
-    sources = [load_source(storage, store, dataset_id) for dataset_id in request.dataset_ids]
+    loaded = [load_source(storage, store, dataset_id) for dataset_id in request.dataset_ids]
+    sources = [source for source, _ in loaded]
+    # Only tables that can be answered from wait on their questions; an undeclared table is refused.
+    holds = [hold for source, found in loaded if source.declared for hold in found]
+    if holds:
+        # An open question of any table holds the answer until it is answered (contracts.holds).
+        log.info("aggregate_question_held_for_questions", questions=len(holds))
+        return AggregateAnswerResponse(status="held", message=held_message(holds))
     _check_choices(sources, request.choices)
     result = estimate_join.answer(sources, request.question, request.choices)
     savable = {

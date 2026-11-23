@@ -2,17 +2,19 @@
 """What a governed query may read: the columns of the dataset's contract, and where they are.
 
 The contract (``contracts/<upload_id>/<version>.odcs.yaml``) is the only schema: a column that is
-not one of its properties does not exist for SQL, and its identifier and PHI tags decide where a
-column may appear. The rows are the stored Parquet of the same version (written by ``storage``),
+not one of its properties does not exist for SQL. The patient identifier is the contract
+semantics' patient key (ADR017; ``contracts.semantics``); app columns copied from it and PHI-tagged
+properties are coarsen-only. A contract written before semantics existed falls back to its
+identifier and PHI tags. The rows are the stored Parquet of the same version (written by ``storage``),
 with the dataset's confirmed level merges applied, so SQL sees the same levels as the intent path.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 from open_data_contract_standard.model import OpenDataContractStandard, SchemaProperty
 from sqlglot import exp
@@ -20,6 +22,7 @@ from sqlglot import exp
 from clinical_analytics.contracts.config import UNIFIED_OBJECT_NAME
 from clinical_analytics.contracts.declarations import LevelMapping
 from clinical_analytics.contracts.quality import is_id_property, is_restricted_property
+from clinical_analytics.contracts.semantics import DatasetSemantics, semantics_from_contract
 from clinical_analytics.sql.errors import SqlRefusedError
 from clinical_analytics.sql.render import render
 
@@ -48,6 +51,14 @@ class SqlCatalog:
     columns: tuple[ColumnSpec, ...]
     parquet_path: Path
     levels: tuple[LevelMapping, ...] = ()
+    # column -> values the user confirmed mean not recorded (ADR017): NULL in the view.
+    missing: tuple[tuple[str, tuple[int | float | str, ...]], ...] = ()
+    # column -> (format, century) the user confirmed for a text date column: a DATE in the view.
+    dates: tuple[tuple[str, tuple[str, str | None]], ...] = ()
+    # column -> a frequency table's total-row values (contracts.readings.total_rows): never read.
+    totals: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    # value column -> (unit column, target unit): durations read in one unit (contracts.readings).
+    units: tuple[tuple[str, tuple[str, str]], ...] = ()
 
     def column(self, name: str) -> ColumnSpec | None:
         """A column by name, case-insensitive as DuckDB identifiers are."""
@@ -65,7 +76,14 @@ class SqlCatalog:
         to M); each becomes one WHEN of the column's CASE, so every merge applies.
         """
         reader = exp.func("read_parquet", exp.Literal.string(str(self.parquet_path)))
-        return f'CREATE VIEW "{UNIFIED_OBJECT_NAME}" AS {render(exp.select(*self._columns()).from_(reader))}'
+        query = exp.select(*self._columns()).from_(reader)
+        names = {c.name for c in self.columns}
+        for column, values in self.totals:
+            if column in names and values:
+                ref = exp.column(column, quoted=True)
+                listed = exp.In(this=exp.cast(ref, "VARCHAR"), expressions=[exp.Literal.string(v) for v in values])
+                query = query.where(exp.or_(exp.not_(listed), exp.Is(this=ref.copy(), expression=exp.Null())))
+        return f'CREATE VIEW "{UNIFIED_OBJECT_NAME}" AS {render(query)}'
 
     def _columns(self) -> list[exp.Expr]:
         merges: dict[str, list[LevelMapping]] = {}
@@ -73,9 +91,26 @@ class SqlCatalog:
             if mapping.spellings:
                 merges.setdefault(mapping.column, []).append(mapping)
         select: list[exp.Expr] = []
+        missing = dict(self.missing)
+        dates = dict(self.dates)
+        units = dict(self.units)
         for col in self.columns:
             ref = exp.column(col.name, quoted=True)
             value: exp.Expr = ref
+            codes = missing.get(col.name)
+            if codes:
+                if col.numeric:
+                    numbers = [exp.Literal.number(float(v)) for v in codes if _is_number(v)]
+                    matched: exp.Expr = exp.In(this=exp.cast(ref.copy(), "DOUBLE"), expressions=numbers)
+                else:
+                    matched = exp.In(
+                        this=exp.cast(ref.copy(), "VARCHAR"), expressions=[exp.Literal.string(str(v)) for v in codes]
+                    )
+                value = exp.case().when(matched, exp.Null()).else_(ref.copy())
+            if col.name in dates:
+                value = _date_reading(ref, *dates[col.name])
+            if col.name in units:
+                value = _in_unit(value, *units[col.name])
             if col.logical_type == "string" and merges.get(col.name):
                 case = exp.case()
                 for mapping in merges[col.name]:
@@ -83,13 +118,20 @@ class SqlCatalog:
                     case = case.when(
                         exp.In(this=ref.copy(), expressions=spellings), exp.Literal.string(mapping.canonical)
                     )
-                value = case.else_(ref.copy())
+                value = case.else_(value.copy())
             select.append(exp.alias_(value, col.name, quoted=True))
         return select
 
     @classmethod
     def from_contract(
-        cls, contract: OpenDataContractStandard, parquet_path: Path, levels: Iterable[LevelMapping] = ()
+        cls,
+        contract: OpenDataContractStandard,
+        parquet_path: Path,
+        levels: Iterable[LevelMapping] = (),
+        missing: Iterable[Any] = (),
+        dates: Iterable[Any] = (),
+        totals: Mapping[str, tuple[str, ...]] | None = None,
+        units: Mapping[str, tuple[str, str]] | None = None,
     ) -> SqlCatalog:
         """The catalog of the contract's unified object.
 
@@ -99,7 +141,8 @@ class SqlCatalog:
         unified = next((o for o in contract.schema_ or [] if o.name == UNIFIED_OBJECT_NAME), None)
         if unified is None or not unified.properties:
             raise SqlRefusedError("This dataset's data contract lists no columns, so SQL cannot be checked against it.")
-        columns = tuple(_spec(p) for p in unified.properties)
+        semantics = semantics_from_contract(contract)
+        columns = tuple(_spec(p, semantics) for p in unified.properties)
         folded = [c.name.casefold() for c in columns]
         if len(set(folded)) < len(folded):
             # DuckDB names are case-insensitive: it reads the second of "Age" and "age" as
@@ -108,14 +151,76 @@ class SqlCatalog:
                 "This dataset has columns whose names differ only in capitalisation, so SQL cannot tell them apart."
             )
         names = {c.name for c in columns}
-        return cls(columns=columns, parquet_path=parquet_path, levels=tuple(m for m in levels if m.column in names))
+        confirmed: dict[str, list[int | float | str]] = {}
+        for answer in missing:  # MissingCodeDeclaration: only "yes, not recorded" answers
+            if answer.missing and answer.column in names:
+                confirmed.setdefault(answer.column, []).append(answer.value)
+        return cls(
+            columns=columns,
+            parquet_path=parquet_path,
+            levels=tuple(m for m in levels if m.column in names),
+            missing=tuple((c, tuple(v)) for c, v in confirmed.items()),
+            dates=tuple((d.column, (d.format, d.century)) for d in dates if d.column in names),
+            totals=tuple((c, tuple(v)) for c, v in (totals or {}).items() if c in names),
+            units=tuple((c, (u, t)) for c, (u, t) in (units or {}).items() if c in names and u in names),
+        )
 
 
-def _spec(prop: SchemaProperty) -> ColumnSpec:
+def _in_unit(value: exp.Expr, unit_column: str, target: str) -> exp.Expr:
+    """``value`` read in ``target`` by its line's unit; NULL for a line without a known unit."""
+    from clinical_analytics.contracts.readings import unit_factors
+
+    unit = exp.func("lower", exp.func("trim", exp.cast(exp.column(unit_column, quoted=True), "VARCHAR")))
+    case = exp.case()
+    for spelling, factor in unit_factors(target).items():
+        case = case.when(exp.EQ(this=unit.copy(), expression=exp.Literal.string(spelling)), exp.Literal.number(factor))
+    return exp.Mul(this=exp.cast(value, "DOUBLE"), expression=case.else_(exp.Null()))
+
+
+def _is_number(value: object) -> bool:
+    try:
+        float(str(value))
+    except ValueError:
+        return False
+    return True
+
+
+def _date_reading(ref: exp.Column, choice_format: str, century: str | None) -> exp.Expr:
+    """A text column read with the user's confirmed date format (and century), as a DATE."""
+    parsed = exp.cast(exp.func("try_strptime", exp.func("trim", ref.copy()), exp.Literal.string(choice_format)), "DATE")
+    year = exp.func("year", parsed.copy())
+    if century == "1900s":
+        shifted = exp.Sub(
+            this=parsed.copy(), expression=exp.Interval(this=exp.Literal.string("100"), unit=exp.var("YEAR"))
+        )
+        return exp.cast(
+            exp.case().when(exp.GTE(this=year, expression=exp.Literal.number(2000)), shifted).else_(parsed), "DATE"
+        )
+    if century == "2000s":
+        added = exp.Add(
+            this=parsed.copy(), expression=exp.Interval(this=exp.Literal.string("100"), unit=exp.var("YEAR"))
+        )
+        return exp.cast(
+            exp.case().when(exp.LT(this=year, expression=exp.Literal.number(2000)), added).else_(parsed), "DATE"
+        )
+    return parsed
+
+
+def _spec(prop: SchemaProperty, semantics: DatasetSemantics | None) -> ColumnSpec:
     name = prop.physicalName or prop.name
     if not name:
         raise SqlRefusedError("This dataset's data contract has a column without a name.")
-    # The same rules as the quality report's, so the two never disagree on what is an ID or PHI.
+    if semantics is not None:
+        # The ID is the semantics' patient key; a copy or hash the app made of an ID is as
+        # restricted as the ID, and a PHI tag still makes a column coarsen-only.
+        app = semantics.app_column(name)
+        return ColumnSpec(
+            name=name,
+            logical_type=str(prop.logicalType or "string"),
+            is_id=name == semantics.patient_key_column,
+            phi=is_restricted_property(prop) or (app is not None and app.kind in ("copy", "hash")),
+        )
+    # Legacy contract: the same rules as the quality report's, so the two never disagree.
     return ColumnSpec(
         name=name,
         logical_type=str(prop.logicalType or "string"),

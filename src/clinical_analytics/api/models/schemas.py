@@ -126,7 +126,7 @@ class SqlQueryRequest(BaseModel):
 class SqlQueryResult(BaseModel):
     """The governed answer, or why the query was refused. ``sql`` is the checked query as run."""
 
-    status: Literal["answered", "refused"]
+    status: Literal["answered", "refused", "held"]
     sql: str | None = Field(None, description="The checked query (shown with every answer)")
     columns: list[str] = Field(default_factory=list)
     rows: list[dict[str, Any]] = Field(default_factory=list)
@@ -137,6 +137,9 @@ class SqlQueryResult(BaseModel):
     )
     confirmation: str | None = Field(
         None, description="With needs_confirmation: the token to send back as confirm_one_row_per_patient"
+    )
+    open_questions: list[str] = Field(
+        default_factory=list, description="With status 'held': ids of the dataset's questions to answer first"
     )
 
 
@@ -160,8 +163,8 @@ class QueryResult(BaseModel):
         ...,
         description="Detected intent (DESCRIBE, COMPARE_GROUPS, FIND_PREDICTORS, etc.)",
     )
-    status: Literal["pending", "processing", "completed", "failed", "awaiting_confirmation"] = Field(
-        ..., description="Query status"
+    status: Literal["pending", "processing", "completed", "failed", "awaiting_confirmation", "awaiting_answers"] = (
+        Field(..., description="Query status")
     )
     confidence: float | None = Field(None, ge=0.0, le=1.0, description="Confidence score for intent detection")
     result_data: dict[str, Any] | None = Field(None, description="Query result data (structure varies by intent)")
@@ -174,6 +177,13 @@ class QueryResult(BaseModel):
     failure_reason: str | None = Field(None, description="Hold or refuse reason from the execution gate")
     plan_line: str | None = Field(None, description="One-line plan summary shown on confirmation hold")
     plan_hash: str | None = Field(None, description="Hash of the held plan; send it back as confirm_plan_hash")
+    choices: list[dict[str, str]] = Field(
+        default_factory=list,
+        description="When the app asks back: concrete choices as {label, question}; ask a choice's question to answer",
+    )
+    open_questions: list[str] = Field(
+        default_factory=list, description="With status awaiting_answers: ids of the file's questions to answer first"
+    )
 
 
 # ============================================================================
@@ -305,6 +315,7 @@ class SSEEvent(BaseModel):
         "query_completed",
         "query_failed",
         "query_awaiting_confirmation",
+        "query_needs_answers",
         "interpretation_ready",
         "stream_end",
     ] = Field(..., description="Event type")

@@ -10,6 +10,7 @@ import {
   renderUploadArea,
   uploadIsUsable,
   uploadResultText,
+  POPULATION_ESTIMATES_LABEL,
 } from './uploadPanel.js';
 import { dataCheckStatusNote } from './dataCheckPanel.js';
 
@@ -34,6 +35,7 @@ describe('normalizeUploadResponse', () => {
       unit_note: '',
       cohort_notes: [],
       one_row_per_patient: null,
+      facts: [],
     });
     expect(normalizeUploadResponse(undefined)).toEqual({
       upload_id: '',
@@ -46,6 +48,7 @@ describe('normalizeUploadResponse', () => {
       unit_note: '',
       cohort_notes: [],
       one_row_per_patient: null,
+      facts: [],
     });
   });
 });
@@ -217,7 +220,7 @@ describe('renderUploadArea', () => {
     Object.defineProperty(input, 'files', { value: [file] });
     input.dispatchEvent(new Event('change'));
 
-    expect(onFileSelect).toHaveBeenCalledWith(file);
+    expect(onFileSelect).toHaveBeenCalledWith(file, { populationEstimates: false });
   });
 
   test('shows upload status text', () => {
@@ -275,7 +278,7 @@ describe('needs_review uploads', () => {
     upload_id: 'u_1',
     status: 'needs_review',
     message:
-      'Uploaded, but a data check failed: patient_id: 127 repeated values. Questions that count patients will first ask you to confirm that rows are visits.',
+      'Uploaded, but a data check failed: patient_id: 127 repeated values. Rows that share an ID are read as visits of one patient: patient counts count each ID once, and each answer says what it counted.',
   };
 
   test.each([
@@ -367,7 +370,10 @@ describe('upload unit note (rows, not patients)', () => {
   });
 
   test.each([
-    [{ status: 'pending', confirmation: 'a'.repeat(32) }, { confirmation: 'a'.repeat(32) }],
+    [
+      { status: 'pending', confirmation: 'a'.repeat(32) },
+      { confirmation: 'a'.repeat(32), countColumns: [] },
+    ],
     [null, null],
     [undefined, null],
     [{ status: 'answered', confirmation: 'a'.repeat(32) }, null],
@@ -437,5 +443,63 @@ describe('upload status line with every note', () => {
     expect(uploadResultText(result, 'trial', null)).toBe(
       'The cohort “trial” needs review. Uploaded, but a data check failed: x. labs: not in the cohort.'
     );
+  });
+});
+
+describe('upload facts from the data contract', () => {
+  test('keeps non-empty fact lines, trimmed', () => {
+    const result = normalizeUploadResponse({
+      upload_id: 'u1',
+      status: 'ready',
+      facts: [
+        '  Each line is one clinic visit; 60 patients (subj names the patient) over 120 lines. ',
+        '',
+        3,
+      ],
+    });
+    expect(result.facts).toEqual([
+      'Each line is one clinic visit; 60 patients (subj names the patient) over 120 lines.',
+    ]);
+  });
+
+  test('the status line says what one line is after the headline', () => {
+    const result = normalizeUploadResponse({
+      upload_id: 'u1',
+      status: 'ready',
+      facts: [
+        'Each line is one ED encounter; 900 patients (MRN names the patient) over 1,260 lines.',
+      ],
+    });
+    expect(uploadResultText(result, 'sepsis', null)).toBe(
+      'The cohort “sepsis” is ready. Each line is one ED encounter; 900 patients (MRN names the patient) over 1,260 lines.'
+    );
+  });
+
+  test('the unit note replaces the first fact when no column names a patient', () => {
+    const result = normalizeUploadResponse({
+      upload_id: 'u1',
+      status: 'ready',
+      unit_note: 'Answers count rows, not patients.',
+      facts: ['No column names a patient, so counts are of lines (80 lines).'],
+    });
+    expect(uploadResultText(result, 'sleep', null)).toBe(
+      'The cohort “sleep” is ready. Answers count rows, not patients.'
+    );
+  });
+});
+
+describe('public population estimates box (ADR014)', () => {
+  test('ticked before choosing a file, the upload is declared', () => {
+    const container = document.createElement('div');
+    const onFileSelect = vi.fn();
+    renderUploadArea(container, { onFileSelect });
+    const box = container.querySelector('[data-testid="upload-population-estimates"]');
+    expect(box.labels[0].textContent.trim()).toBe(POPULATION_ESTIMATES_LABEL);
+    box.checked = true;
+    const input = container.querySelector('[data-testid="upload-file-input"]');
+    const file = new File(['a,b'], 'rates.csv', { type: 'text/csv' });
+    Object.defineProperty(input, 'files', { value: [file] });
+    input.dispatchEvent(new Event('change'));
+    expect(onFileSelect).toHaveBeenCalledWith(file, { populationEstimates: true });
   });
 });

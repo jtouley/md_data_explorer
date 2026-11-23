@@ -282,17 +282,17 @@ def test_stage_true_false_column_isBoolean():
 # --- mixed date formats --------------------------------------------------------------------
 
 
-def test_stage_mixed_date_formats_parsedPerValue():
-    # Arrange: ISO and day-first slashes (31/01 proves day-first)
+def test_stage_mixed_date_formats_keptTextNeverParsedPerValue():
+    # Arrange: ISO and day-first slashes in one column: no ONE format reads every value (ADR017)
     rows = [f"P{i},2023-01-15,50" for i in range(20)] + [f"Q{i},31/01/2023,51" for i in range(20)]
     data = _csv(["patient_id,admit_date,age", *rows])
 
     # Act
     staged = read_csv_typed(data)
 
-    # Assert
-    assert staged.data.schema["admit_date"] == pl.Date
-    assert staged.data["admit_date"].unique().sort().to_list() == [dt.date(2023, 1, 15), dt.date(2023, 1, 31)]
+    # Assert: kept as text, with the values no one format reads counted
+    assert staged.data.schema["admit_date"] == pl.String
+    assert (_note(staged, "admit_date").reason, _note(staged, "admit_date").failed_values) == ("not_dates", 20)
 
 
 def test_stage_unparsed_date_value_keepsColumnText_neverNulled():
@@ -310,16 +310,16 @@ def test_stage_unparsed_date_value_keepsColumnText_neverNulled():
     assert (note.reason, note.failed_values) == ("not_dates", 1)
 
 
-def test_stage_day_first_and_month_first_families_isAmbiguous():
-    # Arrange: "/" settles day-first (13/01), "-" settles month-first (01-13)
+def test_stage_day_first_and_month_first_families_keptText():
+    # Arrange: "/" reads day-first (13/01), "-" month-first (01-13): two formats in one column
     data = _csv(["patient_id,seen", "P1,13/01/2024", "P2,01-13-2024", "P3,02/03/2024"])
 
     # Act
     staged = read_csv_typed(data)
 
-    # Assert
+    # Assert: no one format reads every value, so the column stays text (never per row)
     assert staged.data.schema["seen"] == pl.String
-    assert _note(staged, "seen").reason == "ambiguous_dates"
+    assert _note(staged, "seen").reason == "not_dates"
 
 
 def test_stage_ambiguous_day_month_order_staysText_withNote():
@@ -872,3 +872,38 @@ def test_sheetHasValues_otherSheetCannotBeScanned_countsAsNotReadNeverFails() ->
 
     # Assert
     assert has_values is True
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        pytest.param(["03/25/21", "12/01/22", "07/04/23"], [(2021, 3, 25), (2022, 12, 1), (2023, 7, 4)], id="mm_dd_yy"),
+        pytest.param(["25/03/21", "01/12/22", "04/07/23"], [(2021, 3, 25), (2022, 12, 1), (2023, 7, 4)], id="dd_mm_yy"),
+        # Day first (values above 12 lead), as the contract's one date rule reads it (ADR017,
+        # contracts/dates.py); no year-span guess in staging.
+        pytest.param(
+            ["21/03/25", "22/12/01", "23/07/04"], [(2025, 3, 21), (2001, 12, 22), (2004, 7, 23)], id="day_leads"
+        ),
+    ],
+)
+def test_stage_twoDigitYearDates_oneFormatForTheWholeColumn(values, expected):
+    # Arrange: every value read with the one format that reads them all with years in one span
+    data = _csv(["patient_id,seen", *(f"P{i},{v}" for i, v in enumerate(values))])
+
+    # Act
+    staged = read_csv_typed(data)
+
+    # Assert
+    assert staged.data["seen"].to_list() == [dt.date(*d) for d in expected]
+
+
+def test_stage_twoDigitYearDatesNoValueAbove12_staysTextWithNote():
+    # Arrange: day-first and month-first both read every value, differently
+    data = _csv(["patient_id,seen", "P1,03/04/21", "P2,05/06/22", "P3,07/08/23"])
+
+    # Act
+    staged = read_csv_typed(data)
+
+    # Assert: never parsed row by row in different orders
+    assert staged.data.schema["seen"] == pl.String
+    assert _note(staged, "seen").reason == "ambiguous_dates"

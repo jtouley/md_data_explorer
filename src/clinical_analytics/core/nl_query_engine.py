@@ -452,9 +452,13 @@ class NLQueryEngine:
         dataset_id: str | None = None,
         upload_id: str | None = None,
         conversation_history: list[dict] | None = None,
+        use_model_tier: bool = True,
     ) -> QueryIntent:
         """
         Parse natural language query into structured intent with conversation context.
+
+        ``use_model_tier=False`` skips the language-model tier: the matcher then runs as the fast
+        path in front of the model-written query path (``model_query``), which makes its own call.
 
         Supports conversational refinements (ADR009 Phase 6): When conversation_history
         is provided, the LLM can detect refinement queries like "remove the n/a" that
@@ -609,7 +613,7 @@ class NLQueryEngine:
                     intent = semantic_intent
                     break  # First tier success, stop trying others
 
-            elif tier_name == "llm":
+            elif tier_name == "llm" and use_model_tier:
                 # LLM tier - always as fallback
                 logger.info(
                     "parse_outcome",

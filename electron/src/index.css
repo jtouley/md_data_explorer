@@ -582,6 +582,16 @@ ul {
   display: none;
 }
 
+.menu-upload .upload-estimates {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
 .menu-item,
 .menu-upload .btn-upload {
   display: flex;
@@ -1148,6 +1158,33 @@ ul {
 
 .answer-plan dd {
   color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+/* How a model-written answer was computed: the reading always visible, the SQL on demand. */
+.answer-method {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+}
+
+.answer-reading {
+  color: var(--text-2);
+}
+
+.answer-sql summary {
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.answer-sql-text {
+  margin-top: var(--sp-2);
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--radius-control);
+  background: var(--surface-1);
+  color: var(--text-2);
+  overflow-x: auto;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
@@ -2135,4 +2172,40 @@ ul {
   .example-chip:active {
     transform: none;
   }
+}
+
+/* Questions about your file (ADR017) */
+.file-question {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-2) 0;
+}
+.file-question-text {
+  margin: 0;
+  color: var(--text-1);
+}
+.file-question-evidence,
+.file-question-changes,
+.file-question-status {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+.file-question-answers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.file-question-answer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.result-card-waiting {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-2);
 }

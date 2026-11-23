@@ -129,7 +129,14 @@ describe('renderPatientRowsQuestion', () => {
 
 describe('normalizePatientRowsQuestion', () => {
   test.each([
-    [{ status: 'pending', confirmation: ' abc ' }, { confirmation: 'abc' }],
+    [
+      { status: 'pending', confirmation: ' abc ' },
+      { confirmation: 'abc', countColumns: [] },
+    ],
+    [
+      { status: 'pending', confirmation: 'abc', count_columns: ['cases', '', 3] },
+      { confirmation: 'abc', countColumns: ['cases'] },
+    ],
     [{ status: 'pending', confirmation: 7 }, null],
     [{ confirmation: 'abc' }, null],
     [null, null],
@@ -153,5 +160,42 @@ describe('patientRowsAnsweredText', () => {
 
     // Assert
     expect(text).toBe(expected);
+  });
+});
+
+describe('third answer: each row counts cases for a group', () => {
+  test('offered with the count column, and sends it', () => {
+    const container = document.createElement('div');
+    const onAnswer = vi.fn();
+    renderPatientRowsQuestion(container, { onAnswer, takeFocus: false, countColumns: ['cases'] });
+    const button = container.querySelector('[data-testid="patient-rows-cases"]');
+    expect(button.textContent).toBe('Each row counts cases for a group (in cases)');
+    button.click();
+    expect(onAnswer).toHaveBeenCalledWith(false, 'cases');
+  });
+
+  test('with several count columns, the chosen one is sent', () => {
+    const container = document.createElement('div');
+    const onAnswer = vi.fn();
+    renderPatientRowsQuestion(container, {
+      onAnswer,
+      takeFocus: false,
+      countColumns: ['deaths', 'births'],
+    });
+    container.querySelector('[data-testid="patient-rows-count-column"]').value = 'births';
+    container.querySelector('[data-testid="patient-rows-cases"]').click();
+    expect(onAnswer).toHaveBeenCalledWith(false, 'births');
+  });
+
+  test('not offered without count columns', () => {
+    const container = document.createElement('div');
+    renderPatientRowsQuestion(container, { onAnswer: vi.fn(), takeFocus: false });
+    expect(container.querySelector('[data-testid="patient-rows-cases"]')).toBeNull();
+  });
+
+  test('answered text names the count column', () => {
+    expect(patientRowsAnsweredText('cases', 'deaths', 'Deaths')).toBe(
+      'Answers on “deaths” now add up the cases in Deaths, never count rows.'
+    );
   });
 });

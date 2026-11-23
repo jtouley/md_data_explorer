@@ -44,9 +44,11 @@ from clinical_analytics.api.security import (
     log_auth_mode,
     token_proof,
 )
+from clinical_analytics.core import nl_query_config
 from clinical_analytics.core.data_home import uploads_dir
 from clinical_analytics.core.log_redaction import configure_logging
 from clinical_analytics.core.ollama_init import initialize_ollama
+from clinical_analytics.model_query.llm import MODEL_WARMUP_ENV, warm_in_background
 from clinical_analytics.storage.atomic import sweep_stale_part_files
 from clinical_analytics.storage.dataset_deletion import InvalidDatasetIdError, finish_pending_compaction
 from clinical_analytics.storage.store_format import StoreFormatError, prepare_store_for_engine
@@ -61,6 +63,12 @@ OLLAMA_AUTOINIT_ENV = "CLINICAL_ANALYTICS_OLLAMA_AUTOINIT"
 
 def _ollama_autoinit_enabled() -> bool:
     return os.getenv(OLLAMA_AUTOINIT_ENV, "").strip().lower() in {"1", "true", "yes"}
+
+
+def _model_warmup_enabled() -> bool:
+    return nl_query_config.ENABLE_MODEL_QUERIES and os.getenv(MODEL_WARMUP_ENV, "").strip().lower() in {
+        "1", "true", "yes",
+    }  # fmt: skip
 
 
 def _initialize_ollama_in_background() -> threading.Thread:
@@ -133,6 +141,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     if _ollama_autoinit_enabled():
         _initialize_ollama_in_background()
+    if _model_warmup_enabled():
+        warm_in_background()
 
     yield
 

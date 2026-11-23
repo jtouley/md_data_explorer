@@ -101,7 +101,7 @@ POLL_S = 0.5
 # How long a question waits for an earlier timed-out query that is still running, before it is
 # an ERROR: ask() already gave that query 2 x timeout, so this only absorbs one that ends just after.
 PENDING_GRACE_S = 10.0
-TERMINAL = {"completed", "failed", "awaiting_confirmation"}
+TERMINAL = {"completed", "failed", "awaiting_confirmation", "awaiting_answers"}
 # Log events (core/nl_query_engine.py) that mean the model tier was asked and did not answer.
 LLM_FAILURE_EVENTS = (
     "llm_parse_exception_fallback_to_stub",
@@ -344,6 +344,7 @@ def server_env(
             "LLM_TIMEOUT_PARSE_S": seconds,
             "LLM_TIMEOUT_FILTER_EXTRACTION_S": seconds,
             "LLM_TIMEOUT_MAX_S": seconds,
+            "MODEL_QUERY_TIMEOUT_S": seconds,
         }
     for name in ("HOME", "XDG_DATA_HOME", "CLINICAL_ANALYTICS_DATA_HOME"):
         Path(env[name]).mkdir(parents=True, exist_ok=True)
@@ -517,7 +518,9 @@ def ask(api: Api, dataset_id: str, session_id: str, question: dict[str, Any], ti
     try:
         query_id = _submit(api, payload)
         result = _poll(api, query_id, deadline)
-        if result is not None and result["status"] == "awaiting_confirmation" and question.get("confirm"):
+        # A question back with choices (the model-written path) has no plan to confirm: it stays held.
+        held = result is not None and result["status"] == "awaiting_confirmation"
+        if result is not None and held and result.get("plan_hash") and question.get("confirm"):
             confirmed = True
             payload |= {
                 "confirmed": True,

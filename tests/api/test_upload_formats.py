@@ -292,7 +292,7 @@ def _no_id_cohort(n: int = 150) -> bytes:
 
 
 @pytest.mark.parametrize("as_zip", [False, True], ids=["csv", "zip_of_one_csv"])
-def test_uploadDataset_noPatientIdColumn_uploadsAndSaysRowsNotPatients(
+def test_uploadDataset_noPatientIdColumn_uploadsAndCountsWaitForAnswer(
     test_client: TestClient, isolated_data_home, as_zip: bool
 ):
     # Arrange: before #103 and this branch, "Error saving upload: ValueError" with a 500
@@ -306,7 +306,7 @@ def test_uploadDataset_noPatientIdColumn_uploadsAndSaysRowsNotPatients(
     assert body["_status_code"] == 200, body
     assert body["status"] == "ready"
     assert body["unit_note"].startswith("No column in this file identifies a patient")
-    assert "Answers count rows, not patients." in body["unit_note"]
+    assert "Counts wait for your answer" in body["unit_note"]
     assert "add a column with one ID for each patient" in body["unit_note"]
 
 

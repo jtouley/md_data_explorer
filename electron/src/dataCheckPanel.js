@@ -11,7 +11,37 @@ export const DATA_CHECK_HINT =
   'Checks of the uploaded file against its data contract, with each count as found.';
 export const DATA_CHECK_LOADING = 'Checking…';
 
+export const DATA_FACTS_HINT = 'What the file holds, read from it and its data dictionary:';
+
 const MORE_LINE = /^…and (\d+) more$/;
+
+/**
+ * The file's key facts from its data contract ("Each line is one visit; 300 patients …"),
+ * as the API wrote them. Anything that is not a non-empty string is dropped.
+ * @param {unknown} raw the API's `facts` (upload response or quality report)
+ * @returns {string[]}
+ */
+export function normalizeFacts(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((line) => typeof line === 'string' && line.trim()).map((line) => line.trim());
+}
+
+/**
+ * Fill the facts list above the check lines; hidden when there are none.
+ * @param {{ hint: HTMLElement, list: HTMLElement }} parts
+ * @param {string[]} facts
+ */
+export function renderFacts({ hint, list }, facts) {
+  list.replaceChildren();
+  hint.classList.toggle('hidden', facts.length === 0);
+  list.classList.toggle('hidden', facts.length === 0);
+  hint.textContent = facts.length ? DATA_FACTS_HINT : '';
+  for (const line of facts) {
+    const item = document.createElement('li');
+    item.textContent = line;
+    list.appendChild(item);
+  }
+}
 
 /**
  * @typedef {{ status: 'ran', lines: string[], count: number } | { status: 'not_run', reason: string | null }} DataCheck

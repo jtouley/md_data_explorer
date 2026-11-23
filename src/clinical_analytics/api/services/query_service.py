@@ -111,7 +111,7 @@ class AsyncQueryResult:
     """Result of async query execution."""
 
     query_id: str
-    status: str  # "pending", "processing", "completed", "failed", "awaiting_confirmation"
+    status: str  # "pending", "processing", "completed", "failed", "awaiting_confirmation", "awaiting_answers"
     intent_type: str | None = None
     result: dict[str, Any] | None = None
     interpretation: str | None = None
@@ -123,6 +123,15 @@ class AsyncQueryResult:
     failure_reason: str | None = None
     plan_line: str | None = None
     plan_hash: str | None = None
+    # A question back with concrete choices ({"label", "question"}): asking a choice's question
+    # answers it. Empty for a plain hold.
+    choices: list[dict[str, str]] = field(default_factory=list)
+    open_questions: list[str] = field(default_factory=list)
+    # What a confirmed answer stores as a verified plan (model_query.verified): never sent out.
+    question: str | None = None
+    dataset_id: str | None = None
+    dataset_version: str | None = None
+    model_reply: dict[str, Any] | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
 
@@ -158,7 +167,14 @@ class AsyncQueryService:
 
     def _record_turn(self, session_id: str | None, query: str, result: CoreQueryResult) -> None:
         """Remember a completed turn so the session's next question can refine it."""
-        if not session_id or result.plan is None:
+        if not session_id:
+            return
+        if result.plan is None:
+            if result.model_reply is not None and result.analysis is not None:
+                # A model-written answer: its reply is what a follow-up question refines.
+                turns = self._history.setdefault(session_id, [])
+                turns.append({"query": query, "model_reply": result.model_reply})
+                del turns[:-MAX_CONVERSATION_TURNS]
             return
         plan = result.plan
         turns = self._history.setdefault(session_id, [])
@@ -251,6 +267,9 @@ class AsyncQueryService:
             self._queries[query_id] = AsyncQueryResult(
                 query_id=query_id,
                 status="pending",
+                question=query,
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
             )
             self._events[query_id] = []
 
@@ -300,6 +319,8 @@ class AsyncQueryService:
         plan_line = self._plan_line_of(result)
         self._queries[query_id].plan_line = plan_line
         self._queries[query_id].plan_hash = result.plan_hash
+        self._queries[query_id].choices = list(result.choices)
+        self._queries[query_id].model_reply = result.model_reply if result.analysis is not None else None
         self._queries[query_id].completed_at = datetime.now(UTC)
 
         if result.requires_confirmation:
@@ -316,9 +337,26 @@ class AsyncQueryService:
                     "plan_line": plan_line,
                     "plan_hash": result.plan_hash,
                     "confidence": result.confidence,
+                    "choices": list(result.choices),
                 },
             )
             logger.info("query_awaiting_confirmation", query_id=query_id)
+            return
+
+        if result.open_questions:
+            # Waits on questions about the file (contracts.holds): only answering them releases it.
+            self._queries[query_id].status = "awaiting_answers"
+            self._queries[query_id].open_questions = list(result.open_questions)
+            self._emit_event(
+                query_id,
+                "query_needs_answers",
+                {
+                    "query_id": query_id,
+                    "failure_reason": result.failure_reason,
+                    "open_questions": list(result.open_questions),
+                },
+            )
+            logger.info("query_awaiting_answers", query_id=query_id, questions=len(result.open_questions))
             return
 
         if result.issues:
@@ -488,6 +526,10 @@ class AsyncQueryService:
             "row_count": len(table["rows"]) if table else 0,
             # Plan-derived (chart type and column names), no data values.
             "chart_spec": to_json_safe(result.analysis.get("chart_spec")),
+            # The method, shown with every model-written answer: the SQL that ran (or the rows a
+            # statistical test read) and its one-sentence plain reading. None on the matcher's path.
+            "sql": result.sql,
+            "reading": result.reading,
         }
 
     @staticmethod
@@ -695,7 +737,9 @@ class AsyncQueryService:
             intent_type = result.context.inferred_intent.value
 
         status = "awaiting_confirmation" if result.requires_confirmation else "completed"
-        if result.issues and not result.requires_confirmation:
+        if result.open_questions:
+            status = "awaiting_answers"
+        elif result.issues and not result.requires_confirmation:
             errors = [i["message"] for i in result.issues if i.get("severity") == "error"]
             if errors:
                 status = "failed"
@@ -711,6 +755,8 @@ class AsyncQueryService:
             failure_reason=result.failure_reason,
             plan_line=self._plan_line_of(result),
             plan_hash=result.plan_hash,
+            choices=list(result.choices),
+            open_questions=list(result.open_questions),
             error=(
                 "; ".join(i["message"] for i in result.issues if i.get("severity") == "error")
                 if status == "failed"
@@ -718,6 +764,20 @@ class AsyncQueryService:
             ),
             completed_at=datetime.now(UTC),
         )
+
+    def verify(self, query_id: str) -> bool:
+        """Keep a model-written answer the user confirmed as a verified plan for its dataset
+        (``model_query.verified``: the question masked, the plan; never reused as an answer).
+        False when the query is unknown, unanswered or not model-written."""
+        from clinical_analytics.model_query import verified
+
+        found = self._queries.get(query_id)
+        if found is None or found.status != "completed" or not found.model_reply or not found.dataset_id:
+            return False
+        verified.save(
+            uploads_dir().parent, found.dataset_id, found.dataset_version, found.question or "", found.model_reply
+        )
+        return True
 
     async def get_result(self, query_id: str) -> AsyncQueryResult | None:
         """
@@ -759,6 +819,7 @@ class AsyncQueryService:
                 "completed",
                 "failed",
                 "awaiting_confirmation",
+                "awaiting_answers",
             ):
                 # Send explicit stream_end signal for client to close connection
                 yield SSEEvent(

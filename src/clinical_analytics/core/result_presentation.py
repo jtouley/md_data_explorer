@@ -96,7 +96,10 @@ def _units_word(analysis: Mapping[str, Any]) -> str | None:
     """What n counts in words: the encounter noun the question used ("admissions", "tests"),
     else ``_unit``."""
     noun = analysis.get("unit_noun")
-    return f"{noun}s" if isinstance(noun, str) and noun else _unit(analysis)
+    if isinstance(noun, str) and noun:
+        consonant_y = noun.endswith("y") and noun[-2:-1] not in ("a", "e", "o", "u")
+        return noun[:-1] + "ies" if consonant_y else f"{noun}s"
+    return _unit(analysis)
 
 
 def _one(analysis: Mapping[str, Any]) -> str:
@@ -479,10 +482,17 @@ def _group_label(column: str, level: Any) -> str:
     return "missing" if level is None else display_level(column, level)
 
 
+def _event_of(analysis: Mapping[str, Any], column: str) -> str:
+    """The event a share counts: the condition as written when the query states one
+    (``event_text``, the model-written query path), else 'column = level'."""
+    text = analysis.get("event_text")
+    return str(text) if text else _event_phrase(column, analysis.get("value"))
+
+
 def _present_proportion(analysis: Mapping[str, Any]) -> Presentation:
     """Share of patients with a value, among those with it recorded."""
     column = str(analysis.get("column") or "value")
-    event = _event_phrase(column, analysis.get("value"))
+    event = _event_of(analysis, column)
     share = _num(analysis.get("proportion"))
     if share is None:
         return {
@@ -502,7 +512,7 @@ def _present_rate(analysis: Mapping[str, Any]) -> Presentation:
     """Rate of a value in each group."""
     column = str(analysis.get("column") or "value")
     group_col = str(analysis.get("group_col") or "group")
-    event = _event_phrase(column, analysis.get("value"))
+    event = _event_of(analysis, column)
     groups = list(analysis.get("groups") or [])
     if len(groups) > MAX_GROUP_LEVELS:
         return _too_many_levels(group_col, len(groups))
@@ -551,7 +561,15 @@ def _present_estimates(analysis: Mapping[str, Any]) -> Presentation:
     return {"claim": analysis.get("claim"), "table": table if isinstance(table, dict) else None}  # type: ignore[typeddict-item]
 
 
+def _present_table(analysis: Mapping[str, Any]) -> Presentation:
+    """A query result with no more specific shape: its reading as the claim, its rows as the table."""
+    rows = [dict(row) for row in analysis.get("rows") or []]
+    claim = analysis.get("claim")
+    return {"claim": str(claim) if claim else None, "table": _table(rows)}
+
+
 _PRESENTERS = {
+    "table": _present_table,
     "estimates": _present_estimates,
     "comparison": _present_comparison,
     "predictor": _present_predictor,

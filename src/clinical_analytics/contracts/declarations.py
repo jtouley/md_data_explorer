@@ -120,6 +120,56 @@ class DimensionChoice(BaseModel):
     dataset_version: str | None = None
 
 
+class MissingCodeDeclaration(BaseModel):
+    """The doctor's answer to "Does 99 in los_days mean not recorded?" on one dataset version.
+
+    ``missing`` True: the value is stored as missing wherever answers read the data; False: it is
+    a real value (the question is answered and not asked again)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    column: str = Field(min_length=1)
+    value: int | float | str
+    missing: bool
+    dataset_version: str | None = None
+
+
+class DateReadingDeclaration(BaseModel):
+    """The answer to a date question on one version: the column's one format, and for two-digit
+    years the century ("1900s": 03/15/45 is 1945)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    column: str = Field(min_length=1)
+    format: str = Field(min_length=2, max_length=64)
+    century: Literal["1900s", "2000s"] | None = None
+    dataset_version: str | None = None
+
+
+class AggregateDeclaration(BaseModel):
+    """The answer "Each row counts cases for a group (in column …)" to "Is each row one patient?":
+    the version's lines are groups, and ``count_column`` holds the cases each one counts."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["frequency", "estimate"] = "frequency"
+    count_column: str = Field(min_length=1)
+    rows: int = Field(..., ge=0)
+    dataset_version: str | None = None
+
+
+class QuestionAnswer(BaseModel):
+    """The user's answer to an open question of the contract's semantics that no other
+    declaration holds ("Is Statewide a total?", "Should repeated lines be added?", "Is each line
+    one patient?" answered no): ``answer`` is one of the question's options, as asked."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    question_id: str = Field(min_length=1, max_length=300)
+    answer: str = Field(min_length=1, max_length=200)
+    dataset_version: str | None = None
+
+
 class Declarations(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -129,6 +179,10 @@ class Declarations(BaseModel):
     levels: tuple[LevelMapping, ...] = ()
     population_estimates: PopulationEstimatesDeclaration | None = None
     choices: tuple[DimensionChoice, ...] = ()
+    missing_codes: tuple[MissingCodeDeclaration, ...] = ()
+    aggregates: tuple[AggregateDeclaration, ...] = ()
+    date_readings: tuple[DateReadingDeclaration, ...] = ()
+    answers: tuple[QuestionAnswer, ...] = ()
 
     @model_validator(mode="before")
     @classmethod
@@ -194,6 +248,64 @@ class Declarations(BaseModel):
         """column -> chosen level, for the choices made on ``dataset_version``."""
         return {c.column: c.value for c in self.choices if c.dataset_version == dataset_version}
 
+    def with_missing_code(self, answer: MissingCodeDeclaration) -> Declarations:
+        """These declarations with ``answer`` as the answer for its column and value on its version."""
+        kept = tuple(
+            m
+            for m in self.missing_codes
+            if not (
+                m.column == answer.column
+                and str(m.value) == str(answer.value)
+                and m.dataset_version == answer.dataset_version
+            )
+        )
+        return self.model_copy(update={"missing_codes": (*kept, answer)})
+
+    def with_date_reading(self, declared: DateReadingDeclaration) -> Declarations:
+        kept = tuple(
+            d
+            for d in self.date_readings
+            if not (d.column == declared.column and d.dataset_version == declared.dataset_version)
+        )
+        return self.model_copy(update={"date_readings": (*kept, declared)})
+
+    def date_readings_for(self, dataset_version: str | None) -> tuple[DateReadingDeclaration, ...]:
+        return tuple(d for d in self.date_readings if d.dataset_version == dataset_version)
+
+    def with_aggregate(self, declared: AggregateDeclaration) -> Declarations:
+        """These declarations with ``declared`` as its version's table kind (others kept)."""
+        kept = tuple(a for a in self.aggregates if a.dataset_version != declared.dataset_version)
+        return self.model_copy(update={"aggregates": (*kept, declared)})
+
+    def without_aggregate(self, dataset_version: str | None) -> Declarations:
+        return self.model_copy(
+            update={"aggregates": tuple(a for a in self.aggregates if a.dataset_version != dataset_version)}
+        )
+
+    def aggregate_for(self, dataset_version: str | None) -> AggregateDeclaration | None:
+        return next((a for a in self.aggregates if a.dataset_version == dataset_version), None)
+
+    def missing_codes_for(self, dataset_version: str | None) -> tuple[MissingCodeDeclaration, ...]:
+        return tuple(m for m in self.missing_codes if m.dataset_version == dataset_version)
+
+    def with_answer(self, answer: QuestionAnswer) -> Declarations:
+        """These declarations with ``answer`` as the answer to its question on its version."""
+        kept = tuple(
+            a
+            for a in self.answers
+            if not (a.question_id == answer.question_id and a.dataset_version == answer.dataset_version)
+        )
+        return self.model_copy(update={"answers": (*kept, answer)})
+
+    def without_answer(self, question_id: str, dataset_version: str | None) -> Declarations:
+        kept = tuple(
+            a for a in self.answers if not (a.question_id == question_id and a.dataset_version == dataset_version)
+        )
+        return self.model_copy(update={"answers": kept})
+
+    def answers_for(self, dataset_version: str | None) -> tuple[QuestionAnswer, ...]:
+        return tuple(a for a in self.answers if a.dataset_version == dataset_version)
+
     def for_version(self, dataset_version: str | None) -> Declarations:
         """Only what was confirmed on ``dataset_version``: all a question on that version reads."""
         grain = self.grain_for(dataset_version)
@@ -202,6 +314,10 @@ class Declarations(BaseModel):
             levels=self.levels_for(dataset_version),
             population_estimates=self.population_estimates_for(dataset_version),
             choices=tuple(c for c in self.choices if c.dataset_version == dataset_version),
+            missing_codes=self.missing_codes_for(dataset_version),
+            aggregates=tuple(a for a in self.aggregates if a.dataset_version == dataset_version),
+            date_readings=self.date_readings_for(dataset_version),
+            answers=self.answers_for(dataset_version),
         )
 
 

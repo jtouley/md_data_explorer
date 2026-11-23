@@ -124,21 +124,29 @@ def test_question_keylessUpload_countsRowsNeverPatients(
         assert "population estimates" in (result.failure_reason or "")
         assert not re.search(r"\bpatients?\b", result.claim or "")
         return
-    assert result.analysis is not None, result.failure_reason
-    assert result.analysis.get("unit") == "rows"
-    assert "rows" in (result.claim or "")
+    # ADR017: a count waits for "Is each line one patient?"; it is never given as patients
+    assert result.analysis is None
+    assert "Is each line one patient?" in (result.failure_reason or "")
     assert not re.search(r"\bpatients?\b", result.claim or "")
+
+
+def test_uploadDataset_repeatedPatientIds_readyVisitLevelNotAFailedCheck(upload: Callable[..., Any]) -> None:
+    # Arrange: 150 patients over 200 lines (ADR017: repeated patient IDs on visit rows are expected)
+    df = pl.DataFrame(
+        {"patient_id": [f"P{i % 150:03d}" for i in range(200)], "sbp": [110.0 + i % 40 for i in range(200)]}
+    )
+
+    # Act
+    body = upload(df, "visits").json()
+
+    # Assert: before ADR017 this was "needs_review: patient_id: repeated values"
+    assert (body["status"], body["failed_checks"]) == ("ready", [])
+    assert "150 patients (patient_id names the patient) over 200 lines." in body["facts"][0]
 
 
 @pytest.mark.parametrize(
     ("ids", "failed", "step"),
     [
-        pytest.param(
-            [f"P{i % 150:03d}" for i in range(200)],
-            ["patient_id_no_duplicates"],
-            "confirm that rows are visits",
-            id="repeated_ids",
-        ),
         pytest.param(
             [None if i % 10 == 0 else f"P{i:03d}" for i in range(200)],
             ["patient_id_not_null"],
@@ -318,8 +326,8 @@ def test_uploadDataset_xlsxDeclaresA1Size_readsEveryRowNeverEmpty(test_client: T
     assert detail["tables"][0]["row_count"] == 120
 
 
-def test_uploadDataset_xlsxRepeatedIdsAndSkippedSheet_needsReviewKeepsSheetNote(test_client: TestClient) -> None:
-    # Arrange: the first sheet repeats patient IDs (an error-level check) and a second sheet is not read
+def test_uploadDataset_xlsxRepeatedIdsAndSkippedSheet_readyKeepsSheetNote(test_client: TestClient) -> None:
+    # Arrange: the first sheet repeats patient IDs (visit lines, expected: ADR017) and a second sheet is not read
     first = [("patient_id", *_RATE_HEADER), *((f"P{i % 90:03d}", *row) for i, row in enumerate(_rate_rows(120)))]
     content = _workbook_bytes(first, ("Population", [_RATE_HEADER, *_rate_rows(30)]))
 
@@ -327,10 +335,10 @@ def test_uploadDataset_xlsxRepeatedIdsAndSkippedSheet_needsReviewKeepsSheetNote(
     response = test_client.post(UPLOAD, files={"file": ("visits.xlsx", content, "application/octet-stream")})
     body = response.json()
 
-    # Assert: both the failed check and the sheet that was not read reach the user
+    # Assert: no failed check for the repeats, and the sheet that was not read reaches the user
     assert response.status_code == 200, body
-    assert body["status"] == "needs_review"
-    assert body["failed_checks"] == ["patient_id_no_duplicates"]
+    assert body["status"] == "ready"
+    assert body["failed_checks"] == []
     assert body["sheet_note"] == (
         "Read 1 of 2 sheets: “Sheet”. Not read: “Population”. "
         "To use another sheet, save it as its own file and upload it."
@@ -433,7 +441,7 @@ def _sepsis_survival_shaped(n: int = 240) -> pl.DataFrame:
     )
 
 
-def test_uploadDataset_sepsisSurvivalShaped_uploadsAndSaysRowsNotPatients(
+def test_uploadDataset_sepsisSurvivalShaped_uploadsAndCountsWaitForAnswer(
     test_client: TestClient, upload: Callable[..., Any]
 ) -> None:
     # Arrange
@@ -449,7 +457,7 @@ def test_uploadDataset_sepsisSurvivalShaped_uploadsAndSaysRowsNotPatients(
     assert response.status_code == 200, body
     assert body["status"] == "ready"
     assert body["unit_note"].startswith("No column in this file identifies a patient, so each row was numbered")
-    assert "Answers count rows, not patients." in body["unit_note"]
+    assert "Counts wait for your answer to “Is each line one patient?”." in body["unit_note"]
     assert "row_number" in detail["tables"][0]["columns"]
     assert detail["tables"][0]["row_count"] == df.height
 
@@ -466,9 +474,9 @@ def test_question_sepsisSurvivalShaped_countAnswersInRows(upload: Callable[..., 
     with dependencies.lease_semantic_layer(upload_id) as lease:
         result = QueryService(lease.layer).ask("how many patients?", dataset_id=upload_id, dataset_version="v1")
 
-    # Assert: the count is of rows, and the answer never calls them patients
-    assert result.analysis is not None, result.failure_reason
-    assert result.analysis.get("unit") == "rows"
+    # Assert: the count waits for "Is each line one patient?", never calls rows patients
+    assert result.analysis is None
+    assert "Is each line one patient?" in (result.failure_reason or "")
     assert not re.search(r"\bpatients?\b", result.claim or "")
 
 

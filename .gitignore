@@ -324,6 +324,7 @@ golden_questions.json
 *golden*.json
 !tests/eval/golden_questions.yaml
 !src/clinical_analytics/resources/config/golden_examples.yaml
+!tests/eval/model_query_golden.yaml
 !tests/fixtures/synthetic/**
 
 # --- Settings, env and local overrides ----------------------------------------------------------

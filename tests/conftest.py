@@ -36,6 +36,14 @@ pytest_plugins = ["performance.plugin"]
 # ============================================================================
 
 
+@pytest.fixture(autouse=True)
+def no_local_model(monkeypatch):
+    """No test reaches a model server by accident: the question path sees no local model, so it
+    runs as it does without Ollama, whatever is running on the developer's machine. A test of the
+    model-written query path sets ``service._model_available`` and ``service._model`` itself."""
+    monkeypatch.setattr("clinical_analytics.core.query_service.model_available", lambda: False)
+
+
 @pytest.fixture
 def mock_llm_calls(request):
     """
@@ -2095,6 +2103,25 @@ def get_dataset_by_name(dataset_registry):
 
 
 @pytest.fixture
+def make_semantics() -> Callable[..., Any]:
+    """Factory: the contract semantics (ADR017) of a frame, from the real inference pass.
+
+    ``make_semantics(df, doc=None, add_ids=True, **facts)`` returns the ``DatasetSemantics``
+    (with the app's ID column recorded when ``add_ids``); ``facts`` are ``UploadFacts`` fields
+    (``from_excel``, ``source_format``, ``population_estimates``, ``cohort_key``).
+    """
+    from clinical_analytics.contracts.inference import UploadFacts, add_id_columns, infer_semantics
+
+    def _make(df: pl.DataFrame, doc: str | None = None, add_ids: bool = True, **facts: Any) -> Any:
+        semantics = infer_semantics(df, UploadFacts(doc_context=doc, **facts))
+        if add_ids:
+            _frame, _meta, semantics = add_id_columns(df, semantics)
+        return semantics.model_copy(update={"dataset_version": "v1"})
+
+    return _make
+
+
+@pytest.fixture
 def make_contract() -> Callable[..., OpenDataContractStandard]:
     """Factory: ODCS contract for ``df`` with test defaults (upload u1, version v1, id patient_id).
 
@@ -2114,6 +2141,85 @@ def make_contract() -> Callable[..., OpenDataContractStandard]:
         }
         fields.update(overrides)
         return build_contract(df, ContractInputs(**fields))
+
+    return _make
+
+
+@pytest.fixture
+def make_sql_catalog(tmp_path, make_contract):
+    """Factory: the SQL catalog of ``df`` stored as Parquet, with its contract (``make_contract``).
+
+    Shared by the governed SQL tests and the model-written query tests (both read the sandbox).
+    """
+    from clinical_analytics.sql.catalog import SqlCatalog
+
+    def _make(df: pl.DataFrame, levels: tuple = (), **contract_overrides: Any):
+        path = tmp_path / f"cohort_{len(list(tmp_path.glob('*.parquet')))}.parquet"
+        df.write_parquet(path)
+        return SqlCatalog.from_contract(make_contract(df, **contract_overrides), path, levels)
+
+    return _make
+
+
+@pytest.fixture
+def make_query_table(make_sql_catalog):
+    """Factory: (catalog, context) of ``df`` for the model-written query path, built as an upload
+    builds it: the one semantics pass (with ``doc_context`` as the data dictionary), its typed
+    values, the contract from those semantics, and ``model_query.context`` read from them.
+    ``semantics_update`` overrides fields of the inferred semantics (a declaration, an open
+    question)."""
+    from clinical_analytics.contracts.inference import UploadFacts, apply_semantics, infer_semantics
+    from clinical_analytics.model_query.context import build_context
+    from clinical_analytics.sql.sandbox import SandboxConnection
+
+    def _make(
+        df: pl.DataFrame,
+        doc_context: str | None = None,
+        title: str = "",
+        semantics_update: dict[str, Any] | None = None,
+        **overrides: Any,
+    ):
+        semantics = infer_semantics(df, UploadFacts(doc_context=doc_context))
+        if semantics_update:
+            semantics = semantics.model_copy(update=semantics_update)
+        typed = apply_semantics(df, semantics)
+        catalog = make_sql_catalog(typed, semantics=semantics, id_column=semantics.patient_key_column, **overrides)
+        with SandboxConnection(catalog) as sandbox:
+            context = build_context(sandbox, catalog, semantics, title=title)
+        return catalog, context
+
+    return _make
+
+
+@pytest.fixture
+def make_model_ask():
+    """Factory: ``ask(question, *replies)`` on a (catalog, context) from ``make_query_table``. The
+    model gives the replies in order (then None); returns (answer, the user prompts it was sent)."""
+    from clinical_analytics.model_query.engine import answer_question
+    from clinical_analytics.sql.sandbox import SandboxConnection
+
+    def _make(table: tuple[Any, Any]):
+        catalog, context = table
+
+        def _ask(question: str, *replies: dict[str, Any], previous: tuple = ()):
+            queue = list(replies)
+            prompts: list[str] = []
+
+            def model(_system: str, user: str, _schema: dict[str, Any]) -> Any:
+                prompts.append(user)
+                return queue.pop(0) if queue else None
+
+            answer = answer_question(
+                question,
+                context,
+                model=model,
+                open_sandbox=lambda: SandboxConnection(catalog),
+                examples=[],
+                previous=previous,
+            )
+            return answer, prompts
+
+        return _ask
 
     return _make
 

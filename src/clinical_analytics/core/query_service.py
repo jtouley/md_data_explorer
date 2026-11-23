@@ -8,6 +8,7 @@ Manages query parsing, validation, and execution without Streamlit dependencies.
 
 import dataclasses
 import hashlib
+import json
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -29,8 +30,10 @@ from clinical_analytics.contracts.declarations import (
 )
 from clinical_analytics.contracts.errors import ContractError, ContractStoreError, InvalidDeclarationKeyError
 from clinical_analytics.contracts.quality import QualityReport
+from clinical_analytics.contracts.semantics import DatasetSemantics
+from clinical_analytics.contracts.service import version_semantics
 from clinical_analytics.contracts.store import latest_report
-from clinical_analytics.core import answer_checks, counting_unit, estimates
+from clinical_analytics.core import answer_checks, counting_unit, estimates, nl_query_config
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.core.conversation_manager import ConversationManager
 from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line, plan_fingerprint
@@ -50,6 +53,16 @@ from clinical_analytics.core.word_accounting import (
     unjustified_elements,
     unjustified_reason,
 )
+from clinical_analytics.model_query.checks import matcher_may_answer
+from clinical_analytics.model_query.context import DatasetContext, build_context
+from clinical_analytics.model_query.engine import answer_question
+from clinical_analytics.model_query.llm import ModelFn, model_available, ollama_model
+from clinical_analytics.model_query.present import has_value
+from clinical_analytics.model_query.verified import similar as verified_plans
+from clinical_analytics.sql.catalog import SqlCatalog
+from clinical_analytics.sql.errors import SqlRefusedError
+from clinical_analytics.sql.sandbox import SandboxConnection
+from clinical_analytics.sql.service import catalog_for_layer
 
 _GROUP_SIZE_COLUMNS = frozenset({"n", "count", "len", "n_rows", "n_pairs", "events"})
 logger = structlog.get_logger()
@@ -62,6 +75,8 @@ CONFIRMATION_NOT_SAVED_REASON = (
 # what it reads (level merges, stored declarations). Never parsed under the lock: the LLM tier
 # can take seconds, and every other question on the dataset would wait for it.
 MAX_PARSE_ATTEMPTS = 3
+# Earlier turns of the conversation the model is shown, for follow-up questions.
+MODEL_PREVIOUS_TURNS = 2
 STATE_KEPT_CHANGING_REASON = (
     "This dataset's confirmed settings changed while the question was being read, so it was not run. Ask it again."
 )
@@ -218,6 +233,29 @@ class QueryResult:
     failure_reason: str | None = None  # Hold or refuse reason
     plan_line: str | None = None  # One-line plan summary for confirm UI
     plan_hash: str | None = None  # Canonical hash of the executable plan; a confirmation must return it
+    # Model-written query path (model_query): the SQL that ran, its one-sentence reading, the
+    # model's reply (kept for follow-up questions) and, when it asks back, the concrete choices
+    # as (label, the question to ask instead).
+    sql: str | None = None
+    reading: str | None = None
+    model_reply: dict[str, Any] | None = None
+    choices: list[dict[str, str]] = dataclasses.field(default_factory=list)
+    # Ids of the open questions about the file this answer waits on (contracts.holds); never
+    # released by a confirmation, only by answering them.
+    open_questions: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _ModelPath:
+    """What the model-written query path reads: the dataset version's SQL catalog and the table
+    description the model is given."""
+
+    catalog: SqlCatalog
+    context: DatasetContext
+
+
+def _has_error(result: QueryResult) -> bool:
+    return any(issue.get("severity") == "error" for issue in result.issues)
 
 
 @dataclass(frozen=True)
@@ -290,6 +328,11 @@ class QueryService:
         self.data_dir = data_dir
         self.nl_engine = NLQueryEngine(semantic_layer)
         self.conversation_manager = ConversationManager()
+        # The model-written query path: the local model call and whether it answers (both
+        # replaced in tests), and the table description built once per dataset version.
+        self._model: ModelFn = ollama_model
+        self._model_available: Callable[[], bool] = model_available
+        self._model_context: tuple[Any, DatasetContext] | None = None
 
     def ask(
         self,
@@ -313,13 +356,67 @@ class QueryService:
         either moved, the question is prepared and parsed again, unlocked, up to
         MAX_PARSE_ATTEMPTS times, so it is answered exactly as if it had run alone.
         """
+        model_path = None if confirmed else self._model_path(dataset_id, dataset_version)
+        if model_path is None:
+            return self._ask_matcher(
+                question, dataset_id, upload_id, dataset_version, conversation_history,
+                confirmed, confirm_plan_line, confirm_plan_hash, use_model_tier=True,
+            )  # fmt: skip
+        # The model writes the query. The keyword matcher only answers first when it reads the
+        # whole question (no hold, no refusal): it never holds or vetoes a question here.
+        matcher_turns = [turn for turn in conversation_history or [] if turn.get("intent")]
+        fast = self._ask_matcher(
+            question, dataset_id, upload_id, dataset_version, matcher_turns,
+            False, None, None, use_model_tier=False,
+        )  # fmt: skip
+        if self._matcher_answers(question, fast, model_path.context):
+            logger.info("question_answered_by_matcher", dataset_id=dataset_id)
+            return fast
+        survey = self._survey_refusal(question)
+        if survey is not None:
+            # A national-estimate question on a survey sample: said, never computed (#155).
+            return QueryResult(
+                plan=None, issues=[{"message": survey, "severity": "error"}], result=None, confidence=0.0,
+                run_key=None, context=None, failure_reason=survey,
+            )  # fmt: skip
+        return self._ask_model(question, model_path, conversation_history, dataset_id)
+
+    @staticmethod
+    def _matcher_answers(question: str, fast: QueryResult, context: DatasetContext) -> bool:
+        """The keyword matcher's answer stands in front of the model only for a question it fully
+        reads (``model_query.checks.matcher_may_answer``) and with a value: never a zero or an
+        empty result from a filter it did not match, which hands the question to the model."""
+        if fast.analysis is None or fast.requires_confirmation or _has_error(fast) or fast.plan is None:
+            return False
+        if not has_value(fast.analysis):
+            return False
+        plan = fast.plan
+        used = frozenset(
+            name for name in (plan.metric, plan.group_by, *(f.column for f in plan.filters)) if isinstance(name, str)
+        )
+        return matcher_may_answer(question, context, used)
+
+    def _ask_matcher(
+        self,
+        question: str,
+        dataset_id: str | None,
+        upload_id: str | None,
+        dataset_version: str | None,
+        conversation_history: list[dict[str, Any]] | None,
+        confirmed: bool,
+        confirm_plan_line: str | None,
+        confirm_plan_hash: str | None,
+        *,
+        use_model_tier: bool,
+    ) -> QueryResult:
+        """The keyword matcher's path: parse into a QueryPlan, check, hold or execute."""
         lock = self._connection_lock()
         for attempt in range(1, MAX_PARSE_ATTEMPTS + 1):
             with lock:
                 prepared = self._prepare(question, dataset_id, upload_id, dataset_version)
             if isinstance(prepared, QueryResult):
                 return prepared
-            query_intent = self._parse(prepared, dataset_id, upload_id, conversation_history)
+            query_intent = self._parse(prepared, dataset_id, upload_id, conversation_history, use_model_tier)
             with lock:
                 if self._still_current(prepared):
                     return self._finish(
@@ -434,6 +531,7 @@ class QueryService:
         dataset_id: str | None,
         upload_id: str | None,
         conversation_history: list[dict[str, Any]] | None,
+        use_model_tier: bool = True,
     ) -> Any:
         """Parse with NLQueryEngine; called without the lock (its DuckDB reads lock themselves)."""
         return self.nl_engine.parse_query(
@@ -441,7 +539,142 @@ class QueryService:
             dataset_id=dataset_id,
             upload_id=upload_id,
             conversation_history=conversation_history,
+            use_model_tier=use_model_tier,
         )
+
+    def _model_path(self, dataset_id: str | None, dataset_version: str | None) -> "_ModelPath | None":
+        """What the model-written query path needs for this dataset, or None when it cannot run:
+        switched off, no stored dataset or contract, a file of population estimates (its rows are
+        not patients; the matcher's estimate path reads them), or no local model answering."""
+        if not nl_query_config.ENABLE_MODEL_QUERIES or not dataset_id or self.data_dir is None:
+            return None
+        try:
+            catalog, declared, version = catalog_for_layer(
+                self.semantic_layer, dataset_id=dataset_id, data_dir=self.data_dir, declarations=self.declarations
+            )
+        except SqlRefusedError:
+            return None
+        if declared.population_estimates_for(version) is not None:
+            return None  # declared published estimates: the matcher's estimate path reads the row
+        if not self._model_available():
+            logger.info("model_query_skipped_no_model", dataset_id=dataset_id)
+            return None
+        cached = self._model_context
+        if cached is None or cached[0] != (version, declared):
+            semantics = self._semantics(dataset_id, version, catalog)
+            if semantics is None:
+                return None
+            try:
+                with SandboxConnection(catalog) as sandbox:
+                    context = build_context(
+                        sandbox, catalog, semantics, title=self._upload_text(dataset_id, "dataset_name") or ""
+                    )
+            except SqlRefusedError:
+                return None
+            cached = self._model_context = ((version, declared), context)
+        context = cached[1]
+        # The contract says what the lines are. Estimates keep the read-the-row path; counts of
+        # groups (a frequency table) go to the model path, which adds up their count column. A
+        # table the contract does not mark keeps the structural estimate check (ADR014).
+        if context.aggregate_kind == "estimate":
+            return None
+        if context.aggregate_kind is None:
+            with self._connection_lock():
+                if self._estimate_table() is not None:
+                    return None
+        return _ModelPath(catalog=catalog, context=cached[1])
+
+    def _semantics(self, dataset_id: str, version: str, catalog: SqlCatalog) -> DatasetSemantics | None:
+        """The version's contract semantics with the user's declarations applied
+        (``contracts.service.version_semantics``, the one reader every part of the app uses,
+        versions stored before ADR017 included): what the model is told and the compiler reads."""
+        assert self.data_dir is not None
+        try:
+            return version_semantics(
+                self.data_dir,
+                dataset_id,
+                version,
+                metadata=self._upload_metadata(dataset_id),
+                stored_frame=lambda: pl.read_parquet(catalog.parquet_path),
+                declarations=self.declarations,
+            )
+        except ContractError as e:
+            logger.warning("model_query_semantics_unreadable", dataset_id=dataset_id, error_type=type(e).__name__)
+            return None
+
+    def _upload_metadata(self, dataset_id: str) -> dict[str, Any]:
+        """The upload's metadata record ({} when it can't be read)."""
+        assert self.data_dir is not None
+        path = self.data_dir / "uploads" / "metadata" / f"{dataset_id}.json"
+        try:
+            metadata = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return metadata if isinstance(metadata, dict) else {}
+
+    def _upload_text(self, dataset_id: str, key: str) -> str | None:
+        """A text field of the upload's metadata: the name it was uploaded under (``dataset_name``)."""
+        text = self._upload_metadata(dataset_id).get(key)
+        return text if isinstance(text, str) and text.strip() else None
+
+    def _ask_model(
+        self,
+        question: str,
+        path: "_ModelPath",
+        conversation_history: list[dict[str, Any]] | None,
+        dataset_id: str | None = None,
+    ) -> QueryResult:
+        """Answer with a query the local model writes (``model_query.engine``)."""
+        previous = [
+            (str(turn["query"]), turn["model_reply"])
+            for turn in (conversation_history or [])[-MODEL_PREVIOUS_TURNS:]
+            if isinstance(turn.get("model_reply"), dict) and turn.get("query")
+        ]
+        # Read by the acceptance harness (eval/corpus/run.py): the model step was asked.
+        logger.info("parse_outcome", tier="model_query", llm_called=True)
+        answer = answer_question(
+            # Whitespace collapsed, case kept: the choices it offers re-ask the user's own words.
+            " ".join(question.split()) or question,
+            path.context,
+            model=self._model,
+            open_sandbox=lambda: SandboxConnection(path.catalog),
+            max_attempts=nl_query_config.MODEL_QUERY_MAX_ATTEMPTS,
+            previous=previous,
+            budget_s=nl_query_config.MODEL_QUERY_BUDGET_S,
+            # Confirmed plans of similar questions on this dataset, as prior turns (never reused).
+            verified=verified_plans(self.data_dir, dataset_id, question, path.context)
+            if self.data_dir is not None and dataset_id
+            else (),
+        )
+        base = QueryResult(plan=None, issues=[], result=None, confidence=0.0, run_key=None, context=None)
+        base.sql, base.reading, base.model_reply = answer.sql, answer.reading, answer.reply
+        if answer.status == "answered" and answer.analysis is not None:
+            base.analysis = answer.analysis
+            base.claim = present_analysis(answer.analysis).get("claim")
+            base.plan_line = answer.reading
+            base.confidence = 1.0
+            logger.info("query_parse_success", tier="model_query", attempts=answer.attempts)
+            return base
+        if answer.open_questions:
+            # The contract's open questions hold it until answered (contracts.holds), as on the
+            # matcher path: the questions are offered, never a plan confirmation.
+            base.issues = [{"message": answer.reason or "", "severity": "warning"}]
+            base.failure_reason = answer.reason
+            base.open_questions = answer.open_questions
+            return base
+        if answer.status == "clarify":
+            base.requires_confirmation = True
+            base.failure_reason = answer.reason
+            base.plan_line = answer.reading
+            base.choices = [{"label": label, "question": text} for label, text in answer.choices]
+            return base
+        if answer.status == "unavailable":
+            # Named as the harness reads it: the model tier was asked and did not answer.
+            logger.warning("ollama_generate_failed_fallback_to_stub", tier="model_query")
+        reason = answer.reason or MODEL_STEP_FAILED_REASON
+        base.issues = [{"message": reason, "severity": "error"}]
+        base.failure_reason = reason
+        return base
 
     def _finish(
         self,
@@ -506,6 +739,42 @@ class QueryService:
                 run_key=None,
                 context=None,
                 failure_reason=wayne,
+            )
+        # An open question of the contract holds the answer until the user answers it; a plan
+        # confirmation never releases it (ADR017, contracts.holds).
+        waiting = self._open_question_hold(query_plan)
+        if waiting is not None:
+            return QueryResult(
+                plan=query_plan,
+                issues=[{"message": waiting[0], "severity": "warning"}],
+                result=None,
+                confidence=query_intent.confidence,
+                run_key=None,
+                context=None,
+                failure_reason=waiting[0],
+                open_questions=waiting[1],
+            )
+        declined = self._survey_refusal(normalized_query)
+        if declined is not None:
+            return QueryResult(
+                plan=query_plan,
+                issues=[{"message": declined, "severity": "warning"}],
+                result=None,
+                confidence=query_intent.confidence,
+                run_key=None,
+                context=None,
+                failure_reason=declined,
+            )
+        cases = self._aggregate_cases(query_plan)
+        if cases is not None:
+            return QueryResult(
+                plan=query_plan,
+                issues=[{"message": cases, "severity": "warning"}],
+                result=None,
+                confidence=query_intent.confidence,
+                run_key=None,
+                context=None,
+                failure_reason=cases,
             )
         estimate_table = detected if query_plan.intent != "COUNT" else None
         if estimate_table is not None:
@@ -1003,6 +1272,61 @@ class QueryService:
         findings.notes.extend(answer_checks.report_notes(report, columns))
         findings.notes.extend(answer_checks.missingness_notes(layer, columns, answer_checks.flagged_columns(report)))
         return findings
+
+    def _open_question_hold(self, plan: QueryPlan) -> tuple[str, tuple[str, ...]] | None:
+        """(the held-answer sentence, the question ids) when the plan reads what an unanswered question concerns,
+        checked on the leased layer's own semantics: an answer stored while this question runs
+        never releases a hold on a layer built before it."""
+        from clinical_analytics.contracts.holds import held_message, open_question_holds
+        from clinical_analytics.contracts.semantics import layer_semantics
+
+        holds = open_question_holds(
+            layer_semantics(self.semantic_layer, declared=True),
+            columns=set(answer_checks.plan_columns(plan)),
+            counts_lines=plan.intent == "COUNT" and not plan.metric,
+        )
+        return (held_message(holds), tuple(h.question_id for h in holds)) if holds else None
+
+    def _survey_refusal(self, question: str) -> str | None:
+        """A national-estimate question on a survey sample: its counts are of this file's people,
+        never weighted national estimates (said, never computed)."""
+        from clinical_analytics.contracts.config import SURVEY_NATIONAL_QUESTION, SURVEY_NATIONAL_REFUSAL
+        from clinical_analytics.contracts.semantics import layer_semantics
+
+        semantics = layer_semantics(self.semantic_layer, declared=True)
+        if semantics is None or not semantics.survey_sample or not SURVEY_NATIONAL_QUESTION.search(question):
+            return None
+        logger.info("survey_national_question_declined")
+        return SURVEY_NATIONAL_REFUSAL
+
+    def _aggregate_cases(self, plan: QueryPlan) -> str | None:
+        """For a count question on a table of groups (its contract's ``aggregate``), what the
+        cases are, said in words: its lines are never counted as patients or cases (ADR017).
+        None for any other table or question."""
+        from clinical_analytics.contracts.aggregates import LAYER_AGGREGATE_KEY, count_cases
+        from clinical_analytics.contracts.semantics import AggregateInfo
+
+        raw = (getattr(self.semantic_layer, "config", None) or {}).get(LAYER_AGGREGATE_KEY)
+        if not isinstance(raw, dict) or plan.intent != "COUNT" or plan.metric:
+            return None
+        aggregate = AggregateInfo.model_validate(raw)
+        if plan.group_by:
+            return (
+                f"Each line of this table counts cases for a group: ask for the total of "
+                f"{aggregate.count_column} by {plan.group_by}, never a count of lines."
+            )
+        equals: dict[str, list[object]] = {}
+        for spec in plan.filters:
+            if spec.operator == "==":
+                equals[spec.column] = [spec.value]
+            elif spec.operator == "IN" and isinstance(spec.value, list):
+                equals[spec.column] = list(spec.value)
+            else:
+                return (
+                    "Each line of this table counts cases for a group; name the groups to count (for example a year)."
+                )
+        frame = self.semantic_layer.get_base_view().to_polars()
+        return count_cases(frame, aggregate, equals).message
 
     def _counting_unit(self, question: str, plan: QueryPlan) -> _CountingUnit:
         """The counted unit and roll-up the question names, on data whose patient IDs repeat.

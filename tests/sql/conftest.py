@@ -1,19 +1,16 @@
 """Fixtures for the governed SQL tests: a synthetic cohort as stored Parquet plus its contract.
 
-No fixture for this existed in tests/conftest.py; the contract comes from the shared
-``make_contract`` factory.
+The catalog comes from the shared ``make_sql_catalog`` factory in tests/conftest.py (default
+frame: ``synthetic_cohort`` below, passed by ``ask_sql``).
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
 
 import polars as pl
 import pytest
-from open_data_contract_standard.model import OpenDataContractStandard
 
-from clinical_analytics.contracts.declarations import LevelMapping
 from clinical_analytics.sql.answer import SqlAnswer, answer_query
 from clinical_analytics.sql.catalog import SqlCatalog
 from clinical_analytics.sql.sandbox import SandboxConnection
@@ -43,19 +40,12 @@ def synthetic_cohort(n: int = N_PATIENTS) -> pl.DataFrame:
 
 
 @pytest.fixture
-def make_sql_catalog(
-    tmp_path: Path, make_contract: Callable[..., OpenDataContractStandard]
-) -> Callable[..., SqlCatalog]:
-    """Factory: the catalog of ``df`` (default: ``synthetic_cohort()``) stored as Parquet."""
+def make_sql_catalog(make_sql_catalog: Callable[..., SqlCatalog]) -> Callable[..., SqlCatalog]:
+    """The shared factory (tests/conftest.py) with this directory's default frame, ``synthetic_cohort()``."""
+    shared = make_sql_catalog
 
-    def _make(
-        df: pl.DataFrame | None = None, levels: tuple[LevelMapping, ...] = (), **contract_overrides: object
-    ) -> SqlCatalog:
-        frame = synthetic_cohort() if df is None else df
-        path = tmp_path / f"cohort_{len(list(tmp_path.glob('*.parquet')))}.parquet"
-        frame.write_parquet(path)
-        contract = make_contract(frame, **contract_overrides)
-        return SqlCatalog.from_contract(contract, path, levels)
+    def _make(df: pl.DataFrame | None = None, levels: tuple = (), **contract_overrides: object) -> SqlCatalog:
+        return shared(synthetic_cohort() if df is None else df, levels, **contract_overrides)
 
     return _make
 

@@ -431,3 +431,103 @@ describe('buildHeldCard: next step (H5)', () => {
     expect(onReject).toHaveBeenCalledWith(card);
   });
 });
+
+describe('renderAnswerCard: how a model-written answer was computed', () => {
+  const MODEL_ANSWER = {
+    intentType: 'unknown',
+    claim: 'Total count: 48 patients.',
+    reading: "Counted patients where sex = 'female' AND dx = 'relapsing'.",
+    sql: 'SELECT COUNT(*) AS count\nFROM unified\nWHERE "sex" = \'female\'',
+  };
+
+  it('renderAnswerCard_readingAndSql_showsReadingAlways_andSqlOnDemand', () => {
+    // Act
+    const card = renderAnswerCard(MODEL_ANSWER);
+
+    // Assert
+    expect(testid(card, 'answer-reading').textContent).toBe(MODEL_ANSWER.reading);
+    const sql = testid(card, 'answer-sql');
+    expect(sql.tagName).toBe('DETAILS');
+    expect(sql.open).toBe(false);
+    expect(sql.querySelector('summary').textContent).toBe('Show the SQL');
+    expect(sql.querySelector('pre').textContent).toBe(MODEL_ANSWER.sql);
+  });
+
+  it('renderAnswerCard_sqlWithMarkup_isShownAsText', () => {
+    // Arrange: SQL is shown, never interpreted
+    const sql = "SELECT '<img src=x onerror=alert(1)>' AS count FROM unified";
+
+    // Act
+    const card = renderAnswerCard({ ...MODEL_ANSWER, sql });
+
+    // Assert
+    expect(card.querySelector('img')).toBeNull();
+    expect(testid(card, 'answer-sql').querySelector('pre').textContent).toBe(sql);
+  });
+
+  it.each([
+    ['no reading or SQL (the matcher path)', {}, null],
+    ['a reading only', { reading: 'Counted patients.' }, 'Counted patients.'],
+  ])('renderAnswerCard_%s_showsOnlyWhatItHas', (_name, method, reading) => {
+    // Act
+    const card = renderAnswerCard({ intentType: 'count', claim: 'Total count: 3.', ...method });
+
+    // Assert
+    expect(testid(card, 'answer-reading')?.textContent ?? null).toBe(reading);
+    expect(testid(card, 'answer-sql')).toBeNull();
+  });
+});
+
+describe('buildHeldCard: a question back with concrete choices', () => {
+  const asked = {
+    awaitingConfirmation: true,
+    failureReason:
+      "For 45 patients the answer to 'screened = 'yes'' differs between their rows (visits).",
+    pendingQuery: 'What share of patients were screened?',
+    choices: [
+      { label: 'Ever: true on at least one row', question: 'What share ... ever true.' },
+      { label: 'Always: true on every row', question: 'What share ... always true.' },
+    ],
+  };
+
+  it('buildHeldCard_choices_offersEachChoice_andNoRunThisAnalysis', () => {
+    // Arrange
+    const onChoose = vi.fn();
+
+    // Act
+    const card = buildHeldCard(asked, { onConfirm: vi.fn(), onReject: vi.fn(), onChoose });
+    const buttons = [...card.querySelectorAll('[data-testid="choice-button"]')];
+    buttons[1].click();
+
+    // Assert
+    expect(card.dataset.testid).toBe('choice-card');
+    expect(card.querySelector('.held-reason').textContent).toBe(asked.failureReason);
+    expect(buttons.map((b) => b.textContent)).toEqual(asked.choices.map((c) => c.label));
+    expect(card.querySelector('.btn-confirm')).toBeNull();
+    expect(onChoose).toHaveBeenCalledWith(card, asked.choices[1]);
+  });
+
+  it('buildHeldCard_choices_rephraseHandsTheQuestionBack', () => {
+    // Arrange
+    const onReject = vi.fn();
+
+    // Act
+    const card = buildHeldCard(asked, { onConfirm: vi.fn(), onReject, onChoose: vi.fn() });
+    card.querySelector('.btn-reject').click();
+
+    // Assert
+    expect(onReject).toHaveBeenCalledWith(card);
+  });
+
+  it('buildHeldCard_emptyChoices_isAPlainHeldPlan', () => {
+    // Act
+    const card = buildHeldCard(
+      { ...asked, choices: [], planLine: 'COUNT · outcome none', planHash: 'h' },
+      { onConfirm: vi.fn(), onReject: vi.fn() }
+    );
+
+    // Assert
+    expect(card.dataset.testid).not.toBe('choice-card');
+    expect(card.querySelector('.btn-confirm')).not.toBeNull();
+  });
+});
