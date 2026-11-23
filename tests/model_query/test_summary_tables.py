@@ -57,7 +57,10 @@ def test_answer_question_summaryShare_isPartOfTheSummedCount(ask_injuries):
 
 def test_answer_question_summaryWithoutCountColumn_asksWhichColumnCounts(make_query_table, make_model_ask):
     # Arrange: a summary table whose count column the contract does not name
-    table = make_query_table(tables.injuries(), semantics_update={"case_count_column": None})
+    from clinical_analytics.contracts.semantics import AggregateInfo
+
+    unnamed = AggregateInfo(kind="frequency", count_column=None, source="structure")
+    table = make_query_table(tables.injuries(), semantics_update={"case_count_column": None, "aggregate": unnamed})
     ask = make_model_ask(table)
 
     # Act

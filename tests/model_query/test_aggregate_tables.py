@@ -10,7 +10,7 @@ import polars as pl
 import pytest
 import structlog
 
-from clinical_analytics.contracts.semantics import Grain
+from clinical_analytics.contracts.semantics import AggregateInfo, Grain, TotalLevel
 from clinical_analytics.model_query import checks
 from clinical_analytics.model_query.engine import answer_question
 from clinical_analytics.model_query.plan import ESTIMATES_NEVER_ADDED, LOOKUP_NOT_ONE
@@ -20,12 +20,25 @@ from tests.model_query import tables
 _cond = tables.cond
 
 
-def _frequency(frame: pl.DataFrame) -> dict[str, object]:
-    """The contract's marks for a frequency table, as #155's inference writes them."""
+def _frequency(frame: pl.DataFrame, totals: tuple[TotalLevel, ...] = ()) -> dict[str, object]:
+    """The contract's marks for a frequency table (#155's ``aggregate``), as the contract holds them."""
     grain = Grain(
         kind="stratum", noun="count of cases", one_row_per_patient=False, rows=frame.height, source="structure"
     )
-    return {"grain": grain, "case_count_column": "injury_cases", "patient_key": None}
+    aggregate = AggregateInfo(
+        kind="frequency",
+        count_column="injury_cases",
+        strata=("district", "year", "road_user"),
+        total_levels=totals,
+        source="structure",
+    )
+    return {
+        "grain": grain,
+        "aggregate": aggregate,
+        "case_count_column": "injury_cases",
+        "patient_key": None,
+        "open_questions": (),
+    }
 
 
 @pytest.fixture
@@ -106,7 +119,12 @@ def estimates_table(make_query_table):
     grain = Grain(
         kind="estimate", noun="published estimate", one_row_per_patient=False, rows=frame.height, source="structure"
     )
-    return make_query_table(frame, semantics_update={"grain": grain, "patient_key": None})
+    aggregate = AggregateInfo(
+        kind="estimate", value_columns=("coverage_pct",), strata=("region", "year"), source="structure"
+    )
+    return make_query_table(
+        frame, semantics_update={"grain": grain, "aggregate": aggregate, "patient_key": None, "open_questions": ()}
+    )
 
 
 @pytest.mark.parametrize(
@@ -206,3 +224,52 @@ def test_answer_question_held_logsPlanShapeWithoutValues(make_query_table, make_
     held = next(e for e in logs if e["event"] == "model_query_held_answer")
     assert held["plan_shape"]["conditions"] == [["died_1y", "is"]]
     assert "yes" not in str(held["plan_shape"])
+
+
+def test_answer_question_frequencyTotalLines_neverAddedToTheirParts(make_query_table, make_model_ask):
+    # Arrange: each district-year has an "all users" line holding the total of its road users
+    frame = tables.injuries()
+    totals = (
+        frame.group_by("district", "year")
+        .agg(pl.col("injury_cases").sum())
+        .with_columns(pl.lit("all users").alias("road_user"))
+    )
+    with_totals = pl.concat([frame, totals.select(frame.columns)])
+    marks = _frequency(with_totals, (TotalLevel(column="road_user", values=("all users",)),))
+    ask = make_model_ask(make_query_table(with_totals, semantics_update=marks))
+
+    # Act
+    answer, _prompts = ask("How many injuries were there?", tables.reply(count_of="cases"))
+
+    # Assert: the sum of the groups, once
+    assert answer.analysis["total_count"] == frame["injury_cases"].sum()
+
+
+def test_answer_question_estimateStratumNotNamed_readsItsTotalLine(make_query_table, make_model_ask):
+    # Arrange: the region the question does not name is read at its "all regions" line
+    frame = tables.coverage_estimates()
+    total = frame.filter(pl.col("region") == "north").with_columns(
+        pl.lit("all regions").alias("region"), pl.lit(88.8).alias("coverage_pct")
+    )
+    frame = pl.concat([frame, total])
+    grain = Grain(
+        kind="estimate", noun="published estimate", one_row_per_patient=False, rows=frame.height, source="structure"
+    )
+    aggregate = AggregateInfo(
+        kind="estimate", strata=("region", "year"), source="structure",
+        total_levels=(TotalLevel(column="region", values=("all regions",)),),
+    )  # fmt: skip
+    ask = make_model_ask(
+        make_query_table(
+            frame, semantics_update={"grain": grain, "aggregate": aggregate, "patient_key": None, "open_questions": ()}
+        )
+    )
+    reply = tables.reply(
+        answer="mean", count_of="records", measure="coverage_pct", filters=[_cond("year", "is", values=[2020])]
+    )
+
+    # Act
+    answer, _prompts = ask("What was the coverage in 2020?", reply)
+
+    # Assert
+    assert answer.status == "answered" and answer.analysis["mean"] == pytest.approx(88.8)

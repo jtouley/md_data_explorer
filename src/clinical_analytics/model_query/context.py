@@ -150,9 +150,8 @@ class DatasetContext:
         (frequency), or published estimates and rates never added up (estimate). Read from the
         contract, never inferred here."""
         sem = self.semantics
-        declared = getattr(sem, "aggregate_kind", None)  # #155's explicit kind, when present
-        if declared in ("frequency", "estimate"):
-            return declared  # type: ignore[no-any-return]
+        if sem.aggregate is not None:
+            return sem.aggregate.kind
         if sem.population_estimates or sem.grain.kind == "estimate":
             return "estimate"
         if sem.case_count_column is not None or sem.grain.kind == "stratum":
@@ -167,9 +166,19 @@ class DatasetContext:
     @property
     def count_column(self) -> str | None:
         """The contract's case-count column of a summary table, when the table has it."""
-        name = self.semantics.case_count_column
+        agg = self.semantics.aggregate
+        name = (agg.count_column if agg is not None else None) or self.semantics.case_count_column
         column = self.column(name) if name else None
         return column.name if column is not None and column.numeric else None
+
+    @property
+    def total_levels(self) -> tuple[tuple[str, tuple[str, ...]], ...]:
+        """(column, values) the contract says mean "all" in a table of groups: a line holding one
+        is a total of other lines, never one more group."""
+        agg = self.semantics.aggregate
+        if agg is None:
+            return ()
+        return tuple((t.column, t.values) for t in agg.total_levels if self.column(t.column) is not None)
 
     @property
     def case_noun(self) -> str:

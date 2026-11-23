@@ -532,7 +532,7 @@ def _compile_aggregate(plan: Plan, context: DatasetContext, used: frozenset[str]
     else:
         count = context.count_column
     total = f"SUM({ident(count)})"
-    where = _all(plan.filters, context)
+    where = _where_tail(_all(plan.filters, context), _not_totals(context))
     group = _group_expr(plan, context)
     group_sel, tail = (f"{group} AS grp, ", " GROUP BY 1 ORDER BY 1 NULLS LAST") if group is not None else ("", "")
     unit = context.case_noun
@@ -549,7 +549,8 @@ def _compile_aggregate(plan: Plan, context: DatasetContext, used: frozenset[str]
         kind = "count"
     return Compiled(
         plan=plan, kind=kind, sql=sql, unit=unit, per_patient=False,
-        total_sql=f"SELECT {total} FROM unified" if kind == "count" else None, group_column=plan.group_by,
+        total_sql=f"SELECT {total} FROM unified{_where(_not_totals(context))}" if kind == "count" else None,
+        group_column=plan.group_by,
         filters=plan.filters, numerator=plan.numerator if kind == "share" else (), measure=count, columns=used,
     )  # fmt: skip
 
@@ -564,13 +565,39 @@ LOOKUP_NOT_ONE: Final = (
 )
 
 
+def _not_totals(context: DatasetContext) -> str | None:
+    """Lines that are groups, not totals of other lines (the contract's total levels): a sum
+    never adds a total to its parts."""
+    parts = [
+        f"COALESCE(CAST({ident(c)} AS VARCHAR) NOT IN ({', '.join(literal(v) for v in values)}), TRUE)"
+        for c, values in context.total_levels
+    ]
+    return " AND ".join(parts) or None
+
+
+def _totals_for_unnamed(plan: Plan, context: DatasetContext) -> str | None:
+    """For an estimate: a stratum the question does not name is read at its total line ("all")."""
+    named = {c.column for c in plan.filters} | ({plan.group_by} if plan.group_by else set())
+    parts = [
+        f"CAST({ident(c)} AS VARCHAR) IN ({', '.join(literal(v) for v in values)})"
+        for c, values in context.total_levels
+        if c not in named
+    ]
+    return " AND ".join(parts) or None
+
+
+def _where_tail(*parts: str | None) -> str | None:
+    kept = [p for p in parts if p]
+    return " AND ".join(f"({p})" for p in kept) if kept else None
+
+
 def _compile_lookup(plan: Plan, context: DatasetContext, used: frozenset[str]) -> Compiled:
     """An estimate table: the figure is read from the one record the question names (per group
     with group_by); the engine refuses when the limits match more or fewer than one."""
     if plan.answer not in ("mean", "median", "min", "max", "sum") or plan.measure is None:
         raise PlanRefusedError(ESTIMATES_NEVER_ADDED)
     column = _column(plan.measure, context, "measure")
-    where = _all(plan.filters, context)
+    where = _where_tail(_all(plan.filters, context), _totals_for_unnamed(plan, context))
     group = _group_expr(plan, context)
     group_sel, tail = (f"{group} AS grp, " if group else "", " GROUP BY 1 ORDER BY 1 NULLS LAST" if group else "")
     sql = f"SELECT {group_sel}MIN({ident(column.name)}) AS value, COUNT(*) AS n FROM unified{_where(where)}{tail}"
@@ -600,7 +627,8 @@ def _compile_totals(plan: Plan, context: DatasetContext, per_patient: bool, used
         raise PlanError("totals_by summarises one total per group: set group_by null.")
     totals = _group_expr(plan.model_copy(update={"group_by": plan.totals_by}), context)
     total = _unit_total(plan, context, per_patient)
-    inner = f"SELECT {totals} AS t, {total} AS v FROM unified{_where(_all(plan.filters, context))} GROUP BY 1"
+    lines = _not_totals(context) if context.aggregate else None
+    inner = f"SELECT {totals} AS t, {total} AS v FROM unified{_where(_all(plan.filters, context), lines)} GROUP BY 1"
     func = STATISTICS[plan.answer]
     sql = f"SELECT {func}(v) AS value, COUNT(v) AS n FROM ({inner}) AS g"
     return Compiled(

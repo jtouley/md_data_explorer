@@ -504,7 +504,12 @@ def ask_open(compiled: Compiled, context: DatasetContext) -> Ask | None:
     for q in context.open_questions():
         if q.column is not None and q.column in compiled.columns:
             return Ask("open_question", f"{q.question} You can answer it in the Data check panel.")
-        if q.column is None and compiled.kind in ("count", "share") and not context.aggregate:
+        about_people = q.kind in ("rows_are_patients", "person_role") and not context.aggregate
+        about_groups = q.kind not in ("rows_are_patients", "person_role")  # repeated strata, unsure kind, totals
+        counts = compiled.kind in ("count", "share")
+        if q.column is None and (
+            (about_people and counts) or (about_groups and (counts or compiled.kind == "statistic"))
+        ):
             return Ask("open_question", f"{q.question} You can answer it in the Data check panel.")
     return None
 
