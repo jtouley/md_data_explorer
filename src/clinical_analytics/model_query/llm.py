@@ -5,10 +5,15 @@ Patient data never leaves the machine: the prompt carries column names, category
 data dictionary, so the server must be on a loopback address (``core.loopback``). Any other
 address is refused here, whatever the configuration says; the call goes through OllamaClient's
 proxy-free session.
+
+A cold model (just started, or unloaded after idling) takes minutes to load before it answers, so
+the app warms it at start (``warm_model``, in the background) and every call keeps it loaded; a
+call made while the model is not known to be warm gets the cold timeout.
 """
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 from typing import Any, Final, TypeAlias
@@ -25,14 +30,20 @@ logger = structlog.get_logger()
 # Room for the table description, the examples and a retry's feedback; the server's default
 # (4096 tokens) silently cuts the start of a longer prompt, which is the table's columns.
 NUM_CTX: Final = 8192
-MAX_REPLY_TOKENS: Final = 600
+MAX_REPLY_TOKENS: Final = 500
 AVAILABILITY_TIMEOUT_S: Final = 3.0
+KEEP_ALIVE: Final = "60m"
+# Set by ``api.serve`` (the installed app's entry point): ``api.main`` warms the model at start.
+# Tests and bare uvicorn runs leave it unset, so they never load a model.
+MODEL_WARMUP_ENV: Final = "CLINICAL_ANALYTICS_MODEL_WARMUP"
 # (system prompt, user prompt, reply schema) -> the parsed reply object, or None when the model
 # could not be reached or did not answer with JSON in time.
 ModelFn: TypeAlias = Callable[[str, str, dict[str, Any]], Any]
 
+_warm = threading.Event()
 
-def _client() -> OllamaClient | None:
+
+def _client(timeout: float) -> OllamaClient | None:
     """The app's Ollama client at the configured address, or None when that is not this machine.
     The question path refuses another host even when ``ollama_allow_remote_host`` is set: its
     prompt carries the table's columns, category values and data dictionary."""
@@ -40,25 +51,47 @@ def _client() -> OllamaClient | None:
     if not is_loopback_url(url):
         logger.warning("model_query_url_not_local")
         return None
-    return OllamaClient(
-        model=nl_query_config.OLLAMA_DEFAULT_MODEL, base_url=url, timeout=nl_query_config.MODEL_QUERY_TIMEOUT_S
-    )
+    return OllamaClient(model=nl_query_config.OLLAMA_DEFAULT_MODEL, base_url=url, timeout=timeout)
 
 
 def model_available() -> bool:
     """Whether a local model server answers at the configured loopback address."""
-    client = _client()
-    if client is None:
+    client = _client(AVAILABILITY_TIMEOUT_S)
+    return client is not None and client.is_available()
+
+
+def call_timeout() -> float:
+    """The timeout of the next call: the cold one until a call has answered."""
+    return nl_query_config.MODEL_QUERY_TIMEOUT_S if _warm.is_set() else nl_query_config.MODEL_QUERY_COLD_TIMEOUT_S
+
+
+def warm_model() -> bool:
+    """Load the model into the server's memory now (an empty prompt loads it and answers at
+    once), so the first question does not pay for the load. Returns whether it answered."""
+    client = _client(nl_query_config.MODEL_QUERY_COLD_TIMEOUT_S)
+    if client is None or not client.is_available():
+        logger.info("model_query_warmup_skipped")
         return False
-    client.timeout = AVAILABILITY_TIMEOUT_S
-    return client.is_available()
+    started = time.perf_counter()
+    answered = client.generate(prompt="", json_mode=False, keep_alive=KEEP_ALIVE) is not None
+    if answered:
+        _warm.set()
+    logger.info("model_query_warmup", answered=answered, latency_ms=round((time.perf_counter() - started) * 1000))
+    return answered
+
+
+def warm_in_background() -> threading.Thread:
+    thread = threading.Thread(target=warm_model, name="model-warmup", daemon=True)
+    thread.start()
+    return thread
 
 
 def ollama_model(system: str, user: str, schema: dict[str, Any]) -> Any:
     """One reply from the local Ollama server, as parsed JSON (None: unreachable, timed out, or
     not JSON). Deterministic settings: temperature 0 and a fixed seed, so a question asked twice
-    gets the same query."""
-    client = _client()
+    gets the same plan."""
+    timeout = call_timeout()
+    client = _client(timeout)
     if client is None:
         return None
     started = time.perf_counter()
@@ -67,12 +100,18 @@ def ollama_model(system: str, user: str, schema: dict[str, Any]) -> Any:
         system_prompt=system,
         response_schema=schema,
         options={"temperature": 0, "seed": 7, "num_ctx": NUM_CTX, "num_predict": MAX_REPLY_TOKENS},
+        keep_alive=KEEP_ALIVE,
     )
+    if raw is not None:
+        _warm.set()
+    else:
+        _warm.clear()  # timed out or unloaded: the next call may be cold again
     parsed = parse_json_response(raw) if raw is not None else None
     logger.info(
         "model_query_call",
         model=client.model,
         latency_ms=round((time.perf_counter() - started) * 1000),
+        timeout_s=timeout,
         answered=raw is not None,
         parsed=parsed is not None,
     )

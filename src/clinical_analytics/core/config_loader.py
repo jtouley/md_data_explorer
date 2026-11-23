@@ -186,10 +186,10 @@ class NLQueryConfigDefaults:
     # Governed SQL (POST /api/queries/sql): user-typed SQL, off until the SQL path is accepted.
     enable_sql_queries: bool = False
     # Model-writes-the-query (model_query/): the default question path when a local model answers.
-    # Format of the model's reply: "plan" (a small JSON plan compiled to SQL) or "sql" (raw SQL).
+    # The first call after the model loads (cold) gets the longer timeout.
     enable_model_queries: bool = True
-    model_query_format: str = "plan"
     model_query_timeout_s: float = 300.0
+    model_query_cold_timeout_s: float = 900.0
     model_query_max_attempts: int = 3
     # Open semantic layers (datasets) the API keeps, and the DuckDB memory they share: a
     # percentage of RAM or a size ("60%", "8GB"), split evenly, so each layer gets
@@ -234,8 +234,8 @@ class NLQueryConfigDefaults:
             "enable_multi_layer_validation": self.enable_multi_layer_validation,
             "enable_sql_queries": self.enable_sql_queries,
             "enable_model_queries": self.enable_model_queries,
-            "model_query_format": self.model_query_format,
             "model_query_timeout_s": self.model_query_timeout_s,
+            "model_query_cold_timeout_s": self.model_query_cold_timeout_s,
             "model_query_max_attempts": self.model_query_max_attempts,
             "semantic_layer_cache_size": self.semantic_layer_cache_size,
             "duckdb_memory_budget": self.duckdb_memory_budget,
@@ -387,8 +387,8 @@ def load_nl_query_config(config_path: Path | None = None) -> dict[str, Any]:
         "DUCKDB_THREADS": "duckdb_threads",
         "ENABLE_SQL_QUERIES": "enable_sql_queries",
         "ENABLE_MODEL_QUERIES": "enable_model_queries",
-        "MODEL_QUERY_FORMAT": "model_query_format",
         "MODEL_QUERY_TIMEOUT_S": "model_query_timeout_s",
+        "MODEL_QUERY_COLD_TIMEOUT_S": "model_query_cold_timeout_s",
         "MODEL_QUERY_MAX_ATTEMPTS": "model_query_max_attempts",
     }
 

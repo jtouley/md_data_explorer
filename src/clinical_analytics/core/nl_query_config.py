@@ -220,10 +220,8 @@ SQL_SANDBOX_SLOTS: int = 1
 # Model-writes-the-query (model_query/): the default question path. Its queries run in the same
 # sandbox, so the sandbox takes its share of the budget when either path is on.
 ENABLE_MODEL_QUERIES: bool = _config["enable_model_queries"]
-MODEL_QUERY_FORMAT: str = str(_config["model_query_format"]).strip().lower()
-if MODEL_QUERY_FORMAT not in ("plan", "sql"):
-    raise ValueError(f"model_query_format must be 'plan' or 'sql', got {MODEL_QUERY_FORMAT!r}")
 MODEL_QUERY_TIMEOUT_S: float = _config["model_query_timeout_s"]
+MODEL_QUERY_COLD_TIMEOUT_S: float = max(MODEL_QUERY_TIMEOUT_S, float(_config["model_query_cold_timeout_s"]))
 MODEL_QUERY_MAX_ATTEMPTS: int = max(1, int(_config["model_query_max_attempts"]))
 _SANDBOX_IN_USE: bool = ENABLE_SQL_QUERIES or ENABLE_MODEL_QUERIES
 CACHED_LAYER_MEMORY_LIMIT: DuckdbMemoryLimit = per_layer_memory_limit(

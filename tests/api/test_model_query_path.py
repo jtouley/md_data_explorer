@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import polars as pl
 import pytest
 
 from clinical_analytics.api import dependencies
@@ -24,17 +25,20 @@ from tests.model_query import tables
 pytestmark = [pytest.mark.slow, pytest.mark.integration, pytest.mark.usefixtures("isolated_data_home")]
 
 
-def _plan(answer: str, **fields: Any) -> dict[str, Any]:
-    base = {"thought": "t", "answer": answer, "where": None, "group_by": None}
-    return base | {"numerator": None, "number": None, "outcome": None} | fields
+_BASE: dict[str, Any] = {"answer": "count", "count_of": "patients", "filters": [], "numerator": [], "measure": None,
+                         "group_by": None, "period": "none", "cut_points": [], "which_visit": "any"}  # fmt: skip
 
 
-@pytest.fixture
-def ask_uploaded(upload: Callable[..., Any]) -> Callable[..., tuple[QueryResult, list[str]]]:
-    """Factory: upload the synthetic visits table once, then ask ``question`` on it as the API
-    does, with ``replies`` as the local model's answers (None: no model server). Returns the
-    result and the user prompts the model was sent."""
-    response = upload(tables.visits(), "visits")
+def _plan(answer: str = "count", **fields: Any) -> dict[str, Any]:
+    return {**_BASE, "answer": answer, **fields}
+
+
+def _cond(column: str, op: str, value: Any = None, values: list[Any] | None = None) -> dict[str, Any]:
+    return {"column": column, "op": op, "value": value, "values": values or []}
+
+
+def _asker(upload: Callable[..., Any], frame: Any, name: str) -> Callable[..., tuple[QueryResult, list[str]]]:
+    response = upload(frame, name)
     assert response.status_code == 200, response.text
     upload_id = response.json()["upload_id"]
 
@@ -46,7 +50,7 @@ def ask_uploaded(upload: Callable[..., Any]) -> Callable[..., tuple[QueryResult,
 
         def model(_system: str, user: str, _schema: dict[str, Any]) -> Any:
             prompts.append(user)
-            return queue.pop(0)
+            return queue.pop(0) if queue else None
 
         data_dir = uploads_dir().parent
         with dependencies.lease_semantic_layer(upload_id) as lease:
@@ -65,106 +69,113 @@ def ask_uploaded(upload: Callable[..., Any]) -> Callable[..., tuple[QueryResult,
     return _ask
 
 
-def test_ask_wordsTheMatcherCannotPlace_modelWritesTheQueryAndItIsAnswered(ask_uploaded):
-    # Arrange: the keyword matcher holds this question ("folks", "came back") on its own
-    reply = _plan("count", where="result = 'Positive' AND age_years >= 65")
+@pytest.fixture
+def ask_cohort(upload: Callable[..., Any]) -> Callable[..., tuple[QueryResult, list[str]]]:
+    """Factory: ask on the uploaded one-row-per-patient cohort, with ``replies`` as the model's
+    answers (None: no model server). Returns the result and the user prompts the model got."""
+    return _asker(upload, tables.cohort(), "cohort")
+
+
+@pytest.fixture
+def ask_clinic(upload: Callable[..., Any]) -> Callable[..., tuple[QueryResult, list[str]]]:
+    """The same on the uploaded visit-level clinic table."""
+    return _asker(upload, tables.clinic(), "clinic")
+
+
+def test_ask_invertedComparison_answeredWithTheStatedOperatorAndCard(ask_cohort):
+    # Arrange: the model writes "under 65" as >= 65
+    reply = _plan(filters=[_cond("age", ">=", 65)])
 
     # Act
-    result, prompts = ask_uploaded("How many of our older folks, 65 and up, came back positive?", [reply])
+    result, prompts = ask_cohort("How many of our patients are under 65?", [reply])
     payload = AsyncQueryService()._analysis_payload(result)
 
-    # Assert: answered without a hold, counting distinct patients, with the SQL and its reading
+    # Assert: answered as under 65, with the SQL and a reading card in clinical words
+    expected = tables.cohort().filter(pl.col("age") < 65).height
     assert (result.requires_confirmation, result.issues) == (False, [])
-    assert result.reading == "Counted distinct patients (patient_id) where result = 'positive' AND age_years >= 65."
-    assert result.sql is not None and 'COUNT(DISTINCT "patient_id")' in result.sql
-    assert result.claim is not None and result.claim.startswith("Total count: ")
+    assert result.analysis is not None and result.analysis["total_count"] == expected
+    assert result.sql is not None and '"age" < 65' in result.sql
+    assert result.reading is not None and f"Result: {expected} of 60 patients" in result.reading
     assert payload is not None
     assert (payload["sql"], payload["reading"], payload["analysis_type"]) == (result.sql, result.reading, "count")
-    assert len(prompts) == 1 and "65 and up" in prompts[0]
+    assert len(prompts) == 1
 
 
-def test_ask_noModelServer_fallsBackToTheMatcherPath(ask_uploaded):
+def test_ask_noModelServer_fallsBackToTheMatcherPath(ask_cohort):
     # Act: nothing answers at the model address
-    result, prompts = ask_uploaded("How many of our older folks came back positive?", None)
+    result, prompts = ask_cohort("How many of our older folks died?", None)
 
-    # Assert: the matcher's own outcome (a hold or a refusal), and no model-written fields
+    # Assert: the matcher's own outcome, and no model-written fields
     assert prompts == []
     assert (result.sql, result.reading, result.model_reply) == (None, None, None)
 
 
-def test_ask_modelPathSwitchedOff_usesTheMatcherPath(ask_uploaded, monkeypatch):
+def test_ask_modelPathSwitchedOff_usesTheMatcherPath(ask_cohort, monkeypatch):
     # Arrange
     monkeypatch.setattr(nl_query_config, "ENABLE_MODEL_QUERIES", False)
 
     # Act
-    _result, prompts = ask_uploaded("How many of our older folks came back positive?", [_plan("count")])
+    _result, prompts = ask_cohort("How many of our older folks died?", [_plan()])
 
     # Assert
     assert prompts == []
 
 
-def test_ask_modelStopsAnswering_isRefusedPlainly(ask_uploaded):
+def test_ask_modelStopsAnswering_isRefusedPlainly(ask_cohort):
     # Act: the server was there, then the call returned nothing
-    result, _prompts = ask_uploaded("How many of our older folks came back positive?", [None])
+    result, _prompts = ask_cohort("How many of our older folks died?", [None])
 
     # Assert
     assert result.failure_reason == MODEL_UNAVAILABLE_REASON
     assert result.analysis is None
 
 
-def test_ask_shareThatVariesWithinPatients_asksBackWithChoices(ask_uploaded):
+def test_ask_categoryVariesBetweenVisits_asksWhichVisit(ask_clinic):
     # Act
-    result, _prompts = ask_uploaded(
-        "What fraction of our folks got screened?", [_plan("share", numerator="screened = 'yes'")]
-    )
+    result, _prompts = ask_clinic("How many patients smoke?", [_plan(filters=[_cond("smoker", "is", values=["yes"])])])
 
-    # Assert: a question back, never an answer with a guessed roll-up
+    # Assert: a clinical question back with re-askable choices, never a guessed visit
     assert result.requires_confirmation is True and result.analysis is None
-    assert [choice["label"].split(":")[0] for choice in result.choices] == ["Ever", "Always"]
-    assert all(choice["question"].startswith("What fraction of our folks got screened?") for choice in result.choices)
+    assert result.choices and all(c["question"].startswith("How many patients smoke?") for c in result.choices)
 
 
-def test_ask_followUp_modelSeesThePreviousModelTurn(ask_uploaded):
+def test_ask_followUp_modelSeesThePreviousModelTurn(ask_cohort):
     # Arrange: the session's earlier turn, as the API records a model-written answer
-    earlier = _plan("count", where="result = 'positive'", group_by="region")
-    history = [{"query": "How many folks came back positive in each region?", "model_reply": earlier}]
-    reply = _plan("count", where="result = 'positive' AND sex = 'female'", group_by="region")
+    earlier = _plan(group_by="stage")
+    history = [{"query": "How many patients in each stage?", "model_reply": earlier}]
+    reply = _plan(group_by="stage", filters=[_cond("sex", "is", values=["female"])])
 
     # Act
-    result, prompts = ask_uploaded("Now only the women.", [reply], history=history)
+    result, prompts = ask_cohort("Now only the women.", [reply], history=history)
 
     # Assert
-    assert "How many folks came back positive in each region?" in prompts[0]
-    assert result.reading == (
-        "Counted distinct patients (patient_id) where result = 'positive' AND sex = 'female', by region."
-    )
+    assert "How many patients in each stage?" in prompts[0]
+    assert result.analysis is not None and result.analysis["grouped_by"] == "stage"
 
 
-def test_recordTurn_modelAnswer_keepsTheReplyForTheNextQuestion(ask_uploaded):
+def test_recordTurn_modelAnswer_keepsTheReplyForTheNextQuestion(ask_cohort):
     # Arrange
-    reply = _plan("count", where="result = 'positive'", group_by="region")
-    result, _prompts = ask_uploaded("How many folks came back positive in each region?", [reply])
+    reply = _plan(group_by="stage")
+    result, _prompts = ask_cohort("How many patients in each stage?", [reply])
     service = AsyncQueryService()
 
     # Act
-    service._record_turn("sess_1", "How many folks came back positive in each region?", result)
+    service._record_turn("sess_1", "How many patients in each stage?", result)
 
     # Assert
     assert service.conversation_history("sess_1") == [
-        {"query": "How many folks came back positive in each region?", "model_reply": reply}
+        {"query": "How many patients in each stage?", "model_reply": result.model_reply}
     ]
+    assert result.model_reply is not None and result.model_reply["group_by"] == "stage"
 
 
-def test_ask_statisticalTest_isRoutedToTheStatisticsCode(ask_uploaded):
+def test_ask_statisticalTest_isRoutedToTheStatisticsCode(ask_cohort):
     # Act
-    result, _prompts = ask_uploaded(
-        "Among folks 65 and up, what is the odds ratio for a positive result with antibiotics before, with a CI?",
-        [_plan("odds_ratio", outcome="result", group_by="abx", where="age_years >= 65")],
+    result, _prompts = ask_cohort(
+        "What is the odds ratio of dying within a year for women versus men, with a CI?",
+        [_plan("odds_ratio", numerator=[_cond("died_1y", "is", values=["yes"])], group_by="sex")],
     )
 
-    # Assert: a logistic regression from analysis.compute, not statistics written in SQL
+    # Assert: computed by analysis.compute, not statistics written in SQL
     assert result.analysis is not None and result.analysis["type"] == "predictor"
-    assert result.reading == "Odds ratio of result for abx (logistic regression, unadjusted) where age_years >= 65."
-    assert result.sql is not None
-    flat_sql = " ".join(result.sql.split())
-    assert "AVG" not in flat_sql and "SELECT DISTINCT * FROM unified" in flat_sql
+    assert result.sql is not None and "AVG" not in result.sql

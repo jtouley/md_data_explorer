@@ -14,43 +14,44 @@ const http = require('http');
 
 const PORT = Number(process.argv[2] || 11999);
 
+/** A plan with every slot of the reply schema (model_query/plan.py); recorded replies override some. */
+function plan(slots) {
+  return {
+    answer: 'count',
+    count_of: 'patients',
+    filters: [],
+    numerator: [],
+    measure: null,
+    group_by: null,
+    period: 'none',
+    cut_points: [],
+    which_visit: 'any',
+    ...slots,
+  };
+}
+
 /** Recorded replies of the local model, by a phrase of the question they answer. */
 const RECORDED = [
   {
     when: 'came back positive',
-    reply: {
-      thought: 'Count patients with result positive and age_years at least 65, per visit_year.',
-      answer: 'count',
-      where: "age_years >= 65 AND result = 'Positive'",
+    reply: plan({
+      filters: [
+        { column: 'age_years', op: '>=', value: 65, values: [] },
+        { column: 'result', op: 'is', value: null, values: ['positive'] },
+      ],
       group_by: 'visit_year',
-      numerator: null,
-      number: null,
-      outcome: null,
-    },
+    }),
   },
   {
-    // A share of patients whose result differs between their visits: the app asks ever or always.
+    // A share of patients whose result differs between their visits: the app asks which visit.
     when: 'share of our folks tested positive',
-    reply: {
-      thought: 'Share of patients with result positive.',
+    reply: plan({
       answer: 'share',
-      where: null,
-      group_by: null,
-      numerator: "result = 'positive'",
-      number: null,
-      outcome: null,
-    },
+      numerator: [{ column: 'result', op: 'is', value: null, values: ['positive'] }],
+    }),
   },
 ];
-const DEFAULT_REPLY = {
-  thought: 'Count everyone.',
-  answer: 'count',
-  where: null,
-  group_by: null,
-  numerator: null,
-  number: null,
-  outcome: null,
-};
+const DEFAULT_REPLY = plan({});
 
 const server = http.createServer((req, res) => {
   const send = (status, body) => {

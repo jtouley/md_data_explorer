@@ -1,548 +1,332 @@
 # SPDX-License-Identifier: MIT
-"""What the model is told about the table: columns, descriptions, values and the grain.
+"""What the model and the compiler know about the table: the contract's facts, nothing guessed.
 
-Read once per dataset version from the SQL sandbox (the same stored Parquet and contract governed
-SQL reads) and from the upload's data dictionary text. Everything here stays on the machine: it is
-sent to the local model only.
+Every fact about meaning (what one record is, who the patient is, which column orders a patient's
+records, dates, code labels, units, stated ranges, descriptions, open questions) comes from the
+dataset version's semantics (``contracts.semantics``, ADR017) with the user's declarations
+applied. The sandbox adds only what the stored values are: the category values a column holds
+(so the reply schema can list them) and a number column's range. Nothing here reads the question.
 
-The grain is what a count counts: rows are patients when the patient ID never repeats (or the
-user confirmed one row per patient); otherwise rows are visits and patients are counted with
-``COUNT(DISTINCT <patient ID>)``, admissions or tests by their own encounter ID.
+Everything stays on the machine: it is sent to the local model only.
 """
 
 from __future__ import annotations
 
-import dataclasses
 import re
 from dataclasses import dataclass, field
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 import structlog
-from sqlglot import exp
 
-from clinical_analytics.core import counting_unit
-from clinical_analytics.sql import config as sql_config
+from clinical_analytics.contracts.semantics import DatasetSemantics, OpenQuestion
 from clinical_analytics.sql.catalog import SqlCatalog
-from clinical_analytics.sql.render import render
 from clinical_analytics.sql.sandbox import SandboxConnection
 
 logger = structlog.get_logger()
 
-# A column with at most this many different values has them all listed for the model.
-MAX_LISTED_VALUES: Final = 12
-MAX_VALUE_CHARS: Final = 40
-MAX_DESCRIPTION_CHARS: Final = 260
-# In the table listing every question gets, a description is cut to this; the columns closest
-# to a question are repeated in full right above it (``column_lines``).
-LISTED_DESCRIPTION_CHARS: Final = 90
-# A dictionary this short is given whole (it usually carries counting rules worth every word).
-WHOLE_DICTIONARY_CHARS: Final = 2500
-MAX_NOTES_CHARS: Final = 600
-_ENTRY = re.compile(r"^\s{0,3}[\"'“]?([A-Za-z_][\w.]*)[\"'”]?\s*(?::|-|–|\s{2,}|\t)\s*(\S.*)?$")
-_CODE_LINE = re.compile(r"^\s*[\"'“]?[\w.<>=+-]{1,24}[\"'”]?\s*[:=]\s*\S")
+# A column with at most this many values is a category: its values are listed and the reply
+# schema holds them as an enum. The prompt shows at most MAX_PROMPT_VALUES of them.
+MAX_CATEGORY_VALUES: Final = 40
+MAX_PROMPT_VALUES: Final = 12
+MAX_VALUE_CHARS: Final = 60
+MAX_DESCRIPTION_CHARS: Final = 140
+MAX_DISPLAY_WORDS: Final = 8
+
+Kind = Literal["key", "category", "number", "date", "text", "flag"]
+
+# Stored yes/no spellings (structure, never the question): a column holding only these is a flag.
+_YES: Final = frozenset({"y", "yes", "true", "1", "t"})
+_NO: Final = frozenset({"n", "no", "false", "0", "f"})
 
 
 @dataclass(frozen=True)
-class ColumnInfo:
+class Column:
+    """One column as the contract describes it, with the values the table holds."""
+
     name: str
-    sql_type: str  # DuckDB's type name (VARCHAR, BIGINT, DOUBLE, DATE, ...)
-    logical_type: str  # the contract's (string, integer, number, boolean, date, ...)
-    distinct: int
-    nulls: int
-    values: tuple[Any, ...] | None = None  # every stored value, when there are few
-    low: Any = None  # smallest and largest value of a number or date column
+    kind: Kind
+    logical_type: str
+    values: tuple[Any, ...] = ()  # the stored values of a category or flag
+    labels: dict[str, str] = field(default_factory=dict)  # stored code (as text) -> its label
+    low: Any = None
     high: Any = None
-    description: str | None = None
-    is_patient_id: bool = False
-    is_encounter_id: bool = False
-    # What each stored code means, from the data dictionary ("1 = male"): (code, label) pairs,
-    # only for codes the column holds.
-    labels: tuple[tuple[str, str], ...] = ()
-    # A number of the visit within the patient (1, 2, 3, ... per patient): it orders a patient's
-    # visits and is never a visit's ID (its values repeat across patients).
+    description: str = ""
+    unit: str | None = None
+    stated_range: tuple[float, float] | None = None
+    timepoint: tuple[str, str, int] | None = None  # (measure, timepoint, order)
     is_sequence: bool = False
+    phi: bool = False
+    distinct: int = 0
 
-    def label_of(self, value: Any) -> str | None:
-        return dict(self.labels).get(str(value))
+    def label(self, value: Any) -> str:
+        """What a stored value means in words: its dictionary label, yes/no for a flag, or itself."""
+        text = _text(value)
+        if text in self.labels:
+            return self.labels[text]
+        if self.kind == "flag":
+            return "yes" if text.casefold() in _YES else "no"
+        return text
 
-    def negated_pair(self) -> tuple[Any, Any] | None:
-        """(the value, its negation) when the column holds exactly two text values and one is the
-        other negated ("done" / "not done", "smoker" / "non-smoker"): a yes/no flag in words."""
-        if self.values is None or len(self.values) != 2:
-            return None
-        a, b = (str(v).strip().casefold() for v in self.values)
-        for pos, neg, (pv, nv) in ((a, b, self.values), (b, a, tuple(reversed(self.values)))):
-            for prefix in ("not ", "no ", "non-", "non ", "non", "un", "in"):
-                if neg == prefix + pos:
-                    return pv, nv
-        return None
+    def choices(self) -> tuple[str, ...]:
+        """The words the reply may use for this column's values: labels where the dictionary
+        gives them, else the stored values."""
+        return tuple(dict.fromkeys(self.label(v) for v in self.values))
 
-    def code_for(self, label: str) -> Any:
-        """The stored value whose dictionary label is ``label`` (case-insensitive), or None."""
-        wanted = label.strip().casefold()
-        codes = [code for code, text in self.labels if text.casefold() == wanted]
-        if len(codes) != 1 or self.values is None:
-            return None
-        return next((v for v in self.values if str(v) == codes[0]), None)
+    def stored(self, said: str) -> Any:
+        """The stored value a reply's word names, or None (never a near spelling)."""
+        folded = said.strip().casefold()
+        found = [v for v in self.values if self.label(v).casefold() == folded or _text(v).casefold() == folded]
+        return found[0] if len(found) == 1 or (found and len({_text(v) for v in found}) == 1) else None
+
+    def negative(self, value: Any) -> bool:
+        """A stored value that says no (a flag's no, a label written as a negation)."""
+        word = self.label(value).casefold()
+        return word in _NO or word.startswith(("no ", "not ", "non", "never", "none", "negative"))
 
     @property
     def numeric(self) -> bool:
-        return self.logical_type in ("integer", "number")
+        return self.kind == "number"
 
     @property
-    def text(self) -> bool:
-        return self.logical_type == "string"
+    def display(self) -> str:
+        """The column in clinical words, for the reading card (never its raw name when the
+        dictionary describes it)."""
+        if self.description:
+            text = re.split(r"[:;(]|,\s|\.\s|\s[-–]\s", self.description, maxsplit=1)[0].strip(" .,")
+            if text:
+                words = text.split()[:MAX_DISPLAY_WORDS]
+                first = words[0]
+                if not (len(first) > 1 and first[:2].isupper()):
+                    words[0] = first[0].lower() + first[1:]
+                return " ".join(words)
+        parts = [p for p in re.split(r"[_.\s]+|(?<=[a-z])(?=[A-Z])", self.name) if p]
+        unit_words = set(re.split(r"\W+", (self.unit or "").casefold()))
+        kept = [p for p in parts if p.casefold() not in unit_words] or parts
+        text = " ".join(p if p.isupper() and len(p) > 1 else p.lower() for p in kept)
+        return f"{text} ({self.unit})" if self.unit and len(kept) < len(parts) else text
 
 
 @dataclass(frozen=True)
 class DatasetContext:
-    """The table as the model and the compiler see it."""
+    """The table as the contract describes it (``semantics``) plus the values it holds."""
 
     table: str
-    columns: tuple[ColumnInfo, ...]
+    title: str
+    semantics: DatasetSemantics
+    columns: tuple[Column, ...]
     rows: int
-    distinct_rows: int
-    patient_key: str | None
-    patients: int | None  # distinct patient IDs (None: no patient ID column)
-    confirmed_patient_rows: bool = False  # the user confirmed one row per patient
-    notes: str = ""  # the data dictionary's general notes (or the whole short dictionary)
-    encounter_keys: tuple[str, ...] = field(default_factory=tuple)
-    title: str = ""  # the dataset's name as uploaded: what the whole table is about
-    # The dictionary is short and given whole in ``notes``: column lines then leave out the
-    # descriptions (they would repeat it, and a longer prompt is a slower answer).
-    dictionary_whole: bool = False
+    patients: int | None
 
-    def column(self, name: str) -> ColumnInfo | None:
+    def column(self, name: str) -> Column | None:
         folded = name.casefold()
         return next((c for c in self.columns if c.name.casefold() == folded), None)
 
     @property
-    def duplicate_rows(self) -> int:
-        return self.rows - self.distinct_rows
+    def patient_key(self) -> str | None:
+        """The file's own patient key (never a column the app added)."""
+        key = self.semantics.patient_key_column
+        return key if key is not None and self.column(key) is not None else None
 
     @property
-    def row_phrase(self) -> tuple[str, ...]:
-        """The words the dictionary uses for one row ("one row per INR blood draw")."""
-        found = re.search(
-            r"\b(?:one|each) (?:row|record|line) (?:per|is|for)(?: one| an?| each)? ([a-z][a-z -]{1,40})",
-            (self.notes or "").casefold(),
-        )
-        return tuple(re.findall(r"[a-z]+", found.group(1))) if found else ()
+    def visit_level(self) -> bool:
+        """Patients have several records: counting patients and counting records differ."""
+        return self.patient_key is not None and not self.semantics.one_row_per_patient
 
     @property
-    def row_nouns(self) -> frozenset[str]:
-        """The noun the dictionary gives one row ("one row per DEXA scan" -> scan, scans)."""
-        found = re.search(
-            r"\b(?:one|each) (?:row|record|line) (?:per|is|for)(?: one| an?| each)? ([a-z][a-z -]{1,40})",
-            (self.notes or "").casefold(),
-        )
-        if found is None:
-            return frozenset()
-        words = re.findall(r"[a-z]+", found.group(1))
-        # The head of "INR blood draw", "clinic visit", "DEXA scan" is its last word, before any
-        # "of"/"with"/"and" that starts a qualifier.
-        stop = {"of", "with", "and", "or", "in", "at", "by", "for", "per", "from", "during", "after", "before"}
-        cut = next((i for i, w in enumerate(words) if w in stop), len(words))
-        phrase = [w for w in words[:cut] if w not in {"the", "a", "an"}]
-        if not phrase or phrase[-1] in {"patient", "patients", "person", "people"}:
-            return frozenset()
-        head = phrase[-1]
-        one = head[:-1] if head.endswith("s") and not head.endswith("ss") else head
-        return frozenset({one, one + "s", one + "es"})
+    def row_noun(self) -> str:
+        """What one record is, as the contract names it ("ED encounter", "visit")."""
+        if self.semantics.one_row_per_patient:
+            return "patient"
+        noun = self.semantics.grain.noun.strip()
+        return "record" if noun in ("", "row", "line") else noun
 
     @property
-    def rows_are_patients(self) -> bool:
-        """Counting rows counts patients: every row has its own patient ID, or the user said so."""
+    def row_nouns(self) -> str:
+        return plural(self.row_noun)
+
+    @property
+    def units(self) -> tuple[str, ...]:
+        """What a count can count here: patients, records (or both on a visit-level table)."""
+        if self.semantics.one_row_per_patient:
+            return ("patients",)
         if self.patient_key is None:
-            return self.confirmed_patient_rows
-        key = self.column(self.patient_key)
-        return key is not None and self.patients == self.rows and key.nulls == 0
+            return (self.row_nouns,)
+        return ("patients", self.row_nouns)
 
     @property
-    def row_unit(self) -> str:
-        """What one row is called in an answer: patients, visits or rows."""
-        if self.rows_are_patients:
-            return "patients"
-        return "visits" if self.patient_key is not None else "rows"
+    def order_column(self) -> str | None:
+        """The column that orders a patient's records: the contract's sequence column, else its
+        one date column (first or last needs one)."""
+        for seq in self.semantics.sequence_columns:
+            if self.column(seq.column) is not None:
+                return seq.column
+        dates = [c.name for c in self.columns if c.kind == "date"]
+        return dates[0] if len(dates) == 1 else None
+
+    def sequence_start(self, name: str) -> int | None:
+        seq = next((s for s in self.semantics.sequence_columns if s.column == name), None)
+        return seq.start if seq is not None else None
+
+    def open_questions(self) -> tuple[OpenQuestion, ...]:
+        return tuple(q for q in self.semantics.open_questions if not q.answered)
 
 
-def _literal(value: Any) -> str:
-    if isinstance(value, str):
-        return "'" + value.replace("'", "''") + "'"
+def plural(noun: str) -> str:
+    if noun.endswith(("s", "x", "ch", "sh")):
+        return noun + "es"
+    if noun.endswith("y") and noun[-2:-1] not in "aeiou":
+        return noun[:-1] + "ies"
+    return noun + "s"
+
+
+def _text(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
     return str(value)
 
 
-def _clip(text: str, limit: int) -> str:
-    text = " ".join(text.split())
-    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
-
-
-# "1 = male", "2: female", "0=No; 1=Yes", "M - male": a code and its label in a dictionary entry.
-# A code introducing its label in a dictionary entry: "1 = ", "M: ", "0 - ".
-# A code is written before its label with "=", ":", a dash or a tab: "1 = Yes", "2=No", "3: Other",
-# "4 - Unknown", "5<TAB>Declined".
-_SEPARATOR = r"(?:[ ]*(?:=|:|\u2013|\u2014|-(?=\s))[ ]*|\t+[ ]*)"
-_CODE = r"[A-Za-z0-9][\w.+-]{0,11}"
-_CODE_START = re.compile(rf"(?<![\w.])({_CODE}){_SEPARATOR}")
-# Another code's entry inside a label's run: ", 9 = not asked" or "; 9: not asked".
-_NEXT_ENTRY = re.compile(rf"\s*[,;]\s*{_CODE}{_SEPARATOR}")
-# The longest run of words still read as a label rather than an explanation of the value.
-MAX_LABEL_CHARS = 120
-
-
-def _label_run(run: str) -> str:
-    """The label at the start of ``run``: up to the end of its line, or of its sentence or the next
-    code's entry outside parentheses, so "(mitral, aortic, or both)" and "etc.)" stay whole."""
-    run = run.split("\n")[0]
-    depth = 0
-    for index, char in enumerate(run):
-        if char in "([":
-            depth += 1
-        elif char in ")]":
-            depth = max(depth - 1, 0)
-        elif depth == 0 and (
-            char == ";"
-            or (char == "." and run[index + 1 : index + 2].isspace())
-            or (char == "," and _NEXT_ENTRY.match(run, index))
-        ):
-            return run[:index]
-    return run
-
-
-def value_labels(text: str | None, values: tuple[Any, ...] | None) -> tuple[tuple[str, str], ...]:
-    """(code, label) pairs a dictionary entry gives for codes the column actually holds.
-
-    Entries may be written "1 = Label (a, b, or c)", "2=Label, with comma", "3: Label" or
-    "code<TAB>label", on one line or several. A label runs from its code to the next code of the
-    column, and is cut only at a code boundary, the end of its line, or a sentence end outside
-    parentheses, so parentheses, commas, slashes and "=" inside it are kept."""
-    if not text or not values:
-        return ()
-    # A whole-number float is written as an integer in a dictionary ("1", not "1.0").
-    held = {(str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)): str(v) for v in values}
-    held |= {str(v): str(v) for v in values}
-    starts = [m for m in _CODE_START.finditer(text) if m.group(1) in held]
-    found: dict[str, str] = {}
-    for index, match in enumerate(starts):
-        end = starts[index + 1].start() if index + 1 < len(starts) else len(text)
-        label = " ".join(_label_run(text[match.end() : end]).split()).strip(" ,;.")
-        code = match.group(1)
-        # A sentence explaining the value ("if the age range is between 18 and 50") describes it;
-        # it is not a label to show in place of the stored value.
-        describes = len(label) > MAX_LABEL_CHARS or bool(re.match(r"(?:if|when|where|whether)\b", label, re.IGNORECASE))
-        if label and not describes and held[code] not in found and label.casefold() != code.casefold():
-            found[held[code]] = label
-    # Labels for only some codes are kept too; a code without one keeps its stored value.
-    return tuple(sorted(found.items()))
-
-
-def dictionary_entries(doc: str | None, columns: list[str]) -> dict[str, str]:
-    """{column: its whole dictionary entry text}, unclipped (code lists included)."""
-    if not doc:
-        return {}
-    known = {c.casefold(): c for c in columns}
-    described: dict[str, list[str]] = {}
-    current: str | None = None
-    blank_before = False
-    for raw in doc.splitlines():
-        line = raw.rstrip()
-        if not line.strip():
-            blank_before = True
-            continue
-        match = _ENTRY.match(line)
-        name = known.get(match.group(1).casefold()) if match else known.get(line.strip().strip(":").casefold())
-        if name is not None and name not in described:
-            current = name
-            described[name] = [match.group(2) or ""] if match else []
-        elif current is not None and (not blank_before or line[:1].isspace() or _CODE_LINE.match(line)):
-            described[current].append(line.strip())
-        else:
-            current = None
-        blank_before = False
-    return {name: "\n".join(parts).strip() for name, parts in described.items() if any(parts)}
-
-
-def dictionary_descriptions(doc: str | None, columns: list[str]) -> tuple[dict[str, str], str]:
-    """({column: its description}, general notes) read from a data dictionary's plain text.
-
-    An entry starts on a line that begins with a column's name followed by a colon, a dash or a
-    gap; the lines after it (wrapped text, code lists such as ``1: yes``) belong to it until the
-    next entry or a new paragraph that is not a code line. Everything else is general notes.
-    """
-    if not doc:
-        return {}, ""
-    known = {c.casefold(): c for c in columns}
-    described: dict[str, list[str]] = {}
-    notes: list[str] = []
-    current: str | None = None
-    blank_before = False
-    for raw in doc.splitlines():
-        line = raw.rstrip()
-        if not line.strip():
-            blank_before = True
-            continue
-        match = _ENTRY.match(line)
-        name = known.get(match.group(1).casefold()) if match else None
-        if name is not None and name not in described:
-            current = name
-            described[name] = [match.group(2) or ""] if match else []
-        elif current is not None and (not blank_before or line[:1].isspace() or _CODE_LINE.match(line)):
-            described[current].append(line.strip())
-        else:
-            current = None
-            notes.append(line.strip())
-        blank_before = False
-    descriptions = {name: _clip(" ".join(parts), MAX_DESCRIPTION_CHARS) for name, parts in described.items()}
-    return {k: v for k, v in descriptions.items() if v}, _clip(" ".join(notes), MAX_NOTES_CHARS)
-
-
-# Name words of a counter column: a number per patient (session_number, cycle, visit_seq).
-_COUNTER_WORDS: Final = frozenset(
-    {"seq", "sequence", "number", "no", "num", "nr", "index", "idx", "order", "visit", "session", "cycle", "occasion"}
-)
-
-
-# Words naming a person in a column like "<role>_id" ("infant_id", "donor_no", "student_id").
-PERSON_ROLES: Final = frozenset(
-    {
-        "patient", "pt", "pat", "person", "individual", "participant", "subject", "subj", "member", "resident",
-        "client", "enrollee", "respondent", "volunteer", "infant", "baby", "newborn", "neonate", "child", "kid",
-        "mother", "father", "parent", "woman", "man", "adult", "adolescent", "teen", "girl", "boy", "donor",
-        "recipient", "student", "pupil", "employee", "worker", "athlete", "player", "user", "customer",
-        "veteran", "beneficiary", "caregiver", "guardian", "partner", "twin", "sibling", "teacher", "coach",
-    }
-)  # fmt: skip
-# Plurals not made by adding "s" (the singular of each).
-IRREGULAR_PLURALS: Final = {
-    "children": "child", "people": "person", "women": "woman", "men": "man", "mice": "mouse",
-    "feet": "foot", "teeth": "tooth", "geese": "goose", "wives": "wife", "calves": "calf",
-}  # fmt: skip
-_ROLE_ID_WORDS: Final = frozenset({"id", "no", "nr", "num", "number", "nbr", "key", "code", "ident", "identifier"})
-_CAMEL_SPLIT: Final = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
-
-
-def id_role(name: str) -> str | None:
-    """The role an ID column is named for ("infant_id" -> infant, "MotherID" -> mother), or None."""
-    parts = [p for p in re.split(r"[^a-z0-9]+", _CAMEL_SPLIT.sub("_", name).casefold()) if p]
-    if len(parts) >= 2 and parts[-1] in _ROLE_ID_WORDS:
-        return parts[-2]
-    return None
-
-
-def row_person_key(columns: list[ColumnInfo], rows: int, notes: str) -> str | None:
-    """The column that names one person per row ("infant_id", every value once, none missing),
-    when exactly one does; None otherwise. The role must be a person, or the noun the dictionary
-    gives one row ("one row per calf" with calf_id)."""
-    row_words = set(
-        re.findall(r"\b(?:one|each) (?:row|record|line) (?:per|is|for)(?: one| an?| each)? ([a-z]+)", notes.casefold())
-    )
-    row_words |= {w[:-1] for w in row_words if w.endswith("s")}
-    found = [
-        c.name
-        for c in columns
-        if (role := id_role(c.name)) is not None
-        and (role in PERSON_ROLES or role in row_words)
-        and not c.is_encounter_id
-        and c.nulls == 0
-        and c.distinct == rows
-        and rows > 1
-    ]
-    return found[0] if len(found) == 1 else None
+def _kind(name: str, logical: str, distinct: int, values: tuple[Any, ...], semantics: DatasetSemantics) -> Kind:
+    col = semantics.column(name)
+    if name == semantics.patient_key_column or (col is not None and col.role in ("row_key", "app_added")):
+        return "key"
+    if (col is not None and col.date is not None) or logical in ("date", "timestamp"):
+        return "date"
+    if logical == "boolean" or (values and {_text(v).casefold() for v in values} <= _YES | _NO and len(values) == 2):
+        return "flag"
+    if col is not None and col.labels and values:
+        return "category"
+    if logical in ("integer", "number"):
+        return "number"
+    return "category" if values else "text"
 
 
 def build_context(
-    sandbox: SandboxConnection,
-    catalog: SqlCatalog,
-    *,
-    doc_context: str | None = None,
-    confirmed_patient_rows: bool = False,
-    title: str = "",
+    sandbox: SandboxConnection, catalog: SqlCatalog, semantics: DatasetSemantics, *, title: str = ""
 ) -> DatasetContext:
-    """Profile the table in the sandbox (three aggregate statements) and attach the dictionary."""
-    table = sql_config.TABLE_NAME
-    types = {
-        str(r["column_name"]): str(r["column_type"]) for r in sandbox.run_generated(f"DESCRIBE {table}").to_dicts()
-    }
-    select: list[exp.Expr] = [exp.alias_(exp.Count(this=exp.Star()), "n")]
-    for i, col in enumerate(catalog.columns):
-        ref = exp.column(col.name, quoted=True)
-        select.append(exp.alias_(exp.Count(this=exp.Distinct(expressions=[ref.copy()])), f"d{i}"))
-        select.append(exp.alias_(exp.Count(this=ref.copy()), f"k{i}"))
-        if col.logical_type in ("integer", "number", "date", "timestamp"):
-            select.append(exp.alias_(exp.Min(this=ref.copy()), f"lo{i}"))
-            select.append(exp.alias_(exp.Max(this=ref.copy()), f"hi{i}"))
-    profile = sandbox.run_generated(render(exp.select(*select).from_(table))).row(0, named=True)
-    rows = int(profile["n"])
-    distinct_rows = int(sandbox.run_generated(f"SELECT COUNT(*) AS n FROM (SELECT DISTINCT * FROM {table})").item())
-    key = catalog.id_column.name if catalog.id_column is not None else None
-    names = [c.name for c in catalog.columns]
-    candidates = counting_unit.encounter_key_candidates(names, key)
-    # A candidate whose values repeat across patients but never within one numbers the visits of
-    # each patient (visit_no = 1..6): it is a sequence, not a visit's ID.
-    sequences: set[str] = set()
-    # Also any whole-number column named like a counter ("session_number", "cycle", "seq") that
-    # starts at 0 or 1: the same structural test decides.
-    counters = [
-        col.name
-        for i, col in enumerate(catalog.columns)
-        if col.logical_type == "integer"
-        and col.name != key
-        and col.name not in candidates
-        and set(re.findall(r"[a-z]+", col.name.casefold())) & _COUNTER_WORDS
-        and profile.get(f"lo{i}") is not None
-        and int(profile[f"lo{i}"]) in (0, 1)
-    ]
-    if key is not None:
-        for name in [*candidates, *counters]:
-            ref, pid = exp.column(name, quoted=True), exp.column(key, quoted=True)
-            probe = exp.select(
-                exp.alias_(exp.Count(this=exp.Distinct(expressions=[ref.copy()])), "d"),
-                exp.alias_(
-                    exp.Count(this=exp.Distinct(expressions=[exp.Tuple(expressions=[pid.copy(), ref.copy()])])), "pairs"
-                ),
-                exp.alias_(exp.Count(this=ref.copy()), "k"),
-            ).from_(table)
-            seen = sandbox.run_generated(render(probe)).row(0, named=True)
-            distinct, pairs, kept = int(seen["d"] or 0), int(seen["pairs"] or 0), int(seen["k"] or 0)
-            if 0 < distinct < kept and pairs == kept:
-                sequences.add(name)
-    encounter_keys = tuple(name for name in candidates if name not in sequences)
-    listed = [
-        (i, col)
-        for i, col in enumerate(catalog.columns)
-        if 0 < int(profile[f"d{i}"]) <= MAX_LISTED_VALUES and not col.is_id and col.name not in candidates
-    ]
-    values: dict[str, list[Any]] = {}
-    for _i, col in listed:
-        ref = exp.column(col.name, quoted=True)
-        query = exp.select(exp.alias_(ref, "v")).from_(table).where(ref.copy().is_(exp.null()).not_()).distinct()
-        found = sandbox.run_generated(render(query.order_by("v"))).get_column("v").to_list()
-        values[col.name] = found
-    whole = bool(doc_context) and len(doc_context or "") <= WHOLE_DICTIONARY_CHARS
-    descriptions, notes = dictionary_descriptions(doc_context, names)
-    if whole:
-        notes = (doc_context or "").strip()  # short enough to give whole: counting rules, codes
-    entries = dictionary_entries(doc_context, names)
-    columns = []
-    for i, col in enumerate(catalog.columns):
+    """The table's context from its contract semantics and the stored values (counts only)."""
+    app = {a.column for a in semantics.app_columns}
+    columns: list[Column] = []
+    for spec in catalog.columns:
+        if spec.name in app:
+            continue  # the app's own ID copy or row number: never a fact of the file
+        ident = '"' + spec.name.replace('"', '""') + '"'
+        stats = sandbox.run_model_sql(
+            f"SELECT COUNT(DISTINCT {ident}) AS d, MIN({ident}) AS lo, MAX({ident}) AS hi FROM unified"
+        ).row(0)
+        distinct, low, high = int(stats[0] or 0), stats[1], stats[2]
+        col = semantics.column(spec.name)
+        values: tuple[Any, ...] = ()
+        is_listable = spec.logical_type not in ("date", "timestamp") and not spec.is_id
+        if (
+            is_listable
+            and 0 < distinct <= MAX_CATEGORY_VALUES
+            and (spec.logical_type not in ("integer", "number") or (col is not None and col.labels) or distinct <= 2)
+        ):
+            listed = sandbox.run_model_sql(
+                f"SELECT DISTINCT {ident} AS v FROM unified WHERE {ident} IS NOT NULL ORDER BY 1"
+            ).get_column("v")
+            values = tuple(v for v in listed.to_list() if len(_text(v)) <= MAX_VALUE_CHARS)
+        kind = _kind(spec.name, spec.logical_type, distinct, values, semantics)
         columns.append(
-            ColumnInfo(
-                name=col.name,
-                sql_type=types.get(col.name, "VARCHAR"),
-                logical_type=col.logical_type,
-                distinct=int(profile[f"d{i}"]),
-                nulls=rows - int(profile[f"k{i}"]),
-                values=tuple(values[col.name]) if col.name in values else None,
-                low=profile.get(f"lo{i}"),
-                high=profile.get(f"hi{i}"),
-                description=descriptions.get(col.name),
-                is_patient_id=col.name == key,
-                is_encounter_id=col.name in encounter_keys,
-                labels=value_labels(entries.get(col.name), tuple(values[col.name]) if col.name in values else None),
-                is_sequence=col.name in sequences,
+            Column(
+                name=spec.name,
+                kind=kind,
+                logical_type=spec.logical_type,
+                values=values if kind in ("category", "flag") else (),
+                labels=dict(col.labels) if col is not None else {},
+                low=low if kind in ("number", "date") else None,
+                high=high if kind in ("number", "date") else None,
+                description=" ".join((col.description or "").split())[:MAX_DESCRIPTION_CHARS] if col else "",
+                unit=col.unit.value if col is not None and col.unit is not None else None,
+                stated_range=(col.stated_range.minimum, col.stated_range.maximum)
+                if col is not None and col.stated_range is not None
+                else None,
+                timepoint=(col.timepoint.measure, col.timepoint.timepoint, col.timepoint.order)
+                if col is not None and col.timepoint is not None
+                else None,
+                is_sequence=any(s.column == spec.name for s in semantics.sequence_columns),
+                phi=spec.phi,
+                distinct=distinct,
             )
         )
-    if key is None and (row_key := row_person_key(columns, rows, notes)) is not None:
-        # One row per person, named by its own role ("infant_id", unique on every row): that
-        # column is the person key, so patients are the rows; another role's ID that repeats
-        # ("mother_id") stays a column to group or count by.
-        key = row_key
-        columns = [dataclasses.replace(c, is_patient_id=True) if c.name == key else c for c in columns]
-        logger.info("model_query_row_person_key", column=key)
-    patients = next((c.distinct for c in columns if c.is_patient_id), None)
-    logger.info("model_query_context_built", columns=len(columns), rows=rows, duplicate_rows=rows - distinct_rows)
+    counts = sandbox.run_model_sql(_counts_sql(semantics, {c.name for c in columns})).row(0)
+    logger.info(
+        "model_query_context_built",
+        columns=len(columns),
+        visit_level=semantics.patient_key_column is not None and not semantics.one_row_per_patient,
+        open_questions=sum(not q.answered for q in semantics.open_questions),
+    )
     return DatasetContext(
-        table=table,
-        columns=tuple(columns),
-        rows=rows,
-        distinct_rows=distinct_rows,
-        patient_key=key,
-        patients=patients,
-        confirmed_patient_rows=confirmed_patient_rows,
-        notes=notes,
-        encounter_keys=encounter_keys,
+        table="unified",
         title=title,
-        dictionary_whole=whole,
+        semantics=semantics,
+        columns=tuple(columns),
+        rows=int(counts[0] or 0),
+        patients=int(counts[1]) if counts[1] is not None else None,
     )
 
 
-def _column_line(col: ColumnInfo, *, full: bool = False, describe: bool = True) -> str:
-    parts = [f"- {col.name} ({col.sql_type})"]
-    if col.is_sequence:
-        parts.append("the visit's number within its patient (1, 2, ...), not an ID")
-    if col.is_patient_id:
-        parts.append("patient ID")
-    elif col.is_encounter_id:
-        nouns = counting_unit.nouns_for(col.name)
-        parts.append(f"ID of one {counting_unit.singular(nouns[0]) if len(nouns) == 1 else 'encounter'}")
-    if col.values is not None:
-        shown = ", ".join(
-            _clip(_literal(v), MAX_VALUE_CHARS) + (f" ({label})" if (label := col.label_of(v)) else "")
-            for v in col.values
-        )
-        parts.append(f"values: {shown}")
-    elif col.low is not None and col.high is not None and not col.is_patient_id:
-        parts.append(f"range {col.low} to {col.high}")
-    if col.nulls:
-        parts.append("some rows empty (NULL)")
-    line = "; ".join(parts)
-    if not col.description or not describe:
-        return line
-    return f"{line}. {col.description if full else _clip(col.description, LISTED_DESCRIPTION_CHARS)}"
+def _counts_sql(semantics: DatasetSemantics, names: set[str]) -> str:
+    key = semantics.patient_key_column
+    patients = f'COUNT(DISTINCT "{key}")' if key is not None and key in names else "NULL"
+    return f"SELECT COUNT(*) AS n, {patients} AS p FROM unified"
 
 
-def column_lines(context: DatasetContext) -> dict[str, str]:
-    """Each column's line of the table description, by name."""
-    return {col.name: _column_line(col, full=True) for col in context.columns}
+def _value_list(column: Column) -> str:
+    shown = column.choices()[:MAX_PROMPT_VALUES]
+    more = len(column.choices()) - len(shown)
+    return ", ".join(f"'{v}'" for v in shown) + (f" (+{more} more)" if more > 0 else "")
 
 
-def column_search_texts(context: DatasetContext) -> dict[str, str]:
-    """Each column in words, for finding the columns a question is about."""
-    texts = {}
-    for col in context.columns:
-        words = col.name.replace("_", " ")
-        values = ", ".join(str(v) for v in col.values) if col.values is not None and col.text else ""
-        values = ", ".join(part for part in (values, ", ".join(label for _code, label in col.labels)) if part)
-        texts[col.name] = ". ".join(part for part in (words, col.description or "", values) if part)
-    return texts
-
-
-def grain_text(context: DatasetContext, *, writes_sql: bool = True) -> str:
-    """What a row is and how it is counted, in the model's words. ``writes_sql``: the model
-    writes the COUNT itself (the sql format); otherwise the app does and the model is only told."""
-    key = context.patient_key
-    if context.rows_are_patients:
-        if not writes_sql:
-            return f"Each row is one patient ({context.rows} patients)."
-        how = f'COUNT(*) or COUNT(DISTINCT "{key}")' if key else "COUNT(*)"
-        return f"Each row is one patient ({context.rows} patients). Count patients with {how}."
-    if key is None:
-        return f"There is no patient ID column: {context.rows} rows. Counts are counts of rows."
-    lines = [
-        f"Rows are visits, not patients: {context.rows} rows for {context.patients} patients, "
-        "so a patient can be on several rows."
-    ]
-    if writes_sql:
-        lines.append(f'Count patients with COUNT(DISTINCT "{key}"), never COUNT(*).')
+def column_line(column: Column, context: DatasetContext) -> str:
+    """One line of the table description the model reads."""
+    if column.name == context.patient_key:
+        head = f"{column.name}: the patient ID (counts patients; never a filter)"
+    elif column.kind == "key":
+        head = f"{column.name}: the ID of one {context.row_noun}"
+    elif column.kind in ("category", "flag"):
+        head = f"{column.name}: values {_value_list(column)}"
+    elif column.kind == "number":
+        span = f" {_short(column.low)} to {_short(column.high)}" if column.low is not None else ""
+        head = f"{column.name}: number{span}" + (f" {column.unit}" if column.unit else "")
+    elif column.kind == "date":
+        head = f"{column.name}: date" + (f" {_short(column.low)} to {_short(column.high)}" if column.low else "")
     else:
-        lines.append(f"The app counts each patient once ({key}), whatever the number of their rows.")
-    for column in context.encounter_keys:
-        nouns = counting_unit.nouns_for(column) or ("encounters",)
-        if writes_sql:
-            lines.append(f'Count {" or ".join(nouns)} with COUNT(DISTINCT "{column}").')
-        else:
-            lines.append(f"A question about {' or '.join(nouns)} counts each {column} once.")
-    if context.duplicate_rows:
-        lines.append(f"{context.duplicate_rows} rows are exact duplicates of another row.")
-    return " ".join(lines)
+        head = f"{column.name}: text"
+    if column.is_sequence:
+        head += f" (numbers each patient's {plural(context.row_noun)} in order)"
+    return head + (f". {column.description}" if column.description else "")
 
 
-def context_text(context: DatasetContext, *, writes_sql: bool = True) -> str:
-    """The table description block of the prompt. The same for every question on the dataset, so
-    the model server can reuse its work on it from one question to the next."""
-    lines = [f"Table {context.table} ({context.rows} rows). Columns:"]
-    lines += [_column_line(col, describe=not context.dictionary_whole) for col in context.columns]
-    lines += ["", f"Grain: {grain_text(context, writes_sql=writes_sql)}"]
-    if context.notes:
-        lines += ["", "Notes from the data dictionary:", context.notes]
+def _short(value: Any) -> str:
+    if hasattr(value, "isoformat"):
+        return str(value.isoformat())[:10]
+    if isinstance(value, float):
+        return f"{value:.4g}"
+    return str(value)
+
+
+def context_text(context: DatasetContext) -> str:
+    """The table as the model reads it: what a record is, who the patient is, the columns."""
+    sem = context.semantics
+    lines = [f"Table: {context.title}" if context.title else "Table:"]
+    if sem.one_row_per_patient:
+        lines.append(f"Each record is one patient ({context.rows} patients). Count patients.")
+    elif context.patient_key is not None:
+        lines.append(
+            f"Each record is one {context.row_noun}; {context.patients} patients over {context.rows} records "
+            f"({context.patient_key} names the patient, who can have several {context.row_nouns})."
+        )
+        order = context.order_column
+        lines.append(
+            f"A patient's {context.row_nouns} are in the order of {order}."
+            if order
+            else f"Nothing orders a patient's {context.row_nouns}: first or last cannot be used."
+        )
+    else:
+        lines.append(f"Each record is one {context.row_noun} ({context.rows} records); no column names a patient.")
+    lines.append("Columns:")
+    lines += [f"- {column_line(c, context)}" for c in context.columns]
     return "\n".join(lines)

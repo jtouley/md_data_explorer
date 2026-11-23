@@ -879,7 +879,11 @@ def test_sheetHasValues_otherSheetCannotBeScanned_countsAsNotReadNeverFails() ->
     [
         pytest.param(["03/25/21", "12/01/22", "07/04/23"], [(2021, 3, 25), (2022, 12, 1), (2023, 7, 4)], id="mm_dd_yy"),
         pytest.param(["25/03/21", "01/12/22", "04/07/23"], [(2021, 3, 25), (2022, 12, 1), (2023, 7, 4)], id="dd_mm_yy"),
-        pytest.param(["21/03/25", "22/12/01", "23/07/04"], [(2021, 3, 25), (2022, 12, 1), (2023, 7, 4)], id="yy_mm_dd"),
+        # Day first (values above 12 lead), as the contract's one date rule reads it (ADR017,
+        # contracts/dates.py); no year-span guess in staging.
+        pytest.param(
+            ["21/03/25", "22/12/01", "23/07/04"], [(2025, 3, 21), (2001, 12, 22), (2004, 7, 23)], id="day_leads"
+        ),
     ],
 )
 def test_stage_twoDigitYearDates_oneFormatForTheWholeColumn(values, expected):

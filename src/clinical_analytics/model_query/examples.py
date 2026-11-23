@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT
-"""Worked question -> reply examples, and the few most similar to a question (few-shot).
+"""Worked question -> plan examples, and the few most similar to a question (few-shot).
 
-The pool is ``resources/config/model_query_examples.yaml``: synthetic questions on made-up tables.
-Similarity is the app's own sentence embedding model (on this machine); without it the first
-examples of the pool are used, so the path still works.
+The pool is ``resources/config/model_query_examples.yaml``: synthetic questions on made-up tables
+whose column names no real dataset uses, each plan with every slot filled in. Similarity is the
+app's own sentence embedding model (on this machine); without it the first examples are used.
 """
 
 from __future__ import annotations
@@ -20,13 +20,20 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from clinical_analytics.core import embeddings
 from clinical_analytics.core.resources import config_file
-from clinical_analytics.model_query.plan import LISTING, SQL, STAT_TESTS, ReplyFormat
+from clinical_analytics.model_query.plan import Plan
 
 logger = structlog.get_logger()
 
 EXAMPLES_FILE: Final = "model_query_examples.yaml"
 DEFAULT_TOP_K: Final = 4
-_PLAN_FIELDS: Final = ("thought", "answer", "where", "group_by", "numerator", "number", "outcome")
+SLOTS: Final = tuple(Plan.model_fields)
+
+
+class _Table(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+    columns: list[str]
 
 
 class _Example(BaseModel):
@@ -35,35 +42,25 @@ class _Example(BaseModel):
     table: str
     question: str
     plan: dict[str, Any]
-    sql: str | None = None
 
 
 class _Pool(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    tables: dict[str, str]
+    tables: dict[str, _Table]
     examples: list[_Example]
 
 
 @dataclass(frozen=True)
 class Example:
     question: str
-    table: str  # the made-up table's one-line description
+    table: str  # the made-up table's description
+    columns: tuple[str, ...]
     plan: dict[str, Any]
-    sql: str | None
 
-    def reply(self, fmt: ReplyFormat) -> dict[str, Any]:
-        """The reply the model should give for this example, in ``fmt`` (keys in schema order)."""
-        plan = {name: self.plan.get(name) for name in _PLAN_FIELDS}
-        if fmt == "plan":
-            return plan | {"per_patient": self.plan.get("per_patient"), "order_by": self.plan.get("order_by")}
-        rest = {name: plan[name] for name in _PLAN_FIELDS[2:]}
-        if plan["answer"] in (*STAT_TESTS, LISTING):
-            return {"thought": plan["thought"], "answer": plan["answer"], "sql": None, **rest}
-        return {"thought": plan["thought"], "answer": SQL, "sql": self.sql, **dict.fromkeys(rest)}
-
-    def text(self, fmt: ReplyFormat) -> str:
-        return f"Table: {self.table}\nQuestion: {self.question}\nReply: {json.dumps(self.reply(fmt))}"
+    def text(self) -> str:
+        reply = {slot: self.plan[slot] for slot in SLOTS}
+        return f"Table: {self.table}\nQuestion: {self.question}\nReply: {json.dumps(reply)}"
 
 
 @functools.lru_cache(maxsize=1)
@@ -81,8 +78,16 @@ def load_examples() -> tuple[Example, ...]:
     unknown = sorted({e.table for e in pool.examples} - set(pool.tables))
     if unknown:
         raise ValueError(f"model query examples name unknown tables: {unknown}")
+    incomplete = [e.question for e in pool.examples if set(e.plan) != set(SLOTS)]
+    if incomplete:
+        raise ValueError(f"model query examples must fill every slot: {incomplete}")
     return tuple(
-        Example(question=e.question, table=" ".join(pool.tables[e.table].split()), plan=e.plan, sql=e.sql)
+        Example(
+            question=e.question,
+            table=" ".join(pool.tables[e.table].text.split()),
+            columns=tuple(pool.tables[e.table].columns),
+            plan=e.plan,
+        )
         for e in pool.examples
     )
 
@@ -104,26 +109,3 @@ def similar_examples(question: str, top_k: int = DEFAULT_TOP_K) -> list[Example]
         return list(pool[:top_k])
     best = np.argsort(-scores, kind="stable")[:top_k]
     return [pool[int(i)] for i in reversed(best)]
-
-
-# A table with at most this many columns is short enough to read whole; a wider one gets its
-# columns closest to the question repeated right above the question.
-SHORTLIST_MIN_COLUMNS: Final = 15
-SHORTLIST_SIZE: Final = 6
-
-
-def related_columns(question: str, described: dict[str, str], top_k: int = SHORTLIST_SIZE) -> list[str]:
-    """The names of the columns whose description (``described``: name -> one line saying what it
-    holds) is closest to the question, best first; none for a narrow table or without the encoder."""
-    if len(described) <= SHORTLIST_MIN_COLUMNS:
-        return []
-    names = list(described)
-    texts = [described[name] for name in names]
-    try:
-        encoder = embeddings.get_encoder()
-        matrix = embeddings.encode_cached(encoder, embeddings.texts_key("model_query_columns", texts), texts)
-        scores = np.asarray(matrix) @ np.asarray(encoder.encode([question]))[0]
-    except embeddings.ENCODER_LOAD_ERRORS as e:
-        logger.warning("model_query_columns_unranked", error_type=type(e).__name__)
-        return []
-    return [names[int(i)] for i in np.argsort(-scores, kind="stable")[:top_k]]

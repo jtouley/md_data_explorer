@@ -19,6 +19,7 @@ bundled embedding model is missing (``core.embeddings``; it is never downloaded)
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections.abc import Sequence
 
@@ -36,6 +37,7 @@ from clinical_analytics.core.embeddings import (
     embedding_model_dir,
 )
 from clinical_analytics.core.log_redaction import configure_logging
+from clinical_analytics.model_query.llm import MODEL_WARMUP_ENV
 from clinical_analytics.storage.dataset_deletion import StoreCompactionPendingError, finish_pending_compaction
 from clinical_analytics.storage.datastore import StoreInUseError
 from clinical_analytics.storage.store_format import StoreFormatError, prepare_store_for_engine
@@ -115,6 +117,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     if reason is not None:
         print(f"Clinical Analytics cannot start: {' '.join(reason.split())}", file=sys.stderr)
         sys.exit(STORE_CHECK_FAILED_EXIT)
+    # The installed app warms the local model at start (api.main's lifespan); a caller may set 0.
+    os.environ.setdefault(MODEL_WARMUP_ENV, "1")
     if not lifelines:
         uvicorn.run(
             APP_IMPORT_PATH,

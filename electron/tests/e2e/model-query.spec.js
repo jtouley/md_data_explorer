@@ -54,10 +54,10 @@ test.describe('Model-written query path (live API, mocked model)', () => {
     await expect(page.locator('[data-testid="upload-status"]')).toContainText('Uploaded');
     await expect(page.locator('#query-input')).toBeEnabled();
 
-    // "folks", "came back": words that match no column or value. The question is still answered.
+    // "came back": words that match no column or value. The question is still answered.
     await page
       .locator('#query-input')
-      .fill('How many of our older folks, 65 and up, came back positive each year?');
+      .fill('How many patients 65 and up came back positive at any visit, by year?');
     await page.locator('#query-input').press('Enter');
 
     const card = page.locator('[data-testid="result-card"]').last();
@@ -71,10 +71,13 @@ test.describe('Model-written query path (live API, mocked model)', () => {
       await expect(row).toContainText(String(count));
     }
 
-    // The plain-English reading, always visible.
-    await expect(card.locator('[data-testid="answer-reading"]')).toHaveText(
-      "Counted distinct patients (patient_id) where age_years >= 65 AND result = 'positive', by visit_year."
+    // The reading card in clinical words, always visible: the unit, the visit, the limits.
+    const reading = card.locator('[data-testid="answer-reading"]');
+    await expect(reading).toContainText(
+      'Counted: patients, each once, when any one of their'
     );
+    await expect(reading).toContainText('at least 65');
+    await expect(reading).not.toContainText('age_years');
 
     // The SQL that ran, one click away.
     const sql = card.locator('[data-testid="answer-sql"]');
@@ -94,21 +97,24 @@ test.describe('Model-written query path (live API, mocked model)', () => {
     });
     await expect(page.locator('#query-input')).toBeEnabled();
 
-    // A patient's result differs between visits: "ever" and "always" give different shares.
+    // "folks" names neither patients nor visits, and patients have several visits: asked.
     await page.locator('#query-input').fill('What share of our folks tested positive?');
     await page.locator('#query-input').press('Enter');
 
-    const choice = page.locator('[data-testid="choice-card"]').last();
-    await expect(choice).toBeVisible({ timeout: 45000 });
-    await expect(choice).toContainText('ever true, or only when it was always true');
-    const buttons = choice.locator('[data-testid="choice-button"]');
-    await expect(buttons).toHaveText([/^Ever/, /^Always/]);
+    const unit = page.locator('[data-testid="choice-card"]').last();
+    await expect(unit).toBeVisible({ timeout: 45000 });
+    await expect(unit.locator('[data-testid="choice-button"]').first()).toHaveText(/^Patients/);
+    await unit.locator('[data-testid="choice-button"]').first().click();
+
+    // A patient's result differs between visits: which visit counts is asked next.
+    const visit = page.locator('[data-testid="choice-card"]').last();
+    await expect(visit).toContainText('Which', { timeout: 45000 });
+    await visit.locator('[data-testid="choice-button"]', { hasText: /^At any/ }).click();
 
     // Choosing asks that reading as its own question; the answer says which reading it used.
-    await buttons.first().click();
     const card = page.locator('[data-testid="result-card"]').last();
     await expect(card.locator('[data-testid="answer-reading"]')).toContainText(
-      'One patient counts when at least one of its rows meets it.',
+      'when any one of their',
       { timeout: 45000 }
     );
     await expect(card.locator('[data-testid="result-claim"]')).toContainText('%');

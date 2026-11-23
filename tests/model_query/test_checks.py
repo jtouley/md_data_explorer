@@ -1,9 +1,6 @@
 # SPDX-License-Identifier: MIT
-"""The checks that run on every compiled plan before a number is shown: the counting unit from the
-question's head noun, dictionary codes, coverage and links, measure and per-patient ambiguity.
-
-All on a made-up allergy clinic table (tests/model_query/tables.py), one row per visit.
-"""
+"""Meaning checks on the compiled plan: what the question states is applied, what it contradicts
+is caught, what it leaves open is asked. Never read from the model's own description."""
 
 from __future__ import annotations
 
@@ -11,352 +8,244 @@ from typing import Any
 
 import pytest
 
-from clinical_analytics.model_query import coverage
-from clinical_analytics.model_query.context import dictionary_entries, value_labels
-from clinical_analytics.model_query.engine import answer_question
-from clinical_analytics.model_query.plan import ModelReply, compile_plan
-from clinical_analytics.model_query.units import UnitError, head_noun, plural, resolve_unit, singular
-from clinical_analytics.sql.sandbox import SandboxConnection
+from clinical_analytics.model_query import checks
+from clinical_analytics.model_query.plan import Plan, compile_plan, parse_plan
 from tests.model_query import tables
 
 
-def _plan(answer: str, **fields: Any) -> dict[str, Any]:
-    base = {"thought": "t", "mapping": [], "answer": answer, "where": None, "group_by": None}
-    return base | {"numerator": None, "number": None, "outcome": None} | fields
+def _plan(**fields: Any) -> Plan:
+    return parse_plan(tables.reply(**fields))
+
+
+_cond = tables.cond
 
 
 @pytest.fixture
 def clinic(make_query_table):
-    """(catalog, context) of the clinic table with its dictionary; pt_id is the patient key."""
-    return make_query_table(tables.clinic_visits(), doc_context=tables.CLINIC_DICTIONARY, id_column="pt_id")
+    return make_query_table(tables.clinic(), doc_context=tables.CLINIC_DICTIONARY)[1]
 
 
 @pytest.fixture
-def ask_clinic(clinic):
-    """Factory: answer ``question`` on the clinic table with the replies given, in order."""
-
-    def _ask(question: str, *replies: dict[str, Any]):
-        catalog, context = clinic
-        queue = list(replies)
-        prompts: list[str] = []
-
-        def model(_system: str, user: str, _schema: dict[str, Any]) -> Any:
-            prompts.append(user)
-            return queue.pop(0) if queue else None
-
-        answer = answer_question(
-            question, context, model=model, open_sandbox=lambda: SandboxConnection(catalog), examples=[]
-        )
-        return answer, prompts
-
-    return _ask
+def cohort(make_query_table):
+    return make_query_table(tables.cohort(), doc_context=tables.COHORT_DICTIONARY)[1]
 
 
-# ---------------------------------------------------------------------------- A. the counting unit
+@pytest.mark.parametrize(
+    ("question", "op_in", "op_out"),
+    [
+        pytest.param("How many patients are under 65?", ">=", "<", id="under_inverted"),
+        pytest.param("How many patients aged 65 or older?", ">", ">=", id="or_older"),
+        pytest.param("How many patients over 65?", ">=", ">", id="over"),
+        pytest.param("How many patients aged at least 65?", "<", ">=", id="at_least"),
+        pytest.param("Patients 65+ : how many?", "<=", ">=", id="plus"),
+        pytest.param("How many patients aged 65?", ">", ">", id="no_comparison_word_left_as_is"),
+    ],
+)
+def test_apply_stated_comparisonWithNumber_setsTheStatedOperator(cohort, question, op_in, op_out):
+    # Arrange
+    plan = _plan(filters=[_cond("age", op_in, 65)])
+
+    # Act
+    fixed, changed = checks.apply_stated(plan, question, cohort)
+
+    # Assert
+    assert fixed.filters[0].op == op_out
+    assert bool(changed) == (op_in != op_out)
+
+
+@pytest.mark.parametrize(
+    ("question", "model_says", "expected"),
+    [
+        pytest.param("How many patients smoked at their latest visit?", "any", "last", id="latest"),
+        pytest.param("How many patients smoked at baseline?", "last", "first", id="baseline"),
+        pytest.param("How many patients ever smoked?", "last", "any", id="ever"),
+        pytest.param("How many patients smoked at every visit?", "any", "every", id="every"),
+        pytest.param("How many patients smoked?", "last", "any", id="unstated_is_not_assumed"),
+    ],
+)
+def test_apply_stated_timepointWords_setWhichVisit(clinic, question, model_says, expected):
+    # Arrange
+    plan = _plan(filters=[_cond("smoker", "is", values=["yes"])], which_visit=model_says)
+
+    # Act
+    fixed, _changed = checks.apply_stated(plan, question, clinic)
+
+    # Assert
+    assert fixed.which_visit == expected
+
+
+def test_apply_stated_neverOnVisits_readsEveryVisit(clinic):
+    # Arrange: "never smoked" = not a smoker at every visit, not "a visit without smoking"
+    plan = _plan(filters=[_cond("smoker", "is", values=["no"])], which_visit="any")
+
+    # Act
+    fixed, _changed = checks.apply_stated(plan, "How many patients never smoked?", clinic)
+
+    # Assert
+    assert fixed.which_visit == "every"
 
 
 @pytest.mark.parametrize(
     ("question", "expected"),
     [
-        ("How many patients had shots?", ("patients", "patients")),
-        ("How many unique patients had surgery?", ("patients", "patients")),
-        ("What % of visits had shots?", ("events", "visits")),
-        ("Number of clinic visits each year?", ("events", "visits")),
-        ("How many surgeries were done in 2024?", ("events", "surgeries")),
-        ("Average age of our pts?", ("patients", "pts")),
-        ("How many were positive?", None),
+        pytest.param("How many clinic visits had a smoker?", "clinic visits", id="records_noun"),
+        pytest.param("How many women smoked?", "patients", id="person_noun"),
     ],
 )
-def test_head_noun_question_givesTheCountedNoun(question, expected):
-    # Act / Assert
-    assert head_noun(question) == expected
-
-
-@pytest.mark.parametrize(("noun", "one"), [("surgeries", "surgery"), ("visits", "visit"), ("cases", "case")])
-def test_singular_plural_roundTrip(noun, one):
-    # Act / Assert
-    assert (singular(noun), plural(one)) == (one, noun)
-
-
-@pytest.mark.parametrize(
-    ("question", "key", "word"),
-    [
-        ("How many patients had shots?", "pt_id", "patients"),
-        ("What share of visits had shots?", None, "visits"),
-        ("How many clinic visits were there each year?", None, "visits"),
-    ],
-)
-def test_resolve_unit_visitRows_countsTheNounAsked(clinic, question, key, word):
-    # Act
-    unit = resolve_unit(question, clinic[1])
-
-    # Assert: visits are the table's (distinct) rows; patients their key, counted distinct
-    assert (unit.key, unit.word) == (key, word)
-
-
-def test_answer_question_shareOfVisits_countsVisitsNotPatients(ask_clinic):
-    # Act: 6 of 13 visits had shots (4 of 6 patients ever did)
-    answer, _prompts = ask_clinic("What share of visits had shots?", _plan("share", numerator="shots = 'yes'"))
-
-    # Assert
-    assert answer.status == "answered" and answer.analysis is not None
-    assert answer.analysis["proportion"] == pytest.approx(6 / 13)
-
-
-def test_resolve_unit_patientsOnATableWithoutAPatientKey_isAsked(make_query_table):
-    # Arrange: no column names a patient
-    _catalog, context = make_query_table(tables.clinic_visits().drop("pt_id"), id_column=None)
-
-    # Act / Assert
-    with pytest.raises(UnitError, match="No column of this table identifies patients"):
-        resolve_unit("How many patients had shots?", context)
-
-
-# ---------------------------------------------------------------------------- E. dictionary codes
-
-
-def test_value_labels_dictionaryCodes_areReadForHeldCodesOnly():
+def test_apply_stated_countedNoun_setsTheUnit(clinic, question, expected):
     # Arrange
-    entries = dictionary_entries(tables.CLINIC_DICTIONARY, ["gender", "shots"])
+    other = "patients" if expected != "patients" else "clinic visits"
+    plan = _plan(count_of=other, filters=[_cond("smoker", "is", values=["yes"])])
+
+    # Act
+    fixed, _changed = checks.apply_stated(plan, question, clinic)
+
+    # Assert
+    assert fixed.count_of == expected
+
+
+@pytest.mark.parametrize(
+    ("question", "fields", "kind"),
+    [
+        pytest.param("How many patients are over 70?", {}, "number", id="number_dropped"),
+        pytest.param(
+            "How many patients have a low FEV1?",
+            {"filters": [_cond("fev_pct", "<", 60)]},
+            "invented_number",
+            id="threshold_invented",
+        ),
+        pytest.param(
+            "How many patients did not die within a year?",
+            {"filters": [_cond("died_1y", "is", values=["yes"])]},
+            "negation",
+            id="not_dropped",
+        ),
+        pytest.param(
+            "How many patients died within a year?",
+            {"filters": [_cond("died_1y", "is not", values=["yes"])]},
+            "negation",
+            id="negation_invented",
+        ),
+        pytest.param("How many patients have stage III?", {}, "value", id="named_value_unused"),
+    ],
+)
+def test_problems_meaningNotComputed_isFound(cohort, question, fields, kind):
+    # Arrange
+    compiled = compile_plan(_plan(**fields), cohort)
+
+    # Act
+    found = checks.problems(compiled, question, cohort)
+
+    # Assert
+    assert kind in [p.kind for p in found]
+
+
+@pytest.mark.parametrize(
+    ("question", "fields"),
+    [
+        pytest.param("How many patients are over 70?", {"filters": [_cond("age", ">", 70)]}, id="number_used"),
+        pytest.param(
+            "How many patients did not die within a year?",
+            {"filters": [_cond("died_1y", "is", values=["no"])]},
+            id="no_value_is_negation",
+        ),
+        pytest.param(
+            "How many patients have stage III?", {"filters": [_cond("stage", "is", values=["III"])]}, id="value"
+        ),
+        pytest.param(
+            "How many patients aged 50 to 60?",
+            {"filters": [_cond("age", ">=", 50), _cond("age", "<=", 60)]},
+            id="range",
+        ),
+        pytest.param(
+            "How many patients have no FEV1 recorded?", {"filters": [_cond("fev_pct", "is missing")]}, id="missing"
+        ),
+    ],
+)
+def test_problems_planComputesTheQuestion_findsNothing(cohort, question, fields):
+    # Arrange
+    compiled = compile_plan(_plan(**fields), cohort)
 
     # Act / Assert
-    assert value_labels(entries["gender"], (1, 2)) == (("1", "male"), ("2", "female"))
-    assert value_labels(entries["gender"], (1,)) == (("1", "male"),)
+    assert checks.problems(compiled, question, cohort) == []
 
 
-def test_build_context_codedColumn_showsTheLabels(clinic):
-    # Act
-    gender = clinic[1].column("gender")
-
-    # Assert
-    assert gender is not None and gender.labels == (("1", "male"), ("2", "female"))
-
-
-@pytest.mark.parametrize("where", ["gender = 'female'", "gender = 'women'", "gender = 2"])
-def test_answer_question_womenOnACodedColumn_filtersTheCode(ask_clinic, where):
-    # Act: 3 of the 6 patients are coded 2 (female)
-    answer, _prompts = ask_clinic("How many women are in the clinic?", _plan("count", where=where))
-
-    # Assert
-    assert answer.status == "answered", answer.reason
-    assert '"gender" = 2' in " ".join((answer.sql or "").split())
-    assert answer.analysis is not None and answer.analysis["total_count"] == 3
-
-
-# ---------------------------------------------------------------------------- B, C. coverage and links
-
-
-def test_answer_question_subgroupNamedButNotFiltered_isNeverAnswered(ask_clinic):
-    # Arrange: "women" twice counted with no filter
-    reply = _plan("count")
-
-    # Act
-    answer, prompts = ask_clinic("How many women are in the clinic?", reply, reply)
-
-    # Assert
-    assert answer.status != "answered" and answer.analysis is None
-    assert "The question says 'women'" in prompts[1]
-
-
-def test_answer_question_conceptWithNoColumn_isHeldNamingIt(ask_clinic):
-    # Arrange: the clinic has no smoking column; the model substitutes two unrelated columns
-    reply = _plan("count", where="shots = 'yes' AND ige > 100")
-
-    # Act
-    answer, _prompts = ask_clinic("How many smokers are there?", reply, reply)
-
-    # Assert: held, saying what is missing; never answered with other columns
-    assert answer.status in ("clarify", "refused") and answer.analysis is None
-    assert "smokers" in (answer.reason or "") or "shots" in (answer.reason or "")
-
-
-def test_answer_question_breakdownDescribedInOtherWords_isAnsweredThroughTheDictionary(ask_clinic):
-    # Arrange: "sex" is the gender column (generic synonym); "the year they came" its visit_year
-    reply = _plan("count", group_by="gender")
-
-    # Act
-    answer, _prompts = ask_clinic("Break down the patients by sex.", reply)
-
-    # Assert
-    assert answer.status == "answered", answer.reason
-
-
-def test_check_mappedPhrase_linksOnlyWhenTheColumnIsClose(clinic):
+def test_needs_visit_choice_unstatedVisit_onVaryingColumn(clinic):
     # Arrange
-    _catalog, context = clinic
-    close = [coverage.Link("allergy shots", "filter", "shots")]
+    compiled = compile_plan(_plan(filters=[_cond("smoker", "is", values=["yes"])]), clinic)
+
+    # Act / Assert: no timepoint word, a visit-level table: which visit counts is asked
+    assert checks.needs_visit_choice(compiled, "How many patients smoke?", clinic) is True
+    assert checks.needs_visit_choice(compiled, "How many patients smoked at their latest visit?", clinic) is False
+
+
+def test_visit_ask_choicesReAskWithATimepointTheChecksRead(clinic):
+    # Arrange
+    compiled = compile_plan(_plan(filters=[_cond("smoker", "is", values=["yes"])]), clinic)
 
     # Act
-    found = coverage.check("How many got allergy shots?", context, used=["shots"], values=["yes"], links=close)
+    ask = checks.visit_ask(compiled, clinic, varying=5)
+
+    # Assert: each choice, appended to the question, states a timepoint the checks then apply
+    assert ask.kind == "which_visit"
+    for _label, words in ask.choices:
+        question = f"How many patients smoke? {words}"
+        assert not checks.needs_visit_choice(compiled, question, clinic)
+
+
+def test_ask_unit_visitTableNoNoun_asksPatientsOrVisits(clinic):
+    # Arrange
+    compiled = compile_plan(_plan(answer="share", numerator=[_cond("smoker", "is", values=["yes"])]), clinic)
+
+    # Act
+    ask = checks.ask_unit(compiled, "What share smoked?", clinic)
 
     # Assert
-    assert found.uncovered == () and found.unlinked == ()
+    assert ask is not None and [label for label, _w in ask.choices] == ["Patients", "Clinic visits"]
+
+
+def test_ask_open_unansweredQuestionOnUsedColumn_isAsked(make_query_table):
+    # Arrange: the contract holds an open question about a column the plan reads
+    from clinical_analytics.contracts.semantics import OpenQuestion
+
+    question = OpenQuestion(id="q1", kind="date_order", question="Does 03/04/21 mean 3 April?", column="visit_on")
+    _catalog, context = make_query_table(
+        tables.clinic(), doc_context=tables.CLINIC_DICTIONARY, semantics_update={"open_questions": (question,)}
+    )
+    compiled = compile_plan(_plan(filters=[_cond("visit_on", "before", "2023-01-01")]), context)
+
+    # Act
+    ask = checks.ask_open(compiled, context)
+
+    # Assert
+    assert ask is not None and ask.reason.startswith("Does 03/04/21 mean 3 April?")
 
 
 @pytest.mark.parametrize(
-    ("question", "uncovered"),
+    ("question", "used", "expected"),
     [
-        ("How many women had shots?", ("women",)),
-        ("How many had shots? Leave out 'women'.", ()),
-        ("Please, how many patients in our clinic had shots?", ()),
+        pytest.param("How many patients by sex?", frozenset({"sex"}), True, id="simple"),
+        pytest.param("How many patients are over 70?", frozenset(), False, id="number"),
+        pytest.param("How many patients have stage III?", frozenset(), False, id="value_not_in_plan"),
+        pytest.param("How many patients did not die?", frozenset({"died_1y"}), False, id="negation"),
     ],
 )
-def test_check_contentRuns_mustReachThePlan(clinic, question, uncovered):
+def test_matcher_may_answer_onlyQuestionsItFullyReads(cohort, question, used, expected):
+    # Act / Assert
+    assert checks.matcher_may_answer(question, cohort, used) is expected
+
+
+def test_matcher_may_answer_visitTable_neverAnswersFirst(clinic):
+    # Act / Assert: a visit-level table needs a per-patient choice the matcher cannot make
+    assert checks.matcher_may_answer("How many patients by sex?", clinic, frozenset({"sex"})) is False
+
+
+def test_apply_stated_reAskedChoiceTimepoint_keepsTheUnit(clinic):
+    # Arrange: a choice's words name the records' noun as a time, not as what is counted
+    plan = _plan(answer="share", numerator=[_cond("smoker", "is", values=["yes"])])
+
     # Act
-    found = coverage.check(question, clinic[1], used=["shots"], values=["yes"], links=[])
+    fixed, _changed = checks.apply_stated(plan, "What share of patients smoke? at the latest clinic visit", clinic)
 
     # Assert
-    assert found.uncovered == uncovered
-
-
-# ---------------------------------------------------------------------------- D. ambiguity
-
-
-def test_answer_question_measureTakenTwice_asksWhichColumn(ask_clinic):
-    # Act: eosinophils exist at enrolment and at six months
-    answer, _prompts = ask_clinic("What is the average eosinophil count?", _plan("mean", number="eos_baseline"))
-
-    # Assert: asked, never picked
-    assert answer.status == "clarify"
-    assert [label for label, _q in answer.choices] == ["eos_baseline", "eos_month6"]
-
-
-@pytest.mark.parametrize(
-    "question", ["What is the average eosinophil count at baseline?", "What is the average eos_baseline?"]
-)
-def test_answer_question_measureTimeNamed_isAnswered(ask_clinic, question):
-    # Act
-    answer, _prompts = ask_clinic(question, _plan("mean", number="eos_baseline"))
-
-    # Assert
-    assert answer.status == "answered", answer.reason
-
-
-def test_answer_question_perPatientValueThatVaries_asksVisitOrPatient(ask_clinic):
-    # Act: IgE differs between a patient's visits
-    answer, _prompts = ask_clinic("What is the mean IgE of our patients?", _plan("mean", number="ige"))
-
-    # Assert
-    assert answer.status == "clarify"
-    assert [label for label, _q in answer.choices] == ["Every visit counts", "One value per patient (their average)"]
-
-
-def test_answer_question_perPatientValueThatIsConstant_isOneValuePerPatient(ask_clinic):
-    # Act: height is the same on every visit of a patient
-    answer, _prompts = ask_clinic("What is the average height of our patients?", _plan("mean", number="height_cm"))
-
-    # Assert: the mean over the 6 patients, not over the 13 visits
-    assert answer.status == "answered" and answer.analysis is not None
-    assert answer.analysis["mean"] == pytest.approx((170 + 160 + 150 + 180 + 165 + 175) / 6)
-    assert answer.reading is not None and "one value per patient" in answer.reading
-
-
-@pytest.mark.parametrize(
-    ("choice", "mean"),
-    [
-        ("Count every visit.", (100 + 140 + 80 + 80 + 60 + 300 + 320 + 50 + 70 + 210 + 230 + 90 + 95) / 13),
-        ("Use one value per patient (their average).", (120 + 220 / 3 + 310 + 60 + 220 + 92.5) / 6),
-    ],
-)
-def test_answer_question_perPatientChoice_isAnsweredAsChosen(ask_clinic, choice, mean):
-    # Act
-    answer, _prompts = ask_clinic(f"What is the mean IgE of our patients? {choice}", _plan("mean", number="ige"))
-
-    # Assert
-    assert answer.status == "answered" and answer.analysis is not None
-    assert answer.analysis["mean"] == pytest.approx(mean)
-
-
-def test_compile_plan_meanOverEventsNoun_isOverRows(clinic):
-    # Act
-    compiled = compile_plan(ModelReply(answer="mean", number="ige"), "What is the mean IgE per visit?", clinic[1])
-
-    # Assert
-    assert compiled.per_patient_varies_sql is None and "over visits (rows)" in compiled.reading
-
-
-def test_answer_question_breakdownByACodedColumn_showsTheLabels(ask_clinic):
-    # Act
-    answer, _prompts = ask_clinic("How many patients of each gender?", _plan("count", group_by="gender"))
-
-    # Assert: the dictionary's words, not the codes
-    assert answer.analysis is not None
-    assert [row["gender"] for row in answer.analysis["group_counts"]] == ["male", "female"]
-
-
-def test_build_context_wordValuesDescribedInTheDictionary_keepTheirStoredValues(make_query_table):
-    # Arrange: a yes/no column whose dictionary explains each value in a sentence
-    frame = tables.clinic_visits()
-    doc = tables.CLINIC_DICTIONARY.replace(
-        "shots         yes if allergy shots were given at the visit.",
-        "shots         yes - if shots were given at the visit, no - if they were not",
-    )
-    catalog, context = make_query_table(frame, doc_context=doc, id_column="pt_id")
-    model_reply = {"thought": "t", "mapping": [], "answer": "count", "where": None, "group_by": "shots"}
-    queue = [model_reply | {"numerator": None, "number": None, "outcome": None}]
-
-    # Act
-    answer = answer_question(
-        "How many visits by shots?",
-        context,
-        model=lambda *_args: queue.pop(0),
-        open_sandbox=lambda: SandboxConnection(catalog),
-        examples=[],
-    )
-
-    # Assert: the table shows "no" and "yes", not the dictionary's sentences
-    assert answer.analysis is not None
-    assert sorted(row["shots"] for row in answer.analysis["group_counts"]) == ["no", "yes"]
-
-
-@pytest.mark.parametrize(
-    ("question", "uncovered"),
-    [
-        ("How many K. pneumo patients had shots?", ()),
-        ("How many patients had shots, e.g. women?", ("women",)),
-    ],
-)
-def test_check_initialAndNameNamingTheTable_isNotALimit(make_query_table, question, uncovered):
-    # Arrange: the upload is named for the organism ("kpneumo_clinic")
-    frame = tables.clinic_visits()
-    catalog, context = make_query_table(frame, doc_context=tables.CLINIC_DICTIONARY, id_column="pt_id")
-    context = context.__class__(**{**context.__dict__, "title": "kpneumo_clinic"})
-
-    # Act
-    found = coverage.check(question, context, used=["shots"], values=["yes"], links=[])
-
-    # Assert
-    assert found.uncovered == uncovered
-
-
-@pytest.mark.parametrize(
-    "question",
-    ["What share of each group has two doses on record?", "What share had shots at each visit?"],
-)
-def test_head_noun_nounAfterAPreposition_isNotTheCountedUnit(question):
-    # Act / Assert: "on record", "at each visit" say where, not what is counted
-    assert head_noun(question) is None
-
-
-def test_answer_question_shareAskedButCountedWhereAFlagHolds_isFedBackThenAsked(ask_clinic):
-    # Arrange: "what share had shots, by year" answered twice as counts of visits with shots
-    reply = _plan("count", where="shots = 'yes'", group_by="visit_year")
-
-    # Act
-    answer, prompts = ask_clinic("What share of patients had shots, by year?", reply, reply)
-
-    # Assert
-    assert "The question asks for a share" in prompts[1]
-    assert answer.status == "clarify"
-    assert [label for label, _q in answer.choices] == ["The share with shots = 'yes'", "Counts, not a share"]
-
-
-def test_answer_question_countsChosen_areAnswered(ask_clinic):
-    # Act
-    answer, _prompts = ask_clinic(
-        "What share of patients had shots, by year? Give counts, not a share.",
-        _plan("count", where="shots = 'yes'", group_by="visit_year"),
-    )
-
-    # Assert
-    assert answer.status == "answered", answer.reason
+    assert (fixed.count_of, fixed.which_visit) == ("patients", "last")

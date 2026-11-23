@@ -1,369 +1,112 @@
 # SPDX-License-Identifier: MIT
-"""Synthetic tables for the model-written query tests and golden samples. No real data.
+"""Synthetic tables for the model-written query tests. No real data.
 
-``patients``: one row per patient, small enough to check every expected value by hand.
-``visits``: rows are visits (patients repeat, some rows are exact duplicates, a titer is recorded
-in two units), generated from the row number so the oracles in the tests can recompute it.
+Each is generated from the row number, so the tests' Polars oracles recompute every expected
+value independently of the SQL the compiler writes.
+
+``clinic``: visits (patients repeat, a sequence numbers each patient's visits, a dated visit), with
+a data dictionary that labels its codes. ``cohort``: one row per patient. ``ledger``: lines that
+no column names a patient.
 """
 
 from __future__ import annotations
 
-import polars as pl  # noqa: F401  (re-exported for tests)
+from datetime import date, timedelta
+from typing import Any
 
-_PATIENTS = [
-    # id, sex, dx, admitted, confirmed, onset_year, comorbid, age_cat
-    ("P01", "female", "relapsing", "No", "Yes", 2005, "Yes", 1),
-    ("P02", "female", "relapsing", "No", "No", 2010, "No", 1),
-    ("P03", "female", "relapsing", "Yes", "Yes", 2012, "Yes", 2),
-    ("P04", "female", "progressive", "No", "No", 1999, "No", 2),
-    ("P05", "female", "other", "No", "No", 2015, "No", 1),
-    ("P06", "female", "relapsing", "No", "Yes", 2008, "No", 1),
-    ("P07", "male", "relapsing", "No", "No", 2011, "No", 1),
-    ("P08", "male", "relapsing", "Yes", "Yes", 2001, "Yes", 2),
-    ("P09", "male", "progressive", "No", "No", 1995, "Yes", 2),
-    ("P10", "male", "other", "No", "No", 2018, "No", 1),
-    ("P11", "female", "relapsing", "No", "No", 2003, "No", 2),
-    ("P12", "male", "relapsing", "No", "No", 2007, "Yes", 1),
-]
-PATIENT_COLUMNS = ["patient_id", "sex", "dx", "admitted", "confirmed", "onset_year", "comorbid", "age_cat"]
-VISIT_ROWS = 240
-VISIT_PATIENTS = 150
+import polars as pl
 
+CLINIC_PATIENTS = 40
+CLINIC_DICTIONARY = """\
+HYPERTENSION CLINIC FOLLOW-UP
+One row per clinic visit; pt_ref is the patient.
 
-def patients() -> pl.DataFrame:
-    return pl.DataFrame(_PATIENTS, schema=PATIENT_COLUMNS, orient="row")
+pt_ref        Patient reference number
+visit_seq     Visit number within the patient (1 = first visit)
+visit_on      Visit date
+age_at_visit  Age in years at the visit
+sex           F = female, M = male
+systolic_mmhg Systolic blood pressure, mmHg
+smoker        Current smoker at the visit (Y/N)
+arm           Treatment arm: 1 = ACE inhibitor, 2 = calcium blocker, 3 = diuretic
+"""
 
 
-def visits() -> pl.DataFrame:
-    """240 visits of 150 patients, every 20th row written twice (an extract duplicate)."""
+def clinic() -> pl.DataFrame:
+    """40 patients with 1-4 visits each; smoking and the arm change between some visits."""
     rows = []
-    for i in range(VISIT_ROWS):
-        patient = i % VISIT_PATIENTS
-        in_iu = i % 4 == 0
-        level = 50 + (i * 37) % 400  # mIU/mL
-        row = {
-            "patient_id": f"V{patient:03d}",
-            "encounter_id": f"E{i:04d}",
-            "visit_year": 2021 + i % 4,
-            "age_years": 40 + (patient * 7) % 50,
-            "sex": "female" if patient % 2 == 0 else "male",
-            "region": ("North", "South", "East")[patient % 3],
-            "result": "positive" if i % 5 == 0 or i % 7 == 0 else "negative",
-            "abx": "yes" if i % 3 == 0 or i % 10 == 0 else "no",
-            "screened": "yes" if i % 4 == 1 else "no",
-            "titer": None if i % 11 == 0 else (level / 1000 if in_iu else float(level)),
-            "titer_unit": None if i % 11 == 0 else ("IU/mL" if in_iu else "mIU/mL"),
-        }
-        rows.append(row)
-        if i % 20 == 0:
-            rows.append(dict(row))
+    for p in range(CLINIC_PATIENTS):
+        for v in range(1, 1 + 1 + p % 4):
+            rows.append(
+                {
+                    "pt_ref": f"H{p:03d}",
+                    "visit_seq": v,
+                    "visit_on": date(2022, 1, 3) + timedelta(days=60 * v + p),
+                    "age_at_visit": 45 + p % 30 + v // 3,
+                    "sex": "F" if p % 3 else "M",
+                    "systolic_mmhg": float(120 + (p * 7 + v * 11) % 50) if (p + v) % 9 else None,
+                    "smoker": "Y" if (p + v) % 4 == 0 else "N",
+                    "arm": 1 + (p + (v if p % 5 == 0 else 0)) % 3,
+                }
+            )
     return pl.DataFrame(rows)
 
 
-VISITS_DICTIONARY = """\
-Synthetic clinic: one row per test visit; a patient can have several visits. Some visits appear
-twice (duplicate extract rows); count patients by patient_id and tests by encounter_id.
+COHORT_DICTIONARY = """\
+LUNG SURGERY COHORT. One row per patient.
 
-patient_id    Patient key.
-encounter_id  Test visit key.
-visit_year    Calendar year of the visit.
-age_years     Age in years.
-result        positive or negative.
-abx           yes if an antibiotic was dispensed before the visit.
-screened      yes if screened at this visit.
-titer         Antibody titer; empty when not drawn. The unit is in titer_unit.
-titer_unit    mIU/mL or IU/mL (1 IU/mL = 1000 mIU/mL).
+subject_no  Study subject number (patient)
+age         Age in years at surgery
+sex         female / male
+stage       Tumour stage: I, II or III
+died_1y     Died within one year of surgery (yes/no)
+fev_pct     Pre-operative FEV1, percent predicted; blank = not measured
 """
 
 
-def screening() -> pl.DataFrame:
-    """One row per worker: doses on record and an antibody level, the level missing for some.
-
-    "Fewer than two doses and a level under 120": true for W01 and W03, unknown for W05 and W06
-    (level missing), false for the rest (W07's two doses decide it without the level).
-    """
+def cohort() -> pl.DataFrame:
+    """60 patients, one row each."""
     return pl.DataFrame(
         {
-            "patient_id": [f"W{i:02d}" for i in range(1, 9)],
-            "doses": [0, 2, 1, 1, 0, 1, 2, 0],
-            "igg": [50.0, 30.0, 90.0, 300.0, None, None, None, 150.0],
+            "subject_no": [f"S{i:03d}" for i in range(60)],
+            "age": [40 + (i * 13) % 45 for i in range(60)],
+            "sex": ["female" if i % 2 else "male" for i in range(60)],
+            "stage": [("I", "II", "III")[i % 3] for i in range(60)],
+            "died_1y": ["yes" if i % 7 == 0 else "no" for i in range(60)],
+            "fev_pct": [None if i % 10 == 0 else float(50 + (i * 17) % 50) for i in range(60)],
         }
     )
 
 
-def clinic_visits() -> pl.DataFrame:
-    """A made-up allergy clinic: one row per clinic visit, 6 patients with 2 or 3 visits each.
-
-    ``gender`` is coded (1 = male, 2 = female, per ``CLINIC_DICTIONARY``); ``height_cm`` is the
-    same on every visit of a patient, ``eos_baseline`` and ``eos_month6`` are one measure at two
-    times, and ``ige`` differs between a patient's visits.
-    """
-    rows = [
-        # pid, gender, height, eos0, eos6, ige, year, shots
-        ("A1", 1, 170.0, 300.0, 200.0, 100.0, 2022, "yes"),
-        ("A1", 1, 170.0, 300.0, 200.0, 140.0, 2023, "no"),
-        ("A2", 2, 160.0, 500.0, 250.0, 80.0, 2022, "yes"),
-        ("A2", 2, 160.0, 500.0, 250.0, 80.0, 2023, "yes"),
-        ("A2", 2, 160.0, 500.0, 250.0, 60.0, 2024, "no"),
-        ("A3", 2, 150.0, 200.0, 100.0, 300.0, 2023, "no"),
-        ("A3", 2, 150.0, 200.0, 100.0, 320.0, 2024, "no"),
-        ("A4", 1, 180.0, 400.0, 300.0, 50.0, 2022, "yes"),
-        ("A4", 1, 180.0, 400.0, 300.0, 70.0, 2024, "yes"),
-        ("A5", 2, 165.0, 100.0, 90.0, 210.0, 2024, "no"),
-        ("A5", 2, 165.0, 100.0, 90.0, 230.0, 2024, "yes"),
-        ("A6", 1, 175.0, 350.0, 150.0, 90.0, 2023, "no"),
-        ("A6", 1, 175.0, 350.0, 150.0, 95.0, 2024, "no"),
-    ]
-    columns = ["pt_id", "gender", "height_cm", "eos_baseline", "eos_month6", "ige", "visit_year", "shots"]
-    return pl.DataFrame(rows, schema=columns, orient="row")
-
-
-CLINIC_DICTIONARY = """\
-Made-up allergy clinic: one row per clinic visit.
-
-pt_id         Patient identifier.
-gender        Patient gender: 1 = male, 2 = female
-height_cm     Height in centimetres.
-eos_baseline  Blood eosinophil count at enrolment (cells/uL).
-eos_month6    Blood eosinophil count six months after enrolment (cells/uL).
-ige           Total IgE at the visit (kU/L).
-visit_year    Calendar year of the visit.
-shots         yes if allergy shots were given at the visit.
-"""
-
-
-def eye_visits() -> pl.DataFrame:
-    """A made-up glaucoma clinic: one row per visit, 4 patients with 2 to 4 visits.
-
-    ``visit_no`` numbers each patient's visits (1, 2, ...): it repeats across patients and is not a
-    visit ID. ``drops_used`` is a Y/N flag, ``iop_mmhg`` the eye pressure, ``adherence_pct`` a
-    percentage, ``grade`` a field grade recorded on some visits only.
-    """
-    import datetime as dt
-
-    rows = [
-        # pat_no, visit_no, date, iop, drops, adherence, grade, sex
-        ("G1", 1, dt.date(2022, 1, 10), 25.0, "N", 40.0, None, "F"),
-        ("G1", 2, dt.date(2022, 3, 10), 22.0, "Y", 70.0, 2, "F"),
-        ("G1", 3, dt.date(2023, 1, 5), 19.0, "Y", 90.0, 1, "F"),
-        ("G2", 1, dt.date(2022, 2, 1), 18.0, "N", 100.0, None, "M"),
-        ("G2", 2, dt.date(2023, 2, 1), 17.0, "N", 100.0, 1, "M"),
-        ("G3", 1, dt.date(2022, 5, 5), 30.0, "Y", 50.0, 3, "F"),
-        ("G3", 2, dt.date(2022, 6, 4), 26.0, "Y", 60.0, None, "F"),
-        ("G3", 3, dt.date(2023, 6, 4), 20.0, "Y", 80.0, 2, "F"),
-        ("G3", 4, dt.date(2024, 6, 3), 19.0, "Y", 95.0, 1, "F"),
-        ("G4", 1, dt.date(2023, 9, 9), 20.0, "N", 85.0, None, "M"),
-        ("G4", 2, dt.date(2024, 9, 8), 19.0, "N", 90.0, 1, "M"),
-    ]
-    columns = ["pat_no", "visit_no", "visit_date", "iop_mmhg", "drops_used", "adherence_pct", "grade", "sex"]
-    return pl.DataFrame(rows, schema=columns, orient="row")
-
-
-EYE_DICTIONARY = """\
-Made-up glaucoma clinic: one row per clinic visit.
-
-pat_no         Patient number.
-visit_no       Number of the visit for this patient (1 = first visit).
-visit_date     Date of the visit.
-iop_mmhg       Intraocular pressure (mmHg).
-drops_used     Y if pressure-lowering drops were in use at the visit, N if not.
-adherence_pct  Share of prescribed drop doses taken since the last visit (percent).
-grade          Optic disc grade, 1 to 3; empty when not graded.
-sex            F or M.
-"""
-
-
-def rehab_stays() -> pl.DataFrame:
-    """A made-up rehabilitation unit: one row per stay, each patient once; ``therapy_sessions``
-    counts the sessions of the stay."""
-    rows = [
-        ("R1", 2022, "home", 10), ("R2", 2022, "home", 14), ("R3", 2023, "care home", 20),
-        ("R4", 2023, "home", 8), ("R5", 2023, "hospital", 5), ("R6", 2024, "home", 12),
-    ]  # fmt: skip
-    return pl.DataFrame(rows, schema=["patient_id", "stay_year", "discharge_to", "therapy_sessions"], orient="row")
-
-
-def speech_sessions() -> pl.DataFrame:
-    """A made-up speech therapy service: one row per session, 3 patients with 2 to 4 sessions.
-    ``session_number`` counts each patient's sessions from 1; ``homework`` is done / not done."""
-    rows = [
-        ("S1", 1, "not done", 40.0), ("S1", 2, "done", 55.0), ("S1", 3, "done", 60.0), ("S1", 4, "done", 70.0),
-        ("S2", 1, "done", 50.0), ("S2", 2, "done", 65.0),
-        ("S3", 1, "not done", 30.0), ("S3", 2, "not done", 35.0), ("S3", 3, "done", 45.0),
-    ]  # fmt: skip
-    return pl.DataFrame(rows, schema=["patient_no", "session_number", "homework", "fluency_score"], orient="row")
-
-
-def donor_panel() -> pl.DataFrame:
-    """A made-up donor panel: one row per donor, a one-letter group code among others."""
-    rows = [("D1", "O", 2020), ("D2", "A", 2021), ("D3", "B", 2020), ("D4", "O", 2022), ("D5", "AB", 2020)]
-    return pl.DataFrame(rows, schema=["donor_id", "blood_group", "first_year"], orient="row")
-
-
-DONOR_PANEL_DICTIONARY = """\
-Made-up blood donor panel: one row per donor.
-
-donor_id     Donor identifier.
-blood_group  O, A, B or AB.
-first_year   Year of the first donation.
-"""
-
-
-def inr_draws() -> pl.DataFrame:
-    """A made-up anticoagulation clinic: one row per INR blood draw, 4 patients with 2 to 4 draws.
-
-    ``draw_no`` numbers each patient's draws; ``on_warfarin`` is a Y/N flag; ``inr`` is empty for a
-    draw the lab could not run.
-    """
-    import datetime as dt
-
-    rows = [
-        # pt_number, draw_no, date, inr, on_warfarin, age
-        ("A", 1, dt.date(2023, 1, 2), 1.8, "Y", 45),
-        ("A", 2, dt.date(2023, 1, 16), 2.4, "Y", 45),
-        ("A", 3, dt.date(2023, 2, 13), 2.9, "Y", 45),
-        ("B", 1, dt.date(2023, 1, 5), 2.2, "Y", 61),
-        ("B", 2, dt.date(2023, 2, 2), 2.6, "Y", 61),
-        ("C", 1, dt.date(2023, 1, 9), 3.4, "N", 72),
-        ("C", 2, dt.date(2023, 1, 23), None, "N", 72),
-        ("C", 3, dt.date(2023, 3, 6), 3.8, "N", 72),
-        ("C", 4, dt.date(2023, 4, 3), 2.1, "Y", 72),
-        ("D", 1, dt.date(2023, 2, 1), 2.5, "Y", 38),
-        ("D", 2, dt.date(2023, 3, 1), 2.7, "Y", 38),
-    ]
-    return pl.DataFrame(rows, schema=["pt_number", "draw_no", "draw_date", "inr", "on_warfarin", "age"], orient="row")
-
-
-INR_DICTIONARY = """\
-Made-up anticoagulation clinic: one row per INR blood draw.
-
-pt_number    Patient number.
-draw_no      Number of the draw for this patient (1 = first draw).
-draw_date    Date of the draw.
-inr          International normalised ratio; empty when the sample could not be run.
-on_warfarin  Y if the patient was taking warfarin at the draw, N if not.
-age          Age, years.
-"""
-
-
-def bleed_outcomes() -> pl.DataFrame:
-    """A made-up anticoagulation audit: one row per patient, a major-bleed flag and a coded outcome
-    whose labels also say "major bleed" (the two columns do not always agree)."""
-    rows = [("B1", "yes", 1, 2), ("B2", "no", 1, 1), ("B3", "no", 2, 3), ("B4", "yes", 1, 2), ("B5", "no", 2, 1)]
-    return pl.DataFrame(rows, schema=["patient_id", "major_bleed", "outcome", "age_band"], orient="row")
-
-
-BLEED_DICTIONARY = """\
-Made-up anticoagulation audit: one row per patient.
-
-patient_id   Patient identifier.
-major_bleed  yes if the patient had a major bleed.
-outcome      1 = major bleed, 2 = no bleed
-age_band     Age band.
-  1 = if the age range is between 18 and 50
-  2 = if the age range is between 51 and 70
-  3 = if 71 or older
-"""
-
-
-def school_screening() -> pl.DataFrame:
-    """A made-up school health screening: one row per student, no column named for patients.
-
-    ``student_id`` is unique; ``guardian_id`` repeats for siblings; ``vision`` is a code whose
-    dictionary labels are long, with parentheses and commas, written after a tab.
-    """
-    rows = [
-        # student_id, guardian_id, age_years, vision, sports_club
-        ("S01", "G1", 8, 1, "yes"),
-        ("S02", "G1", 10, 3, "no"),
-        ("S03", "G2", 9, 2, "yes"),
-        ("S04", "G3", 11, 1, "no"),
-        ("S05", "G3", 7, 1, "no"),
-        ("S06", "G4", 12, 2, "yes"),
-    ]
-    return pl.DataFrame(rows, schema=["student_id", "guardian_id", "age_years", "vision", "sports_club"], orient="row")
-
-
-SCHOOL_DICTIONARY = """\
-Made-up school health screening: one row per student.
-
-student_id   Student identifier.
-guardian_id  Identifier of the student's guardian (siblings share one).
-age_years    Age at screening, years.
-vision       Vision screening result.
-\t1\tPassed (both eyes, with or without glasses)
-\t2\tReferred, one eye (left or right, either test)
-\t3\tReferred, both eyes (or could not be tested, e.g. uncooperative, etc.)
-sports_club  yes if the student is in a sports club.
-"""
-
-
-def sleep_studies(*, with_patient: bool = True) -> pl.DataFrame:
-    """A made-up sleep clinic: one row per sleep study episode, 4 patients with 1 to 3 episodes.
-
-    ``episode_no`` numbers each patient's episodes (1, 2, 3 repeat across patients); ``osa_class``
-    changes between a patient's episodes for A and D; ``cpap_started`` is yes/no per episode.
-    Without the patient column the table still has one row per episode.
-    """
-    import datetime as dt
-
-    rows = [
-        # pt_id, episode_no, study_date, ahi, osa_class, cpap_started
-        ("A", 1, dt.date(2022, 1, 10), 12.0, 1, "no"),
-        ("A", 2, dt.date(2022, 3, 11), 25.0, 2, "yes"),
-        ("A", 3, dt.date(2022, 6, 9), 18.0, 2, "yes"),
-        ("B", 1, dt.date(2022, 2, 1), 35.0, 3, "yes"),
-        ("B", 2, dt.date(2022, 2, 21), 30.0, 3, "yes"),
-        ("C", 1, dt.date(2022, 1, 5), 8.0, 1, "no"),
-        ("D", 1, dt.date(2022, 4, 1), 9.0, 1, "no"),
-        ("D", 2, dt.date(2022, 5, 1), 16.0, 2, "no"),
-    ]
-    frame = pl.DataFrame(
-        rows, schema=["pt_id", "episode_no", "study_date", "ahi", "osa_class", "cpap_started"], orient="row"
-    )
-    return frame if with_patient else frame.drop("pt_id")
-
-
-SLEEP_DICTIONARY = """\
-Made-up sleep clinic: one row per sleep study episode.
-
-pt_id         Patient identifier.
-episode_no    Number of the episode for this patient (1 = first study).
-study_date    Date of the study.
-ahi           Apnoea-hypopnoea index, events per hour.
-osa_class     Severity class: 1 = mild, 2 = moderate, 3 = severe
-cpap_started  yes if CPAP was started after the study.
-"""
-
-
-def wound_clinic() -> pl.DataFrame:
-    """A made-up wound clinic: one row per patient, wound area at baseline and at week 12.
-
-    W08 has no week-12 area; W09 has no age.
-    """
-    rows = [
-        # patient_id, age, area_baseline_cm2, area_week12_cm2, healed
-        ("W01", 45, 10.0, 5.0, "no"),
-        ("W02", 52, 8.0, 0.0, "yes"),
-        ("W03", 67, 20.0, 15.0, "no"),
-        ("W04", 71, 4.0, 0.0, "yes"),
-        ("W05", 78, 12.0, 9.0, "no"),
-        ("W06", 39, 5.0, 0.0, "yes"),
-        ("W07", 60, 16.0, 4.0, "no"),
-        ("W08", 85, 10.0, None, "no"),
-        ("W09", None, 6.0, 3.0, "no"),
-    ]
+def ledger() -> pl.DataFrame:
+    """30 numbered lines of supply use: nothing names a patient."""
     return pl.DataFrame(
-        rows, schema=["patient_id", "age", "area_baseline_cm2", "area_week12_cm2", "healed"], orient="row"
+        {
+            "line_no": [f"L{i:03d}" for i in range(30)],
+            "ward": [("north", "south", "east")[i % 3] for i in range(30)],
+            "qty": [(i * 7) % 11 + 1 for i in range(30)],
+        }
     )
 
 
-WOUND_DICTIONARY = """\
-Made-up wound clinic: one row per patient.
+# A model reply with every slot of the plan; tests override the slots they are about.
+EMPTY_REPLY: dict[str, Any] = {
+    "answer": "count",
+    "count_of": "patients",
+    "filters": [],
+    "numerator": [],
+    "measure": None,
+    "group_by": None,
+    "period": "none",
+    "cut_points": [],
+    "which_visit": "any",
+}
 
-patient_id         Patient identifier.
-age                Age at baseline, years.
-area_baseline_cm2  Wound area at the first visit, square centimetres.
-area_week12_cm2    Wound area at week 12, square centimetres; empty if not measured.
-healed             yes if the wound had healed by week 12.
-"""
+
+def reply(**slots: Any) -> dict[str, Any]:
+    return {**EMPTY_REPLY, **slots}
+
+
+def cond(column: str, op: str, value: Any = None, values: list[Any] | None = None) -> dict[str, Any]:
+    """One condition slot of a reply."""
+    return {"column": column, "op": op, "value": value, "values": values or []}

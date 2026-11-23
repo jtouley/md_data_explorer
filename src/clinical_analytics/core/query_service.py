@@ -30,6 +30,13 @@ from clinical_analytics.contracts.declarations import (
 )
 from clinical_analytics.contracts.errors import ContractError, ContractStoreError, InvalidDeclarationKeyError
 from clinical_analytics.contracts.quality import QualityReport
+from clinical_analytics.contracts.semantics import (
+    DatasetSemantics,
+    SemanticsMissingError,
+    layer_semantics,
+    semantics_for,
+    with_declarations,
+)
 from clinical_analytics.contracts.store import latest_report
 from clinical_analytics.core import answer_checks, counting_unit, estimates, nl_query_config
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
@@ -51,9 +58,11 @@ from clinical_analytics.core.word_accounting import (
     unjustified_elements,
     unjustified_reason,
 )
+from clinical_analytics.model_query.checks import matcher_may_answer
 from clinical_analytics.model_query.context import DatasetContext, build_context
 from clinical_analytics.model_query.engine import answer_question
 from clinical_analytics.model_query.llm import ModelFn, model_available, ollama_model
+from clinical_analytics.model_query.present import has_value
 from clinical_analytics.sql.catalog import SqlCatalog
 from clinical_analytics.sql.errors import SqlRefusedError
 from clinical_analytics.sql.sandbox import SandboxConnection
@@ -361,10 +370,25 @@ class QueryService:
             question, dataset_id, upload_id, dataset_version, matcher_turns,
             False, None, None, use_model_tier=False,
         )  # fmt: skip
-        if fast.analysis is not None and not fast.requires_confirmation and not _has_error(fast):
+        if self._matcher_answers(question, fast, model_path.context):
             logger.info("question_answered_by_matcher", dataset_id=dataset_id)
             return fast
         return self._ask_model(question, model_path, conversation_history)
+
+    @staticmethod
+    def _matcher_answers(question: str, fast: QueryResult, context: DatasetContext) -> bool:
+        """The keyword matcher's answer stands in front of the model only for a question it fully
+        reads (``model_query.checks.matcher_may_answer``) and with a value: never a zero or an
+        empty result from a filter it did not match, which hands the question to the model."""
+        if fast.analysis is None or fast.requires_confirmation or _has_error(fast) or fast.plan is None:
+            return False
+        if not has_value(fast.analysis):
+            return False
+        plan = fast.plan
+        used = frozenset(
+            name for name in (plan.metric, plan.group_by, *(f.column for f in plan.filters)) if isinstance(name, str)
+        )
+        return matcher_may_answer(question, context, used)
 
     def _ask_matcher(
         self,
@@ -533,21 +557,37 @@ class QueryService:
             return None
         cached = self._model_context
         if cached is None or cached[0] != (version, declared):
-            grain = declared.grains[0] if declared.grains else None
-            key = catalog.id_column.name if catalog.id_column is not None else None
+            semantics = self._semantics(dataset_id, version)
+            if semantics is None:
+                return None
             try:
                 with SandboxConnection(catalog) as sandbox:
                     context = build_context(
-                        sandbox,
-                        catalog,
-                        doc_context=self._upload_text(dataset_id, "doc_context"),
-                        confirmed_patient_rows=grain is not None and grain.grain == "patient" and grain.key == key,
-                        title=self._upload_text(dataset_id, "dataset_name") or "",
+                        sandbox, catalog, semantics, title=self._upload_text(dataset_id, "dataset_name") or ""
                     )
             except SqlRefusedError:
                 return None
             cached = self._model_context = ((version, declared), context)
         return _ModelPath(catalog=catalog, context=cached[1])
+
+    def _semantics(self, dataset_id: str, version: str) -> DatasetSemantics | None:
+        """The version's contract semantics with the user's declarations applied (ADR017): what
+        the model is told and the compiler reads. A version written before semantics existed
+        reads the copy its semantic layer was built with."""
+        assert self.data_dir is not None
+        try:
+            return semantics_for(self.data_dir, dataset_id, version, declarations=self.declarations)
+        except SemanticsMissingError:
+            built = layer_semantics(self.semantic_layer)
+            if built is None:
+                logger.info("model_query_skipped_no_semantics", dataset_id=dataset_id)
+                return None
+            return with_declarations(
+                built.model_copy(update={"dataset_version": version}), self.declarations.load(dataset_id)
+            )
+        except ContractError as e:
+            logger.warning("model_query_semantics_unreadable", dataset_id=dataset_id, error_type=type(e).__name__)
+            return None
 
     def _upload_text(self, dataset_id: str, key: str) -> str | None:
         """A text field of the upload's metadata: its data dictionary (``doc_context``) or the name
@@ -578,7 +618,6 @@ class QueryService:
             path.context,
             model=self._model,
             open_sandbox=lambda: SandboxConnection(path.catalog),
-            fmt=nl_query_config.MODEL_QUERY_FORMAT,  # type: ignore[arg-type]
             max_attempts=nl_query_config.MODEL_QUERY_MAX_ATTEMPTS,
             previous=previous,
         )

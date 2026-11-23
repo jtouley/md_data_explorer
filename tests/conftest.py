@@ -2163,17 +2163,29 @@ def make_sql_catalog(tmp_path, make_contract):
 
 @pytest.fixture
 def make_query_table(make_sql_catalog):
-    """Factory: (catalog, context) of ``df`` for the model-written query path: the table as the
-    sandbox reads it and as the model is told about it (``model_query.context``)."""
+    """Factory: (catalog, context) of ``df`` for the model-written query path, built as an upload
+    builds it: the one semantics pass (with ``doc_context`` as the data dictionary), its typed
+    values, the contract from those semantics, and ``model_query.context`` read from them.
+    ``semantics_update`` overrides fields of the inferred semantics (a declaration, an open
+    question)."""
+    from clinical_analytics.contracts.inference import UploadFacts, apply_semantics, infer_semantics
     from clinical_analytics.model_query.context import build_context
     from clinical_analytics.sql.sandbox import SandboxConnection
 
-    def _make(df: pl.DataFrame, doc_context: str | None = None, confirmed_patient_rows: bool = False, **overrides: Any):
-        catalog = make_sql_catalog(df, **overrides)
+    def _make(
+        df: pl.DataFrame,
+        doc_context: str | None = None,
+        title: str = "",
+        semantics_update: dict[str, Any] | None = None,
+        **overrides: Any,
+    ):
+        semantics = infer_semantics(df, UploadFacts(doc_context=doc_context))
+        if semantics_update:
+            semantics = semantics.model_copy(update=semantics_update)
+        typed = apply_semantics(df, semantics)
+        catalog = make_sql_catalog(typed, semantics=semantics, id_column=semantics.patient_key_column, **overrides)
         with SandboxConnection(catalog) as sandbox:
-            context = build_context(
-                sandbox, catalog, doc_context=doc_context, confirmed_patient_rows=confirmed_patient_rows
-            )
+            context = build_context(sandbox, catalog, semantics, title=title)
         return catalog, context
 
     return _make
@@ -2189,7 +2201,7 @@ def make_model_ask():
     def _make(table: tuple[Any, Any]):
         catalog, context = table
 
-        def _ask(question: str, *replies: dict[str, Any]):
+        def _ask(question: str, *replies: dict[str, Any], previous: tuple = ()):
             queue = list(replies)
             prompts: list[str] = []
 
@@ -2198,7 +2210,12 @@ def make_model_ask():
                 return queue.pop(0) if queue else None
 
             answer = answer_question(
-                question, context, model=model, open_sandbox=lambda: SandboxConnection(catalog), examples=[]
+                question,
+                context,
+                model=model,
+                open_sandbox=lambda: SandboxConnection(catalog),
+                examples=[],
+                previous=previous,
             )
             return answer, prompts
 
