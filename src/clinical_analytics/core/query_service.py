@@ -218,6 +218,9 @@ class QueryResult:
     failure_reason: str | None = None  # Hold or refuse reason
     plan_line: str | None = None  # One-line plan summary for confirm UI
     plan_hash: str | None = None  # Canonical hash of the executable plan; a confirmation must return it
+    # Ids of the open questions about the file this answer waits on (contracts.holds); never
+    # released by a confirmation, only by answering them.
+    open_questions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -509,16 +512,28 @@ class QueryService:
             )
         # An open question of the contract holds the answer until the user answers it; a plan
         # confirmation never releases it (ADR017, contracts.holds).
-        held = self._open_question_hold(query_plan) or self._survey_refusal(normalized_query)
-        if held is not None:
+        waiting = self._open_question_hold(query_plan)
+        if waiting is not None:
             return QueryResult(
                 plan=query_plan,
-                issues=[{"message": held, "severity": "warning"}],
+                issues=[{"message": waiting[0], "severity": "warning"}],
                 result=None,
                 confidence=query_intent.confidence,
                 run_key=None,
                 context=None,
-                failure_reason=held,
+                failure_reason=waiting[0],
+                open_questions=waiting[1],
+            )
+        declined = self._survey_refusal(normalized_query)
+        if declined is not None:
+            return QueryResult(
+                plan=query_plan,
+                issues=[{"message": declined, "severity": "warning"}],
+                result=None,
+                confidence=query_intent.confidence,
+                run_key=None,
+                context=None,
+                failure_reason=declined,
             )
         cases = self._aggregate_cases(query_plan)
         if cases is not None:
@@ -1028,8 +1043,8 @@ class QueryService:
         findings.notes.extend(answer_checks.missingness_notes(layer, columns, answer_checks.flagged_columns(report)))
         return findings
 
-    def _open_question_hold(self, plan: QueryPlan) -> str | None:
-        """The held-answer sentence when the plan reads what an unanswered question concerns,
+    def _open_question_hold(self, plan: QueryPlan) -> tuple[str, tuple[str, ...]] | None:
+        """(the held-answer sentence, the question ids) when the plan reads what an unanswered question concerns,
         checked on the leased layer's own semantics: an answer stored while this question runs
         never releases a hold on a layer built before it."""
         from clinical_analytics.contracts.holds import held_message, open_question_holds
@@ -1040,7 +1055,7 @@ class QueryService:
             columns=set(answer_checks.plan_columns(plan)),
             counts_lines=plan.intent == "COUNT" and not plan.metric,
         )
-        return held_message(holds) if holds else None
+        return (held_message(holds), tuple(h.question_id for h in holds)) if holds else None
 
     def _survey_refusal(self, question: str) -> str | None:
         """A national-estimate question on a survey sample: its counts are of this file's people,

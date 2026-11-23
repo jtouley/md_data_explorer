@@ -535,6 +535,44 @@ const clinicalAPI = {
    * @param {string} [countsCasesIn] third answer: each row counts cases for a group, in this column
    * @returns {Promise<{ dataset_id: string, counts: 'patients' | 'rows' | 'cases' }>}
    */
+  /**
+   * The open questions about a dataset's file, each with its answers (route and body).
+   * @param {string} datasetId
+   */
+  async getFileQuestions(datasetId) {
+    const enc = encodeURIComponent(datasetId);
+    const response = await apiFetch(`${API_BASE_URL}/api/datasets/${enc}/questions`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw httpFailureError(response, data);
+    }
+    return data;
+  },
+
+  /**
+   * Post one answer to the route its question names (only the known answer routes).
+   * @param {string} datasetId
+   * @param {string} route
+   * @param {Record<string, unknown>} body
+   */
+  async answerFileQuestion(datasetId, route, body) {
+    const routes = ['/answers', '/missing-codes', '/date-readings', '/one-row-per-patient'];
+    if (!routes.includes(route)) {
+      throw new Error('That answer cannot be saved.');
+    }
+    const enc = encodeURIComponent(datasetId);
+    const response = await apiFetch(`${API_BASE_URL}/api/datasets/${enc}${route}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw httpFailureError(response, data);
+    }
+    return data;
+  },
+
   async answerOneRowPerPatient(datasetId, confirmation, oneRowPerPatient, countsCasesIn) {
     const enc = encodeURIComponent(datasetId);
     const body = { confirmation, one_row_per_patient: oneRowPerPatient === true };

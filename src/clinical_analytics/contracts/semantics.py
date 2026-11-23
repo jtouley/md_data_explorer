@@ -416,8 +416,8 @@ def _with_answers(semantics: DatasetSemantics, answers: Any) -> DatasetSemantics
         settled = answer is not None and answer in q.options
         if q.kind == "aggregate_unsure" and records:
             settled = True
-        if q.kind == "repeated_strata" and settled and answer != q.options[0]:
-            settled = False  # lines that replace each other: no sum can be given
+        if q.kind in ("repeated_strata", "person_role") and settled and answer != q.options[0]:
+            settled = False  # lines that replace each other, or one line per mother: not supported
         if q.kind == "total_row" and settled and answer == q.options[0] and aggregate is not None and q.column:
             aggregate = _with_total(aggregate, q.column, str(q.value))
         questions.append(q.model_copy(update={"answered": True}) if settled else q)

@@ -111,7 +111,7 @@ class AsyncQueryResult:
     """Result of async query execution."""
 
     query_id: str
-    status: str  # "pending", "processing", "completed", "failed", "awaiting_confirmation"
+    status: str  # "pending", "processing", "completed", "failed", "awaiting_confirmation", "awaiting_answers"
     intent_type: str | None = None
     result: dict[str, Any] | None = None
     interpretation: str | None = None
@@ -123,6 +123,7 @@ class AsyncQueryResult:
     failure_reason: str | None = None
     plan_line: str | None = None
     plan_hash: str | None = None
+    open_questions: list[str] = field(default_factory=list)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
 
@@ -319,6 +320,22 @@ class AsyncQueryService:
                 },
             )
             logger.info("query_awaiting_confirmation", query_id=query_id)
+            return
+
+        if result.open_questions:
+            # Waits on questions about the file (contracts.holds): only answering them releases it.
+            self._queries[query_id].status = "awaiting_answers"
+            self._queries[query_id].open_questions = list(result.open_questions)
+            self._emit_event(
+                query_id,
+                "query_needs_answers",
+                {
+                    "query_id": query_id,
+                    "failure_reason": result.failure_reason,
+                    "open_questions": list(result.open_questions),
+                },
+            )
+            logger.info("query_awaiting_answers", query_id=query_id, questions=len(result.open_questions))
             return
 
         if result.issues:
@@ -695,7 +712,9 @@ class AsyncQueryService:
             intent_type = result.context.inferred_intent.value
 
         status = "awaiting_confirmation" if result.requires_confirmation else "completed"
-        if result.issues and not result.requires_confirmation:
+        if result.open_questions:
+            status = "awaiting_answers"
+        elif result.issues and not result.requires_confirmation:
             errors = [i["message"] for i in result.issues if i.get("severity") == "error"]
             if errors:
                 status = "failed"
@@ -711,6 +730,7 @@ class AsyncQueryService:
             failure_reason=result.failure_reason,
             plan_line=self._plan_line_of(result),
             plan_hash=result.plan_hash,
+            open_questions=list(result.open_questions),
             error=(
                 "; ".join(i["message"] for i in result.issues if i.get("severity") == "error")
                 if status == "failed"
@@ -759,6 +779,7 @@ class AsyncQueryService:
                 "completed",
                 "failed",
                 "awaiting_confirmation",
+                "awaiting_answers",
             ):
                 # Send explicit stream_end signal for client to close connection
                 yield SSEEvent(

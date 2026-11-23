@@ -552,8 +552,9 @@ OPEN_QUESTION_METRIC = "openQuestion"
 
 
 def open_question_results(contract: OpenDataContractStandard) -> list[QualityCheckResult]:
-    """Values the contract's semantics ask about ("Does 999 in trop_ng_l mean not recorded?"):
-    listed as needing an answer, never reported as "no problems" (ADR017)."""
+    """Every open question of the contract's semantics, of any kind ("Does 999 in trop_ng_l mean
+    not recorded?", "Is each line one patient?"): listed as needing an answer, never reported as
+    "no problems" (ADR017)."""
     from clinical_analytics.contracts.semantics import semantics_from_contract
 
     semantics = semantics_from_contract(contract)
@@ -569,10 +570,10 @@ def open_question_results(contract: OpenDataContractStandard) -> list[QualityChe
             status="warning",
             count=None,
             percent=None,
-            message=f"Needs your answer: {question.question} Answers on {question.column} are held until then",
+            message=f"Needs your answer: {question.question} Answers that depend on it wait until then.",
         )
         for question in semantics.open_questions
-        if question.kind == "missing_code" and question.column
+        if not question.answered
     ]
 
 

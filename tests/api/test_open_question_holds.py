@@ -182,3 +182,66 @@ def test_aggregatePath_everyKind_heldNoTable(
     assert body["status"] == "held"
     assert body["table"] is None
     assert f"Question of kind {kind}?" in body["message"]
+
+
+# --------------------------------------------------------------------------- the panel's routes
+def test_fileQuestions_answerFromThePanelRoute_releasesTheHold(
+    test_client: TestClient, upload: Callable[..., Any]
+) -> None:
+    # Arrange: chest-pain troponin with an undocumented 999 the upload asks about
+    from clinical_analytics.core.query_service import QueryService
+
+    frame = pl.DataFrame(
+        {
+            "mrn": [f"C{i:03d}" for i in range(200)],
+            "trop_ng_l": [999.0 if i % 20 == 0 else 4.0 + i % 30 for i in range(200)],
+        }
+    )
+    upload_id = test_client.post(
+        "/api/datasets/upload",
+        files={"file": ("trop.csv", frame.write_csv().encode(), "text/csv")},
+        data={"dataset_name": "trop_panel"},
+    ).json()["upload_id"]
+
+    def ask() -> Any:
+        with dependencies.lease_semantic_layer(upload_id) as lease:
+            return QueryService(lease.layer).ask("average trop_ng_l", dataset_id=upload_id, dataset_version="v1")
+
+    held = ask()
+    listed = test_client.get(f"/api/datasets/{upload_id}/questions").json()["questions"]
+
+    # Act
+    answer = listed[0]["answers"][0]
+    saved = test_client.post(f"/api/datasets/{upload_id}{answer['route']}", json=answer["body"])
+    released = ask()
+    after = test_client.get(f"/api/datasets/{upload_id}/questions").json()["questions"]
+    dependencies.invalidate_semantic_layer_cache(upload_id)
+
+    # Assert: counts only as evidence; the panel's route records the answer and releases the hold
+    assert held.analysis is None and held.open_questions == ("missing_code:trop_ng_l:999.0",)
+    assert [(q["kind"], q["evidence"]) for q in listed] == [("missing_code", "10 lines of trop_ng_l hold 999.0.")]
+    assert [a["route"] for a in listed[0]["answers"]] == ["/missing-codes", "/missing-codes"]
+    assert saved.status_code == 200, saved.text
+    assert released.analysis is not None, released.failure_reason
+    assert after == []
+
+
+def test_qualityReport_everyKind_listedUntilAnswered(test_client: TestClient, upload: Callable[..., Any]) -> None:
+    # Arrange: a file without IDs asks "Is each line one patient?"
+    frame = pl.DataFrame({"ward": ["North", "South", "East"] * 100, "pain_score": [i % 10 for i in range(300)]})
+    response = upload(frame, "ward_pain")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    before = test_client.get(f"/api/datasets/{body['upload_id']}/quality").json()
+
+    # Act
+    test_client.post(
+        f"/api/datasets/{body['upload_id']}/one-row-per-patient",
+        json={"confirmation": body["one_row_per_patient"]["confirmation"], "one_row_per_patient": False},
+    )
+    after = test_client.get(f"/api/datasets/{body['upload_id']}/quality").json()
+
+    # Assert
+    asked = [c["id"] for c in before["checks"] if c["metric"] == "openQuestion"]
+    assert "rows_are_patients" in asked
+    assert "rows_are_patients" not in [c["id"] for c in after["checks"] if c["metric"] == "openQuestion"]

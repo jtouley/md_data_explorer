@@ -48,7 +48,7 @@ from clinical_analytics.core.export_boundary import SMALL_MAX, SMALL_MIN, export
 from clinical_analytics.eval.headless import HIDDEN, TOTAL_COUNT, count_grain, presented_answer
 
 Grade: TypeAlias = Literal["RIGHT", "WRONG", "HELD", "ERROR"]
-Status: TypeAlias = Literal["completed", "failed", "awaiting_confirmation", "timeout", "error"]
+Status: TypeAlias = Literal["completed", "failed", "awaiting_confirmation", "awaiting_answers", "timeout", "error"]
 # ("female",) is a group's patients; ("female", "events") / ("female", "non_events") the
 # patients with and without the outcome in it; ("total",) the whole answer's patients.
 CellKey: TypeAlias = tuple[str, ...]
@@ -313,7 +313,7 @@ def score(question: dict[str, Any], oracle: OracleAnswer, outcome: ApiOutcome) -
         return Scored("ERROR", False, f"no trustworthy oracle answer: {oracle.oracle_error}")
     if outcome.status == "failed" and UNEXPECTED_FAILURE_MESSAGE in (outcome.error or ""):
         return Scored("ERROR", False, f"exception: {outcome.error}")
-    if outcome.status in ("failed", "awaiting_confirmation"):
+    if outcome.status in ("failed", "awaiting_confirmation", "awaiting_answers"):
         reason = outcome.failure_reason or outcome.error or outcome.status
         return Scored("RIGHT" if expect == "held" else "HELD", False, f"{outcome.status}: {reason}")
     presentation = outcome.presentation or {}
