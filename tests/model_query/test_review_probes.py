@@ -148,6 +148,7 @@ def test_answer_question_openMissingCodeOnCountColumn_isHeld(make_query_table, m
 
     # Assert
     assert answer.analysis is None and "Does -1 in discard_count mean not recorded?" in answer.reason
+    assert answer.open_questions == ("q",)  # offered to answer, as on every path
 
 
 def test_answer_question_perPatientFactOnVisits_readsOneValuePerPatient(make_query_table, make_model_ask):

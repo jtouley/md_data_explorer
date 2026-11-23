@@ -163,8 +163,8 @@ class QueryResult(BaseModel):
         ...,
         description="Detected intent (DESCRIBE, COMPARE_GROUPS, FIND_PREDICTORS, etc.)",
     )
-    status: Literal["pending", "processing", "completed", "failed", "awaiting_confirmation"] = Field(
-        ..., description="Query status"
+    status: Literal["pending", "processing", "completed", "failed", "awaiting_confirmation", "awaiting_answers"] = (
+        Field(..., description="Query status")
     )
     confidence: float | None = Field(None, ge=0.0, le=1.0, description="Confidence score for intent detection")
     result_data: dict[str, Any] | None = Field(None, description="Query result data (structure varies by intent)")
@@ -180,6 +180,9 @@ class QueryResult(BaseModel):
     choices: list[dict[str, str]] = Field(
         default_factory=list,
         description="When the app asks back: concrete choices as {label, question}; ask a choice's question to answer",
+    )
+    open_questions: list[str] = Field(
+        default_factory=list, description="With status awaiting_answers: ids of the file's questions to answer first"
     )
 
 
@@ -312,6 +315,7 @@ class SSEEvent(BaseModel):
         "query_completed",
         "query_failed",
         "query_awaiting_confirmation",
+        "query_needs_answers",
         "interpretation_ready",
         "stream_end",
     ] = Field(..., description="Event type")

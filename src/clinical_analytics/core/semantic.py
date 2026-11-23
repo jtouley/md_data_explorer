@@ -890,9 +890,14 @@ class SemanticLayer:
 
         # 0. What the user confirmed about values (ADR017): "999 means not recorded", the format
         # of a date column; the same reads every reader applies (contracts.readings).
-        from clinical_analytics.contracts.readings import ibis_reads
+        from clinical_analytics.contracts.readings import ibis_reads, ibis_total_filter
 
-        mutations.update(ibis_reads(raw, self.config.get(DECLARED_READS_KEY) or {}))
+        reads = self.config.get(DECLARED_READS_KEY) or {}
+        # A frequency table's total rows are never read: no answer adds a total to its groups.
+        keep = ibis_total_filter(raw, reads)
+        if keep is not None:
+            raw = raw.filter(keep)
+        mutations.update(ibis_reads(raw, reads))
 
         # 1. Build outcome columns from config
         outcomes = self.config.get("outcomes", {})

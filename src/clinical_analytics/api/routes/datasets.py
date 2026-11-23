@@ -11,7 +11,6 @@ Endpoints:
 """
 
 import asyncio
-from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -29,6 +28,7 @@ from clinical_analytics.api.dependencies import (
     invalidate_semantic_layer_cache,
     reject_if_deleting,
 )
+from clinical_analytics.api.file_questions import FileQuestion, file_questions
 from clinical_analytics.api.models import database as db_models
 from clinical_analytics.api.routes.queries import forget_query_service
 from clinical_analytics.contracts.builder import logical_type
@@ -410,7 +410,7 @@ def get_dataset_quality(dataset_id: str) -> QualityReport:
             status_code=500, detail=f"Could not check this dataset's quality ({type(e).__name__})."
         ) from e
     declarations = _upload_declarations(storage, dataset_id)
-    report = _without_answered_questions(report, declarations.missing_codes_for(version))
+    report = _without_answered_questions(report, declarations, version)
     log.info("dataset_quality_completed", failed=report.failed, warnings=report.warnings)
     return report.model_copy(update={"facts": _facts(_contract_semantics(storage, dataset_id), declarations)})
 
@@ -423,17 +423,30 @@ def _drop_cached_answers(dataset_id: str) -> None:
     logger.info("dataset_cached_answers_dropped", dataset_id=dataset_id)
 
 
-def _without_answered_questions(report: QualityReport, answers: Sequence[MissingCodeDeclaration]) -> QualityReport:
-    """The stored report without the "Needs your answer" lines the user has answered since it ran
-    (ids ``missing_code:<column>:<value>``): an answer never waits for the next report to show."""
+def _without_answered_questions(report: QualityReport, declarations: Declarations, version: str) -> QualityReport:
+    """The stored report without the "Needs your answer" lines the user has answered since it ran,
+    read from the declarations alone (no contract read): an answer never waits for the next report."""
     from clinical_analytics.core.answer_checks import same_value_key
 
-    answered = {(a.column, same_value_key(a.value)) for a in answers}
+    codes = {(a.column, same_value_key(a.value)) for a in declarations.missing_codes_for(version)}
+    dated = {d.column for d in declarations.date_readings_for(version)}
+    given = {a.question_id: a.answer for a in declarations.answers_for(version)}
+    table_kind = declarations.grain_for(version) is not None or declarations.aggregate_for(version) is not None
 
     def is_answered(check: QualityCheckResult) -> bool:
-        prefix, _, rest = check.id.partition(":")
+        kind, _, rest = check.id.partition(":")
         column, _, value = rest.rpartition(":")
-        return prefix == "missing_code" and bool(column) and (column, same_value_key(value)) in answered
+        if kind == "missing_code":
+            return bool(column) and (column, same_value_key(value)) in codes
+        if kind in ("date_order", "date_century"):
+            return rest in dated
+        if kind in ("rows_are_patients", "aggregate_unsure"):
+            return table_kind or check.id in given or "rows_are_patients" in given
+        if kind in ("repeated_strata", "unit_missing"):
+            return given.get(check.id, "").startswith("yes")
+        if kind == "person_role":
+            return given.get(check.id) == "one baby"
+        return check.id in given
 
     kept = [c for c in report.checks if not (c.metric == OPEN_QUESTION_METRIC and is_answered(c))]
     dropped = len(report.checks) - len(kept)
@@ -901,6 +914,11 @@ class MissingCodeAnswer(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     column: str = Field(..., min_length=1, max_length=512)
+    # One answer for every column a shared dictionary note asks about ("999 means not recorded for
+    # all measurements"): each must be asked about the same value.
+    also_columns: list[Annotated[str, Field(min_length=1, max_length=512)]] = Field(
+        default_factory=list, max_length=500
+    )
     value: StrictInt | StrictFloat | str = Field(
         ..., description='The value the question asks about (999, 999.0 and "999" are one value)'
     )
@@ -933,7 +951,6 @@ def answer_missing_code(dataset_id: str, answer: MissingCodeAnswer) -> MissingCo
         HTTPException: 400 bad id, 404 unknown dataset, 409 not asked on this version, 500 when
             the answer can't be stored.
     """
-    from clinical_analytics.contracts.declarations import MissingCodeDeclaration
     from clinical_analytics.contracts.semantics import describe
 
     try:
@@ -946,34 +963,81 @@ def answer_missing_code(dataset_id: str, answer: MissingCodeAnswer) -> MissingCo
         semantics = _contract_semantics(storage, dataset_id)
         if semantics is None:
             raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
-        asked = next(
-            (
-                q
-                for q in semantics.open_questions
-                if q.kind == "missing_code"
-                and q.column == answer.column
-                and same_value_key(q.value) == same_value_key(answer.value)
-            ),
-            None,
-        )
-        if asked is None or asked.value is None:
-            raise HTTPException(status_code=409, detail="This cohort is not asked about that value.")
-        declaration = MissingCodeDeclaration(
-            column=answer.column,
-            value=asked.value,
-            missing=answer.not_recorded,
-            dataset_version=semantics.dataset_version,
-        )
-        try:
-            FileDeclarationStore(storage.upload_dir.parent).update(
-                dataset_id, lambda current: current.with_missing_code(declaration)
+        declarations = []
+        for column in dict.fromkeys([answer.column, *answer.also_columns]):
+            asked = next(
+                (
+                    q
+                    for q in semantics.open_questions
+                    if q.kind == "missing_code"
+                    and q.column == column
+                    and same_value_key(q.value) == same_value_key(answer.value)
+                ),
+                None,
             )
+            if asked is None or asked.value is None:
+                raise HTTPException(status_code=409, detail="This cohort is not asked about that value.")
+            declarations.append(
+                MissingCodeDeclaration(
+                    column=column,
+                    value=asked.value,
+                    missing=answer.not_recorded,
+                    dataset_version=semantics.dataset_version,
+                )
+            )
+
+        def record(current: Declarations) -> Declarations:
+            for declaration in declarations:
+                current = current.with_missing_code(declaration)
+            return current
+
+        try:
+            FileDeclarationStore(storage.upload_dir.parent).update(dataset_id, record)
         except (ContractStoreError, InvalidDeclarationKeyError) as e:
             logger.error("missing_code_answer_not_saved", dataset_id=dataset_id, **error_fields(e))
             raise HTTPException(status_code=500, detail="The answer couldn’t be stored. Try again.") from e
     _drop_cached_answers(dataset_id)
     declared = _contract_semantics(storage, dataset_id, declared=True)
     return MissingCodeResult(dataset_id=dataset_id, facts=describe(declared) if declared else [])
+
+
+class FileQuestionsResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_id: str
+    questions: list[FileQuestion]
+
+
+@router.get("/datasets/{dataset_id}/questions", response_model=FileQuestionsResult)
+def get_file_questions(dataset_id: str) -> FileQuestionsResult:
+    """The open questions about the active version, each with its evidence (counts only) and its
+    answers (the route and body that record each), for the app's "Questions about your file".
+
+    Raises:
+        HTTPException: 400 bad id, 404 unknown dataset or no stored data, 500 when the contract
+            can't be read.
+    """
+    from clinical_analytics.core.patient_rows import question_token
+
+    try:
+        validate_dataset_id(dataset_id)
+    except InvalidDatasetIdError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    reject_if_deleting(dataset_id)
+    storage = UserDatasetStorage()
+    metadata = storage.get_upload_metadata(dataset_id)
+    declared = _contract_semantics(storage, dataset_id, declared=True)
+    if metadata is None or declared is None:
+        raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
+    try:
+        frame = storage.stored_dataset(dataset_id, metadata).scan_cohort()
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=f"Dataset {dataset_id} has no stored data") from e
+    questions = file_questions(
+        declared, frame, lambda: question_token(metadata, _contract_semantics(storage, dataset_id))
+    )
+    logger.info("file_questions_listed", dataset_id=dataset_id, questions=len(questions))
+    return FileQuestionsResult(dataset_id=dataset_id, questions=questions)
 
 
 class QuestionAnswerRequest(BaseModel):

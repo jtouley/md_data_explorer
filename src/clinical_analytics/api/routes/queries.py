@@ -258,6 +258,7 @@ async def get_query_result(
         plan_line=result.plan_line,
         plan_hash=result.plan_hash,
         choices=result.choices,
+        open_questions=list(result.open_questions),
     )
 
 

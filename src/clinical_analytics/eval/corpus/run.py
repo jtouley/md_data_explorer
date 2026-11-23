@@ -101,7 +101,7 @@ POLL_S = 0.5
 # How long a question waits for an earlier timed-out query that is still running, before it is
 # an ERROR: ask() already gave that query 2 x timeout, so this only absorbs one that ends just after.
 PENDING_GRACE_S = 10.0
-TERMINAL = {"completed", "failed", "awaiting_confirmation"}
+TERMINAL = {"completed", "failed", "awaiting_confirmation", "awaiting_answers"}
 # Log events (core/nl_query_engine.py) that mean the model tier was asked and did not answer.
 LLM_FAILURE_EVENTS = (
     "llm_parse_exception_fallback_to_stub",

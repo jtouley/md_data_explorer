@@ -169,7 +169,8 @@ def test_aggregatePath_everyKind_heldNoTable(
         files={"file": ("a.csv", buffer.getvalue(), "text/csv")},
         data={"dataset_name": "AtlasPlus", "population_estimates": POPULATION_ESTIMATES_FORM_VALUE},
     ).json()["upload_id"]
-    monkeypatch.setattr(aggregate, "_version_semantics", lambda *_a, **_k: _asking(kind))
+    dimension = "Geography"  # a key dimension every AtlasPlus question reads
+    monkeypatch.setattr(aggregate, "_version_semantics", lambda *_a, **_k: _asking(kind, column=dimension))
 
     # Act
     body = test_client.post(
@@ -182,3 +183,149 @@ def test_aggregatePath_everyKind_heldNoTable(
     assert body["status"] == "held"
     assert body["table"] is None
     assert f"Question of kind {kind}?" in body["message"]
+
+
+# --------------------------------------------------------------------------- the panel's routes
+def test_fileQuestions_answerFromThePanelRoute_releasesTheHold(
+    test_client: TestClient, upload: Callable[..., Any]
+) -> None:
+    # Arrange: chest-pain troponin with an undocumented 999 the upload asks about
+    from clinical_analytics.core.query_service import QueryService
+
+    frame = pl.DataFrame(
+        {
+            "mrn": [f"C{i:03d}" for i in range(200)],
+            "trop_ng_l": [999.0 if i % 20 == 0 else 4.0 + i % 30 for i in range(200)],
+        }
+    )
+    upload_id = test_client.post(
+        "/api/datasets/upload",
+        files={"file": ("trop.csv", frame.write_csv().encode(), "text/csv")},
+        data={"dataset_name": "trop_panel"},
+    ).json()["upload_id"]
+
+    def ask() -> Any:
+        with dependencies.lease_semantic_layer(upload_id) as lease:
+            return QueryService(lease.layer).ask("average trop_ng_l", dataset_id=upload_id, dataset_version="v1")
+
+    held = ask()
+    listed = test_client.get(f"/api/datasets/{upload_id}/questions").json()["questions"]
+
+    # Act
+    answer = listed[0]["answers"][0]
+    saved = test_client.post(f"/api/datasets/{upload_id}{answer['route']}", json=answer["body"])
+    released = ask()
+    after = test_client.get(f"/api/datasets/{upload_id}/questions").json()["questions"]
+    dependencies.invalidate_semantic_layer_cache(upload_id)
+
+    # Assert: counts only as evidence; the panel's route records the answer and releases the hold
+    assert held.analysis is None and held.open_questions == ("missing_code:trop_ng_l:999.0",)
+    assert [(q["kind"], q["evidence"]) for q in listed] == [("missing_code", "10 lines of trop_ng_l hold 999.0.")]
+    assert [a["route"] for a in listed[0]["answers"]] == ["/missing-codes", "/missing-codes"]
+    assert saved.status_code == 200, saved.text
+    assert released.analysis is not None, released.failure_reason
+    assert after == []
+
+
+def test_qualityReport_everyKind_listedUntilAnswered(test_client: TestClient, upload: Callable[..., Any]) -> None:
+    # Arrange: a file without IDs asks "Is each line one patient?"
+    frame = pl.DataFrame({"ward": ["North", "South", "East"] * 100, "pain_score": [i % 10 for i in range(300)]})
+    response = upload(frame, "ward_pain")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    before = test_client.get(f"/api/datasets/{body['upload_id']}/quality").json()
+
+    # Act
+    test_client.post(
+        f"/api/datasets/{body['upload_id']}/one-row-per-patient",
+        json={"confirmation": body["one_row_per_patient"]["confirmation"], "one_row_per_patient": False},
+    )
+    after = test_client.get(f"/api/datasets/{body['upload_id']}/quality").json()
+
+    # Assert
+    asked = [c["id"] for c in before["checks"] if c["metric"] == "openQuestion"]
+    assert "rows_are_patients" in asked
+    assert "rows_are_patients" not in [c["id"] for c in after["checks"] if c["metric"] == "openQuestion"]
+
+
+def test_aggregatePath_questionOnAColumnNotRead_answered(
+    test_client: TestClient,
+    isolated_data_home: Path,
+    make_public_table: Callable[..., pl.DataFrame],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Arrange: a missing-code question on a column the estimate question never reads
+    from clinical_analytics.api.routes import aggregate
+
+    buffer = io.BytesIO()
+    make_public_table("atlasplus").write_csv(buffer)
+    upload_id = test_client.post(
+        "/api/datasets/upload",
+        files={"file": ("a.csv", buffer.getvalue(), "text/csv")},
+        data={"dataset_name": "AtlasPlus", "population_estimates": POPULATION_ESTIMATES_FORM_VALUE},
+    ).json()["upload_id"]
+    monkeypatch.setattr(aggregate, "_version_semantics", lambda *_a, **_k: _asking("missing_code", column="no_such"))
+
+    # Act
+    body = test_client.post(
+        "/api/aggregate/questions",
+        json={"dataset_ids": [upload_id], "question": "AtlasPlus syphilis rate in Michigan, 2023"},
+    ).json()
+    dependencies.invalidate_semantic_layer_cache(upload_id)
+
+    # Assert
+    assert "Question of kind" not in body["message"]
+
+
+@pytest.mark.parametrize(
+    "notes",
+    [
+        pytest.param("\nFor all measurements, 9999 = not recorded.\n", id="one-shared-note"),
+        pytest.param(
+            "alt  ALT, U/L. Missing values were coded as 9999.\nast  AST, U/L. 9999 indicates the test was not done.\n"
+            "ggt  GGT, U/L. Missing values were coded as 9999.\n",
+            id="a-note-per-column",
+        ),
+    ],
+)
+def test_fileQuestions_sharedNoteOnSeveralColumns_oneQuestionOneAnswer(
+    test_client: TestClient, isolated_data_home: Path, notes: str
+) -> None:
+    # Arrange: one prose note, 9999 present in three lab columns
+    import zipfile
+
+    frame = pl.DataFrame(
+        {
+            "mrn": [f"L{i:03d}" for i in range(300)],
+            "alt": [9999 if i % 30 == 0 else 20 + i % 40 for i in range(300)],
+            "ast": [9999 if i % 25 == 0 else 18 + i % 35 for i in range(300)],
+            "ggt": [9999 if i % 50 == 0 else 30 + i % 60 for i in range(300)],
+        }
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("labs.csv", frame.write_csv())
+        zf.writestr(
+            "dictionary.txt",
+            "mrn  Medical record number (patient identifier)\n" + notes,
+        )
+    uploaded = test_client.post(
+        "/api/datasets/upload",
+        files={"file": ("labs.zip", buf.getvalue(), "application/zip")},
+        data={"dataset_name": "labs"},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    upload_id = uploaded.json()["upload_id"]
+    listed = test_client.get(f"/api/datasets/{upload_id}/questions").json()["questions"]
+
+    # Act
+    answer = listed[0]["answers"][0]
+    saved = test_client.post(f"/api/datasets/{upload_id}{answer['route']}", json=answer["body"])
+    after = test_client.get(f"/api/datasets/{upload_id}/questions").json()["questions"]
+    dependencies.invalidate_semantic_layer_cache(upload_id)
+
+    # Assert
+    assert [q["id"] for q in listed] == ["shared_missing:9999"]
+    assert "all 3 columns that hold it: alt, ast, ggt" in listed[0]["question"]
+    assert saved.status_code == 200, saved.text
+    assert after == []

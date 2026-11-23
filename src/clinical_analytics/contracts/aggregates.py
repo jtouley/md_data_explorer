@@ -52,6 +52,15 @@ def count_cases(frame: pl.DataFrame, aggregate: AggregateInfo, equals: Mapping[s
             selected = selected.filter(pl.col(column).cast(pl.String).is_in([str(v) for v in accepted]))
     totals = {t.column: t.values for t in aggregate.total_levels}
     if aggregate.kind == "frequency":
+        # Readers leave total rows out (contracts.readings): a question naming a total ("cases in
+        # All States") asks for every group of that column, so that filter is dropped.
+        for column, values in totals.items():
+            if column in equals and {str(v) for v in equals[column]} <= {str(v) for v in values}:
+                selected = frame
+                for other, accepted in equals.items():
+                    if other != column and other in selected.columns:
+                        selected = selected.filter(pl.col(other).cast(pl.String).is_in([str(v) for v in accepted]))
+                equals = {k: v for k, v in equals.items() if k != column}
         # Lines that total other lines never add to the sum.
         for column, values in totals.items():
             if column not in equals:

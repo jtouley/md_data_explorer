@@ -104,6 +104,7 @@ class ModelAnswer:
     choices: tuple[tuple[str, str], ...] = field(default_factory=tuple)
     attempts: int = 0
     problems: tuple[str, ...] = field(default_factory=tuple)  # what each failed attempt got wrong
+    open_questions: tuple[str, ...] = ()  # the contract's questions this answer waits on (ids)
 
 
 def asks_for_listing(question: str) -> bool:
@@ -200,6 +201,7 @@ def _ask(
         reading=card.reading(card.reading_lines(compiled, context)),
         reply=reply,
         attempts=attempt,
+        open_questions=ask.questions,
     )
 
 

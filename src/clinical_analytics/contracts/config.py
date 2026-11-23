@@ -374,6 +374,9 @@ ESTIMATE_TOTAL_LEVELS: Final = frozenset(
         "global",
         "world",
         "grand total",
+        "all states",
+        "all regions",
+        "all counties",
     }
 )
 # A level naming a county-like part of a state: the other levels in that column are its totals.
@@ -927,3 +930,16 @@ SURVEY_NATIONAL_REFUSAL: Final = (
     "so a national figure isn't given. Ask about the people in this file instead."
 )
 SURVEY_NOTE: Final = "These are counts of the people in this file, not weighted national estimates."
+
+# Time units a unit column may name (normalised), and days in one of each.
+TIME_UNIT_NAMES: Final = {
+    **dict.fromkeys(("day", "days", "d"), "days"),
+    **dict.fromkeys(("week", "weeks", "wk"), "weeks"),
+    **dict.fromkeys(("month", "months", "mo"), "months"),
+    **dict.fromkeys(("year", "years", "yr", "yrs"), "years"),
+    **dict.fromkeys(("hour", "hours", "h", "hr", "hrs"), "hours"),
+    **dict.fromkeys(("minute", "minutes", "min"), "minutes"),
+}
+TIME_UNIT_DAYS: Final = {
+    "minutes": 1 / 1440, "hours": 1 / 24, "days": 1.0, "weeks": 7.0, "months": 365.25 / 12, "years": 365.25,
+}  # fmt: skip

@@ -13,7 +13,7 @@ import pytest
 
 from clinical_analytics.contracts.declarations import Declarations, QuestionAnswer
 from clinical_analytics.contracts.dictionary import parse_dictionary
-from clinical_analytics.contracts.inference import UploadFacts, infer_semantics
+from clinical_analytics.contracts.inference import UploadFacts, apply_semantics, infer_semantics
 from clinical_analytics.contracts.readings import apply_declared, declared_reads
 from clinical_analytics.contracts.semantics import describe, with_declarations
 from clinical_analytics.core.identifier_rules import row_key_note
@@ -117,13 +117,14 @@ def test_readings_topCodeAnsweredLeaveOut_leftOutOnlyThen() -> None:
     assert read.filter(pl.col("AGEYR") == 80).height == 0
 
 
-def test_inferSemantics_unitColumn_pairedWithItsValue() -> None:
+def test_inferSemantics_unitColumnNotStated_askedNotApplied() -> None:
     # Act
     semantics = _inferred()
 
-    # Assert
-    assert semantics.columns["sleep_dur"].unit_column == "sleep_dur_unit"
-    assert semantics.columns["sleep_dur"].unit is None
+    # Assert: the codebook never says sleep_dur_unit is the unit of sleep_dur (ADR017 principle A)
+    assert semantics.columns["sleep_dur"].unit_column is None
+    asked = next(q for q in semantics.open_questions if q.kind == "unit_pair")
+    assert (asked.column, asked.value) == ("sleep_dur", "years")
 
 
 @pytest.mark.parametrize(
@@ -156,3 +157,98 @@ def test_inferSemantics_respondentSequenceNumber_isThePersonKeyNoteAgrees() -> N
     # Assert: the dictionary names the respondent; the unit note says nothing contrary
     assert semantics.patient_key_column == "RESPSEQ"
     assert row_key_note(semantics) == ""
+
+
+# --------------------------------------------------------------------------- round 6: only explicit labels apply
+TUMOUR_CODEBOOK = """Variable Name: PRIMARY
+SAS Label: Primary tumour site
+Code or Value\tValue Description\tCount\tCumulative
+1\tLung\t120\t120
+2\tColorectal\t100\t220
+3\tBreast\t71\t291
+9\tUnknown primary (CUP)\t109\t400
+"""
+
+
+def test_inferSemantics_categoryNamedUnknown_keptAndAskedNeverNulled() -> None:
+    # Arrange
+    frame = pl.DataFrame(
+        {"case_id": [f"T{i:03d}" for i in range(400)], "PRIMARY": [1] * 120 + [2] * 100 + [3] * 71 + [9] * 109}
+    )
+
+    # Act
+    semantics = infer_semantics(frame, UploadFacts(doc_context=TUMOUR_CODEBOOK))
+    read = apply_declared(frame, declared_reads(Declarations(), None, semantics))
+
+    # Assert: "Unknown primary (CUP)" is a category until the user says otherwise
+    assert semantics.columns["PRIMARY"].nonresponse_codes == ()
+    assert semantics.columns["PRIMARY"].labels["9"] == "Unknown primary (CUP)"
+    assert read.filter(pl.col("PRIMARY") == 9).height == 109
+    asked = next(q for q in semantics.open_questions if q.id == "missing_code:PRIMARY:9")
+    assert "Unknown primary (CUP)" in asked.question
+
+
+@pytest.mark.parametrize(
+    ("rows", "range_", "censored"),
+    [
+        pytest.param("1\tLess than 9th grade\n2\tHigh school\n3\tCollege\n", None, {}, id="category-less-than"),
+        pytest.param("12 to 16\tRange of normal values\n17\tAbove normal\n", None, {}, id="clinical-reference-range"),
+        pytest.param(
+            "1 to 120\tRange of Values\n666\tLess than 1 year\n",
+            (1.0, 120.0),
+            {"666": "Less than 1 year"},
+            id="measure-edge",
+        ),
+    ],
+)
+def test_parseDictionary_codebookRangesAndRangeCodes_onlyTheCodebooksOwn(
+    rows: str, range_: tuple[float, float] | None, censored: dict[str, str]
+) -> None:
+    # Arrange
+    text = f"Variable Name: ITEM\nSAS Label: An item\nCode or Value\tValue Description\n{rows}"
+
+    # Act
+    entry = parse_dictionary(text, ["ITEM"]).entry("ITEM")
+
+    # Assert
+    assert entry.stated_range == range_
+    assert entry.censored == censored
+
+
+UNIT_DOC = "dur  Duration of symptoms\ndur_unit  Unit of measure for dur (days, months or years)\n"
+
+
+@pytest.mark.parametrize("blank", [0, 2], ids=["all-units", "two-blank"])
+def test_readings_statedUnitColumn_everyLineInOneUnitBlanksAsked(blank: int) -> None:
+    # Arrange: 6 months, 2 years, 18 months, 1 year; ``blank`` lines without a unit
+    units = ["months", "years", "months", "years"] + [""] * blank
+    frame = pl.DataFrame(
+        {"pid": [f"P{i}" for i in range(4 + blank)], "dur": [6, 2, 18, 1] + [5] * blank, "dur_unit": units}
+    )
+
+    # Act
+    semantics = infer_semantics(frame, UploadFacts(doc_context=UNIT_DOC))
+    read = apply_declared(apply_semantics(frame, semantics), declared_reads(Declarations(), None, semantics))
+
+    # Assert: read in years by every reader; the stored data is not rewritten
+    assert semantics.columns["dur"].unit.value == "years"
+    assert read.get_column("dur").to_list()[:4] == pytest.approx([0.5, 2.0, 1.5, 1.0])
+    assert apply_semantics(frame, semantics).get_column("dur").to_list() == frame.get_column("dur").to_list()
+    assert any("read in years" in line for line in describe(semantics, max_lines=40))
+    missing = next((q for q in semantics.open_questions if q.kind == "unit_missing"), None)
+    assert (missing is not None) is (blank > 0)
+    assert read.get_column("dur").null_count() == blank
+
+
+def test_inferSemantics_ratePerColumn_neverAUnitPair() -> None:
+    # Arrange: 20 mg per day, 100 mg per week
+    frame = pl.DataFrame(
+        {"pid": [f"P{i}" for i in range(40)], "dose_mg": [20, 100] * 20, "dose_per": ["day", "week"] * 20}
+    )
+
+    # Act
+    semantics = infer_semantics(frame)
+
+    # Assert
+    assert semantics.columns["dose_mg"].unit_column is None
+    assert not [q for q in semantics.open_questions if q.kind in ("unit_pair", "unit_missing")]

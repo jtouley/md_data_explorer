@@ -11,7 +11,7 @@ with the dataset's confirmed level merges applied, so SQL sees the same levels a
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, TypeAlias
@@ -55,6 +55,10 @@ class SqlCatalog:
     missing: tuple[tuple[str, tuple[int | float | str, ...]], ...] = ()
     # column -> (format, century) the user confirmed for a text date column: a DATE in the view.
     dates: tuple[tuple[str, tuple[str, str | None]], ...] = ()
+    # column -> a frequency table's total-row values (contracts.readings.total_rows): never read.
+    totals: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    # value column -> (unit column, target unit): durations read in one unit (contracts.readings).
+    units: tuple[tuple[str, tuple[str, str]], ...] = ()
 
     def column(self, name: str) -> ColumnSpec | None:
         """A column by name, case-insensitive as DuckDB identifiers are."""
@@ -72,7 +76,14 @@ class SqlCatalog:
         to M); each becomes one WHEN of the column's CASE, so every merge applies.
         """
         reader = exp.func("read_parquet", exp.Literal.string(str(self.parquet_path)))
-        return f'CREATE VIEW "{UNIFIED_OBJECT_NAME}" AS {render(exp.select(*self._columns()).from_(reader))}'
+        query = exp.select(*self._columns()).from_(reader)
+        names = {c.name for c in self.columns}
+        for column, values in self.totals:
+            if column in names and values:
+                ref = exp.column(column, quoted=True)
+                listed = exp.In(this=exp.cast(ref, "VARCHAR"), expressions=[exp.Literal.string(v) for v in values])
+                query = query.where(exp.or_(exp.not_(listed), exp.Is(this=ref.copy(), expression=exp.Null())))
+        return f'CREATE VIEW "{UNIFIED_OBJECT_NAME}" AS {render(query)}'
 
     def _columns(self) -> list[exp.Expr]:
         merges: dict[str, list[LevelMapping]] = {}
@@ -82,6 +93,7 @@ class SqlCatalog:
         select: list[exp.Expr] = []
         missing = dict(self.missing)
         dates = dict(self.dates)
+        units = dict(self.units)
         for col in self.columns:
             ref = exp.column(col.name, quoted=True)
             value: exp.Expr = ref
@@ -97,6 +109,8 @@ class SqlCatalog:
                 value = exp.case().when(matched, exp.Null()).else_(ref.copy())
             if col.name in dates:
                 value = _date_reading(ref, *dates[col.name])
+            if col.name in units:
+                value = _in_unit(value, *units[col.name])
             if col.logical_type == "string" and merges.get(col.name):
                 case = exp.case()
                 for mapping in merges[col.name]:
@@ -116,6 +130,8 @@ class SqlCatalog:
         levels: Iterable[LevelMapping] = (),
         missing: Iterable[Any] = (),
         dates: Iterable[Any] = (),
+        totals: Mapping[str, tuple[str, ...]] | None = None,
+        units: Mapping[str, tuple[str, str]] | None = None,
     ) -> SqlCatalog:
         """The catalog of the contract's unified object.
 
@@ -145,7 +161,20 @@ class SqlCatalog:
             levels=tuple(m for m in levels if m.column in names),
             missing=tuple((c, tuple(v)) for c, v in confirmed.items()),
             dates=tuple((d.column, (d.format, d.century)) for d in dates if d.column in names),
+            totals=tuple((c, tuple(v)) for c, v in (totals or {}).items() if c in names),
+            units=tuple((c, (u, t)) for c, (u, t) in (units or {}).items() if c in names and u in names),
         )
+
+
+def _in_unit(value: exp.Expr, unit_column: str, target: str) -> exp.Expr:
+    """``value`` read in ``target`` by its line's unit; NULL for a line without a known unit."""
+    from clinical_analytics.contracts.readings import unit_factors
+
+    unit = exp.func("lower", exp.func("trim", exp.cast(exp.column(unit_column, quoted=True), "VARCHAR")))
+    case = exp.case()
+    for spelling, factor in unit_factors(target).items():
+        case = case.when(exp.EQ(this=unit.copy(), expression=exp.Literal.string(spelling)), exp.Literal.number(factor))
+    return exp.Mul(this=exp.cast(value, "DOUBLE"), expression=case.else_(exp.Null()))
 
 
 def _is_number(value: object) -> bool:

@@ -611,33 +611,92 @@ def _far_outside(
     return code > max(_float(rest.max()), 0.0) * gap
 
 
-_TIME_UNITS: Final = frozenset(
-    {"day", "days", "week", "weeks", "month", "months", "year", "years", "hour", "hours", "minute", "minutes",
-     "d", "wk", "mo", "yr", "yrs", "h", "hr", "hrs", "min"}
-)  # fmt: skip
 _UNIT_WORDS: Final = frozenset({"unit", "units", "u", "uom", "scale"})
+_RATE_UNIT_WORDS: Final = frozenset({"per", "freq", "frequency", "rate", "times", "schedule", "interval", "every"})
 
 
 def _unit_columns(df: pl.DataFrame) -> list[tuple[str, str]]:
-    """(value column, unit column) pairs: a text column whose values are all time units
-    ("months", "years") gives the unit of the number column it names ("dur" and "dur_unit") or,
-    failing that, of the number column just before it."""
+    """(value column, unit column) candidates: a text column whose filled values are mostly time
+    units ("months", "years") beside the number column it names ("dur" and "dur_unit") or, failing
+    that, the number column just before it. Never a rate ("dose_per" = day/week beside "dose_mg"):
+    a unit column named for a frequency, or a value column with a unit of its own."""
     pairs = []
     order = list(df.columns)
     for i, c in enumerate(order):
-        if df.schema[c] != pl.String:
+        if df.schema[c] != pl.String or set(name_tokens(c)) & _RATE_UNIT_WORDS:
             continue
-        values = {str(v).strip().lower() for v in df.get_column(c).drop_nulls().unique().to_list()}
-        if not values or len(values) > 6 or not values <= _TIME_UNITS:
+        filled = [str(v).strip().lower() for v in df.get_column(c).drop_nulls().to_list() if str(v).strip()]
+        known = [v for v in filled if v in config.TIME_UNIT_NAMES]
+        if not known or len(set(filled)) > 8 or len(known) < 0.8 * len(filled):
             continue
         stem = [t for t in name_tokens(c) if t not in _UNIT_WORDS]
-        numbers = [n for n in order if n != c and df.schema[n].is_numeric()]
+        numbers = [n for n in order if n != c and df.schema[n].is_numeric() and _unit_from_name(n) is None]
         named = [n for n in numbers if stem and name_tokens(n) == stem]
         before = [order[i - 1]] if i > 0 and order[i - 1] in numbers else []
         partners = named or before
         if partners:
             pairs.append((partners[0], c))
     return pairs
+
+
+def _unit_stated(dictionary: Dictionary, value_column: str, unit_column: str) -> bool:
+    """The dictionary says ``unit_column`` gives the unit of ``value_column`` ("Unit of measure
+    for DID060")."""
+    entry = dictionary.entry(unit_column)
+    text = f"{entry.description} {entry.text}" if entry is not None else ""
+    return bool(re.search(r"\bunits?\b", text, re.I)) and bool(
+        re.search(rf"(?<![\w]){re.escape(value_column)}(?![\w])", text, re.I)
+    )
+
+
+def _unit_pair_questions(df: pl.DataFrame, value_column: str, unit_column: str, stated: bool) -> list[OpenQuestion]:
+    """ "Does dur_unit give the unit of dur?" (unless the dictionary says so), and "N lines of dur
+    have no unit: leave them out?" (blank or unrecognised units: never read as any unit)."""
+    found = []
+    target = _largest_unit(df, unit_column)
+    if not stated:
+        found.append(
+            OpenQuestion(
+                id=f"unit_pair:{value_column}:{unit_column}",
+                kind="unit_pair",
+                column=value_column,
+                value=target,
+                question=(
+                    f"Does {unit_column} give the unit of {value_column} (days, months, years…)? If so, answers read "
+                    f"every line of {value_column} in {target}."
+                ),
+                options=(f"yes, {unit_column} gives the unit of {value_column}", "no, they are separate"),
+            )
+        )
+    unit = pl.col(unit_column).cast(pl.String).str.strip_chars().str.to_lowercase()
+    missing = int(
+        df.select(
+            (pl.col(value_column).is_not_null() & ~unit.is_in(list(config.TIME_UNIT_NAMES)).fill_null(True)).sum()
+        ).item()
+    )
+    if missing:
+        found.append(
+            OpenQuestion(
+                id=f"unit_missing:{value_column}",
+                kind="unit_missing",
+                column=value_column,
+                value=missing,
+                question=(
+                    f"{missing:,} lines of {value_column} have no unit in {unit_column}. Leave them out of answers?"
+                ),
+                options=("yes, leave them out", "no, I'll fix the file"),
+            )
+        )
+    return found
+
+
+def _largest_unit(df: pl.DataFrame, unit_column: str) -> str:
+    used = {
+        config.TIME_UNIT_NAMES[v]
+        for v in (str(x).strip().lower() for x in df.get_column(unit_column).drop_nulls().unique().to_list())
+        if v in config.TIME_UNIT_NAMES
+    }
+    return max(used, key=lambda unit: config.TIME_UNIT_DAYS[unit])
 
 
 def _coded(codes: Mapping[str, str], dtype: pl.DataType, present: set[str]) -> tuple[MissingCode, ...]:
@@ -1238,9 +1297,13 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
                 **dictionary.noted_missing.get(name, {}),
                 **(entry.noted_missing if entry else {}),
             }
+            own = entry.noted_missing if entry else {}
             for code, note in notes.items():
                 typed = _typed_code(code, dtype)
-                if not isinstance(typed, int | float) or code in labels or float(typed) not in present:
+                # A shared note never overrides a category of the column's own code list; the
+                # list's own "9 = Unknown primary" is asked about, kept as a category until then.
+                listed = code in labels and code not in own
+                if not isinstance(typed, int | float) or listed or float(typed) not in present:
                     continue
                 if any(_same_code(m.value, typed) for m in missing):
                     continue
@@ -1318,7 +1381,14 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
             )
 
     for value_column, unit_column in _unit_columns(df):
-        columns[value_column] = columns[value_column].model_copy(update={"unit_column": unit_column, "unit": None})
+        # Durations in mixed units are read in one unit, the largest the file uses, by every reader
+        # (contracts.readings): an average of 6 months and 2 years is never 4. Applied only when the
+        # dictionary states the pair; otherwise asked (ADR017 principle A).
+        stated = _unit_stated(dictionary, value_column, unit_column)
+        questions.extend(_unit_pair_questions(df, value_column, unit_column, stated))
+        if stated:
+            unit = Unit(value=_largest_unit(df, unit_column), source="dictionary")
+            columns[value_column] = columns[value_column].model_copy(update={"unit_column": unit_column, "unit": unit})
     weights = tuple(c for c in df.columns if config.SURVEY_WEIGHT_NAME.search(c.lower()))
     survey = bool(weights) or dictionary.mentions_weights
 
@@ -1818,9 +1888,7 @@ def apply_semantics(df: pl.DataFrame, semantics: DatasetSemantics) -> pl.DataFra
                 expr = parse_expr(name, col.date.format, col.date.has_time, dtype)
         if expr is not None:
             exprs.append(expr)
-    if not exprs:
-        return df
-    return df.lazy().with_columns(exprs).collect()
+    return df.lazy().with_columns(exprs).collect() if exprs else df
 
 
 def add_id_columns(

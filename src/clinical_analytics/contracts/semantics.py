@@ -46,7 +46,7 @@ FactSource: TypeAlias = Literal["structure", "dictionary", "declared", "default"
 Confidence: TypeAlias = Literal["high", "medium", "low"]
 QuestionKind: TypeAlias = Literal[
     "rows_are_patients", "person_role", "date_order", "date_century", "missing_code", "repeated_strata",
-    "aggregate_unsure", "total_row", "censored_value",
+    "aggregate_unsure", "total_row", "censored_value", "unit_pair", "unit_missing",
 ]  # fmt: skip
 AggregateKind: TypeAlias = Literal["frequency", "estimate"]
 LogicalType: TypeAlias = Literal[
@@ -409,6 +409,7 @@ def _with_answers(semantics: DatasetSemantics, answers: Any) -> DatasetSemantics
         return semantics
     given = {a.question_id: a.answer for a in answers}
     aggregate = semantics.aggregate
+    columns = dict(semantics.columns)
     records = given.get(config.ROWS_QUESTION_ID) == config.ROWS_ANSWER_RECORDS
     questions = []
     for q in semantics.open_questions:
@@ -416,12 +417,17 @@ def _with_answers(semantics: DatasetSemantics, answers: Any) -> DatasetSemantics
         settled = answer is not None and answer in q.options
         if q.kind == "aggregate_unsure" and records:
             settled = True
-        if q.kind == "repeated_strata" and settled and answer != q.options[0]:
-            settled = False  # lines that replace each other: no sum can be given
+        if q.kind in ("repeated_strata", "person_role", "unit_missing") and settled and answer != q.options[0]:
+            settled = False  # lines that replace each other, or one line per mother: not supported
         if q.kind == "total_row" and settled and answer == q.options[0] and aggregate is not None and q.column:
             aggregate = _with_total(aggregate, q.column, str(q.value))
+        if q.kind == "unit_pair" and settled and answer == q.options[0] and q.column in columns:
+            unit_column = q.id.rpartition(":")[2]
+            columns[q.column] = columns[q.column].model_copy(
+                update={"unit_column": unit_column, "unit": Unit(value=str(q.value), source="declared")}
+            )
         questions.append(q.model_copy(update={"answered": True}) if settled else q)
-    update: dict[str, Any] = {"open_questions": tuple(questions), "aggregate": aggregate}
+    update: dict[str, Any] = {"open_questions": tuple(questions), "aggregate": aggregate, "columns": columns}
     if records and aggregate is not None and aggregate.source != "declared":
         update.update({"aggregate": None, "case_count_column": None})
     return semantics.model_copy(update=update)
@@ -685,7 +691,8 @@ def describe(semantics: DatasetSemantics, *, max_lines: int = 12) -> list[str]:
             codes = ", ".join(f"{c.value} ({c.label})" for c in col.nonresponse_codes)
             lines.append(f"In {name}, {codes} are kept as answers but left out of percentages and averages.")
         if col.unit_column:
-            lines.append(f"{col.unit_column} gives the unit of {name}.")
+            read = f"; every line is read in {col.unit.value}" if col.unit is not None else ""
+            lines.append(f"{col.unit_column} gives the unit of {name}{read}.")
     if semantics.survey_sample:
         lines.append(config.SURVEY_NOTE)
     for q in semantics.open_questions:

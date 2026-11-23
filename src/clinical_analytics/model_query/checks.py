@@ -154,6 +154,7 @@ class Ask:
     kind: str
     reason: str
     choices: tuple[tuple[str, str], ...] = field(default_factory=tuple)
+    questions: tuple[str, ...] = ()  # ids of the contract's open questions it waits on
 
 
 def _mentioned_labels(question: str, context: DatasetContext) -> list[tuple[str, str, tuple[int, int]]]:
@@ -760,7 +761,7 @@ def ask_open(compiled: Compiled, context: DatasetContext) -> Ask | None:
     holds = open_question_holds(
         context.semantics, columns=compiled.columns, counts_lines=compiled.kind in ("count", "share")
     )
-    return Ask("open_question", held_message(holds)) if holds else None
+    return Ask("open_question", held_message(holds), questions=tuple(h.question_id for h in holds)) if holds else None
 
 
 def ask_unit(compiled: Compiled, question: str, context: DatasetContext) -> Ask | None:
