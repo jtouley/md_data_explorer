@@ -136,6 +136,16 @@ def _value_spans(question: str, context: DatasetContext) -> list[tuple[int, int]
     return spans
 
 
+def _names_key_person(text: str, context: DatasetContext) -> bool:
+    """The question names the person the contract's patient key names, in the file's own word
+    ("recipients" for a recipient column, the key's role)."""
+    key = context.semantics.patient_key
+    if key is None:
+        return False
+    words = {w for w in re.split(r"[^a-z]+", f"{key.column} {key.role}".casefold()) if len(w) >= 4}
+    return any(re.search(rf"\b{re.escape(w)}s?\b", text, re.I) for w in words)
+
+
 def _blank(text: str, spans: list[tuple[int, int]]) -> str:
     for start, end in spans:
         text = text[:start] + " " * (end - start) + text[end:]
@@ -200,7 +210,7 @@ def read_cues(question: str, context: DatasetContext, used: frozenset[str] = fro
         negated=bool(_NEGATION.search(negated_text)),
         never=bool(re.search(r"\bnever\b", text, re.I)),
         times=times,
-        persons=bool(_PERSONS.search(text)) and records_word not in ("patient",),
+        persons=(bool(_PERSONS.search(text)) or _names_key_person(text, context)) and records_word != "patient",
         records=context.visit_level and bool(counted_records),
         episodes=episodes,
         values=tuple((label, name) for label, name, _span in labels),
@@ -428,6 +438,23 @@ def problems(compiled: Compiled, question: str, context: DatasetContext) -> list
                 else "My reading excluded something your question does not exclude, so I did not answer.",
             )
         )
+    for column in context.columns:
+        # A column the question names by its own name ("discontinued", "smoker") the plan never reads.
+        said = column.name.replace("_", " ").casefold()
+        skip = column.kind == "key" or column.name == context.count_column or len(said) < 4
+        if (
+            not skip
+            and column.name not in compiled.columns
+            and re.search(rf"(?<!\w){re.escape(said)}(?!\w)", question, re.I)
+        ):
+            found.append(
+                Problem(
+                    "column",
+                    feedback=f"The question names {column.name}, but the reply does not use it: put it where the "
+                    "question means it (a filter, the numerator, the measure or group_by).",
+                    reason=f"I could not use '{column.display}' in my reading, so I did not answer.",
+                )
+            )
     for label, name in cues.values:
         if name not in compiled.columns:
             column = context.column(name)

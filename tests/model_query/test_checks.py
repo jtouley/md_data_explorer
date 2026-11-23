@@ -310,3 +310,28 @@ def test_needs_visit_choice_summaryOverNamedRecords_poolsWithoutAsking(clinic):
 
     # Act / Assert: the question names the records it summarises
     assert checks.needs_visit_choice(compiled, "Mean systolic pressure in clinic visits of smokers", clinic) is False
+
+
+def test_problems_columnNamedInQuestionUnused_isFound(make_query_table):
+    # Arrange: the question names a column by its own name; the plan reads another
+    frame = tables.cohort().rename({"died_1y": "discontinued"})
+    _catalog, context = make_query_table(frame)
+    compiled = compile_plan(_plan(answer="share", numerator=[_cond("stage", "is", values=["III"])]), context)
+
+    # Act
+    kinds = [p.kind for p in checks.problems(compiled, "What share of stage III patients discontinued?", context)]
+
+    # Assert
+    assert "column" in kinds
+
+
+def test_read_cues_patientKeysOwnWord_isAPerson(make_query_table):
+    # Arrange: the file names its patient "recipient"
+    frame = tables.clinic().rename({"pt_ref": "recipient"})
+    _catalog, context = make_query_table(frame, doc_context=tables.CLINIC_DICTIONARY.replace("pt_ref", "recipient"))
+
+    # Act
+    cues = checks.read_cues("How many recipients smoked?", context)
+
+    # Assert
+    assert cues.persons is True
