@@ -11,3 +11,12 @@ class SqlRefusedError(Exception):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+class SqlHeldError(SqlRefusedError):
+    """The query waits for the user to answer open questions of the dataset's contract
+    (``contracts.holds``): ``questions`` are their ids, ``reason`` names them in words."""
+
+    def __init__(self, reason: str, *, questions: tuple[str, ...]) -> None:
+        super().__init__(reason)
+        self.questions = questions

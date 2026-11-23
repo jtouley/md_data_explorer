@@ -212,6 +212,12 @@ def row_key_note(semantics: DatasetSemantics) -> str:
     else:
         numbered = next((a.column for a in semantics.app_columns if a.kind == "row_number"), ROW_NUMBER_COLUMN)
         found = f"No column in this file identifies a patient, so each row was numbered (“{numbered}”)."
+    if any(q.kind == "rows_are_patients" and not q.answered for q in semantics.open_questions):
+        # Counts wait for the answer (contracts.holds): nothing is counted until it is given.
+        return (
+            f"{found} Counts wait for your answer to “Is each line one patient?”. To count patients by ID "
+            "instead, add a column with one ID for each patient, named patient_id, and upload the file again."
+        )
     return (
         f"{found} Answers count rows, not patients. To count patients, add a column with one ID for each "
         "patient, named patient_id, and upload the file again."

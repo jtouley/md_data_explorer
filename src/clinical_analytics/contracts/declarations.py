@@ -158,6 +158,18 @@ class AggregateDeclaration(BaseModel):
     dataset_version: str | None = None
 
 
+class QuestionAnswer(BaseModel):
+    """The user's answer to an open question of the contract's semantics that no other
+    declaration holds ("Is Statewide a total?", "Should repeated lines be added?", "Is each line
+    one patient?" answered no): ``answer`` is one of the question's options, as asked."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    question_id: str = Field(min_length=1, max_length=300)
+    answer: str = Field(min_length=1, max_length=200)
+    dataset_version: str | None = None
+
+
 class Declarations(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -170,6 +182,7 @@ class Declarations(BaseModel):
     missing_codes: tuple[MissingCodeDeclaration, ...] = ()
     aggregates: tuple[AggregateDeclaration, ...] = ()
     date_readings: tuple[DateReadingDeclaration, ...] = ()
+    answers: tuple[QuestionAnswer, ...] = ()
 
     @model_validator(mode="before")
     @classmethod
@@ -275,6 +288,24 @@ class Declarations(BaseModel):
     def missing_codes_for(self, dataset_version: str | None) -> tuple[MissingCodeDeclaration, ...]:
         return tuple(m for m in self.missing_codes if m.dataset_version == dataset_version)
 
+    def with_answer(self, answer: QuestionAnswer) -> Declarations:
+        """These declarations with ``answer`` as the answer to its question on its version."""
+        kept = tuple(
+            a
+            for a in self.answers
+            if not (a.question_id == answer.question_id and a.dataset_version == answer.dataset_version)
+        )
+        return self.model_copy(update={"answers": (*kept, answer)})
+
+    def without_answer(self, question_id: str, dataset_version: str | None) -> Declarations:
+        kept = tuple(
+            a for a in self.answers if not (a.question_id == question_id and a.dataset_version == dataset_version)
+        )
+        return self.model_copy(update={"answers": kept})
+
+    def answers_for(self, dataset_version: str | None) -> tuple[QuestionAnswer, ...]:
+        return tuple(a for a in self.answers if a.dataset_version == dataset_version)
+
     def for_version(self, dataset_version: str | None) -> Declarations:
         """Only what was confirmed on ``dataset_version``: all a question on that version reads."""
         grain = self.grain_for(dataset_version)
@@ -286,6 +317,7 @@ class Declarations(BaseModel):
             missing_codes=self.missing_codes_for(dataset_version),
             aggregates=tuple(a for a in self.aggregates if a.dataset_version == dataset_version),
             date_readings=self.date_readings_for(dataset_version),
+            answers=self.answers_for(dataset_version),
         )
 
 

@@ -126,7 +126,7 @@ class SqlQueryRequest(BaseModel):
 class SqlQueryResult(BaseModel):
     """The governed answer, or why the query was refused. ``sql`` is the checked query as run."""
 
-    status: Literal["answered", "refused"]
+    status: Literal["answered", "refused", "held"]
     sql: str | None = Field(None, description="The checked query (shown with every answer)")
     columns: list[str] = Field(default_factory=list)
     rows: list[dict[str, Any]] = Field(default_factory=list)
@@ -137,6 +137,9 @@ class SqlQueryResult(BaseModel):
     )
     confirmation: str | None = Field(
         None, description="With needs_confirmation: the token to send back as confirm_one_row_per_patient"
+    )
+    open_questions: list[str] = Field(
+        default_factory=list, description="With status 'held': ids of the dataset's questions to answer first"
     )
 
 

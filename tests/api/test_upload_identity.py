@@ -124,9 +124,9 @@ def test_question_keylessUpload_countsRowsNeverPatients(
         assert "population estimates" in (result.failure_reason or "")
         assert not re.search(r"\bpatients?\b", result.claim or "")
         return
-    assert result.analysis is not None, result.failure_reason
-    assert result.analysis.get("unit") == "rows"
-    assert "rows" in (result.claim or "")
+    # ADR017: a count waits for "Is each line one patient?"; it is never given as patients
+    assert result.analysis is None
+    assert "Is each line one patient?" in (result.failure_reason or "")
     assert not re.search(r"\bpatients?\b", result.claim or "")
 
 
@@ -441,7 +441,7 @@ def _sepsis_survival_shaped(n: int = 240) -> pl.DataFrame:
     )
 
 
-def test_uploadDataset_sepsisSurvivalShaped_uploadsAndSaysRowsNotPatients(
+def test_uploadDataset_sepsisSurvivalShaped_uploadsAndCountsWaitForAnswer(
     test_client: TestClient, upload: Callable[..., Any]
 ) -> None:
     # Arrange
@@ -457,7 +457,7 @@ def test_uploadDataset_sepsisSurvivalShaped_uploadsAndSaysRowsNotPatients(
     assert response.status_code == 200, body
     assert body["status"] == "ready"
     assert body["unit_note"].startswith("No column in this file identifies a patient, so each row was numbered")
-    assert "Answers count rows, not patients." in body["unit_note"]
+    assert "Counts wait for your answer to “Is each line one patient?”." in body["unit_note"]
     assert "row_number" in detail["tables"][0]["columns"]
     assert detail["tables"][0]["row_count"] == df.height
 
@@ -474,9 +474,9 @@ def test_question_sepsisSurvivalShaped_countAnswersInRows(upload: Callable[..., 
     with dependencies.lease_semantic_layer(upload_id) as lease:
         result = QueryService(lease.layer).ask("how many patients?", dataset_id=upload_id, dataset_version="v1")
 
-    # Assert: the count is of rows, and the answer never calls them patients
-    assert result.analysis is not None, result.failure_reason
-    assert result.analysis.get("unit") == "rows"
+    # Assert: the count waits for "Is each line one patient?", never calls rows patients
+    assert result.analysis is None
+    assert "Is each line one patient?" in (result.failure_reason or "")
     assert not re.search(r"\bpatients?\b", result.claim or "")
 
 

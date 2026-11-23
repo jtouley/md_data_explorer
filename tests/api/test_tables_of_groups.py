@@ -73,10 +73,11 @@ def test_loadFromUrl_undeclaredFrequencyTable_recognisedWithCountColumn(
     # Assert
     assert calls == [data_url, "https://data.cdc.gov/api/views/ab12-cd34.json"]
     assert body["status"] == "ready"
-    assert body["one_row_per_patient"] is None
+    # Recognised and recorded, then asked: the structure alone never applies it (ADR017 principle A)
+    assert body["one_row_per_patient"]["count_columns"] == ["Cases"]
     assert (semantics["aggregate"]["kind"], semantics["aggregate"]["count_column"]) == ("frequency", "Cases")
     assert semantics["aggregate"]["repeated_strata_lines"] == 6
-    assert body["facts"][0].startswith("Each line counts cases for one county, year and sex")
+    assert body["facts"][0].startswith("Each line seems to count cases for one county, year and sex")
 
 
 @pytest.mark.parametrize(
@@ -178,19 +179,31 @@ def sql_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(nl_query_config, "ENABLE_SQL_QUERIES", True)
 
 
-def test_governedSql_frequencyTable_countOfLinesNeverConfirmableAsPatients(
+def test_governedSql_frequencyTable_heldThenCountOfLinesNeverConfirmableAsPatients(
     upload: Callable[..., Any], test_client: TestClient, sql_on: None
 ) -> None:
     # Arrange: a frequency table with no person ID
     frame = pl.read_csv(_legionella_csv()).unique(subset=["County", "Year", "Sex"], keep="first", maintain_order=True)
-    upload_id = upload(frame, "legionella_sql").json()["upload_id"]
+    body = upload(frame, "legionella_sql").json()
+    upload_id = body["upload_id"]
     sql = {"dataset_id": upload_id, "sql": "SELECT Sex, count(*) AS n FROM unified GROUP BY Sex"}
 
     # Act
+    held = test_client.post("/api/queries/sql", json=sql).json()
+    test_client.post(
+        f"/api/datasets/{upload_id}/one-row-per-patient",
+        json={
+            "confirmation": body["one_row_per_patient"]["confirmation"],
+            "one_row_per_patient": False,
+            "counts_cases_in": "Cases",
+        },
+    )
     refused = test_client.post("/api/queries/sql", json=sql).json()
     forced = test_client.post("/api/queries/sql", json={**sql, "confirm_one_row_per_patient": "a" * 32}).json()
 
-    # Assert: no confirmation is offered or taken; the refusal says to add up the count
+    # Assert: waits for "Does each line count cases?"; once declared, never confirmable as patients
+    assert held["status"] == "held"
+    assert held["open_questions"] == ["aggregate_unsure"]
     assert refused["status"] == "refused"
     assert refused["needs_confirmation"] is None
     assert refused["confirmation"] is None
@@ -209,26 +222,29 @@ def _troponin() -> pl.DataFrame:
     )
 
 
-def test_governedSql_columnWithOpenMissingCodeQuestion_answerSaysValueCountedAsReal(
+def test_governedSql_columnWithOpenMissingCodeQuestion_heldUntilAnswered(
     upload: Callable[..., Any], test_client: TestClient, sql_on: None
 ) -> None:
     # Arrange
     upload_id = upload(_troponin(), "trop_sql").json()["upload_id"]
     sql = {"dataset_id": upload_id, "sql": "SELECT avg(trop_ng_l) AS mean_trop FROM unified"}
+    other = {"dataset_id": upload_id, "sql": "SELECT count(*) AS n FROM unified"}
 
     # Act
     before = test_client.post("/api/queries/sql", json=sql).json()
+    unrelated = test_client.post("/api/queries/sql", json=other).json()
     test_client.post(
         f"/api/datasets/{upload_id}/missing-codes", json={"column": "trop_ng_l", "value": "999", "not_recorded": True}
     )
     after = test_client.post("/api/queries/sql", json=sql).json()
 
-    # Assert: never silent before the answer; after it, 999 is left out and no note remains
-    assert before["status"] == "answered", before
-    assert any("trop_ng_l holds 999" in note for note in before["notes"])
+    # Assert: held (no number) until answered; a query that does not read the column is answered
+    assert before["status"] == "held"
+    assert before["rows"] == []
+    assert "Does 999 in trop_ng_l mean not recorded?" in before["reason"]
+    assert unrelated["status"] == "answered", unrelated
     assert after["status"] == "answered", after
-    assert not any("trop_ng_l holds 999" in note for note in after["notes"])
-    assert after["rows"][0]["mean_trop"] < before["rows"][0]["mean_trop"]
+    assert after["rows"][0]["mean_trop"] < 999
 
 
 def test_qualityReport_missingCodeAnswered_needsYourAnswerLineGone(

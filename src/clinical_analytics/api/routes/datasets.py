@@ -976,6 +976,70 @@ def answer_missing_code(dataset_id: str, answer: MissingCodeAnswer) -> MissingCo
     return MissingCodeResult(dataset_id=dataset_id, facts=describe(declared) if declared else [])
 
 
+class QuestionAnswerRequest(BaseModel):
+    """An answer to one of the contract's open questions that has no answer route of its own
+    ("Is Statewide a total?", "Should repeated lines be added together?"): one of its options."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    question_id: str = Field(..., min_length=1, max_length=300)
+    answer: str = Field(..., min_length=1, max_length=200)
+
+
+# Questions answered through their own routes (their answers change how values are read).
+_OWN_ANSWER_ROUTE = {
+    "missing_code": "/missing-codes",
+    "date_order": "/date-readings",
+    "date_century": "/date-readings",
+    "aggregate_unsure": "/one-row-per-patient",
+    "rows_are_patients": "/one-row-per-patient",
+}
+
+
+@router.post("/datasets/{dataset_id}/answers", response_model=MissingCodeResult)
+def answer_question(dataset_id: str, answer: QuestionAnswerRequest) -> MissingCodeResult:
+    """Record the answer to an open question of this version's contract (``QuestionAnswer``).
+
+    Raises:
+        HTTPException: 400 bad id, 404 unknown dataset, 409 not asked on this version, not one of
+            its options, or answered through another route; 500 when it can't be stored.
+    """
+    from clinical_analytics.contracts.declarations import QuestionAnswer
+    from clinical_analytics.contracts.semantics import describe
+
+    try:
+        validate_dataset_id(dataset_id)
+    except InvalidDatasetIdError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    storage = UserDatasetStorage()
+    with dataset_files_lock(dataset_id):
+        reject_if_deleting(dataset_id)
+        semantics = _contract_semantics(storage, dataset_id)
+        if semantics is None:
+            raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
+        asked = next((q for q in semantics.open_questions if q.id == answer.question_id), None)
+        if asked is None:
+            raise HTTPException(status_code=409, detail="This cohort is not asked that question.")
+        if asked.kind in _OWN_ANSWER_ROUTE:
+            raise HTTPException(status_code=409, detail=f"Answer this question with {_OWN_ANSWER_ROUTE[asked.kind]}.")
+        if answer.answer not in asked.options:
+            raise HTTPException(status_code=409, detail="That is not one of the question's answers.")
+        declaration = QuestionAnswer(
+            question_id=asked.id, answer=answer.answer, dataset_version=semantics.dataset_version
+        )
+        try:
+            FileDeclarationStore(storage.upload_dir.parent).update(
+                dataset_id, lambda current: current.with_answer(declaration)
+            )
+        except (ContractStoreError, InvalidDeclarationKeyError) as e:
+            logger.error("question_answer_not_saved", dataset_id=dataset_id, **error_fields(e))
+            raise HTTPException(status_code=500, detail="The answer couldn’t be stored. Try again.") from e
+    _drop_cached_answers(dataset_id)
+    logger.info("question_answered", dataset_id=dataset_id, kind=asked.kind)
+    declared = _contract_semantics(storage, dataset_id, declared=True)
+    return MissingCodeResult(dataset_id=dataset_id, facts=describe(declared) if declared else [])
+
+
 class DateReadingAnswer(BaseModel):
     """The answer to "In op_date, does 03/04/21 mean 3 April 2021 or March 4, 2021?" or to a
     two-digit-year century question."""

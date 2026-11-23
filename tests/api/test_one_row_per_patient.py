@@ -71,6 +71,8 @@ def _count_unit(upload_id: str) -> str | None:
     with dependencies.lease_semantic_layer(upload_id) as lease:
         service = QueryService(lease.layer, declarations=FileDeclarationStore(data_dir), data_dir=data_dir)
         result = service.ask("how many patients?", dataset_id=upload_id, dataset_version=lease.layer.loaded_version)
+    if result.analysis is None and (result.failure_reason or "").startswith("This answer waits"):
+        return "held"  # "Is each line one patient?" is still open (contracts.holds)
     assert result.analysis is not None, result.failure_reason
     return result.analysis.get("unit")
 
@@ -90,10 +92,10 @@ def test_upload_uniqueUnnamedId_questionPendingThenYesCountsPatients(
     )
     after = _count_unit(upload_id)
 
-    # Assert: pending until answered (rows), then patients
+    # Assert: counts wait until answered, then count patients
     assert question["status"] == "pending"
-    assert "Answers count rows, not patients." in body["unit_note"]
-    assert before == "rows"
+    assert "Counts wait for your answer" in body["unit_note"]
+    assert before == "held"
     assert response.status_code == 200, response.text
     assert response.json() == {"dataset_id": upload_id, "counts": "patients"}
     assert after == "patients"
@@ -142,7 +144,7 @@ def test_answer_staleOrForgedToken_409NothingStored(
     assert response.status_code == 409
     assert "changed after you were asked" in response.json()["detail"]
     assert FileDeclarationStore(uploads_dir().parent).load(upload_id).grains == ()
-    assert _count_unit(upload_id) == "rows"
+    assert _count_unit(upload_id) == "held"
 
 
 def test_upload_visitLevelIdsRepeat_neverAskedAnswerRefused(

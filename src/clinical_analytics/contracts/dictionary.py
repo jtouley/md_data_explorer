@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Final, Literal
 
 from clinical_analytics.contracts import config
@@ -39,7 +39,8 @@ _SENTENCE_END: Final = re.compile(r"(?<=[.;!?])\s+(?=[A-Z0-9\-])")
 _PATIENT_KEY_TEXT: Final = re.compile(
     r"\(\s*patient\s*\)|\bpatient(?:'s)?\s+(?:id|identifier|number|key|record\s+number)\b|"
     r"\bidentif(?:ies|ier)\s+(?:(?:of|for)\s+)?(?:the|each|a)\s+patients?\b|"
-    r"\b(?:id|identifier|number)\s+of\s+(?:the|each|a)\s+patient\b",
+    r"\b(?:id|identifier|number)\s+of\s+(?:the|each|a)\s+patient\b|"
+    r"\b(?:respondent|participant|subject|patient|person)\s+(?:sequence|seq\.?|id|identification)\s+(?:number|no\.?)\b",
     re.IGNORECASE,
 )
 _KEY_STATEMENT: Final = (
@@ -110,6 +111,13 @@ class DictionaryEntry:
     date_format: str | None = None
     direction: Direction | None = None
     names_patient_key: bool = False
+    # "Not recorded" codes the entry states in a sentence, not its code list ("Missing values
+    # were coded as -9"): asked about, never applied (code -> the sentence).
+    noted_missing: dict[str, str] = field(default_factory=dict)
+    # From a codebook table: a coded item's non-response codes ("7 = Refused"), and labelled values
+    # that stand for a range ("80 = 80 years or older").
+    nonresponse: dict[str, str] = field(default_factory=dict)
+    censored: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -120,10 +128,14 @@ class Dictionary:
     key_statements: tuple[str, ...] = ()
     one_per_person: bool = False
     repeats_stated: bool = False
-    # Codes a note documents for every measurement ("For all measurements, 999 = not recorded").
+    # Codes a prose note states for no column in particular ("For all measurements, 999 = not
+    # recorded"), and for columns a sentence names: asked about, never applied (code -> the sentence).
     shared_missing: dict[str, str] = field(default_factory=dict)
+    noted_missing: dict[str, dict[str, str]] = field(default_factory=dict)
     # The dictionary says lines are counts for groups ("each row is a count of cases by state").
     says_aggregate: bool = False
+    # The dictionary mentions sample or survey weights: the file is a weighted survey sample.
+    mentions_weights: bool = False
 
     def entry(self, column: str) -> DictionaryEntry | None:
         return self.entries.get(column)
@@ -309,7 +321,12 @@ def _direction(text: str) -> Direction | None:
 def _entry(column: str, text: str) -> DictionaryEntry:
     pairs = parse_pairs(text)
     listed = {code for code, _ in pairs}
-    pairs += [(code, label) for code, label in free_missing_pairs(text) if code not in listed]
+    noted = {
+        code: sentence
+        for sentence in _SENTENCE_END.split(text)
+        for code, _label in free_missing_pairs(sentence)
+        if code not in listed
+    }
     first = re.search(r"[A-Za-z0-9][A-Za-z0-9.+\-]{0,7}\s*=(?!=)", text)
     description = text[: first.start()] if first else text
     date_format = format_from_text(text)
@@ -326,19 +343,8 @@ def _entry(column: str, text: str) -> DictionaryEntry:
         date_format=date_format,
         direction=_direction(text),
         names_patient_key=bool(_PATIENT_KEY_TEXT.search(description)),
+        noted_missing=noted,
     )
-
-
-def _with_missing(entry: DictionaryEntry | None, column: str, notes: list[tuple[str, str]]) -> DictionaryEntry:
-    """``entry`` (or an empty one) with the "not recorded" codes a prose sentence documents for it,
-    when they lie outside the entry's stated range."""
-    if entry is None:
-        entry = DictionaryEntry(column=column, text="", description="")
-    missing = dict(entry.missing)
-    for code, label in notes:
-        if code not in entry.labels and _outside(code, entry.stated_range):
-            missing.setdefault(code, label)
-    return replace(entry, missing=missing)
 
 
 def _entry_start(line: str, by_lower: dict[str, str]) -> tuple[str, str] | None:
@@ -406,6 +412,97 @@ def _table_rows_as_entries(text: str) -> str:
     return "\n".join(out)
 
 
+# ---- Codebook tables (SAS/SPSS/NCHS style): a variable header, then rows of
+# "Code or Value | Value Description | Count | Cumulative", including "1 to 79 | Range of Values".
+_CODEBOOK_HEADER: Final = re.compile(
+    r"\b(?:code\s+or\s+value|value|code)\b.*\b(?:value\s+)?(?:description|label)\b", re.I
+)
+_CELL_SPLIT: Final = re.compile(r"\s*\|\s*|\t+|\s{2,}")
+_VARIABLE_LINE: Final = re.compile(
+    r"^\s*(?:variable(?:\s+name)?\s*[:=]\s*)?(?P<name>[A-Za-z_][\w.]*)\s*(?:$|[:\-–]\s+(?P<label>.*))", re.I
+)
+_LABEL_LINE: Final = re.compile(
+    r"^\s*(?:sas\s+label|label|english\s+text|question|description)\s*:\s*(?P<text>.+)", re.I
+)
+_RANGE_ROW: Final = re.compile(r"^(-?\d+(?:\.\d+)?)\s*(?:to|-|–|—)\s*(-?\d+(?:\.\d+)?)$")
+_NONRESPONSE: Final = re.compile(
+    r"\b(?:refused|don'?t\s+know|not\s+asked|missing|not\s+ascertained|no\s+answer|unknown|not\s+applicable|"
+    r"skipped|legitimate\s+skip)\b",
+    re.I,
+)
+_CENSORED: Final = re.compile(
+    r"\b(?:or\s+(?:older|more|over|above|higher|less|fewer|younger)|and\s+(?:over|older|above)|less\s+than|"
+    r"more\s+than|under|at\s+least|at\s+most)\b|\d\s*\+",
+    re.I,
+)
+
+
+def _cells(line: str) -> list[str]:
+    return [c for c in (part.strip() for part in _CELL_SPLIT.split(line.strip().strip("|"))) if c]
+
+
+def _codebook_entries(text: str, by_lower: dict[str, str]) -> dict[str, DictionaryEntry]:
+    """Per-column entries read from codebook tables (labels, the value range, non-response and
+    range codes): structured per column, so they apply like a column's own code list. A variable
+    header with a label and no table ("Variable Name: SEQN / Respondent sequence number") gives
+    an entry of its label."""
+    found: dict[str, DictionaryEntry] = {}
+    labels: dict[str, str] = {}
+    lines = text.splitlines()
+    current: str | None = None
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        header = _VARIABLE_LINE.match(line)
+        if header and header.group("name").lower() in by_lower:
+            current = by_lower[header.group("name").lower()]
+            labels[current] = (header.group("label") or "").strip()
+        elif (labelled := _LABEL_LINE.match(line)) and current is not None and not labels[current]:
+            labels[current] = labelled.group("text").strip()
+        elif current is not None and _CODEBOOK_HEADER.search(line) and len(_cells(line)) >= 2:
+            rows: list[tuple[str, str]] = []
+            i += 1
+            while i < len(lines) and (_TABLE_RULE.match(lines[i]) or len(cells := _cells(lines[i])) >= 2):
+                if not _TABLE_RULE.match(lines[i]):
+                    rows.append((cells[0], cells[1]))
+                i += 1
+            found[current] = _codebook_entry(current, labels.pop(current), rows)
+            current = None
+            continue
+        i += 1
+    for column, label in labels.items():
+        if label and column not in found:
+            found[column] = _entry(column, label)
+    return found
+
+
+def _codebook_entry(column: str, label: str, rows: list[tuple[str, str]]) -> DictionaryEntry:
+    stated: tuple[float, float] | None = None
+    coded: dict[str, str] = {}
+    for code, description in rows:
+        ranged = _RANGE_ROW.match(code)
+        if ranged and "range" in description.lower():
+            stated = (float(ranged.group(1)), float(ranged.group(2)))
+        elif code != "." and re.fullmatch(r"-?\d+(?:\.\d+)?|[A-Za-z]", code):
+            coded[code] = description
+    nonresponse = {c: d for c, d in coded.items() if _NONRESPONSE.search(d)}
+    censored = {c: d for c, d in coded.items() if c not in nonresponse and _CENSORED.search(d)}
+    if stated is not None:
+        # A measure ("0 to 79 | Range of Values"): non-response codes are missing values, range
+        # codes are real values; nothing else is a category.
+        return DictionaryEntry(
+            column=column, text=label, description=label, missing=nonresponse, censored=censored, stated_range=stated,
+            unit=_unit(label),
+        )  # fmt: skip
+    return DictionaryEntry(
+        column=column, text=label, description=label, labels=coded if len(coded) >= 2 else {}, nonresponse=nonresponse,
+        censored=censored,
+    )  # fmt: skip
+
+
+_WEIGHTS: Final = re.compile(r"\b(?:sample|sampling|survey|interview|exam|mec|full\s+sample)\s+weights?\b", re.I)
+
+
 def parse_dictionary(text: str | None, columns: Sequence[str]) -> Dictionary:
     """The dictionary facts for ``columns`` found in ``text`` (empty when there is no text)."""
     if not text or not text.strip():
@@ -427,6 +524,9 @@ def parse_dictionary(text: str | None, columns: Sequence[str]) -> Dictionary:
             if line.strip():
                 prose.append(line.strip())
     entries = {column: _entry(column, "\n".join(lines)) for column, lines in blocks.items()}
+    for variable, codebook in _codebook_entries(text, by_lower).items():
+        if codebook.labels or codebook.stated_range or variable not in entries:
+            entries[variable] = codebook
     prose_text = "\n".join(prose)
     grain_noun = grain_text = None
     for pattern in _GRAIN_STATEMENT:
@@ -441,6 +541,7 @@ def parse_dictionary(text: str | None, columns: Sequence[str]) -> Dictionary:
             if column is not None and column not in statements:
                 statements.append(column)
     shared: dict[str, str] = {}
+    noted: dict[str, dict[str, str]] = {}
     for line in prose:
         for sentence in _SENTENCE_END.split(line):
             notes = [*parse_pairs(sentence), *free_missing_pairs(sentence)]
@@ -452,16 +553,18 @@ def parse_dictionary(text: str | None, columns: Sequence[str]) -> Dictionary:
                 for lower, c in by_lower.items()
                 if len(lower) >= 3 and re.search(rf"(?<![\w]){re.escape(lower)}(?![\w])", sentence.lower())
             ]
-            if named:
-                # "In sbp, 999 indicates the reading was not taken": that column's own code.
+            for code, _label in notes:
+                # "In sbp, 999 indicates the reading was not taken" is about sbp; a sentence that
+                # names no column, about every one. Either way the sentence is quoted and asked.
                 for column in named:
-                    entries[column] = _with_missing(entries.get(column), column, notes)
-            else:
-                for code, label in notes:
-                    shared.setdefault(code, label)
+                    noted.setdefault(column, {}).setdefault(code, sentence.strip())
+                if not named:
+                    shared.setdefault(code, sentence.strip())
     return Dictionary(
         shared_missing=shared,
+        noted_missing=noted,
         says_aggregate=bool(_SAYS_AGGREGATE.search(prose_text)),
+        mentions_weights=bool(_WEIGHTS.search(text)),
         entries=entries,
         grain_noun=grain_noun,
         grain_text=grain_text,

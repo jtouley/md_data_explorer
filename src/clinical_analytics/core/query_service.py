@@ -714,6 +714,19 @@ class QueryService:
                 context=None,
                 failure_reason=wayne,
             )
+        # An open question of the contract holds the answer until the user answers it; a plan
+        # confirmation never releases it (ADR017, contracts.holds).
+        held = self._open_question_hold(query_plan) or self._survey_refusal(normalized_query)
+        if held is not None:
+            return QueryResult(
+                plan=query_plan,
+                issues=[{"message": held, "severity": "warning"}],
+                result=None,
+                confidence=query_intent.confidence,
+                run_key=None,
+                context=None,
+                failure_reason=held,
+            )
         cases = self._aggregate_cases(query_plan)
         if cases is not None:
             return QueryResult(
@@ -1211,9 +1224,6 @@ class QueryService:
         for _column, hold, note in answer_checks.implausible_sentences(plan, layer):
             findings.holds.append(hold)
             findings.notes.append(note)
-        # A value the contract asks about ("Does 999 mean not recorded?") holds every answer on
-        # its column until the user answers: never averaged in without a word (ADR017).
-        findings.holds.extend(answer_checks.open_value_questions(plan, layer, declarations, dataset_version))
         null_keys = answer_checks.missing_key_note(
             grain, visits or grain.repeated, encounter=unit.encounter_key is not None and plan.entity_key is not None
         )
@@ -1224,6 +1234,32 @@ class QueryService:
         findings.notes.extend(answer_checks.report_notes(report, columns))
         findings.notes.extend(answer_checks.missingness_notes(layer, columns, answer_checks.flagged_columns(report)))
         return findings
+
+    def _open_question_hold(self, plan: QueryPlan) -> str | None:
+        """The held-answer sentence when the plan reads what an unanswered question concerns,
+        checked on the leased layer's own semantics: an answer stored while this question runs
+        never releases a hold on a layer built before it."""
+        from clinical_analytics.contracts.holds import held_message, open_question_holds
+        from clinical_analytics.contracts.semantics import layer_semantics
+
+        holds = open_question_holds(
+            layer_semantics(self.semantic_layer, declared=True),
+            columns=set(answer_checks.plan_columns(plan)),
+            counts_lines=plan.intent == "COUNT" and not plan.metric,
+        )
+        return held_message(holds) if holds else None
+
+    def _survey_refusal(self, question: str) -> str | None:
+        """A national-estimate question on a survey sample: its counts are of this file's people,
+        never weighted national estimates (said, never computed)."""
+        from clinical_analytics.contracts.config import SURVEY_NATIONAL_QUESTION, SURVEY_NATIONAL_REFUSAL
+        from clinical_analytics.contracts.semantics import layer_semantics
+
+        semantics = layer_semantics(self.semantic_layer, declared=True)
+        if semantics is None or not semantics.survey_sample or not SURVEY_NATIONAL_QUESTION.search(question):
+            return None
+        logger.info("survey_national_question_declined")
+        return SURVEY_NATIONAL_REFUSAL
 
     def _aggregate_cases(self, plan: QueryPlan) -> str | None:
         """For a count question on a table of groups (its contract's ``aggregate``), what the

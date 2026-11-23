@@ -26,11 +26,13 @@ from typing import Literal
 
 import structlog
 
+from clinical_analytics.contracts.config import ROWS_ANSWER_RECORDS, ROWS_QUESTION_ID
 from clinical_analytics.contracts.declarations import (
     AggregateDeclaration,
     Declarations,
     DeclarationStore,
     GrainDeclaration,
+    QuestionAnswer,
     confirmation_token,
 )
 from clinical_analytics.contracts.semantics import DatasetSemantics
@@ -149,17 +151,27 @@ def record_answer(
         declared = AggregateDeclaration(
             kind="frequency", count_column=counts_cases_in, rows=rows, dataset_version=version
         )
-        store.update(dataset_id, lambda current: current.without_patient_grain(version).with_aggregate(declared))
+        store.update(
+            dataset_id,
+            lambda current: (
+                current.without_patient_grain(version)
+                .without_answer(ROWS_QUESTION_ID, version)
+                .with_aggregate(declared)
+            ),
+        )
         log.info("patient_rows_counts_cases", dataset_version=version)
         return "cases"
     if store.load(dataset_id).aggregate_for(version) is not None:
         store.update(dataset_id, lambda current: current.without_aggregate(version))
     if one_row_per_patient:
         grain = GrainDeclaration(grain="patient", key=None, rows=rows, patients=rows, dataset_version=version)
-        store.update(dataset_id, lambda current: current.with_grain(grain))
+        store.update(dataset_id, lambda current: current.without_answer(ROWS_QUESTION_ID, version).with_grain(grain))
         log.info("patient_rows_confirmed", dataset_version=version)
         return "patients"
     if confirmed_patient_rows(metadata, semantics, store.load(dataset_id)):
         store.update(dataset_id, lambda current: current.without_patient_grain(version))
+    # "No": lines are records, not patients and not groups. Kept, so answers stop waiting on it.
+    records = QuestionAnswer(question_id=ROWS_QUESTION_ID, answer=ROWS_ANSWER_RECORDS, dataset_version=version)
+    store.update(dataset_id, lambda current: current.with_answer(records))
     log.info("patient_rows_declined", dataset_version=version)
     return "rows"

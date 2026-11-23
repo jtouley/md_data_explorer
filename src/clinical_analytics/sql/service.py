@@ -18,7 +18,6 @@ each row one patient?" at upload (``core.patient_rows``), so either answer serve
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -30,15 +29,18 @@ from clinical_analytics.contracts.declarations import (
     Declarations,
     DeclarationStore,
     GrainDeclaration,
+    MissingCodeDeclaration,
     confirmation_token,
 )
 from clinical_analytics.contracts.errors import ContractError, ContractStoreError
-from clinical_analytics.contracts.semantics import DatasetSemantics, semantics_from_contract, with_declarations
+from clinical_analytics.contracts.holds import held_message, open_question_holds
+from clinical_analytics.contracts.readings import declared_reads
+from clinical_analytics.contracts.semantics import layer_semantics
 from clinical_analytics.contracts.service import read_saved_contract
 from clinical_analytics.contracts.store import contract_path
 from clinical_analytics.sql.answer import PatientRowsUnconfirmedError, SqlAnswer, answer_query
 from clinical_analytics.sql.catalog import SqlCatalog
-from clinical_analytics.sql.errors import SqlRefusedError
+from clinical_analytics.sql.errors import SqlHeldError, SqlRefusedError
 from clinical_analytics.sql.sandbox import SandboxConnection
 from clinical_analytics.sql.validate import validate_sql
 
@@ -53,10 +55,6 @@ DECLARATIONS_UNREADABLE = "This dataset's saved confirmations can't be read or s
 AGGREGATE_ROWS = (
     "Each line of this table counts cases for a group (in {count}), so a count of lines is a count of groups, "
     "not of patients, and it can't be confirmed as one patient per line. Add up {count} with SUM({count}) instead."
-)
-OPEN_MISSING_CODE = (
-    "{column} holds {value} on some rows, which may mean not recorded ({question}). This answer counts it as a "
-    "real value; answer the question in the cohort details to leave it out."
 )
 CONFIRMATION_STALE = (
     "The dataset changed after you were asked to confirm one row per patient. "
@@ -104,16 +102,28 @@ def run_governed_sql(
         log.warning("governed_sql_declarations_unreadable", error_type=type(e).__name__)
         raise SqlRefusedError(DECLARATIONS_UNREADABLE) from e
     declared = loaded.for_version(version)
-    semantics = _semantics(contract, loaded, version)
+    # The leased layer's own semantics, with the answers it was built with (contracts.holds).
+    semantics = layer_semantics(layer, declared=True)
+    reads = declared_reads(loaded, version, semantics)
+    missing = [
+        MissingCodeDeclaration(column=column, value=value, missing=True, dataset_version=version)
+        for column, values in reads.missing.items()
+        for value in values
+    ]
     catalog = SqlCatalog.from_contract(
-        contract, Path(source), declared.levels, declared.missing_codes, declared.date_readings_for(version)
+        contract, Path(source), declared.levels, missing, declared.date_readings_for(version)
     )
     query = validate_sql(sql, catalog)
+    read = {c.name for c in sqlglot.parse_one(query.shown_sql, read="duckdb").find_all(exp.Column)}
+    # Counting lines is gated below by the one-row-per-patient confirmation, SQL's own answer to it.
+    holds = open_question_holds(semantics, columns=read, counts_lines=False)
+    if holds:
+        log.info("governed_sql_held", questions=len(holds))
+        raise SqlHeldError(held_message(holds), questions=tuple(h.question_id for h in holds))
     aggregate = semantics.aggregate if semantics is not None else None
     with SandboxConnection(catalog) as sandbox:
         try:
-            answer = answer_query(query, sandbox, catalog, confirmed_patient_rows=_confirmed_rows(declared, catalog))
-            return _with_open_value_notes(answer, query.shown_sql, semantics)
+            return answer_query(query, sandbox, catalog, confirmed_patient_rows=_confirmed_rows(declared, catalog))
         except PatientRowsUnconfirmedError as e:
             if aggregate is not None:
                 # Lines of a table of groups are never patients: no confirmation is offered or taken.
@@ -132,38 +142,7 @@ def run_governed_sql(
                 log.warning("governed_sql_declarations_unsaved", error_type=type(store_error).__name__)
                 raise SqlRefusedError(DECLARATIONS_UNREADABLE) from store_error
             log.info("governed_sql_patient_grain_confirmed", dataset_version=version)
-            answer = answer_query(query, sandbox, catalog, confirmed_patient_rows=e.rows)
-            return _with_open_value_notes(answer, query.shown_sql, semantics)
-
-
-def _semantics(contract: Any, loaded: Any, version: str) -> DatasetSemantics | None:
-    """The version's semantics with the user's declarations, or None (a contract without them)."""
-    semantics = semantics_from_contract(contract)
-    if semantics is None:
-        return None
-    return with_declarations(semantics.model_copy(update={"dataset_version": version}), loaded)
-
-
-def _with_open_value_notes(answer: SqlAnswer, sql: str, semantics: DatasetSemantics | None) -> SqlAnswer:
-    """``answer`` with a note for every column it reads that holds a value the contract asks about
-    ("Does 99 in phq9 mean not recorded?") and the user has not answered: the value is counted as
-    real, and the answer says so (as the question path holds it)."""
-    if semantics is None:
-        return answer
-    read = {c.name for c in sqlglot.parse_one(sql, read="duckdb").find_all(exp.Column)}
-    notes = [
-        OPEN_MISSING_CODE.format(
-            column=q.column,
-            value=f"{q.value:g}" if isinstance(q.value, int | float) else q.value,
-            question=q.question,
-        )
-        for q in semantics.open_questions
-        if q.kind == "missing_code" and not q.answered and q.column in read
-    ]
-    if not notes:
-        return answer
-    logger.info("governed_sql_open_value_questions", questions=len(notes))
-    return replace(answer, notes=[*answer.notes, *notes])
+            return answer_query(query, sandbox, catalog, confirmed_patient_rows=e.rows)
 
 
 def catalog_for_layer(
