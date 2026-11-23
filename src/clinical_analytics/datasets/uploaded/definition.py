@@ -975,6 +975,13 @@ def probe_query_view(storage: UserDatasetStorage, upload_id: str, metadata: dict
         view = layer.get_base_view()
         counts = [view.count().name("_rows"), *(view[c].count().name(f"_c{i}") for i, c in enumerate(view.columns))]
         rows = int(view.aggregate(counts).to_pyarrow().column("_rows")[0].as_py())
+        # A frequency table's total rows are left out of the view on purpose (contracts.readings).
+        from clinical_analytics.contracts.readings import ibis_total_filter
+        from clinical_analytics.core.semantic import DECLARED_READS_KEY
+
+        keep = ibis_total_filter(layer.raw, layer.config.get(DECLARED_READS_KEY) or {})
+        if keep is not None:
+            rows += int(layer.raw.filter(~keep).count().to_pyarrow().as_py())
         view_schema = dict(pl.DataFrame(layer.raw.limit(0).to_pyarrow()).schema) if cohort_path else None
     except _BUILD_ERRORS as e:
         log.error("upload_probe_failed", error_type=type(e).__name__)

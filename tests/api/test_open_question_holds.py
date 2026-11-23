@@ -277,7 +277,20 @@ def test_aggregatePath_questionOnAColumnNotRead_answered(
     assert "Question of kind" not in body["message"]
 
 
-def test_fileQuestions_sharedNoteOnSeveralColumns_oneQuestionOneAnswer(test_client: TestClient) -> None:
+@pytest.mark.parametrize(
+    "notes",
+    [
+        pytest.param("\nFor all measurements, 9999 = not recorded.\n", id="one-shared-note"),
+        pytest.param(
+            "alt  ALT, U/L. Missing values were coded as 9999.\nast  AST, U/L. 9999 indicates the test was not done.\n"
+            "ggt  GGT, U/L. Missing values were coded as 9999.\n",
+            id="a-note-per-column",
+        ),
+    ],
+)
+def test_fileQuestions_sharedNoteOnSeveralColumns_oneQuestionOneAnswer(
+    test_client: TestClient, isolated_data_home: Path, notes: str
+) -> None:
     # Arrange: one prose note, 9999 present in three lab columns
     import zipfile
 
@@ -294,13 +307,15 @@ def test_fileQuestions_sharedNoteOnSeveralColumns_oneQuestionOneAnswer(test_clie
         zf.writestr("labs.csv", frame.write_csv())
         zf.writestr(
             "dictionary.txt",
-            "mrn  Medical record number (patient identifier)\n\nFor all measurements, 9999 = not recorded.\n",
+            "mrn  Medical record number (patient identifier)\n" + notes,
         )
-    upload_id = test_client.post(
+    uploaded = test_client.post(
         "/api/datasets/upload",
         files={"file": ("labs.zip", buf.getvalue(), "application/zip")},
         data={"dataset_name": "labs"},
-    ).json()["upload_id"]
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    upload_id = uploaded.json()["upload_id"]
     listed = test_client.get(f"/api/datasets/{upload_id}/questions").json()["questions"]
 
     # Act

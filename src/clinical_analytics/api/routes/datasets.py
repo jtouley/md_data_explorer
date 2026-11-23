@@ -442,7 +442,7 @@ def _without_answered_questions(report: QualityReport, declarations: Declaration
             return rest in dated
         if kind in ("rows_are_patients", "aggregate_unsure"):
             return table_kind or check.id in given or "rows_are_patients" in given
-        if kind == "repeated_strata":
+        if kind in ("repeated_strata", "unit_missing"):
             return given.get(check.id, "").startswith("yes")
         if kind == "person_role":
             return given.get(check.id) == "one baby"

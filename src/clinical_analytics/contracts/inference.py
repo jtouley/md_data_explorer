@@ -611,52 +611,92 @@ def _far_outside(
     return code > max(_float(rest.max()), 0.0) * gap
 
 
-_TIME_UNITS: Final = frozenset(
-    {"day", "days", "week", "weeks", "month", "months", "year", "years", "hour", "hours", "minute", "minutes",
-     "d", "wk", "mo", "yr", "yrs", "h", "hr", "hrs", "min"}
-)  # fmt: skip
 _UNIT_WORDS: Final = frozenset({"unit", "units", "u", "uom", "scale"})
-_TIME_UNIT_NAMES: Final = {
-    **dict.fromkeys(("day", "days", "d"), "days"),
-    **dict.fromkeys(("week", "weeks", "wk"), "weeks"),
-    **dict.fromkeys(("month", "months", "mo"), "months"),
-    **dict.fromkeys(("year", "years", "yr", "yrs"), "years"),
-    **dict.fromkeys(("hour", "hours", "h", "hr", "hrs"), "hours"),
-    **dict.fromkeys(("minute", "minutes", "min"), "minutes"),
-}
-_TIME_UNIT_DAYS: Final = {
-    "minutes": 1 / 1440, "hours": 1 / 24, "days": 1.0, "weeks": 7.0, "months": 365.25 / 12, "years": 365.25,
-}  # fmt: skip
-
-
-def _unit_days(unit_column: str) -> pl.Expr:
-    """Days in one unit of each line's ``unit_column`` value (null for a value it doesn't name)."""
-    unit = pl.col(unit_column).cast(pl.String).str.strip_chars().str.to_lowercase()
-    return unit.replace_strict(
-        {k: _TIME_UNIT_DAYS[v] for k, v in _TIME_UNIT_NAMES.items()}, default=None, return_dtype=pl.Float64
-    )
+_RATE_UNIT_WORDS: Final = frozenset({"per", "freq", "frequency", "rate", "times", "schedule", "interval", "every"})
 
 
 def _unit_columns(df: pl.DataFrame) -> list[tuple[str, str]]:
-    """(value column, unit column) pairs: a text column whose values are all time units
-    ("months", "years") gives the unit of the number column it names ("dur" and "dur_unit") or,
-    failing that, of the number column just before it."""
+    """(value column, unit column) candidates: a text column whose filled values are mostly time
+    units ("months", "years") beside the number column it names ("dur" and "dur_unit") or, failing
+    that, the number column just before it. Never a rate ("dose_per" = day/week beside "dose_mg"):
+    a unit column named for a frequency, or a value column with a unit of its own."""
     pairs = []
     order = list(df.columns)
     for i, c in enumerate(order):
-        if df.schema[c] != pl.String:
+        if df.schema[c] != pl.String or set(name_tokens(c)) & _RATE_UNIT_WORDS:
             continue
-        values = {str(v).strip().lower() for v in df.get_column(c).drop_nulls().unique().to_list()}
-        if not values or len(values) > 6 or not values <= _TIME_UNITS:
+        filled = [str(v).strip().lower() for v in df.get_column(c).drop_nulls().to_list() if str(v).strip()]
+        known = [v for v in filled if v in config.TIME_UNIT_NAMES]
+        if not known or len(set(filled)) > 8 or len(known) < 0.8 * len(filled):
             continue
         stem = [t for t in name_tokens(c) if t not in _UNIT_WORDS]
-        numbers = [n for n in order if n != c and df.schema[n].is_numeric()]
+        numbers = [n for n in order if n != c and df.schema[n].is_numeric() and _unit_from_name(n) is None]
         named = [n for n in numbers if stem and name_tokens(n) == stem]
         before = [order[i - 1]] if i > 0 and order[i - 1] in numbers else []
         partners = named or before
         if partners:
             pairs.append((partners[0], c))
     return pairs
+
+
+def _unit_stated(dictionary: Dictionary, value_column: str, unit_column: str) -> bool:
+    """The dictionary says ``unit_column`` gives the unit of ``value_column`` ("Unit of measure
+    for DID060")."""
+    entry = dictionary.entry(unit_column)
+    text = f"{entry.description} {entry.text}" if entry is not None else ""
+    return bool(re.search(r"\bunits?\b", text, re.I)) and bool(
+        re.search(rf"(?<![\w]){re.escape(value_column)}(?![\w])", text, re.I)
+    )
+
+
+def _unit_pair_questions(df: pl.DataFrame, value_column: str, unit_column: str, stated: bool) -> list[OpenQuestion]:
+    """ "Does dur_unit give the unit of dur?" (unless the dictionary says so), and "N lines of dur
+    have no unit: leave them out?" (blank or unrecognised units: never read as any unit)."""
+    found = []
+    target = _largest_unit(df, unit_column)
+    if not stated:
+        found.append(
+            OpenQuestion(
+                id=f"unit_pair:{value_column}:{unit_column}",
+                kind="unit_pair",
+                column=value_column,
+                value=target,
+                question=(
+                    f"Does {unit_column} give the unit of {value_column} (days, months, years…)? If so, answers read "
+                    f"every line of {value_column} in {target}."
+                ),
+                options=(f"yes, {unit_column} gives the unit of {value_column}", "no, they are separate"),
+            )
+        )
+    unit = pl.col(unit_column).cast(pl.String).str.strip_chars().str.to_lowercase()
+    missing = int(
+        df.select(
+            (pl.col(value_column).is_not_null() & ~unit.is_in(list(config.TIME_UNIT_NAMES)).fill_null(True)).sum()
+        ).item()
+    )
+    if missing:
+        found.append(
+            OpenQuestion(
+                id=f"unit_missing:{value_column}",
+                kind="unit_missing",
+                column=value_column,
+                value=missing,
+                question=(
+                    f"{missing:,} lines of {value_column} have no unit in {unit_column}. Leave them out of answers?"
+                ),
+                options=("yes, leave them out", "no, I'll fix the file"),
+            )
+        )
+    return found
+
+
+def _largest_unit(df: pl.DataFrame, unit_column: str) -> str:
+    used = {
+        config.TIME_UNIT_NAMES[v]
+        for v in (str(x).strip().lower() for x in df.get_column(unit_column).drop_nulls().unique().to_list())
+        if v in config.TIME_UNIT_NAMES
+    }
+    return max(used, key=lambda unit: config.TIME_UNIT_DAYS[unit])
 
 
 def _coded(codes: Mapping[str, str], dtype: pl.DataType, present: set[str]) -> tuple[MissingCode, ...]:
@@ -1341,14 +1381,14 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
             )
 
     for value_column, unit_column in _unit_columns(df):
-        # Durations in mixed units are read in one unit, the largest the file uses: an average of
-        # 6 months and 2 years is never 4 (``apply_semantics`` converts every line).
-        units_used = {
-            _TIME_UNIT_NAMES[str(v).strip().lower()] for v in df.get_column(unit_column).drop_nulls().unique()
-        }
-        target = max(units_used, key=lambda unit: _TIME_UNIT_DAYS[unit])
-        unit = Unit(value=target, source="structure")
-        columns[value_column] = columns[value_column].model_copy(update={"unit_column": unit_column, "unit": unit})
+        # Durations in mixed units are read in one unit, the largest the file uses, by every reader
+        # (contracts.readings): an average of 6 months and 2 years is never 4. Applied only when the
+        # dictionary states the pair; otherwise asked (ADR017 principle A).
+        stated = _unit_stated(dictionary, value_column, unit_column)
+        questions.extend(_unit_pair_questions(df, value_column, unit_column, stated))
+        if stated:
+            unit = Unit(value=_largest_unit(df, unit_column), source="dictionary")
+            columns[value_column] = columns[value_column].model_copy(update={"unit_column": unit_column, "unit": unit})
     weights = tuple(c for c in df.columns if config.SURVEY_WEIGHT_NAME.search(c.lower()))
     survey = bool(weights) or dictionary.mentions_weights
 
@@ -1848,27 +1888,6 @@ def apply_semantics(df: pl.DataFrame, semantics: DatasetSemantics) -> pl.DataFra
                 expr = parse_expr(name, col.date.format, col.date.has_time, dtype)
         if expr is not None:
             exprs.append(expr)
-    converted = df.lazy().with_columns(exprs).collect() if exprs else df
-    return _in_one_unit(converted, semantics)
-
-
-def _in_one_unit(df: pl.DataFrame, semantics: DatasetSemantics) -> pl.DataFrame:
-    """Durations whose unit is given per line (``unit_column``) converted to the column's one
-    unit, the unit column rewritten to it: safe to run twice (a converted line has factor 1)."""
-    exprs: list[pl.Expr] = []
-    for name, col in semantics.columns.items():
-        unit_column = col.unit_column
-        if unit_column is None or col.unit is None or name not in df.columns or unit_column not in df.columns:
-            continue
-        target = _TIME_UNIT_DAYS[col.unit.value]
-        days = _unit_days(unit_column)
-        exprs += [
-            pl.when(days.is_not_null())
-            .then(pl.col(name).cast(pl.Float64) * days / target)
-            .otherwise(pl.col(name))
-            .alias(name),
-            pl.when(days.is_not_null()).then(pl.lit(col.unit.value)).otherwise(pl.col(unit_column)).alias(unit_column),
-        ]
     return df.lazy().with_columns(exprs).collect() if exprs else df
 
 

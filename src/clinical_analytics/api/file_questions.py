@@ -93,21 +93,21 @@ def file_questions(
 _NOTE: Final = re.compile(r'^The data dictionary says "(?P<note>.+?)"\. Does ')
 
 
-def _shared_notes(questions: list[OpenQuestion]) -> dict[tuple[str, str], list[OpenQuestion]]:
-    """Missing-code questions one dictionary note raises on several columns, by (note, value)."""
-    groups: dict[tuple[str, str], list[OpenQuestion]] = {}
+def _shared_notes(questions: list[OpenQuestion]) -> dict[str, list[OpenQuestion]]:
+    """Missing-code questions the dictionary's notes raise on several columns about one value,
+    by value: one note for every measurement, or the same note written beside each column."""
+    groups: dict[str, list[OpenQuestion]] = {}
     for q in questions:
-        m = _NOTE.match(q.question)
-        if q.kind == "missing_code" and m is not None and q.column:
-            groups.setdefault((m.group("note"), f"{q.value}"), []).append(q)
+        if q.kind == "missing_code" and _NOTE.match(q.question) is not None and q.column:
+            groups.setdefault(f"{q.value:g}" if isinstance(q.value, int | float) else f"{q.value}", []).append(q)
     return {key: group for key, group in groups.items() if len(group) > 1}
 
 
 def _shared_view(group: list[OpenQuestion], frame: pl.LazyFrame) -> FileQuestion:
     """One question, one answer, for every column a shared note names ("apply to these 4 columns?")."""
     first = group[0]
-    note = _NOTE.match(first.question)
-    assert note is not None and first.column is not None
+    notes = list(dict.fromkeys(m.group("note") for q in group if (m := _NOTE.match(q.question)) is not None))
+    said = " and ".join(f'"{n}"' for n in notes[:2]) + (" and other notes" if len(notes) > 2 else "")
     columns = [q.column or "" for q in group]
     listed = ", ".join(columns)
     evidence = (
@@ -119,7 +119,7 @@ def _shared_view(group: list[OpenQuestion], frame: pl.LazyFrame) -> FileQuestion
         kind="missing_code",
         column=None,
         question=(
-            f'The data dictionary says "{note.group("note")}". Does {first.value} mean not recorded in all '
+            f"The data dictionary says {said}. Does {first.value} mean not recorded in all "
             f"{len(columns)} columns that hold it: {listed}?"
         ),
         evidence=evidence,
@@ -223,6 +223,14 @@ def _view(
     elif q.kind == "censored_value":
         evidence = f"{_lines(_equal_count(frame, column, q.value))} of {column} hold {q.value}."
         answers = generic((f"Answers use {q.value} as given.", f"Answers leave the {q.value} lines of {column} out."))
+    elif q.kind == "unit_pair":
+        evidence = f"{_lines(_filled(frame, column))} of {column} hold a number."
+        answers = generic(
+            (f"Every line of {column} is read in {q.value}, by its unit.", f"{column} is read as written.")
+        )
+    elif q.kind == "unit_missing":
+        evidence = f"{_lines(int(q.value or 0))} of {column} have no unit."
+        answers = generic((f"Those lines are left out of {column}.", "Answers stay on hold until the file is fixed."))
     elif q.kind == "person_role":
         evidence = f"The file has {_lines(semantics.rows)}; {column} names a baby on each."
         answers = generic(

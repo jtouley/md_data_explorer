@@ -112,7 +112,13 @@ def run_governed_sql(
         for value in values
     ]
     catalog = SqlCatalog.from_contract(
-        contract, Path(source), declared.levels, missing, declared.date_readings_for(version)
+        contract,
+        Path(source),
+        declared.levels,
+        missing,
+        declared.date_readings_for(version),
+        reads.totals,
+        reads.units,
     )
     query = validate_sql(sql, catalog)
     read = {c.name for c in sqlglot.parse_one(query.shown_sql, read="duckdb").find_all(exp.Column)}

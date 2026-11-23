@@ -117,13 +117,14 @@ def test_readings_topCodeAnsweredLeaveOut_leftOutOnlyThen() -> None:
     assert read.filter(pl.col("AGEYR") == 80).height == 0
 
 
-def test_inferSemantics_unitColumn_pairedWithItsValue() -> None:
+def test_inferSemantics_unitColumnNotStated_askedNotApplied() -> None:
     # Act
     semantics = _inferred()
 
-    # Assert
-    assert semantics.columns["sleep_dur"].unit_column == "sleep_dur_unit"
-    assert semantics.columns["sleep_dur"].unit.value == "years"  # the largest unit the file uses
+    # Assert: the codebook never says sleep_dur_unit is the unit of sleep_dur (ADR017 principle A)
+    assert semantics.columns["sleep_dur"].unit_column is None
+    asked = next(q for q in semantics.open_questions if q.kind == "unit_pair")
+    assert (asked.column, asked.value) == ("sleep_dur", "years")
 
 
 @pytest.mark.parametrize(
@@ -214,19 +215,40 @@ def test_parseDictionary_codebookRangesAndRangeCodes_onlyTheCodebooksOwn(
     assert entry.censored == censored
 
 
-def test_applySemantics_mixedUnitDurations_readInOneUnitTwiceSafe() -> None:
-    # Arrange: 6 months and 2 years
+UNIT_DOC = "dur  Duration of symptoms\ndur_unit  Unit of measure for dur (days, months or years)\n"
+
+
+@pytest.mark.parametrize("blank", [0, 2], ids=["all-units", "two-blank"])
+def test_readings_statedUnitColumn_everyLineInOneUnitBlanksAsked(blank: int) -> None:
+    # Arrange: 6 months, 2 years, 18 months, 1 year; ``blank`` lines without a unit
+    units = ["months", "years", "months", "years"] + [""] * blank
     frame = pl.DataFrame(
-        {"pid": ["A", "B", "C", "D"], "dur": [6, 2, 18, 1], "dur_unit": ["months", "years", "months", "years"]}
+        {"pid": [f"P{i}" for i in range(4 + blank)], "dur": [6, 2, 18, 1] + [5] * blank, "dur_unit": units}
     )
-    semantics = infer_semantics(frame)
 
     # Act
-    once = apply_semantics(frame, semantics)
-    twice = apply_semantics(once, semantics)
+    semantics = infer_semantics(frame, UploadFacts(doc_context=UNIT_DOC))
+    read = apply_declared(apply_semantics(frame, semantics), declared_reads(Declarations(), None, semantics))
+
+    # Assert: read in years by every reader; the stored data is not rewritten
+    assert semantics.columns["dur"].unit.value == "years"
+    assert read.get_column("dur").to_list()[:4] == pytest.approx([0.5, 2.0, 1.5, 1.0])
+    assert apply_semantics(frame, semantics).get_column("dur").to_list() == frame.get_column("dur").to_list()
+    assert any("read in years" in line for line in describe(semantics, max_lines=40))
+    missing = next((q for q in semantics.open_questions if q.kind == "unit_missing"), None)
+    assert (missing is not None) is (blank > 0)
+    assert read.get_column("dur").null_count() == blank
+
+
+def test_inferSemantics_ratePerColumn_neverAUnitPair() -> None:
+    # Arrange: 20 mg per day, 100 mg per week
+    frame = pl.DataFrame(
+        {"pid": [f"P{i}" for i in range(40)], "dose_mg": [20, 100] * 20, "dose_per": ["day", "week"] * 20}
+    )
+
+    # Act
+    semantics = infer_semantics(frame)
 
     # Assert
-    assert semantics.columns["dur"].unit.value == "years"
-    assert once.get_column("dur").to_list() == pytest.approx([0.5, 2.0, 1.5, 1.0])
-    assert twice.get_column("dur").to_list() == pytest.approx([0.5, 2.0, 1.5, 1.0])
-    assert any("read in years" in line for line in describe(semantics, max_lines=40))
+    assert semantics.columns["dose_mg"].unit_column is None
+    assert not [q for q in semantics.open_questions if q.kind in ("unit_pair", "unit_missing")]

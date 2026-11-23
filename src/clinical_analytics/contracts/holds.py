@@ -28,7 +28,9 @@ from clinical_analytics.contracts.semantics import DatasetSemantics, OpenQuestio
 
 logger = structlog.get_logger()
 
-COLUMN_KINDS: Final = frozenset({"missing_code", "date_order", "date_century", "censored_value"})
+COLUMN_KINDS: Final = frozenset(
+    {"missing_code", "date_order", "date_century", "censored_value", "unit_pair", "unit_missing"}
+)
 TABLE_KINDS: Final = frozenset({"aggregate_unsure", "total_row", "repeated_strata"})
 COUNT_KINDS: Final = frozenset({"rows_are_patients", "person_role"})
 

@@ -273,3 +273,63 @@ def test_qualityReport_missingCodeAnswered_needsYourAnswerLineGone(
     assert [c["id"] for c in asked] == ["missing_code:trop_ng_l:999.0"]
     assert [c for c in after["checks"] if c["metric"] == "openQuestion"] == []
     assert after["warnings"] == before["warnings"] - 1
+
+
+def _with_total(label: str) -> pl.DataFrame:
+    """Legionella counts by county, year and sex, plus a ``label`` line per year and sex holding their sum."""
+    groups = pl.read_csv(_legionella_csv()).unique(subset=["County", "Year", "Sex"], keep="first", maintain_order=True)
+    totals = groups.group_by("Year", "Sex").agg(pl.col("Cases").sum()).with_columns(pl.lit(label).alias("County"))
+    return pl.concat([groups, totals.select(groups.columns)])
+
+
+@pytest.mark.parametrize(
+    ("label", "confirm"),
+    [
+        pytest.param("All States", None, id="label-and-sums"),
+        pytest.param("Statewide", "yes, it is a total", id="sum-confirmed"),
+    ],
+)
+def test_threeReaders_frequencyTableTotals_neverAddedToTheirGroups(
+    upload: Callable[..., Any], test_client: TestClient, sql_on: None, label: str, confirm: str | None
+) -> None:
+    # Arrange: declared as counts in Cases; "Statewide" is a total only once confirmed
+    from clinical_analytics.api import dependencies
+    from clinical_analytics.contracts.declarations import FileDeclarationStore
+    from clinical_analytics.contracts.readings import apply_declared, declared_reads
+    from clinical_analytics.contracts.semantics import layer_semantics
+    from clinical_analytics.core.data_home import uploads_dir
+
+    frame = _with_total(label)
+    truth = int(frame.filter((pl.col("Year") == 2002) & (pl.col("County") != label))["Cases"].sum())
+    body = upload(frame, f"legionella_{label.replace(' ', '_')}").json()
+    upload_id = body["upload_id"]
+    test_client.post(
+        f"/api/datasets/{upload_id}/one-row-per-patient",
+        json={
+            "confirmation": body["one_row_per_patient"]["confirmation"],
+            "one_row_per_patient": False,
+            "counts_cases_in": "Cases",
+        },
+    )
+    if confirm is not None:
+        test_client.post(
+            f"/api/datasets/{upload_id}/answers", json={"question_id": f"total_row:County:{label}", "answer": confirm}
+        )
+
+    # Act
+    sql = test_client.post(
+        "/api/queries/sql",
+        json={"dataset_id": upload_id, "sql": "SELECT sum(Cases) AS cases FROM unified WHERE Year = 2002"},
+    ).json()
+    with dependencies.lease_semantic_layer(upload_id) as lease:
+        view = lease.layer.get_base_view().to_polars()
+        semantics = layer_semantics(lease.layer, declared=True)
+    dependencies.invalidate_semantic_layer_cache(upload_id)
+    declarations = FileDeclarationStore(uploads_dir().parent).load(upload_id)
+    polars_read = apply_declared(frame, declared_reads(declarations, semantics.dataset_version, semantics))
+
+    # Assert: governed SQL, the semantic layer and the polars reads all leave the total out
+    assert sql["status"] == "answered", sql
+    assert sql["rows"][0]["cases"] == truth
+    assert int(view.filter(pl.col("Year") == 2002)["Cases"].sum()) == truth
+    assert int(polars_read.filter(pl.col("Year") == 2002)["Cases"].sum()) == truth
