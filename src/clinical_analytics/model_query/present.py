@@ -114,7 +114,7 @@ _INTENTS = {
 
 def run_test(call: Compiled, rows: pl.DataFrame, question: str, entity_key: str | None) -> dict[str, Any]:
     """Route a test call to the app's statistics code (``analysis.compute``) on the fetched rows.
-    The result may carry ``error`` (too few rows, a non-binary outcome): shown as the reason."""
+    The result may carry ``error`` (too few rows, an outcome that is not yes/no): shown as the reason."""
     test, outcome, group = call.plan.answer, call.test_outcome, call.test_group
     context = AnalysisContext(research_question=question, query_text=question, inferred_intent=_INTENTS[test])
     if test == "compare_groups":

@@ -22,7 +22,7 @@ _cond = tables.cond
 
 @pytest.fixture
 def clinic(make_query_table):
-    return make_query_table(tables.clinic(), doc_context=tables.CLINIC_DICTIONARY)[1]
+    return make_query_table(tables.shots(), doc_context=tables.SHOTS_DICTIONARY)[1]
 
 
 @pytest.fixture
@@ -56,16 +56,16 @@ def test_apply_stated_comparisonWithNumber_setsTheStatedOperator(cohort, questio
 @pytest.mark.parametrize(
     ("question", "model_says", "expected"),
     [
-        pytest.param("How many patients smoked at their latest visit?", "any", "last", id="latest"),
-        pytest.param("How many patients smoked at baseline?", "last", "first", id="baseline"),
-        pytest.param("How many patients ever smoked?", "last", "any", id="ever"),
-        pytest.param("How many patients smoked at every visit?", "any", "every", id="every"),
-        pytest.param("How many patients smoked?", "last", "any", id="unstated_is_not_assumed"),
+        pytest.param("How many patients wheezed at their latest visit?", "any", "last", id="latest"),
+        pytest.param("How many patients wheezed at baseline?", "last", "first", id="baseline"),
+        pytest.param("How many patients ever wheezed?", "last", "any", id="ever"),
+        pytest.param("How many patients wheezed at every visit?", "any", "every", id="every"),
+        pytest.param("How many patients wheezed?", "last", "any", id="unstated_is_not_assumed"),
     ],
 )
 def test_apply_stated_timepointWords_setWhichVisit(clinic, question, model_says, expected):
     # Arrange
-    plan = _plan(filters=[_cond("smoker", "is", values=["yes"])], which_visit=model_says)
+    plan = _plan(filters=[_cond("wheeze", "is", values=["yes"])], which_visit=model_says)
 
     # Act
     fixed, _changed = checks.apply_stated(plan, question, clinic)
@@ -75,11 +75,11 @@ def test_apply_stated_timepointWords_setWhichVisit(clinic, question, model_says,
 
 
 def test_apply_stated_neverOnVisits_readsEveryVisit(clinic):
-    # Arrange: "never smoked" = not a smoker at every visit, not "a visit without smoking"
-    plan = _plan(filters=[_cond("smoker", "is", values=["no"])], which_visit="any")
+    # Arrange: "never wheezed" = not a wheeze at every visit, not "a visit without wheezing"
+    plan = _plan(filters=[_cond("wheeze", "is", values=["no"])], which_visit="any")
 
     # Act
-    fixed, _changed = checks.apply_stated(plan, "How many patients never smoked?", clinic)
+    fixed, _changed = checks.apply_stated(plan, "How many patients never wheezed?", clinic)
 
     # Assert
     assert fixed.which_visit == "every"
@@ -88,14 +88,14 @@ def test_apply_stated_neverOnVisits_readsEveryVisit(clinic):
 @pytest.mark.parametrize(
     ("question", "expected"),
     [
-        pytest.param("How many clinic visits had a smoker?", "clinic visits", id="records_noun"),
-        pytest.param("How many women smoked?", "patients", id="person_noun"),
+        pytest.param("How many shot visits had a wheeze?", "shot visits", id="records_noun"),
+        pytest.param("How many women wheezed?", "patients", id="person_noun"),
     ],
 )
 def test_apply_stated_countedNoun_setsTheUnit(clinic, question, expected):
     # Arrange
-    other = "patients" if expected != "patients" else "clinic visits"
-    plan = _plan(count_of=other, filters=[_cond("smoker", "is", values=["yes"])])
+    other = "patients" if expected != "patients" else "shot visits"
+    plan = _plan(count_of=other, filters=[_cond("wheeze", "is", values=["yes"])])
 
     # Act
     fixed, _changed = checks.apply_stated(plan, question, clinic)
@@ -172,16 +172,16 @@ def test_problems_planComputesTheQuestion_findsNothing(cohort, question, fields)
 
 def test_needs_visit_choice_unstatedVisit_onVaryingColumn(clinic):
     # Arrange
-    compiled = compile_plan(_plan(filters=[_cond("smoker", "is", values=["yes"])]), clinic)
+    compiled = compile_plan(_plan(filters=[_cond("wheeze", "is", values=["yes"])]), clinic)
 
     # Act / Assert: no timepoint word, a visit-level table: which visit counts is asked
-    assert checks.needs_visit_choice(compiled, "How many patients smoke?", clinic) is True
-    assert checks.needs_visit_choice(compiled, "How many patients smoked at their latest visit?", clinic) is False
+    assert checks.needs_visit_choice(compiled, "How many patients wheeze?", clinic) is True
+    assert checks.needs_visit_choice(compiled, "How many patients wheezed at their latest visit?", clinic) is False
 
 
 def test_visit_ask_choicesReAskWithATimepointTheChecksRead(clinic):
     # Arrange
-    compiled = compile_plan(_plan(filters=[_cond("smoker", "is", values=["yes"])]), clinic)
+    compiled = compile_plan(_plan(filters=[_cond("wheeze", "is", values=["yes"])]), clinic)
 
     # Act
     ask = checks.visit_ask(compiled, clinic, varying=5)
@@ -189,30 +189,30 @@ def test_visit_ask_choicesReAskWithATimepointTheChecksRead(clinic):
     # Assert: each choice, appended to the question, states a timepoint the checks then apply
     assert ask.kind == "which_visit"
     for _label, words in ask.choices:
-        question = f"How many patients smoke? {words}"
+        question = f"How many patients wheeze? {words}"
         assert not checks.needs_visit_choice(compiled, question, clinic)
 
 
 def test_ask_unit_visitTableNoNoun_asksPatientsOrVisits(clinic):
     # Arrange
-    compiled = compile_plan(_plan(answer="share", numerator=[_cond("smoker", "is", values=["yes"])]), clinic)
+    compiled = compile_plan(_plan(answer="share", numerator=[_cond("wheeze", "is", values=["yes"])]), clinic)
 
     # Act
-    ask = checks.ask_unit(compiled, "What share smoked?", clinic)
+    ask = checks.ask_unit(compiled, "What share wheezed?", clinic)
 
     # Assert
-    assert ask is not None and [label for label, _w in ask.choices] == ["Patients", "Clinic visits"]
+    assert ask is not None and [label for label, _w in ask.choices] == ["Patients", "Shot visits"]
 
 
 def test_ask_open_unansweredQuestionOnUsedColumn_isAsked(make_query_table):
     # Arrange: the contract holds an open question about a column the plan reads
     from clinical_analytics.contracts.semantics import OpenQuestion
 
-    question = OpenQuestion(id="q1", kind="date_order", question="Does 03/04/21 mean 3 April?", column="visit_on")
+    question = OpenQuestion(id="q1", kind="date_order", question="Does 03/04/21 mean 3 April?", column="shot_date")
     _catalog, context = make_query_table(
-        tables.clinic(), doc_context=tables.CLINIC_DICTIONARY, semantics_update={"open_questions": (question,)}
+        tables.shots(), doc_context=tables.SHOTS_DICTIONARY, semantics_update={"open_questions": (question,)}
     )
-    compiled = compile_plan(_plan(filters=[_cond("visit_on", "before", "2023-01-01")]), context)
+    compiled = compile_plan(_plan(filters=[_cond("shot_date", "before", "2023-01-01")]), context)
 
     # Act
     ask = checks.ask_open(compiled, context)
@@ -242,10 +242,10 @@ def test_matcher_may_answer_visitTable_neverAnswersFirst(clinic):
 
 def test_apply_stated_reAskedChoiceTimepoint_keepsTheUnit(clinic):
     # Arrange: a choice's words name the records' noun as a time, not as what is counted
-    plan = _plan(answer="share", numerator=[_cond("smoker", "is", values=["yes"])])
+    plan = _plan(answer="share", numerator=[_cond("wheeze", "is", values=["yes"])])
 
     # Act
-    fixed, _changed = checks.apply_stated(plan, "What share of patients smoke? at the latest clinic visit", clinic)
+    fixed, _changed = checks.apply_stated(plan, "What share of patients wheeze? at the latest shot visit", clinic)
 
     # Assert
     assert (fixed.count_of, fixed.which_visit) == ("patients", "last")
@@ -253,11 +253,11 @@ def test_apply_stated_reAskedChoiceTimepoint_keepsTheUnit(clinic):
 
 def test_needs_visit_choice_overAllRecordsInContractNoun_poolsWithoutAsking(clinic):
     # Arrange: a summary over every visit, said with the contract's own noun for a record
-    compiled = compile_plan(_plan(answer="median", measure="systolic_mmhg"), clinic)
+    compiled = compile_plan(_plan(answer="median", measure="ige_kul"), clinic)
 
     # Act / Assert
-    assert checks.needs_visit_choice(compiled, "Median systolic pressure over all clinic visits", clinic) is False
-    assert checks.needs_visit_choice(compiled, "Median systolic pressure", clinic) is True
+    assert checks.needs_visit_choice(compiled, "Median IgE level over all shot visits", clinic) is False
+    assert checks.needs_visit_choice(compiled, "Median IgE level", clinic) is True
 
 
 def test_apply_stated_countWithNumerator_numeratorIsALimit(cohort):
@@ -306,10 +306,10 @@ def test_problems_breakdownNotAsked_isFound(cohort, question, group_by, found):
 
 def test_needs_visit_choice_summaryOverNamedRecords_poolsWithoutAsking(clinic):
     # Arrange
-    compiled = compile_plan(_plan(answer="mean", measure="systolic_mmhg", count_of="clinic visits"), clinic)
+    compiled = compile_plan(_plan(answer="mean", measure="ige_kul", count_of="shot visits"), clinic)
 
     # Act / Assert: the question names the records it summarises
-    assert checks.needs_visit_choice(compiled, "Mean systolic pressure in clinic visits of smokers", clinic) is False
+    assert checks.needs_visit_choice(compiled, "Mean IgE level in shot visits of wheezers", clinic) is False
 
 
 def test_problems_columnNamedInQuestionUnused_isFound(make_query_table):
@@ -327,11 +327,11 @@ def test_problems_columnNamedInQuestionUnused_isFound(make_query_table):
 
 def test_read_cues_patientKeysOwnWord_isAPerson(make_query_table):
     # Arrange: the file names its patient "recipient"
-    frame = tables.clinic().rename({"pt_ref": "recipient"})
-    _catalog, context = make_query_table(frame, doc_context=tables.CLINIC_DICTIONARY.replace("pt_ref", "recipient"))
+    frame = tables.shots().rename({"holder_ref": "recipient"})
+    _catalog, context = make_query_table(frame, doc_context=tables.SHOTS_DICTIONARY.replace("holder_ref", "recipient"))
 
     # Act
-    cues = checks.read_cues("How many recipients smoked?", context)
+    cues = checks.read_cues("How many recipients wheezed?", context)
 
     # Assert
     assert cues.persons is True

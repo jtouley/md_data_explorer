@@ -22,7 +22,7 @@ def ask_cohort(make_query_table, make_model_ask):
 
 @pytest.fixture
 def ask_clinic(make_query_table, make_model_ask):
-    return make_model_ask(make_query_table(tables.clinic(), doc_context=tables.CLINIC_DICTIONARY))
+    return make_model_ask(make_query_table(tables.shots(), doc_context=tables.SHOTS_DICTIONARY))
 
 
 def test_answer_question_invertedComparison_isAnsweredWithTheStatedOne(ask_cohort):
@@ -72,29 +72,29 @@ def test_answer_question_meaningStillWrong_holdsAndLogsWouldBeAnswer(ask_cohort)
 
 def test_answer_question_categoryVariesOverVisits_asksWhichVisit(ask_clinic):
     # Arrange
-    reply = _reply(filters=[_cond("smoker", "is", values=["yes"])])
+    reply = _reply(filters=[_cond("wheeze", "is", values=["yes"])])
 
     # Act
     with structlog.testing.capture_logs() as logs:
-        answer, _prompts = ask_clinic("How many patients smoke?", reply)
+        answer, _prompts = ask_clinic("How many patients wheeze?", reply)
 
     # Assert
     assert answer.status == "clarify"
     assert [label for label, _q in answer.choices] == [
-        "At any clinic visit (ever)",
-        "At every clinic visit",
-        "At the first clinic visit",
-        "At the latest clinic visit",
+        "At any shot visit (ever)",
+        "At every shot visit",
+        "At the first shot visit",
+        "At the latest shot visit",
     ]
     assert any(e["event"] == "model_query_held_answer" and e["why"] == "which_visit" for e in logs)
 
 
 def test_answer_question_choiceReAsked_isAnswered(ask_clinic):
     # Arrange
-    reply = _reply(filters=[_cond("smoker", "is", values=["yes"])])
+    reply = _reply(filters=[_cond("wheeze", "is", values=["yes"])])
 
     # Act
-    answer, _prompts = ask_clinic("How many patients smoke? at the latest clinic visit", reply)
+    answer, _prompts = ask_clinic("How many patients wheeze? at the latest shot visit", reply)
 
     # Assert
     assert answer.status == "answered" and answer.reply["which_visit"] == "last"

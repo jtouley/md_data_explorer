@@ -163,7 +163,7 @@ class DatasetContext:
 
     @property
     def row_noun(self) -> str:
-        """What one record is, as the contract names it ("ED encounter", "visit")."""
+        """What one record is, as the contract names it ("clinic contact", "visit")."""
         if self.semantics.one_row_per_patient:
             return "patient"
         noun = self.semantics.grain.noun.strip()
@@ -219,7 +219,7 @@ class DatasetContext:
     @property
     def episode(self) -> tuple[str, str] | None:
         """(column, plural noun) of the contract's episode key within the patient (an admission
-        within an MRN), when it is not simply the records' own key."""
+        within a person), when it is not simply the records' own key."""
         for ep in self.semantics.episode_keys:
             if self.column(ep.column) is not None and ep.column not in self.semantics.row_key.columns:
                 return ep.column, plural(ep.noun)

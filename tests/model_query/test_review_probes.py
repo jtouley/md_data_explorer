@@ -34,7 +34,7 @@ def ask_cohort(cohort, make_model_ask):
 
 @pytest.fixture
 def ask_clinic(make_query_table, make_model_ask):
-    return make_model_ask(make_query_table(tables.clinic(), doc_context=tables.CLINIC_DICTIONARY))
+    return make_model_ask(make_query_table(tables.shots(), doc_context=tables.SHOTS_DICTIONARY))
 
 
 def _died() -> pl.DataFrame:
@@ -73,10 +73,10 @@ def test_answer_question_meaningNotComputed_isFedBackThenHeld(ask_cohort, questi
 
 def test_answer_question_inventedDateLimit_isHeld(ask_clinic):
     # Arrange: no date, year or period in the question
-    reply = _reply(count_of="clinic visits", filters=[_cond("visit_on", "on or after", "2022-06-01")])
+    reply = _reply(count_of="shot visits", filters=[_cond("shot_date", "on or after", "2022-06-01")])
 
     # Act
-    answer, _prompts = ask_clinic("How many clinic visits were there?", reply, reply)
+    answer, _prompts = ask_clinic("How many shot visits were there?", reply, reply)
 
     # Assert
     assert answer.status == "refused" and answer.analysis is None
@@ -101,15 +101,15 @@ def test_answer_question_groupedCount_totalIsTheFilteredTotal(ask_cohort):
 @pytest.mark.parametrize(
     ("question", "expected"),
     [
-        pytest.param("Of all the patients, how many smoked?", frozenset(), id="all_the_patients"),
-        pytest.param("How many patients had a clinic visit last year?", frozenset(), id="last_year_is_a_date"),
-        pytest.param("How many patients smoked at their last clinic visit?", frozenset({"last"}), id="last_visit"),
-        pytest.param("Average systolic pressure at baseline", frozenset({"first"}), id="baseline"),
+        pytest.param("Of all the patients, how many wheezed?", frozenset(), id="all_the_patients"),
+        pytest.param("How many patients had a shot visit last year?", frozenset(), id="last_year_is_a_date"),
+        pytest.param("How many patients wheezed at their last shot visit?", frozenset({"last"}), id="last_visit"),
+        pytest.param("Average IgE level at baseline", frozenset({"first"}), id="baseline"),
     ],
 )
 def test_read_cues_timepointWords_onlyWhenAttachedToARecord(make_query_table, question, expected):
     # Arrange (B4)
-    _catalog, context = make_query_table(tables.clinic(), doc_context=tables.CLINIC_DICTIONARY)
+    _catalog, context = make_query_table(tables.shots(), doc_context=tables.SHOTS_DICTIONARY)
 
     # Act
     cues = checks.read_cues(question, context)
@@ -120,64 +120,64 @@ def test_read_cues_timepointWords_onlyWhenAttachedToARecord(make_query_table, qu
 
 def test_compile_plan_firstOrLast_readsTheOrderColumn(make_query_table):
     # Arrange (B5): an open question about the order column holds a latest-value answer
-    question = OpenQuestion(id="q", kind="date_order", question="Is visit 2 after visit 1?", column="visit_seq")
+    question = OpenQuestion(id="q", kind="date_order", question="Is visit 2 after visit 1?", column="shot_round")
     _catalog, context = make_query_table(
-        tables.clinic(), doc_context=tables.CLINIC_DICTIONARY, semantics_update={"open_questions": (question,)}
+        tables.shots(), doc_context=tables.SHOTS_DICTIONARY, semantics_update={"open_questions": (question,)}
     )
 
     # Act
-    compiled = compile_plan(parse_plan(_reply(answer="mean", measure="systolic_mmhg", which_visit="last")), context)
+    compiled = compile_plan(parse_plan(_reply(answer="mean", measure="ige_kul", which_visit="last")), context)
 
     # Assert
-    assert "visit_seq" in compiled.columns and checks.ask_open(compiled, context) is not None
+    assert "shot_round" in compiled.columns and checks.ask_open(compiled, context) is not None
 
 
 def test_answer_question_openMissingCodeOnCountColumn_isHeld(make_query_table, make_model_ask):
     # Arrange (B5): a frequency table whose count column has an unanswered "does -1 mean missing?"
     question = OpenQuestion(
-        id="q", kind="missing_code", question="Does -1 in injury_cases mean not recorded?", column="injury_cases"
+        id="q", kind="missing_code", question="Does -1 in discard_count mean not recorded?", column="discard_count"
     )
-    frame = tables.injuries()
-    aggregate = AggregateInfo(kind="frequency", count_column="injury_cases", source="structure")
+    frame = tables.vials()
+    aggregate = AggregateInfo(kind="frequency", count_column="discard_count", source="structure")
     ask = make_model_ask(
         make_query_table(frame, semantics_update={"aggregate": aggregate, "open_questions": (question,)})
     )
 
     # Act
-    answer, _prompts = ask("How many injury cases?", _reply(count_of="cases"))
+    answer, _prompts = ask("How many discards?", _reply(count_of="cases"))
 
     # Assert
-    assert answer.analysis is None and "Does -1 in injury_cases mean not recorded?" in answer.reason
+    assert answer.analysis is None and "Does -1 in discard_count mean not recorded?" in answer.reason
 
 
 def test_answer_question_perPatientFactOnVisits_readsOneValuePerPatient(make_query_table, make_model_ask):
     # Arrange (B6): an age at entry, the same at every visit
-    frame = tables.clinic().with_columns((40 + pl.col("pt_ref").str.slice(1).cast(pl.Int64) % 25).alias("entry_age"))
-    ask = make_model_ask(make_query_table(frame, doc_context=tables.CLINIC_DICTIONARY))
+    frame = tables.shots().with_columns((40 + pl.col("holder_ref").str.slice(1).cast(pl.Int64) % 25).alias("entry_age"))
+    ask = make_model_ask(make_query_table(frame, doc_context=tables.SHOTS_DICTIONARY))
 
     # Act
     answer, _prompts = ask("What is the average entry age of the patients?", _reply(answer="mean", measure="entry_age"))
 
     # Assert: never weighted by the number of visits
-    per_patient = frame.group_by("pt_ref").agg(pl.col("entry_age").first())["entry_age"].mean()
+    per_patient = frame.group_by("holder_ref").agg(pl.col("entry_age").first())["entry_age"].mean()
     assert answer.analysis["mean"] == pytest.approx(per_patient)
     assert "each patient's value once" in answer.reading
 
 
 def test_answer_question_tiedFirstRecords_areNotPicked(make_query_table, make_model_ask):
     # Arrange (S3): one patient has two first visits that disagree
-    frame = tables.clinic()
-    extra = frame.filter((pl.col("pt_ref") == "H004") & (pl.col("visit_seq") == 1)).with_columns(
-        pl.lit("Y").alias("smoker")
-        if frame.filter(pl.col("pt_ref") == "H004")["smoker"][0] == "N"
-        else pl.lit("N").alias("smoker")
+    frame = tables.shots()
+    extra = frame.filter((pl.col("holder_ref") == "H004") & (pl.col("shot_round") == 1)).with_columns(
+        pl.lit("Y").alias("wheeze")
+        if frame.filter(pl.col("holder_ref") == "H004")["wheeze"][0] == "N"
+        else pl.lit("N").alias("wheeze")
     )
-    ask = make_model_ask(make_query_table(pl.concat([frame, extra]), doc_context=tables.CLINIC_DICTIONARY))
+    ask = make_model_ask(make_query_table(pl.concat([frame, extra]), doc_context=tables.SHOTS_DICTIONARY))
 
     # Act
     answer, _prompts = ask(
-        "How many patients smoked at their first clinic visit?",
-        _reply(filters=[_cond("smoker", "is", values=["yes"])], which_visit="first"),
+        "How many patients wheezed at their first shot visit?",
+        _reply(filters=[_cond("wheeze", "is", values=["yes"])], which_visit="first"),
     )
 
     # Assert
@@ -201,8 +201,8 @@ def test_answer_question_topGroup_neverTheMissingGroup(make_query_table, make_mo
 
 def test_answer_question_frequencySumOfANonCount_isRefused(make_query_table, make_model_ask):
     # Arrange (S5): a rate beside the count column
-    frame = tables.injuries().with_columns((pl.col("injury_cases") * 1.7).alias("rate_per_100k"))
-    aggregate = AggregateInfo(kind="frequency", count_column="injury_cases", source="structure")
+    frame = tables.vials().with_columns((pl.col("discard_count") * 1.7).alias("rate_per_100k"))
+    aggregate = AggregateInfo(kind="frequency", count_column="discard_count", source="structure")
     ask = make_model_ask(make_query_table(frame, semantics_update={"aggregate": aggregate, "open_questions": ()}))
 
     # Act
@@ -215,19 +215,19 @@ def test_answer_question_frequencySumOfANonCount_isRefused(make_query_table, mak
 
 
 def test_answer_question_frequencyLineThatReadsLikeATotal_isAsked(make_query_table, make_model_ask):
-    # Arrange (S6): an "All users" line the contract does not mark as a total
-    frame = tables.injuries()
+    # Arrange (S6): an "All kinds" line the contract does not mark as a total
+    frame = tables.vials()
     totals = (
-        frame.group_by("district", "year")
-        .agg(pl.col("injury_cases").sum())
-        .with_columns(pl.lit("All users").alias("road_user"))
+        frame.group_by("depot", "round_no")
+        .agg(pl.col("discard_count").sum())
+        .with_columns(pl.lit("All kinds").alias("vial_kind"))
     )
     frame = pl.concat([frame, totals.select(frame.columns)])
-    aggregate = AggregateInfo(kind="frequency", count_column="injury_cases", source="structure")
+    aggregate = AggregateInfo(kind="frequency", count_column="discard_count", source="structure")
     ask = make_model_ask(make_query_table(frame, semantics_update={"aggregate": aggregate, "open_questions": ()}))
 
     # Act
-    answer, _prompts = ask("How many injury cases?", _reply(count_of="cases"))
+    answer, _prompts = ask("How many discards?", _reply(count_of="cases"))
 
     # Assert
     assert answer.analysis is None and "may be a total" in answer.reason
@@ -293,19 +293,20 @@ def test_apply_stated_negatedComparison_isTheOppositeComparison(cohort, question
 
 
 def test_answer_question_averageYearlyTotal_countsEmptyYearsAsZero(make_query_table, make_model_ask):
-    # Arrange (S11): no injuries at all in 1990
-    frame = tables.injuries().filter(pl.col("year") != 1990)
-    aggregate = AggregateInfo(kind="frequency", count_column="injury_cases", source="structure")
+    # Arrange (S11): no discards at all in round 26
+    frame = tables.vials().filter(pl.col("round_no") != 26)
+    aggregate = AggregateInfo(kind="frequency", count_column="discard_count", source="structure")
     ask = make_model_ask(make_query_table(frame, semantics_update={"aggregate": aggregate, "open_questions": ()}))
 
     # Act
     answer, _prompts = ask(
-        "What is the average yearly number of injury cases?", _reply(answer="mean", count_of="cases", totals_by="year")
+        "What is the average number of discards per round?",
+        _reply(answer="mean", count_of="cases", totals_by="round_no"),
     )
 
-    # Assert: 60 years, 1990 counted as zero
+    # Assert: 60 rounds, round 26 counted as zero
     assert answer.analysis["non_null_count"] == 60
-    assert answer.analysis["mean"] == pytest.approx(frame["injury_cases"].sum() / 60)
+    assert answer.analysis["mean"] == pytest.approx(frame["discard_count"].sum() / 60)
 
 
 @pytest.mark.parametrize(
@@ -334,11 +335,11 @@ def test_column_display_descriptionThatOnlyListsLabels_usesTheName(make_query_ta
 def test_answer_question_nonresponseCodes_leftOutOfTheShare(make_query_table, make_model_ask):
     # Arrange (#155): "9 = don't know" kept as an answer, left out of the base
     frame = pl.DataFrame(
-        {"resp_ref": [f"R{i:03d}" for i in range(40)], "smokes": [(1, 2, 9, 2)[i % 4] for i in range(40)]}
+        {"resp_ref": [f"R{i:03d}" for i in range(40)], "wheezes": [(1, 2, 9, 2)[i % 4] for i in range(40)]}
     )
     catalog, context = make_query_table(frame)
     columns = dict(context.semantics.columns)
-    columns["smokes"] = columns["smokes"].model_copy(
+    columns["wheezes"] = columns["wheezes"].model_copy(
         update={
             "labels": {"1": "yes", "2": "no", "9": "don't know"},
             "nonresponse_codes": (MissingCode(value=9, label="don't know", source="dictionary"),),
@@ -348,8 +349,8 @@ def test_answer_question_nonresponseCodes_leftOutOfTheShare(make_query_table, ma
 
     # Act
     answer, _prompts = ask(
-        "What share smokes?",
-        _reply(answer="share", count_of="records", numerator=[_cond("smokes", "is", values=["yes"])]),
+        "What share wheezes?",
+        _reply(answer="share", count_of="records", numerator=[_cond("wheezes", "is", values=["yes"])]),
     )
 
     # Assert: 10 of 30 (the 10 "don't know" left out), and the card says so

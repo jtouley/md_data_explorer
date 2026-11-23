@@ -79,7 +79,7 @@ def ask_cohort(upload: Callable[..., Any]) -> Callable[..., tuple[QueryResult, l
 @pytest.fixture
 def ask_clinic(upload: Callable[..., Any]) -> Callable[..., tuple[QueryResult, list[str]]]:
     """The same on the uploaded visit-level clinic table."""
-    return _asker(upload, tables.clinic(), "clinic")
+    return _asker(upload, tables.shots(), "clinic")
 
 
 def test_ask_invertedComparison_answeredWithTheStatedOperatorAndCard(ask_cohort):
@@ -132,11 +132,11 @@ def test_ask_modelStopsAnswering_isRefusedPlainly(ask_cohort):
 
 def test_ask_categoryVariesBetweenVisits_asksWhichVisit(ask_clinic):
     # Act
-    result, _prompts = ask_clinic("How many patients smoke?", [_plan(filters=[_cond("smoker", "is", values=["yes"])])])
+    result, _prompts = ask_clinic("How many patients wheeze?", [_plan(filters=[_cond("wheeze", "is", values=["yes"])])])
 
     # Assert: a clinical question back with re-askable choices, never a guessed visit
     assert result.requires_confirmation is True and result.analysis is None
-    assert result.choices and all(c["question"].startswith("How many patients smoke?") for c in result.choices)
+    assert result.choices and all(c["question"].startswith("How many patients wheeze?") for c in result.choices)
 
 
 def test_ask_followUp_modelSeesThePreviousModelTurn(ask_cohort):

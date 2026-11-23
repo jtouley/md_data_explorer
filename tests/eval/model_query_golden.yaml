@@ -6,7 +6,7 @@
 # module that recomputes the expected value independently; `status` is the expected outcome.
 #
 # Fields:
-#   table:    clinic | cohort
+#   table:    shots | cohort
 #   replies:  the model's replies in order (more than one: the first was fed back)
 #   status:   answered | clarify | refused
 #   oracle:   (answered) the oracle of the answer's headline value
@@ -40,32 +40,32 @@ samples:
       - {answer: count, count_of: patients, filters: [{column: stage, op: is, value: null, values: [II]}, {column: age, op: ">", value: 70, values: []}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any}
     status: answered
     oracle: cohort_over70_stage2
-  - id: clinic-latest-arm
-    table: clinic
-    question: How many patients are on each arm at their latest visit?
-    replies: [{answer: count, count_of: patients, filters: [], numerator: [], measure: null, group_by: arm, period: none, cut_points: [], which_visit: any}]
+  - id: shots-latest-extract
+    table: shots
+    question: How many patients are on each extract at their latest shot visit?
+    replies: [{answer: count, count_of: patients, filters: [], numerator: [], measure: null, group_by: extract, period: none, cut_points: [], which_visit: any}]
     status: answered
-    oracle: clinic_latest_arm
-    reading: ["Counted: patients, each once, read at their latest clinic visit with it recorded."]
-  - id: clinic-never-smoked
-    table: clinic
-    question: How many patients never smoked?
-    replies: [{answer: count, count_of: patients, filters: [{column: smoker, op: is, value: null, values: ["no"]}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any}]
+    oracle: shots_latest_extract
+    reading: ["Counted: patients, each once, read at their latest shot visit with it recorded."]
+  - id: shots-never-wheezed
+    table: shots
+    question: How many patients never wheezed?
+    replies: [{answer: count, count_of: patients, filters: [{column: wheeze, op: is, value: null, values: ["no"]}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: any}]
     status: answered
-    oracle: clinic_never_smoked
-  - id: clinic-baseline-bp
-    table: clinic
-    question: Average systolic pressure at baseline?
-    replies: [{answer: mean, count_of: patients, filters: [], numerator: [], measure: systolic_mmhg, group_by: null, period: none, cut_points: [], which_visit: any}]
+    oracle: shots_never_wheezed
+  - id: shots-baseline-ige
+    table: shots
+    question: Average IgE level at baseline?
+    replies: [{answer: mean, count_of: patients, filters: [], numerator: [], measure: ige_kul, group_by: null, period: none, cut_points: [], which_visit: any}]
     status: answered
-    oracle: clinic_baseline_bp
-  - id: clinic-visit-unstated-asks
-    table: clinic
-    question: How many patients smoke?
-    replies: [{answer: count, count_of: patients, filters: [{column: smoker, op: is, value: null, values: ["yes"]}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: last}]
+    oracle: shots_baseline_ige
+  - id: shots-visit-unstated-asks
+    table: shots
+    question: How many patients wheeze?
+    replies: [{answer: count, count_of: patients, filters: [{column: wheeze, op: is, value: null, values: ["yes"]}], numerator: [], measure: null, group_by: null, period: none, cut_points: [], which_visit: last}]
     status: clarify
-  - id: clinic-unit-unstated-asks
-    table: clinic
-    question: What share smoked at the latest visit?
-    replies: [{answer: share, count_of: patients, filters: [], numerator: [{column: smoker, op: is, value: null, values: ["yes"]}], measure: null, group_by: null, period: none, cut_points: [], which_visit: last}]
+  - id: shots-unit-unstated-asks
+    table: shots
+    question: What share wheezed at the latest visit?
+    replies: [{answer: share, count_of: patients, filters: [], numerator: [{column: wheeze, op: is, value: null, values: ["yes"]}], measure: null, group_by: null, period: none, cut_points: [], which_visit: last}]
     status: clarify

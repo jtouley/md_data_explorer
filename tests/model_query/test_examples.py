@@ -11,7 +11,7 @@ from tests.model_query import tables
 
 EXAMPLES = load_examples()
 # Column names of the test tables and the app's own: an example must never teach one of them.
-_FORBIDDEN = {*tables.clinic().columns, *tables.cohort().columns, *tables.ledger().columns, "patient_id"}
+_FORBIDDEN = {*tables.shots().columns, *tables.cohort().columns, *tables.ledger().columns, "patient_id"}
 
 
 @pytest.mark.parametrize("example", EXAMPLES, ids=[e.question for e in EXAMPLES])

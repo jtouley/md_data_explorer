@@ -22,7 +22,7 @@ _cond = tables.cond
 
 @pytest.fixture
 def clinic(make_query_table):
-    return make_query_table(tables.clinic(), doc_context=tables.CLINIC_DICTIONARY)
+    return make_query_table(tables.shots(), doc_context=tables.SHOTS_DICTIONARY)
 
 
 def _run(table: tuple[Any, Any], plan: Plan) -> pl.DataFrame:
@@ -32,23 +32,27 @@ def _run(table: tuple[Any, Any], plan: Plan) -> pl.DataFrame:
 
 
 def _last_visits() -> pl.DataFrame:
-    return tables.clinic().sort("visit_seq").group_by("pt_ref").last()
+    return tables.shots().sort("shot_round").group_by("holder_ref").last()
 
 
 def _first_visits() -> pl.DataFrame:
-    return tables.clinic().sort("visit_seq").group_by("pt_ref").first()
+    return tables.shots().sort("shot_round").group_by("holder_ref").first()
 
 
 @pytest.mark.parametrize(
     ("which", "expected"),
     [
-        pytest.param("any", lambda: tables.clinic().filter(pl.col("smoker") == "Y")["pt_ref"].n_unique(), id="any"),
-        pytest.param("last", lambda: _last_visits().filter(pl.col("smoker") == "Y").height, id="last"),
-        pytest.param("first", lambda: _first_visits().filter(pl.col("smoker") == "Y").height, id="first"),
+        pytest.param("any", lambda: tables.shots().filter(pl.col("wheeze") == "Y")["holder_ref"].n_unique(), id="any"),
+        pytest.param("last", lambda: _last_visits().filter(pl.col("wheeze") == "Y").height, id="last"),
+        pytest.param("first", lambda: _first_visits().filter(pl.col("wheeze") == "Y").height, id="first"),
         pytest.param(
             "every",
             lambda: (
-                tables.clinic().group_by("pt_ref").agg((pl.col("smoker") == "Y").all()).filter(pl.col("smoker")).height
+                tables.shots()
+                .group_by("holder_ref")
+                .agg((pl.col("wheeze") == "Y").all())
+                .filter(pl.col("wheeze"))
+                .height
             ),
             id="every",
         ),
@@ -56,7 +60,7 @@ def _first_visits() -> pl.DataFrame:
 )
 def test_compile_plan_patientCountByVisit_matchesOracle(clinic, which, expected):
     # Arrange
-    plan = _plan(filters=[_cond("smoker", "is", values=["yes"])], which_visit=which)
+    plan = _plan(filters=[_cond("wheeze", "is", values=["yes"])], which_visit=which)
 
     # Act
     result = _run(clinic, plan)
@@ -66,41 +70,41 @@ def test_compile_plan_patientCountByVisit_matchesOracle(clinic, which, expected)
 
 
 def test_compile_plan_groupByLatestCategory_countsEachPatientOnce(clinic):
-    # Arrange: patients by their latest treatment arm (the arm changes between some visits)
-    plan = _plan(group_by="arm", which_visit="last")
-    labels = {1: "ACE inhibitor", 2: "calcium blocker", 3: "diuretic"}
-    oracle = _last_visits().group_by("arm").len().sort("arm")
+    # Arrange: patients by their latest allergen extract (the arm changes between some visits)
+    plan = _plan(group_by="extract", which_visit="last")
+    labels = {1: "grass pollen", 2: "dust mite", 3: "bee venom"}
+    oracle = _last_visits().group_by("extract").len().sort("extract")
 
     # Act
     result = _run(clinic, plan)
 
     # Assert: one row per arm code, each patient counted once
     assert result["count"].to_list() == oracle["len"].to_list()
-    assert result["count"].sum() == tables.CLINIC_PATIENTS
+    assert result["count"].sum() == tables.SHOT_PATIENTS
     assert set(labels) == set(result["grp"].to_list())
 
 
 def test_compile_plan_visitCount_countsRecords(clinic):
     # Arrange
-    plan = _plan(count_of="clinic visits", filters=[_cond("systolic_mmhg", ">=", 140)])
+    plan = _plan(count_of="shot visits", filters=[_cond("ige_kul", ">=", 140)])
 
     # Act
     result = _run(clinic, plan)
 
     # Assert
-    assert result.item(0, "count") == tables.clinic().filter(pl.col("systolic_mmhg") >= 140).height
+    assert result.item(0, "count") == tables.shots().filter(pl.col("ige_kul") >= 140).height
 
 
 @pytest.mark.parametrize("which", ["any", "every", "last"])
 def test_compile_plan_shareOfPatients_matchesOracle(clinic, which):
     # Arrange
-    plan = _plan(answer="share", numerator=[_cond("smoker", "is", values=["yes"])], which_visit=which)
-    frame = tables.clinic()
+    plan = _plan(answer="share", numerator=[_cond("wheeze", "is", values=["yes"])], which_visit=which)
+    frame = tables.shots()
     if which == "last":
-        per = _last_visits().select("pt_ref", (pl.col("smoker") == "Y").alias("e"))
+        per = _last_visits().select("holder_ref", (pl.col("wheeze") == "Y").alias("e"))
     else:
-        agg = (pl.col("smoker") == "Y").any() if which == "any" else (pl.col("smoker") == "Y").all()
-        per = frame.group_by("pt_ref").agg(agg.alias("e"))
+        agg = (pl.col("wheeze") == "Y").any() if which == "any" else (pl.col("wheeze") == "Y").all()
+        per = frame.group_by("holder_ref").agg(agg.alias("e"))
 
     # Act
     result = _run(clinic, plan)
@@ -115,43 +119,41 @@ def test_compile_plan_shareOfPatients_matchesOracle(clinic, which):
     [
         pytest.param(
             "first",
-            lambda f: (
-                f.drop_nulls("systolic_mmhg").sort("visit_seq").group_by("pt_ref").first()["systolic_mmhg"].mean()
-            ),
+            lambda f: f.drop_nulls("ige_kul").sort("shot_round").group_by("holder_ref").first()["ige_kul"].mean(),
             id="first",
         ),
         pytest.param(
             "change",
             lambda f: (
-                f.sort("visit_seq")
-                .group_by("pt_ref")
+                f.sort("shot_round")
+                .group_by("holder_ref")
                 .agg(
-                    pl.col("systolic_mmhg").drop_nulls().last() - pl.col("systolic_mmhg").drop_nulls().first(),
-                    pl.col("systolic_mmhg").count().alias("n"),
+                    pl.col("ige_kul").drop_nulls().last() - pl.col("ige_kul").drop_nulls().first(),
+                    pl.col("ige_kul").count().alias("n"),
                 )
-                .filter(pl.col("n") >= 2)["systolic_mmhg"]
+                .filter(pl.col("n") >= 2)["ige_kul"]
                 .mean()
             ),
             id="change",
         ),
-        pytest.param("any", lambda f: f["systolic_mmhg"].mean(), id="pooled"),
+        pytest.param("any", lambda f: f["ige_kul"].mean(), id="pooled"),
     ],
 )
 def test_compile_plan_meanPerPatientValue_matchesOracle(clinic, which, oracle):
     # Arrange
-    plan = _plan(answer="mean", measure="systolic_mmhg", which_visit=which)
+    plan = _plan(answer="mean", measure="ige_kul", which_visit=which)
 
     # Act
     result = _run(clinic, plan)
 
     # Assert
-    assert result.item(0, "value") == pytest.approx(oracle(tables.clinic()))
+    assert result.item(0, "value") == pytest.approx(oracle(tables.shots()))
 
 
 def test_compile_plan_numberCutPoints_groupsIntoBands(clinic):
     # Arrange
-    plan = _plan(count_of="clinic visits", group_by="age_at_visit", cut_points=[50, 65])
-    ages = tables.clinic()["age_at_visit"]
+    plan = _plan(count_of="shot visits", group_by="years_at_shot", cut_points=[50, 65])
+    ages = tables.shots()["years_at_shot"]
 
     # Act
     result = _run(clinic, plan)
@@ -167,32 +169,34 @@ def test_compile_plan_numberCutPoints_groupsIntoBands(clinic):
 
 def test_compile_plan_labelValue_isStoredCode(clinic):
     # Arrange: the reply names the dictionary label; the stored value is the code
-    plan = _plan(count_of="clinic visits", filters=[_cond("arm", "is not", values=["diuretic"])])
+    plan = _plan(count_of="shot visits", filters=[_cond("extract", "is not", values=["bee venom"])])
 
     # Act
     result = _run(clinic, plan)
 
     # Assert
-    assert result.item(0, "count") == tables.clinic().filter(pl.col("arm") != 3).height
+    assert result.item(0, "count") == tables.shots().filter(pl.col("extract") != 3).height
 
 
 @pytest.mark.parametrize(
     ("fields", "message"),
     [
-        pytest.param({"filters": [_cond("arm", "is", values=["placebo"])]}, "not a value of arm", id="unknown_value"),
-        pytest.param({"filters": [_cond("pt_ref", "is", values=["H001"])]}, "not the ID", id="patient_key"),
+        pytest.param(
+            {"filters": [_cond("extract", "is", values=["placebo"])]}, "not a value of extract", id="unknown_value"
+        ),
+        pytest.param({"filters": [_cond("holder_ref", "is", values=["H001"])]}, "not the ID", id="patient_key"),
         pytest.param({"answer": "mean", "measure": "sex"}, "not a number column", id="mean_of_category"),
         pytest.param({"answer": "share"}, "numerator", id="share_without_numerator"),
         pytest.param(
             {
                 "answer": "share",
-                "filters": [_cond("smoker", "is", values=["yes"])],
-                "numerator": [_cond("smoker", "is", values=["yes"])],
+                "filters": [_cond("wheeze", "is", values=["yes"])],
+                "numerator": [_cond("wheeze", "is", values=["yes"])],
             },
             "both filters and numerator",
             id="share_of_its_own_filter",
         ),  # fmt: skip
-        pytest.param({"group_by": "arm", "which_visit": "every"}, "not to a breakdown", id="every_breakdown"),
+        pytest.param({"group_by": "extract", "which_visit": "every"}, "not to a breakdown", id="every_breakdown"),
         pytest.param({"answer": "list_patients"}, "does not list", id="listing"),
     ],
 )
@@ -214,10 +218,10 @@ def test_reply_schema_enumsComeFromContract(clinic):
 
     # Assert: labels, not codes; the patient key is never a slot; both units offered
     branches = schema["properties"]["filters"]["items"]["anyOf"]
-    arm = next(b for b in branches if b["properties"]["column"]["const"] == "arm")
-    assert arm["properties"]["values"]["items"]["enum"] == ["ACE inhibitor", "calcium blocker", "diuretic"]
-    assert "pt_ref" not in schema["properties"]["group_by"]["items"]["enum"]
-    assert schema["properties"]["count_of"]["enum"] == ["patients", "clinic visits"]
+    arm = next(b for b in branches if b["properties"]["column"]["const"] == "extract")
+    assert arm["properties"]["values"]["items"]["enum"] == ["grass pollen", "dust mite", "bee venom"]
+    assert "holder_ref" not in schema["properties"]["group_by"]["items"]["enum"]
+    assert schema["properties"]["count_of"]["enum"] == ["patients", "shot visits"]
 
 
 @pytest.mark.parametrize("payload", [None, [], {"answer": "explain"}, {"answer": "count", "cut_points": [1] * 9}])
@@ -230,9 +234,9 @@ def test_parse_plan_invalid_raisesPlanError(payload):
 @pytest.mark.parametrize(
     ("group_by", "expected"),
     [
-        pytest.param(["arm"], "arm", id="list"),
+        pytest.param(["extract"], "extract", id="list"),
         pytest.param([], None, id="empty_list"),
-        pytest.param("arm", "arm", id="string"),
+        pytest.param("extract", "extract", id="string"),
         pytest.param(None, None, id="null"),
     ],
 )
@@ -244,7 +248,7 @@ def test_parse_plan_groupByAsList_readsOneColumn(group_by, expected):
     assert plan.group_by == expected
 
 
-@pytest.mark.parametrize("group_by", [["sex", "arm"], "sex, arm"])
+@pytest.mark.parametrize("group_by", [["sex", "extract"], "sex, arm"])
 def test_parse_plan_severalBreakdowns_isFedBackNotACrash(group_by):
     # Act / Assert: one breakdown at a time, said as feedback the model can act on
     with pytest.raises(PlanError, match="one breakdown at a time"):

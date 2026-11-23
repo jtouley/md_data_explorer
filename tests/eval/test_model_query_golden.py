@@ -21,13 +21,13 @@ from tests.model_query import tables
 
 GOLDEN = yaml.safe_load((Path(__file__).parent / "model_query_golden.yaml").read_text(encoding="utf-8"))["samples"]
 TABLES: dict[str, tuple[Callable[[], pl.DataFrame], str]] = {
-    "clinic": (tables.clinic, tables.CLINIC_DICTIONARY),
+    "shots": (tables.shots, tables.SHOTS_DICTIONARY),
     "cohort": (tables.cohort, tables.COHORT_DICTIONARY),
 }
 
 
 def _latest() -> pl.DataFrame:
-    return tables.clinic().sort("visit_seq").group_by("pt_ref").last()
+    return tables.shots().sort("shot_round").group_by("holder_ref").last()
 
 
 ORACLES: dict[str, Callable[[], Any]] = {
@@ -35,22 +35,22 @@ ORACLES: dict[str, Callable[[], Any]] = {
     "cohort_under_65": lambda: tables.cohort().filter(pl.col("age") < 65).height,
     "cohort_stage3_alive_share": lambda: tables.cohort().filter(pl.col("stage") == "III")["died_1y"].eq("no").mean(),
     "cohort_over70_stage2": lambda: tables.cohort().filter((pl.col("age") > 70) & (pl.col("stage") == "II")).height,
-    "clinic_latest_arm": lambda: dict(_latest().group_by("arm").len().iter_rows()),
-    "clinic_never_smoked": lambda: (
-        tables.clinic().group_by("pt_ref").agg(pl.col("smoker").eq("N").all())["smoker"].sum()
+    "shots_latest_extract": lambda: dict(_latest().group_by("extract").len().iter_rows()),
+    "shots_never_wheezed": lambda: (
+        tables.shots().group_by("holder_ref").agg(pl.col("wheeze").eq("N").all())["wheeze"].sum()
     ),
     # The first recorded value per patient (one rule for first and last, ADR016).
-    "clinic_baseline_bp": lambda: (
-        tables.clinic().drop_nulls("systolic_mmhg").sort("visit_seq").group_by("pt_ref").first()["systolic_mmhg"].mean()
+    "shots_baseline_ige": lambda: (
+        tables.shots().drop_nulls("ige_kul").sort("shot_round").group_by("holder_ref").first()["ige_kul"].mean()
     ),
 }
-_ARM_CODES = {"ACE inhibitor": 1, "calcium blocker": 2, "diuretic": 3}
+_EXTRACT_CODES = {"grass pollen": 1, "dust mite": 2, "bee venom": 3}
 
 
 def _headline(analysis: dict[str, Any]) -> Any:
     if analysis.get("grouped_by"):
         return {
-            _ARM_CODES.get(g[analysis["grouped_by"]], g[analysis["grouped_by"]]): g["count"]
+            _EXTRACT_CODES.get(g[analysis["grouped_by"]], g[analysis["grouped_by"]]): g["count"]
             for g in analysis["group_counts"]
         }
     if analysis["type"] == "proportion":

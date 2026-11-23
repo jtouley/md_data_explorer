@@ -84,7 +84,7 @@ NO_QUERY_REASON: Final = "I could not turn this question into a query that runs 
 MAX_TEST_ROWS: Final = 2_000_000
 Status = Literal["answered", "refused", "unavailable", "clarify"]
 _LISTING: Final = re.compile(
-    r"\b(?:list|show me|give me|name|identify)\b.{0,40}\b(?:patients?|people|ids?|mrns?|names|charts?|records)\b"
+    r"\b(?:list|show me|give me|name|identify)\b.{0,40}\b(?:patients?|people|ids?|names|charts?|records)\b"
     r"(?!.{0,30}\b(?:how many|number|count|share|percent|average|mean|median)\b)",
     re.I,
 )

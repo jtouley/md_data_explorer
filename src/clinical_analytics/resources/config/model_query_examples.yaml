@@ -33,13 +33,13 @@ tables:
       Each record is one patient. Columns: sleep_ref (the patient ID); apnea_index: number; body_mass:
       number kg/m2; loud_snoring: values 'Y', 'N'; pap_begun: values 'Y', 'N'; age_at_test: number.
     columns: [sleep_ref, apnea_index, body_mass, loud_snoring, pap_begun, age_at_test]
-  burns:
+  tally:
     text: >-
-      Each record counts burn admissions for one district, season and burn cause. n_admits holds how
-      many admissions each record counts: a count adds it up. Columns: district: values 'coast',
-      'hills', 'plain'; season: values 'dry', 'wet'; burn_cause: values 'scald', 'flame', 'contact';
-      n_admits: number.
-    columns: [district, season, burn_cause, n_admits]
+      Each record counts packs handed out for one outlet zone, formulary and month. packs_out holds
+      how many packs each record counts: a count adds it up. Columns: outlet_zone: values 'harbour',
+      'ridge', 'upland'; formulary: values 'generic', 'branded'; tally_month: date 2023-01-01 to
+      2024-12-01; packs_out: number.
+    columns: [outlet_zone, formulary, tally_month, packs_out]
 examples:
   - table: lens
     question: "How many patients are in the file?"
@@ -66,7 +66,7 @@ examples:
     question: "Under 65 versus 65 and older: how many patients?"
     plan: {answer: count, count_of: patients, filters: [], numerator: [], measure: null, group_by: [yrs_at_op], period: none, cut_points: [65], which_visit: any, totals_by: null, missing: null}
   - table: lens
-    question: "Operations per year since 2021"
+    question: "Operations in each calendar year, 2021 onwards"
     plan: {answer: count, count_of: patients, filters: [{column: op_day, op: on or after, value: "2021-01-01", values: []}], numerator: [], measure: null, group_by: [op_day], period: year, cut_points: [], which_visit: any, totals_by: null, missing: null}
   - table: lens
     question: "Does acuity after surgery differ between lens models?"
@@ -122,18 +122,18 @@ examples:
   - table: sleep
     question: "What is the death rate after a positive test?"
     plan: {answer: not_in_table, count_of: patients, filters: [], numerator: [], measure: null, group_by: [], period: none, cut_points: [], which_visit: any, totals_by: null, missing: "death"}
-  - table: burns
-    question: "How many burn admissions were scalds, by district?"
-    plan: {answer: count, count_of: admissions, filters: [{column: burn_cause, op: is, value: null, values: [scald]}], numerator: [], measure: null, group_by: [district], period: none, cut_points: [], which_visit: any, totals_by: null, missing: null}
-  - table: burns
-    question: "What share of burn admissions in the wet season were flame burns?"
-    plan: {answer: share, count_of: admissions, filters: [{column: season, op: is, value: null, values: [wet]}], numerator: [{column: burn_cause, op: is, value: null, values: [flame]}], measure: null, group_by: [], period: none, cut_points: [], which_visit: any, totals_by: null, missing: null}
   - table: blood
     question: "How many different services gave transfusions?"
     plan: {answer: count_distinct, count_of: patients, filters: [], numerator: [], measure: service, group_by: [], period: none, cut_points: [], which_visit: any, totals_by: null, missing: null}
-  - table: burns
-    question: "Which district had the most burn admissions?"
-    plan: {answer: top, count_of: admissions, filters: [], numerator: [], measure: null, group_by: [district], period: none, cut_points: [], which_visit: any, totals_by: null, missing: null}
-  - table: lens
-    question: "What is the average number of operations per year?"
-    plan: {answer: mean, count_of: patients, filters: [], numerator: [], measure: null, group_by: [], period: year, cut_points: [], which_visit: any, totals_by: op_day, missing: null}
+  - table: tally
+    question: "Total packs handed out in the harbour zone?"
+    plan: {answer: count, count_of: packs, filters: [{column: outlet_zone, op: is, value: null, values: [harbour]}], numerator: [], measure: null, group_by: [], period: none, cut_points: [], which_visit: any, totals_by: null, missing: null}
+  - table: tally
+    question: "Proportion of packs that were branded, from March 2024 on"
+    plan: {answer: share, count_of: packs, filters: [{column: tally_month, op: on or after, value: "2024-03-01", values: []}], numerator: [{column: formulary, op: is, value: null, values: [branded]}], measure: null, group_by: [], period: none, cut_points: [], which_visit: any, totals_by: null, missing: null}
+  - table: tally
+    question: "Which zone moved the most packs?"
+    plan: {answer: top, count_of: packs, filters: [], numerator: [], measure: null, group_by: [outlet_zone], period: none, cut_points: [], which_visit: any, totals_by: null, missing: null}
+  - table: tally
+    question: "Typical monthly pack count for generics"
+    plan: {answer: median, count_of: packs, filters: [{column: formulary, op: is, value: null, values: [generic]}], numerator: [], measure: null, group_by: [], period: month, cut_points: [], which_visit: any, totals_by: tally_month, missing: null}

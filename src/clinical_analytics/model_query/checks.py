@@ -65,7 +65,7 @@ _STATISTIC_WORDS: Final[tuple[tuple[re.Pattern[str], frozenset[str]], ...]] = (
     (re.compile(r"\b(?:lowest|minimum|min|smallest|shortest|youngest)\b", re.I), frozenset({"min"})),
     (re.compile(r"\b(?:how many|number of)\b", re.I), frozenset({"count", "count_distinct", "top", "sum"})),
 )
-# "The share of the women ...", "among smokers": what follows names the share's denominator.
+# "The share of the climbers ...", "among the hikers": what follows names the share's denominator.
 _DENOMINATOR: Final = re.compile(
     r"\b(?:(?:share|percent(?:age)?|proportion|fraction|rate) of(?: the| all| our)?|among(?: the| all| our)?|"
     r"of all(?: the)?|of the)\s+((?:[\w-]+\s+){0,2}[\w-]+)",
@@ -99,7 +99,7 @@ _WHEN: Final = re.compile(
     r"\b(?:at|on|during|per|first|last|latest|final|baseline|initial|earliest|recent|every|each|any|all)\b", re.I
 )
 _YEARS: Final = (1900, 2100)
-# Words that ask for a breakdown ("by sex", "per arm", "each district", "A versus B"), and the
+# Words that ask for a breakdown ("by sex", "per arm", "each depot", "A versus B"), and the
 # period words a breakdown by date needs. "each patient's" names a timepoint, not a breakdown.
 _BREAKDOWN: Final = re.compile(
     r"\b(?:by|per|each|for each|across|versus|vs|compared?|comparing|between|breakdown|broken down|split|"
@@ -186,7 +186,7 @@ def _value_spans(question: str, context: DatasetContext) -> list[tuple[int, int]
 
 def _names_key_person(text: str, context: DatasetContext) -> bool:
     """The question names the person the contract's patient key names, in the file's own word
-    ("recipients" for a recipient column, the key's role)."""
+    ("carriers" for a carrier column, the key's role)."""
     key = context.semantics.patient_key
     if key is None:
         return False
@@ -220,7 +220,7 @@ def _cmp_of(question: str, start: int, end: int, previous_end: int) -> Cmp | Non
 
 def _timepoints(text: str, context: DatasetContext, used: frozenset[str], records_word: str) -> set[WhichVisit]:
     """The timepoints the question states (see ``_TIMES``). A word that is part of a used column's
-    own description ("Initial serum lactate") is that column's name, not a timepoint."""
+    own description ("Opening blister score") is that column's name, not a timepoint."""
     own = " ".join(f"{c.name} {c.description}".casefold() for name in used if (c := context.column(name)) is not None)
     nouns = {records_word, plural(records_word), "record", "records"}
     nouns |= {s.noun for s in context.semantics.sequence_columns} | {
@@ -235,7 +235,7 @@ def _timepoints(text: str, context: DatasetContext, used: frozenset[str], record
             after = text[match.end() :].strip()
             phrase = f"{match.group(0)} {after.split(' ', 1)[0] if after else ''}".casefold().strip()
             if phrase in own and " " in phrase:
-                continue  # "initial serum ...", the column's own name
+                continue  # "opening blister ...", the column's own name
             if not attached:
                 found.add(which)
                 continue
@@ -249,8 +249,8 @@ def _timepoints(text: str, context: DatasetContext, used: frozenset[str], record
 
 def read_cues(question: str, context: DatasetContext, used: frozenset[str] = frozenset()) -> Cues:
     """What the question says, with the words that belong to a category label or to a used
-    column's own description set aside (so "non-binary" is not a negation, nor "Initial serum
-    lactate" a timepoint)."""
+    column's own description set aside (so "non-reactive" is not a negation, nor "Opening blister
+    score" a timepoint)."""
     labels = _mentioned_labels(question, context)
     # Every category value the question names is set aside, whichever columns hold it: a value
     # ("women" in a column of groups) never sets the counted unit, a negation or a timepoint.
@@ -268,7 +268,7 @@ def read_cues(question: str, context: DatasetContext, used: frozenset[str] = fro
     noun = rf"(?:{re.escape(records_word)}|{re.escape(plural(records_word))}|records?)"
     times = frozenset(_timepoints(text, context, used, records_word))
     records = re.compile(rf"\b{noun}\b", re.I)
-    # "over all encounters", "across every visit": every record, in the contract's own noun.
+    # "over all contacts", "across every visit": every record, in the contract's own noun.
     if context.visit_level and re.search(
         rf"\b(?:all|every|each|across)(?: of)?(?: their| the)?(?: \w+)? {noun}\b", text, re.I
     ):
@@ -417,7 +417,7 @@ def apply_stated(plan: Plan, question: str, context: DatasetContext) -> tuple[Pl
 def _negated(plan: Plan, context: DatasetContext, named: frozenset[str] = frozenset()) -> bool:
     """The plan excludes something: "is not" a value (not "is not none", a double negative), a
     value that means no, a number of zero, or not recorded. ``named``: values the question names
-    itself ("never" as a smoking status), whose condition is the value, not a negation."""
+    itself ("never" as a vaccination status), whose condition is the value, not a negation."""
     for cond in (*plan.filters, *plan.numerator):
         column = context.column(cond.column)
         if cond.op == "is" and cond.values and all(str(v).casefold() in named for v in cond.values):
@@ -468,7 +468,7 @@ def _tokens(question: str) -> list[str]:
 
 def _same(a: str, b: str) -> bool:
     """One word, or one stem: a prefix of the other (four letters or more), or five shared first
-    letters ("smoked" and "smoker", "diabetic" and "diabetes")."""
+    letters ("wheezed" and "wheezer", "anaemic" and "anaemia")."""
     if a == b or (min(len(a), len(b)) >= 4 and (a.startswith(b) or b.startswith(a))):
         return True
     return len(os.path.commonprefix([a, b])) >= 5

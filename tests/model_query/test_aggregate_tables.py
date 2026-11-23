@@ -27,15 +27,15 @@ def _frequency(frame: pl.DataFrame, totals: tuple[TotalLevel, ...] = ()) -> dict
     )
     aggregate = AggregateInfo(
         kind="frequency",
-        count_column="injury_cases",
-        strata=("district", "year", "road_user"),
+        count_column="discard_count",
+        strata=("depot", "round_no", "vial_kind"),
         total_levels=totals,
         source="structure",
     )
     return {
         "grain": grain,
         "aggregate": aggregate,
-        "case_count_column": "injury_cases",
+        "case_count_column": "discard_count",
         "patient_key": None,
         "open_questions": (),
     }
@@ -43,9 +43,9 @@ def _frequency(frame: pl.DataFrame, totals: tuple[TotalLevel, ...] = ()) -> dict
 
 @pytest.fixture
 def repeated_strata() -> pl.DataFrame:
-    """The injuries table with some strata written twice (two reports of one district-year-user)."""
-    frame = tables.injuries()
-    return pl.concat([frame, frame.filter(pl.col("year") % 10 == 0)])
+    """The discards table with some strata written twice (two reports of one depot, round and vial kind)."""
+    frame = tables.vials()
+    return pl.concat([frame, frame.filter(pl.col("round_no") % 10 == 0)])
 
 
 @pytest.fixture
@@ -55,59 +55,61 @@ def ask_repeated(make_query_table, make_model_ask, repeated_strata):
 
 def test_answer_question_repeatedStrata_addsEveryLineCount(ask_repeated, repeated_strata):
     # Act
-    answer, _prompts = ask_repeated("How many injuries were there?", tables.reply(count_of="cases"))
+    answer, _prompts = ask_repeated("How many discards were there?", tables.reply(count_of="cases"))
 
     # Assert: the sum of the count column over every line, never a count of lines
-    assert answer.analysis["total_count"] == repeated_strata["injury_cases"].sum()
+    assert answer.analysis["total_count"] == repeated_strata["discard_count"].sum()
     assert answer.analysis["total_count"] != repeated_strata.height
 
 
 def test_answer_question_top_isTheGroupWithTheLargestTotal(ask_repeated, repeated_strata):
     # Act
     answer, _prompts = ask_repeated(
-        "Which district had the most injuries?", tables.reply(answer="top", count_of="cases", group_by="district")
+        "Which depot had the most discards?", tables.reply(answer="top", count_of="cases", group_by="depot")
     )
 
     # Assert
-    totals = repeated_strata.group_by("district").agg(pl.col("injury_cases").sum())
-    best = totals.filter(pl.col("injury_cases") == pl.col("injury_cases").max())["district"].to_list()
-    assert [g["district"] for g in answer.analysis["group_counts"]] == sorted(best)
+    totals = repeated_strata.group_by("depot").agg(pl.col("discard_count").sum())
+    best = totals.filter(pl.col("discard_count") == pl.col("discard_count").max())["depot"].to_list()
+    assert [g["depot"] for g in answer.analysis["group_counts"]] == sorted(best)
 
 
 def test_answer_question_averageYearlyTotal_summarisesPerYearTotals(ask_repeated, repeated_strata):
     # Arrange
     reply = tables.reply(
-        answer="mean", count_of="cases", totals_by="year", filters=[_cond("road_user", "is", values=["cyclist"])]
+        answer="mean", count_of="cases", totals_by="round_no", filters=[_cond("vial_kind", "is", values=["multi"])]
     )
 
     # Act
-    answer, _prompts = ask_repeated("What is the average yearly total of cyclist injuries?", reply)
+    answer, _prompts = ask_repeated("What is the mean total of multi-dose vial discards per round?", reply)
 
     # Assert
-    yearly = repeated_strata.filter(pl.col("road_user") == "cyclist").group_by("year").agg(pl.col("injury_cases").sum())
-    assert answer.analysis["mean"] == pytest.approx(yearly["injury_cases"].mean())
-    assert answer.analysis["non_null_count"] == yearly.height
+    per_round = (
+        repeated_strata.filter(pl.col("vial_kind") == "multi").group_by("round_no").agg(pl.col("discard_count").sum())
+    )
+    assert answer.analysis["mean"] == pytest.approx(per_round["discard_count"].mean())
+    assert answer.analysis["non_null_count"] == per_round.height
 
 
 def test_answer_question_countDistinct_countsDifferentValues(ask_repeated):
     # Act
     answer, _prompts = ask_repeated(
-        "How many different districts are there?",
-        tables.reply(answer="count_distinct", count_of="cases", measure="district"),
+        "How many different depots are there?",
+        tables.reply(answer="count_distinct", count_of="cases", measure="depot"),
     )
 
     # Assert
-    assert answer.analysis["total_count"] == 3
+    assert answer.analysis["total_count"] == tables.vials()["depot"].n_unique()
 
 
 def test_answer_question_groupLevelsCountedAfterFilters_isAnswered(ask_repeated, repeated_strata):
-    # Arrange: 60 years in the table, 10 after the filter: a breakdown by year is shown
+    # Arrange: 60 rounds in the table, 10 after the filter: a breakdown by round is shown
     reply = tables.reply(
-        count_of="cases", filters=[_cond("year", ">=", 2010), _cond("year", "<=", 2019)], group_by="year"
+        count_of="cases", filters=[_cond("round_no", ">=", 46), _cond("round_no", "<=", 55)], group_by="round_no"
     )
 
     # Act
-    answer, _prompts = ask_repeated("How many injuries each year from 2010 to 2019?", reply)
+    answer, _prompts = ask_repeated("How many discards each round, rounds 46 to 55?", reply)
 
     # Assert
     assert answer.status == "answered" and len(answer.analysis["group_counts"]) == 10
@@ -184,13 +186,13 @@ def test_answer_question_textValueNotHeld_asksWithNearestValues(make_query_table
 
 def test_read_cues_valueThatIsAPersonWord_neverSetsTheUnit(make_query_table):
     # Arrange: a column whose values are person words
-    frame = tables.clinic().with_columns(
-        pl.when(pl.col("visit_seq") % 2 == 0).then(pl.lit("women")).otherwise(pl.lit("men")).alias("seen_by")
+    frame = tables.shots().with_columns(
+        pl.when(pl.col("shot_round") % 2 == 0).then(pl.lit("women")).otherwise(pl.lit("men")).alias("seen_by")
     )
-    _catalog, context = make_query_table(frame, doc_context=tables.CLINIC_DICTIONARY)
+    _catalog, context = make_query_table(frame, doc_context=tables.SHOTS_DICTIONARY)
 
     # Act
-    cues = checks.read_cues("How many clinic visits were seen by women?", context)
+    cues = checks.read_cues("How many shot visits were seen by women?", context)
 
     # Assert
     assert (cues.persons, cues.records) == (False, True)
@@ -227,22 +229,22 @@ def test_answer_question_held_logsPlanShapeWithoutValues(make_query_table, make_
 
 
 def test_answer_question_frequencyTotalLines_neverAddedToTheirParts(make_query_table, make_model_ask):
-    # Arrange: each district-year has an "all users" line holding the total of its road users
-    frame = tables.injuries()
+    # Arrange: each depot and round has an "all kinds" line holding the total of its vial kinds
+    frame = tables.vials()
     totals = (
-        frame.group_by("district", "year")
-        .agg(pl.col("injury_cases").sum())
-        .with_columns(pl.lit("all users").alias("road_user"))
+        frame.group_by("depot", "round_no")
+        .agg(pl.col("discard_count").sum())
+        .with_columns(pl.lit("all kinds").alias("vial_kind"))
     )
     with_totals = pl.concat([frame, totals.select(frame.columns)])
-    marks = _frequency(with_totals, (TotalLevel(column="road_user", values=("all users",)),))
+    marks = _frequency(with_totals, (TotalLevel(column="vial_kind", values=("all kinds",)),))
     ask = make_model_ask(make_query_table(with_totals, semantics_update=marks))
 
     # Act
-    answer, _prompts = ask("How many injuries were there?", tables.reply(count_of="cases"))
+    answer, _prompts = ask("How many discards were there?", tables.reply(count_of="cases"))
 
     # Assert: the sum of the groups, once
-    assert answer.analysis["total_count"] == frame["injury_cases"].sum()
+    assert answer.analysis["total_count"] == frame["discard_count"].sum()
 
 
 def test_answer_question_estimateStratumNotNamed_readsItsTotalLine(make_query_table, make_model_ask):
