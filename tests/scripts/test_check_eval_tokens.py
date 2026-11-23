@@ -232,10 +232,11 @@ def test_main_tokenInNewFileName_isReportedAsFileName(make_branch_repo, monkeypa
         {"src/app.py": "a = 1\n"},
         {"src/app.py": None},
         {"src/app.py": "a = 2\n"},
-        {"README.md": "quokka\n"},
+        {"uv.lock": "quokka\n"},
+        {"electron/package-lock.json": '"quokka": 1\n'},
         {guard.HASH_FILE: "# salt=x\nquokka\n"},
     ],
-    ids=["no_change", "token_line_deleted", "clean_edit", "outside_scanned_paths", "hash_file_itself"],
+    ids=["no_change", "token_line_deleted", "clean_edit", "uv_lock", "package_lock", "hash_file_itself"],
 )
 def test_main_noProtectedTokenAdded_passes(branch, make_branch_repo, monkeypatch, capsys):
     # Arrange
@@ -247,6 +248,21 @@ def test_main_noProtectedTokenAdded_passes(branch, make_branch_repo, monkeypatch
     # Assert
     assert rc == 0, output
     assert "no protected token" in output
+
+
+@pytest.mark.parametrize(
+    "path", ["README.md", ".claude/CLAUDE.md", ".cursor/rules/brief.mdc", "Makefile", ".github/ci.yml"]
+)
+def test_main_tokenOutsideSourceTrees_isFlagged(path, make_branch_repo, monkeypatch, capsys):
+    # Arrange
+    repo = make_branch_repo({"src/app.py": "a = 1\n"}, {path: "rule: avoid the quokka trap\n"})
+
+    # Act
+    rc, output = _run(repo, monkeypatch, capsys)
+
+    # Assert
+    assert rc == 1
+    assert f"{path}:1: {guard.MATCH_MESSAGE}" in output
 
 
 def test_main_uncommittedEdit_isChecked(make_branch_repo, monkeypatch, capsys):

@@ -7,7 +7,8 @@ holds ``sha256(salt + lowercase identifier)`` for each one, with the salt in its
 list can be committed without naming the tokens.
 
 For every line added against the merge base with ``--base`` (default ``origin/main``) under
-``SCANNED_PATHS``, and for every added or renamed path, this script takes the identifiers, the
+any path except ``EXEMPT_PATHSPECS`` (the hash list itself and generated lock files), and for
+every added or renamed path, this script takes the identifiers, the
 hyphen/dot-joined words and the string literals, lowercases them, hashes each with the salt and
 reports ``path:line`` on a match. The token itself is never printed. Uncommitted edits to tracked
 files are checked too; untracked files only once they are added.
@@ -37,7 +38,14 @@ else:  # run as a file: scripts/ is sys.path[0]
 
 HASH_FILE: Final = "config/eval_token_hashes.txt"
 DEFAULT_BASE: Final = "origin/main"
-SCANNED_PATHS: Final[tuple[str, ...]] = ("src", "config", "prompts", "electron/src", "tests", "docs", "scripts")
+# Every tracked path is scanned: rules, prompts and briefs live in .claude/, .cursor/, root docs and the
+# Makefile as much as in src/. Only the hash list and generated lock files are left out.
+EXEMPT_PATHSPECS: Final[tuple[str, ...]] = (
+    f":(exclude){HASH_FILE}",
+    ":(exclude)uv.lock",
+    ":(exclude,glob)**/package-lock.json",
+)
+SCANNED_PATHS: Final[tuple[str, ...]] = (".", *EXEMPT_PATHSPECS)
 MATCH_MESSAGE: Final = "matched a protected evaluation token"
 
 SALT_RE: Final = re.compile(r"\bsalt=(\S+)")
@@ -149,7 +157,7 @@ def find_matches(lines: Iterable[AddedLine], hashes: TokenHashes) -> list[tuple[
 
 def _changed_paths(root: Path, base: str) -> list[AddedLine]:
     names = diff_against_base(root, base, ["--name-only", "-z", "--diff-filter=AR"], SCANNED_PATHS)
-    return [AddedLine(p, 0, p) for p in names.split("\0") if p and p != HASH_FILE]
+    return [AddedLine(p, 0, p) for p in names.split("\0") if p]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -162,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
         root = repo_root()
         hashes = load_hashes((args.hashes or root / HASH_FILE).read_text(encoding="utf-8"))
         diff = diff_against_base(root, args.base, ["-U0", "--diff-filter=AMR"], SCANNED_PATHS)
-        lines = [line for line in added_lines(diff) if line.path != HASH_FILE]
+        lines = list(added_lines(diff))
         lines += _changed_paths(root, args.base)
     except (GitQueryError, HashFileError, OSError) as exc:
         print(f"check_eval_tokens: cannot run: {exc}", file=sys.stderr)
