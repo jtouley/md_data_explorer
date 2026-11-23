@@ -100,6 +100,12 @@ def socrata_id(url: str) -> str | None:
     parts = urlsplit(url)
     if (parts.hostname or "").lower() != SOCRATA_HOST or parts.scheme != "https":
         return None
+    try:
+        port = parts.port
+    except ValueError:  # a port that is not a number
+        return None
+    if port not in (None, 443) or parts.username is not None or parts.password is not None:
+        return None
     found = _SOCRATA_ID.findall(parts.path.lower())
     return found[-1] if found else None
 

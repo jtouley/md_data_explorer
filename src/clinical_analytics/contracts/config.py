@@ -371,9 +371,28 @@ ESTIMATE_TOTAL_LEVELS: Final = frozenset(
         "u.s.",
         "usa",
         "national",
+        "nationwide",
+        "statewide",
+        "state total",
+        "countywide",
+        "citywide",
         "global",
         "world",
+        "grand total",
+        "subtotal",
+        "sub-total",
+        "sub total",
+        "all persons",
+        "all people",
+        "all patients",
+        "both genders",
+        "total population",
     }
+)
+# Total levels by shape: "Total, all ages", "Region total", "Total (all races)", "Statewide".
+ESTIMATE_TOTAL_PATTERN: Final = re.compile(
+    r"^(?:all\s|(?:grand\s+|sub-?\s?)?total(?:$|\s*[,(:\-])|both\s+sexes\b)|\btotal$|\b(?:state|nation|county|city)wide$",
+    re.IGNORECASE,
 )
 # A level naming a county-like part of a state: the other levels in that column are its totals.
 # Age levels that summarise every age by standardisation (normalised: lowercase, "_" for others).
@@ -874,7 +893,8 @@ MISSING_LABEL_STRICT: Final = re.compile(
 # also say the measurement was not taken, when the code lies outside the measurement's values.
 MISSING_LABEL_NOT_TAKEN: Final = re.compile(
     r"\b(?:not\s+(?:done|assessed|obtained|performed|taken|measured|recorded|available|evaluated|tested|asked)|"
-    r"missing|unknown|no\s+data|n/a|refused|declined|don'?t\s+know|not\s+known)\b",
+    r"missing|unknown|unrecorded|no\s+data|no\s+(?:reading|measurement|value|result|record)s?|n/a|refused|declined|"
+    r"don'?t\s+know|not\s+known)\b",
     re.IGNORECASE,
 )
 # A codebook keeps at least this many coded categories after its missing codes are taken out.
@@ -896,3 +916,12 @@ DATE_ORDER_MIN_SHARE: Final = 0.1
 # A whole-number column counts as a stratum of a summary table only with at most this many
 # values (age bands, category codes) unless it holds years; age or SBP is a measure.
 STRATUM_MAX_CODES: Final = 20
+# A table of groups has few lines repeating another line's groups; above this share the lines are
+# records (a survey with banded answers and a count per respondent), so the reading is asked.
+SUMMARY_MAX_REPEATED_SHARE: Final = 0.2
+# Rate evidence in a column's dictionary entry, whatever its type ("per 100,000", "age-adjusted").
+SUMMARY_RATE_TEXT: Final = re.compile(
+    r"\brates?\b|\bper\s+[\d,]+|\bpercent(?:age)?\b|%|\bage[- ]adjusted\b|\bage[- ]standardi[sz]ed\b|"
+    r"\bprevalence\b|\bproportion\b",
+    re.IGNORECASE,
+)

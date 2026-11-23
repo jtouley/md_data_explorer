@@ -46,7 +46,7 @@ FactSource: TypeAlias = Literal["structure", "dictionary", "declared", "default"
 Confidence: TypeAlias = Literal["high", "medium", "low"]
 QuestionKind: TypeAlias = Literal[
     "rows_are_patients", "person_role", "date_order", "date_century", "missing_code", "repeated_strata",
-    "aggregate_unsure",
+    "aggregate_unsure", "total_row",
 ]  # fmt: skip
 AggregateKind: TypeAlias = Literal["frequency", "estimate"]
 LogicalType: TypeAlias = Literal[
@@ -377,23 +377,31 @@ def with_declarations(semantics: DatasetSemantics, declarations: Any) -> Dataset
     return semantics
 
 
+def _same_value(value: object) -> str:
+    """999, 999.0 and "999" are one value."""
+    try:
+        return f"{float(str(value)):g}"
+    except ValueError:
+        return str(value)
+
+
 def _with_missing_answers(semantics: DatasetSemantics, answers: Any) -> DatasetSemantics:
     """Confirmed "not recorded" values become declared missing codes; every answered question is
     marked answered (a "no" keeps the value as a real value)."""
     if not answers:
         return semantics
-    by_key = {(a.column, str(a.value)): a for a in answers}
+    by_key = {(a.column, _same_value(a.value)): a for a in answers}
     columns = dict(semantics.columns)
     for answer in answers:
         column = columns.get(answer.column)
         if column is None or not answer.missing:
             continue
-        if all(str(m.value) != str(answer.value) for m in column.missing_codes):
+        if all(_same_value(m.value) != _same_value(answer.value) for m in column.missing_codes):
             code = MissingCode(value=answer.value, source="declared", evidence="you confirmed it means not recorded")
             columns[answer.column] = column.model_copy(update={"missing_codes": (*column.missing_codes, code)})
     questions = tuple(
         q.model_copy(update={"answered": True})
-        if q.kind == "missing_code" and (q.column, str(q.value)) in by_key
+        if q.kind == "missing_code" and (q.column, _same_value(q.value)) in by_key
         else q
         for q in semantics.open_questions
     )

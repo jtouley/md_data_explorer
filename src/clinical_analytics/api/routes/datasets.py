@@ -11,6 +11,7 @@ Endpoints:
 """
 
 import asyncio
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -32,14 +33,19 @@ from clinical_analytics.api.models import database as db_models
 from clinical_analytics.api.routes.queries import forget_query_service
 from clinical_analytics.contracts.builder import logical_type
 from clinical_analytics.contracts.config import POPULATION_ESTIMATES_FORM_VALUE, POPULATION_ESTIMATES_NOT_SAVED
-from clinical_analytics.contracts.declarations import CONFIRMATION_TOKEN_CHARS, Declarations, FileDeclarationStore
+from clinical_analytics.contracts.declarations import (
+    CONFIRMATION_TOKEN_CHARS,
+    Declarations,
+    FileDeclarationStore,
+    MissingCodeDeclaration,
+)
 from clinical_analytics.contracts.errors import (
     ContractDamagedError,
     ContractError,
     ContractStoreError,
     InvalidDeclarationKeyError,
 )
-from clinical_analytics.contracts.quality import QualityCheckResult, QualityNotRun, QualityReport
+from clinical_analytics.contracts.quality import OPEN_QUESTION_METRIC, QualityCheckResult, QualityNotRun, QualityReport
 from clinical_analytics.contracts.semantics import DatasetSemantics
 from clinical_analytics.contracts.service import check_upload
 from clinical_analytics.contracts.store import latest_report
@@ -403,10 +409,37 @@ def get_dataset_quality(dataset_id: str) -> QualityReport:
         raise HTTPException(
             status_code=500, detail=f"Could not check this dataset's quality ({type(e).__name__})."
         ) from e
+    declarations = _upload_declarations(storage, dataset_id)
+    report = _without_answered_questions(report, declarations.missing_codes_for(version))
     log.info("dataset_quality_completed", failed=report.failed, warnings=report.warnings)
-    return report.model_copy(
-        update={"facts": _facts(_contract_semantics(storage, dataset_id), _upload_declarations(storage, dataset_id))}
-    )
+    return report.model_copy(update={"facts": _facts(_contract_semantics(storage, dataset_id), declarations)})
+
+
+def _drop_cached_answers(dataset_id: str) -> None:
+    """An answer changed how values are read: drop the cached layer and the dataset's query
+    service (its results and parsed plans), so no earlier answer is reused."""
+    invalidate_semantic_layer_cache(dataset_id)
+    forget_query_service(dataset_id)
+    logger.info("dataset_cached_answers_dropped", dataset_id=dataset_id)
+
+
+def _without_answered_questions(report: QualityReport, answers: Sequence[MissingCodeDeclaration]) -> QualityReport:
+    """The stored report without the "Needs your answer" lines the user has answered since it ran
+    (ids ``missing_code:<column>:<value>``): an answer never waits for the next report to show."""
+    from clinical_analytics.core.answer_checks import same_value_key
+
+    answered = {(a.column, same_value_key(a.value)) for a in answers}
+
+    def is_answered(check: QualityCheckResult) -> bool:
+        prefix, _, rest = check.id.partition(":")
+        column, _, value = rest.rpartition(":")
+        return prefix == "missing_code" and bool(column) and (column, same_value_key(value)) in answered
+
+    kept = [c for c in report.checks if not (c.metric == OPEN_QUESTION_METRIC and is_answered(c))]
+    dropped = len(report.checks) - len(kept)
+    if not dropped:
+        return report
+    return report.model_copy(update={"checks": kept, "warnings": max(0, report.warnings - dropped)})
 
 
 class DatasetSemanticsResponse(BaseModel):
@@ -937,7 +970,7 @@ def answer_missing_code(dataset_id: str, answer: MissingCodeAnswer) -> MissingCo
         except (ContractStoreError, InvalidDeclarationKeyError) as e:
             logger.error("missing_code_answer_not_saved", dataset_id=dataset_id, **error_fields(e))
             raise HTTPException(status_code=500, detail="The answer couldn’t be stored. Try again.") from e
-    invalidate_semantic_layer_cache(dataset_id)
+    _drop_cached_answers(dataset_id)
     declared = _contract_semantics(storage, dataset_id, declared=True)
     return MissingCodeResult(dataset_id=dataset_id, facts=describe(declared) if declared else [])
 
@@ -1006,7 +1039,7 @@ def answer_date_reading(dataset_id: str, answer: DateReadingAnswer) -> DateReadi
         except (ContractStoreError, InvalidDeclarationKeyError) as e:
             logger.error("date_reading_not_saved", dataset_id=dataset_id, **error_fields(e))
             raise HTTPException(status_code=500, detail="The answer couldn’t be stored. Try again.") from e
-    invalidate_semantic_layer_cache(dataset_id)
+    _drop_cached_answers(dataset_id)
     declared = _contract_semantics(storage, dataset_id, declared=True)
     return DateReadingResult(dataset_id=dataset_id, facts=describe(declared) if declared else [])
 
@@ -1050,7 +1083,7 @@ def declare_population_estimates(dataset_id: str, request: PopulationEstimatesRe
         if storage.get_upload_metadata(dataset_id) is None:
             raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
         note = _declare_population_estimates(storage, dataset_id)
-    invalidate_semantic_layer_cache(dataset_id)
+    _drop_cached_answers(dataset_id)
     return PopulationEstimatesResult(dataset_id=dataset_id, population_estimates=True, population_estimates_note=note)
 
 

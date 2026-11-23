@@ -565,35 +565,49 @@ def _undocumented_missing(series: pl.Series, stated: tuple[float, float] | None)
     asked there only when far beyond everything else (a stay of 999 days)."""
     if not series.dtype.is_numeric() or series.dtype == pl.Boolean:
         return []
-    exempt = bool(set(name_tokens(series.name)) & config.MISSING_CODE_EXEMPT_TOKENS)
     values = series.drop_nulls()
     if values.len() < 3:
         return []
     floats = values.cast(pl.Float64)
     distinct = [_float(v) for v in floats.unique().to_list()]
     negatives = [v for v in distinct if v < 0 and v.is_integer() and int(v) in config.MISSING_CODE_CANDIDATES]
-    real = floats.filter(~floats.is_in(negatives)) if negatives else floats
-    found: list[MissingCode] = []
-    if negatives and not exempt and real.len() and _float(real.min()) >= 0:
-        for code in sorted(negatives):
-            hits = int((floats == code).sum())
-            if hits >= config.MISSING_CODE_MIN_ROWS and hits >= config.MISSING_CODE_MIN_SHARE * values.len():
-                found.append(_suspect(series, code, hits, "below every other value"))
     top = _float(floats.max())
-    # On a count, change or stay the -1 and 99 rules do not apply; 999 and above far beyond the
-    # rest is still asked (a stay of 999 days).
-    if top > 0 and top.is_integer() and int(top) in config.MISSING_CODE_CANDIDATES and not (exempt and top < 999):
-        hits = int((floats == top).sum())
-        rest = floats.filter(floats != top)
-        gap = config.MISSING_CODE_EXEMPT_GAP if exempt else config.MISSING_CODE_GAP
-        if hits >= config.MISSING_CODE_MIN_ROWS and hits >= config.MISSING_CODE_MIN_SHARE * values.len() and rest.len():
-            if stated is not None and not exempt:
-                far = top > stated[1] and _float(rest.max()) <= stated[1] * config.MISSING_CODE_GAP
-            else:
-                far = top > max(_float(rest.max()), 0.0) * gap
-            if far:
-                found.append(_suspect(series, top, hits, "far above every other value"))
+    candidates = sorted(negatives)
+    if top > 0 and top.is_integer() and int(top) in config.MISSING_CODE_CANDIDATES:
+        candidates.append(top)
+    found: list[MissingCode] = []
+    for code in candidates:
+        hits = int((floats == code).sum())
+        if hits < config.MISSING_CODE_MIN_ROWS or hits < config.MISSING_CODE_MIN_SHARE * values.len():
+            continue
+        if _far_outside(series, code, stated, ignore=negatives):
+            side = "below every other value" if code < 0 else "far above every other value"
+            found.append(_suspect(series, code, hits, side))
     return found
+
+
+def _far_outside(
+    series: pl.Series, code: float, stated: tuple[float, float] | None, ignore: Sequence[float] = ()
+) -> bool:
+    """``code`` lies far outside the column's other values (``ignore``: other codes left out), so it
+    cannot be a real measurement: a negative code in a column of values 0 or more, or a code far
+    above every other value (and above the stated range). On a count, change or stay the -1 and 99
+    rules do not apply; 999 and above far beyond the rest still counts (a stay of 999 days)."""
+    exempt = bool(set(name_tokens(series.name)) & config.MISSING_CODE_EXEMPT_TOKENS)
+    floats = series.drop_nulls().cast(pl.Float64)
+    rest = floats.filter(~floats.is_in([code, *ignore]))
+    if rest.len() == 0:
+        return False
+    if code < 0:
+        return not exempt and _float(rest.min()) >= 0
+    if exempt and code < 999:
+        return False
+    if code < _float(rest.max()):
+        return False
+    if stated is not None and not exempt:
+        return code > stated[1] and _float(rest.max()) <= stated[1] * config.MISSING_CODE_GAP
+    gap = config.MISSING_CODE_EXEMPT_GAP if exempt else config.MISSING_CODE_GAP
+    return code > max(_float(rest.max()), 0.0) * gap
 
 
 def _suspect(series: pl.Series, code: float, hits: int, side: str) -> MissingCode:
@@ -620,6 +634,7 @@ def _n(count: int) -> str:
     return f"{count:,}"
 
 
+_CODED_TOKENS: Final = frozenset({"cat", "category", "categories", "band", "banded", "grp", "class", "flag"})
 _MASS_STEMS: Final = frozenset({"weight", "wt", "mass", "bw", "birthweight"})
 _DAY_STEMS: Final = frozenset({"age", "ga", "gest", "gestation", "gestational", "dur", "duration", "los"})
 
@@ -882,9 +897,10 @@ def _choose_keys(df: pl.DataFrame, dictionary: Dictionary, facts: UploadFacts, e
         )
         infants = [c for c in people if c.role == "infant"]
         mothers = [c for c in people if c.role == "mother"]
-        if infants and any(c.distinct < rows - c.nulls for c in mothers):
-            # A mother ID repeats beside a baby ID: twins, or one line per mother? Only the
-            # clinician can say; the baby is the tentative patient.
+        if infants and not any(c.unique for c in infants) and any(c.distinct < rows - c.nulls for c in mothers):
+            # A mother ID repeats beside a baby ID that repeats too: one line per baby, or per
+            # mother? Only the clinician can say; the baby is the tentative patient. A baby ID
+            # unique on every line settles it: each line is one baby (twins share a mother).
             chosen = next((c for c in infants if c.unique), infants[0])
             confidence = "medium"
             evidence = f"{chosen.column} names a baby on every line; {mothers[0].column} repeats for a mother"
@@ -1142,14 +1158,18 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
             if header:
                 labels, labels_source = header, "structure"
         if dictionary.shared_missing and date_fmt is None and dtype.is_numeric() and dtype != pl.Boolean:
-            # A note for every measurement ("For all measurements, 999 = not recorded"): a code of
-            # each numeric column that holds it and does not list it as a category.
+            # A note for every measurement ("For all measurements, 999 = not recorded") is applied
+            # only where the code lies far outside the column's other values; a code inside them
+            # (a real 99-year-old under "Coded fields: 99 = unknown") is asked about, never nulled.
             present = set(series.drop_nulls().cast(pl.Float64).unique().to_list())
+            stated = entry.stated_range if entry else None
             for code, label in dictionary.shared_missing.items():
                 typed = _typed_code(code, dtype)
                 if typed is None or code in labels or float(typed) not in present:
                     continue
-                if all(str(m.value) != str(typed) for m in missing):
+                if any(str(m.value) == str(typed) for m in missing):
+                    continue
+                if _far_outside(series, float(typed), stated):
                     missing.append(
                         MissingCode(
                             value=typed,
@@ -1158,9 +1178,26 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
                             evidence="a note in the data dictionary documents it for every measurement",
                         )
                     )
+                else:
+                    questions.append(
+                        OpenQuestion(
+                            id=f"missing_code:{name}:{typed}",
+                            kind="missing_code",
+                            column=name,
+                            value=typed,
+                            question=(
+                                f"The data dictionary says {typed:g} means {label.strip().rstrip('.')}, but "
+                                f"{name} also holds real values near it. Does {typed:g} in {name} mean not recorded?"
+                            ),
+                            options=("yes, not recorded", "no, it is a real value"),
+                        )
+                    )
         if not missing and date_fmt is None and not labels:
             # Never stored as missing without the dictionary or the user: asked instead.
+            asked = {q.id for q in questions}
             for suspect in _undocumented_missing(series, entry.stated_range if entry else None):
+                if f"missing_code:{name}:{suspect.value}" in asked:
+                    continue
                 questions.append(
                     OpenQuestion(
                         id=f"missing_code:{name}:{suspect.value}",
@@ -1173,7 +1210,15 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
                 )
 
         unit: Unit | None = None
-        if entry is not None and entry.unit:
+        # A coded column ("1 = below target, 2 = in range") or a band of a measure ("sbp_target",
+        # "bmi_cat") holds codes, not the measure's unit.
+        name_parts = set(name_tokens(name))
+        coded = bool(labels) or bool(name_parts & _CODED_TOKENS)
+        if "target" in name_parts and dtype.is_integer():
+            coded = coded or series.n_unique() <= 5  # "a1c_target" 1/2/3: a code, not a percentage
+        if coded:
+            pass
+        elif entry is not None and entry.unit:
             unit = Unit(value=entry.unit, source="dictionary")
         elif date_fmt is None and (from_name := _unit_from_name(name)) and not _holds_years(series, from_name):
             unit = Unit(value=from_name, source="structure")
@@ -1230,7 +1275,7 @@ def infer_semantics(df: pl.DataFrame, facts: UploadFacts | None = None) -> Datas
     case_count: str | None = None
     aggregate: AggregateInfo | None = None
     if keys.patient is None and not published and not any(g.is_id for g in keys.groups):
-        summary = _summary_table(df, date_columns, dictionary.says_aggregate)
+        summary = _summary_table(df, date_columns, dictionary)
         if isinstance(summary, _Summary):
             grain, aggregate, case_count = summary.grain, summary.aggregate, summary.aggregate.count_column
             questions.extend(summary.questions)
@@ -1340,21 +1385,82 @@ def _count_columns(df: pl.DataFrame) -> list[str]:
     return found
 
 
-def _total_levels(df: pl.DataFrame, strata: Sequence[str]) -> tuple[TotalLevel, ...]:
-    """Stratum values that mean "all" (``ESTIMATE_TOTAL_LEVELS``, or "All …"): total rows."""
-    found = []
+def _is_total_label(value: str) -> bool:
+    text = " ".join(value.strip().lower().split())
+    return text in config.ESTIMATE_TOTAL_LEVELS or bool(config.ESTIMATE_TOTAL_PATTERN.search(text))
+
+
+def _total_levels(
+    df: pl.DataFrame, strata: Sequence[str], count: str
+) -> tuple[tuple[TotalLevel, ...], tuple[tuple[str, str], ...]]:
+    """(total levels, the ones found only by their sums) of the strata.
+
+    A total is a stratum value that means "all" by its label (``ESTIMATE_TOTAL_LEVELS``,
+    ``ESTIMATE_TOTAL_PATTERN``), or a value whose count equals the sum of the other values of its
+    column on every line that shares its other groups (an unlabelled "Statewide").
+    """
+    by_label: dict[str, list[str]] = {}
+    by_sum: list[tuple[str, str]] = []
     for c in strata:
-        if df.schema[c] != pl.String:
+        if not isinstance(df.schema[c], pl.String | pl.Categorical | pl.Enum):
             continue
-        levels = [v for v in df.get_column(c).drop_nulls().unique().sort().to_list() if isinstance(v, str)]
-        totals = tuple(
-            v
-            for v in levels
-            if v.strip().lower() in config.ESTIMATE_TOTAL_LEVELS or v.strip().lower().startswith("all ")
+        levels = [
+            v for v in df.get_column(c).cast(pl.String).drop_nulls().unique().sort().to_list() if isinstance(v, str)
+        ]
+        labelled = [v for v in levels if _is_total_label(v)]
+        if labelled:
+            by_label[c] = labelled
+        for v in _sum_totals(df, strata, count, c, levels):
+            if v not in labelled:
+                by_label.setdefault(c, []).append(v)
+                by_sum.append((c, v))
+    totals = tuple(TotalLevel(column=c, values=tuple(sorted(vs))) for c, vs in by_label.items())
+    return totals, tuple(by_sum)
+
+
+def _sum_totals(df: pl.DataFrame, strata: Sequence[str], count: str, column: str, levels: list[str]) -> list[str]:
+    """Values of ``column`` whose count is the sum of its other values' counts, for every set of
+    the other strata where it appears (at least two such sets, or one with three other values)."""
+    if len(levels) < 3 or len(levels) > config.STRATUM_MAX_CODES * 3:
+        return []
+    others = [c for c in strata if c != column]
+    keys = [pl.col(c).cast(pl.String).fill_null("\x00") for c in others]
+    cells = (
+        df.lazy()
+        .with_columns(*keys, pl.lit(1).alias("__all"))
+        .group_by(["__all", *others, column])
+        .agg(pl.col(count).sum().alias("__n"))
+        .collect()
+    )
+    on = ["__all", *others]
+    found = []
+    for v in levels:
+        total = cells.filter(pl.col(column).cast(pl.String) == v).select(*on, pl.col("__n").alias("__t"))
+        rest = (
+            cells.filter((pl.col(column).cast(pl.String) != v) | pl.col(column).is_null())
+            .group_by(on)
+            .agg(pl.col("__n").sum().alias("__r"), pl.len().alias("__k"))
         )
-        if totals:
-            found.append(TotalLevel(column=c, values=totals))
-    return tuple(found)
+        joined = total.join(rest, on=on, how="inner")
+        if joined.height == 0 or _float(joined.get_column("__t").sum()) <= 0:
+            continue
+        lines = int(joined.get_column("__k").min() or 0)  # type: ignore[arg-type]
+        if lines < 2 or (joined.height < 2 and lines < 3):
+            continue
+        if bool((joined.get_column("__t") == joined.get_column("__r")).all()):
+            found.append(v)
+    return found
+
+
+def _rate_column(df: pl.DataFrame, column: str, dictionary: Dictionary | None) -> bool:
+    """A numeric column of rates or percentages, by its name or its dictionary entry, whatever its
+    type (an integer "rate_per_100k" or a "%" column is a value, never a group)."""
+    if not df.schema[column].is_numeric() or df.schema[column] == pl.Boolean:
+        return False
+    if set(name_tokens(column)) & _RATE_TOKENS or config.ESTIMATE_RATE_NAME.search(column.lower()) or "%" in column:
+        return not bool(set(name_tokens(column)) & {"year", "yr"})
+    entry = dictionary.entry(column) if dictionary is not None else None
+    return entry is not None and bool(config.SUMMARY_RATE_TEXT.search(entry.description or entry.text))
 
 
 def _stratum(df: pl.DataFrame, column: str, dates: set[str], loose: bool) -> bool:
@@ -1376,7 +1482,7 @@ def _stratum(df: pl.DataFrame, column: str, dates: set[str], loose: bool) -> boo
     return year_like or distinct <= (200 if loose else config.STRATUM_MAX_CODES)
 
 
-def _summary_table(df: pl.DataFrame, dates: set[str], says_aggregate: bool = False) -> _Summary | str | None:
+def _summary_table(df: pl.DataFrame, dates: set[str], dictionary: Dictionary | None = None) -> _Summary | str | None:
     """A table of groups (region x year x category with a count column, no person ID).
 
     Returns the summary; or a reason (str) when it looks like one (a count column, no person ID)
@@ -1392,13 +1498,12 @@ def _summary_table(df: pl.DataFrame, dates: set[str], says_aggregate: bool = Fal
     """
     if df.height < 2:
         return None
+    says_aggregate = dictionary is not None and dictionary.says_aggregate
     counts = _count_columns(df)
     if not counts:
         return None
     count = counts[0]
-    values = [
-        c for c in df.columns if c not in counts and df.schema[c].is_float() and set(name_tokens(c)) & _RATE_TOKENS
-    ]
+    values = [c for c in df.columns if c not in counts and _rate_column(df, c, dictionary)]
     strata = [c for c in df.columns if c not in counts and c not in values and _stratum(df, c, dates, says_aggregate)]
     measures = [c for c in df.columns if c not in counts and c not in values and c not in strata]
     many_valued = [
@@ -1413,7 +1518,11 @@ def _summary_table(df: pl.DataFrame, dates: set[str], says_aggregate: bool = Fal
     rates = values
     values = [*values, *measures]
     repeated = int(df.select(pl.struct(strata).is_duplicated().sum()).item())
-    totals = _total_levels(df, strata)
+    if not says_aggregate and repeated > config.SUMMARY_MAX_REPEATED_SHARE * df.height:
+        # A table of groups has few repeated groups; most lines repeating one are records (a
+        # survey with banded answers and a visit count per respondent).
+        return f"{repeated:,} of {df.height:,} lines repeat another line's groups, so they may be records, not groups"
+    totals, by_sum = _total_levels(df, strata, count)
     kind: Literal["frequency", "estimate"] = "estimate" if totals or rates else "frequency"
     tokens = set(name_tokens(count))
     what = next((t for t in _WHAT_WORDS if t in tokens), "cases")
@@ -1435,6 +1544,21 @@ def _summary_table(df: pl.DataFrame, dates: set[str], says_aggregate: bool = Fal
             )
         )
         logger.info("summary_table_repeated_strata", lines=repeated, strata=len(strata))
+    for column, level in by_sum:
+        questions.append(
+            OpenQuestion(
+                id=f"total_row:{column}:{level}",
+                kind="total_row",
+                column=column,
+                value=level,
+                question=(
+                    f"The {level} lines in {column} hold the sum of the other {column} lines. "
+                    f"Is {level} a total? Until you answer, it is read as a total and never added to the others."
+                ),
+                options=("yes, it is a total", "no, it is one more group"),
+            )
+        )
+        logger.info("summary_table_total_by_sum", column=column)
     sentence = (
         f"Each line counts {what} for one {listed}."
         if kind == "frequency"

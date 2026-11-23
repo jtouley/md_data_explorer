@@ -84,6 +84,8 @@ def test_loadFromUrl_undeclaredFrequencyTable_recognisedWithCountColumn(
     [
         "https://data.cdc.gov.evil.test/api/views/ab12-cd34/rows.csv",
         "https://data.cdc.gov/api/views/AB12-CD34x/rows.csv",
+        "https://data.cdc.gov:8443/api/views/ab12-cd34/rows.csv",
+        "https://user@data.cdc.gov/api/views/ab12-cd34/rows.csv",
     ],
 )
 def test_socrataDictionary_otherHostOrBadId_notFetched(url: str, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -167,3 +169,83 @@ def test_populationEstimates_declaredAfterLoading_semanticsSayEstimates(
     assert response.status_code == 200, response.text
     assert semantics["population_estimates"] is True
     assert semantics["patient_key"] is None
+
+
+@pytest.fixture
+def sql_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    from clinical_analytics.core import nl_query_config
+
+    monkeypatch.setattr(nl_query_config, "ENABLE_SQL_QUERIES", True)
+
+
+def test_governedSql_frequencyTable_countOfLinesNeverConfirmableAsPatients(
+    upload: Callable[..., Any], test_client: TestClient, sql_on: None
+) -> None:
+    # Arrange: a frequency table with no person ID
+    frame = pl.read_csv(_legionella_csv()).unique(subset=["County", "Year", "Sex"], keep="first", maintain_order=True)
+    upload_id = upload(frame, "legionella_sql").json()["upload_id"]
+    sql = {"dataset_id": upload_id, "sql": "SELECT Sex, count(*) AS n FROM unified GROUP BY Sex"}
+
+    # Act
+    refused = test_client.post("/api/queries/sql", json=sql).json()
+    forced = test_client.post("/api/queries/sql", json={**sql, "confirm_one_row_per_patient": "a" * 32}).json()
+
+    # Assert: no confirmation is offered or taken; the refusal says to add up the count
+    assert refused["status"] == "refused"
+    assert refused["needs_confirmation"] is None
+    assert refused["confirmation"] is None
+    assert "SUM(Cases)" in refused["reason"]
+    assert forced["status"] == "refused"
+    assert forced["needs_confirmation"] is None
+
+
+def _troponin() -> pl.DataFrame:
+    """Chest-pain unit troponin with an undocumented 999 the upload asks about."""
+    return pl.DataFrame(
+        {
+            "mrn": [f"C{i:03d}" for i in range(200)],
+            "trop_ng_l": [999.0 if i % 20 == 0 else 4.0 + i % 30 for i in range(200)],
+        }
+    )
+
+
+def test_governedSql_columnWithOpenMissingCodeQuestion_answerSaysValueCountedAsReal(
+    upload: Callable[..., Any], test_client: TestClient, sql_on: None
+) -> None:
+    # Arrange
+    upload_id = upload(_troponin(), "trop_sql").json()["upload_id"]
+    sql = {"dataset_id": upload_id, "sql": "SELECT avg(trop_ng_l) AS mean_trop FROM unified"}
+
+    # Act
+    before = test_client.post("/api/queries/sql", json=sql).json()
+    test_client.post(
+        f"/api/datasets/{upload_id}/missing-codes", json={"column": "trop_ng_l", "value": "999", "not_recorded": True}
+    )
+    after = test_client.post("/api/queries/sql", json=sql).json()
+
+    # Assert: never silent before the answer; after it, 999 is left out and no note remains
+    assert before["status"] == "answered", before
+    assert any("trop_ng_l holds 999" in note for note in before["notes"])
+    assert after["status"] == "answered", after
+    assert not any("trop_ng_l holds 999" in note for note in after["notes"])
+    assert after["rows"][0]["mean_trop"] < before["rows"][0]["mean_trop"]
+
+
+def test_qualityReport_missingCodeAnswered_needsYourAnswerLineGone(
+    upload: Callable[..., Any], test_client: TestClient
+) -> None:
+    # Arrange
+    upload_id = upload(_troponin(), "trop_quality").json()["upload_id"]
+    before = test_client.get(f"/api/datasets/{upload_id}/quality").json()
+
+    # Act
+    test_client.post(
+        f"/api/datasets/{upload_id}/missing-codes", json={"column": "trop_ng_l", "value": 999, "not_recorded": False}
+    )
+    after = test_client.get(f"/api/datasets/{upload_id}/quality").json()
+
+    # Assert
+    asked = [c for c in before["checks"] if c["metric"] == "openQuestion"]
+    assert [c["id"] for c in asked] == ["missing_code:trop_ng_l:999.0"]
+    assert [c for c in after["checks"] if c["metric"] == "openQuestion"] == []
+    assert after["warnings"] == before["warnings"] - 1
