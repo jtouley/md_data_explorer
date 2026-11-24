@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 import polars as pl
@@ -129,8 +130,13 @@ def apply_declared(frame: pl.DataFrame, reads: DeclaredReads) -> pl.DataFrame:
 
 
 def ibis_reads(raw: Any, reads_config: dict[str, Any]) -> dict[str, Any]:
-    """The same reads as ibis expressions over ``raw`` (the semantic layer's source table)."""
+    """The same reads as ibis expressions over ``raw`` (the semantic layer's source table, DuckDB)."""
     import ibis
+
+    @ibis.udf.scalar.builtin(name="try_strptime")
+    def _try_strptime(value: str, fmt: str) -> datetime:
+        """DuckDB's try_strptime: NULL where ``fmt`` does not read ``value`` (never run in Python)."""
+        raise NotImplementedError
 
     mutations: dict[str, Any] = {}
     for column, values in (reads_config.get("missing") or {}).items():
@@ -146,7 +152,9 @@ def ibis_reads(raw: Any, reads_config: dict[str, Any]) -> dict[str, Any]:
     for column, (choice_format, century) in (reads_config.get("dates") or {}).items():
         if column not in raw.columns:
             continue
-        parsed = raw[column].cast("string").strip().as_date(choice_format)
+        # A value the format does not read (a blank, a stray word) is missing, as in the other two
+        # readers; ibis's as_date would fail the whole view on it.
+        parsed = _try_strptime(raw[column].cast("string").strip(), choice_format).cast("date")
         if century == "1900s":
             parsed = (parsed.year() >= 2000).ifelse(parsed - ibis.interval(years=100), parsed)
         elif century == "2000s":

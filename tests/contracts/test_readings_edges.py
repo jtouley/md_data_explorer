@@ -14,7 +14,15 @@ import pytest
 
 from clinical_analytics.contracts.declarations import Declarations, QuestionAnswer
 from clinical_analytics.contracts.readings import DeclaredReads, declared_reads, missing_expr, total_rows, unit_factors
-from clinical_analytics.contracts.semantics import AggregateInfo, DatasetSemantics, Grain, OpenQuestion, TotalLevel
+from clinical_analytics.contracts.semantics import (
+    AggregateInfo,
+    ColumnSemantics,
+    DatasetSemantics,
+    Grain,
+    OpenQuestion,
+    TotalLevel,
+    Unit,
+)
 
 READERS = ("polars", "layer", "sql")
 
@@ -146,12 +154,19 @@ def test_everyReader_skippedAndAbsentColumns_otherReadsStillApplied(
                      id="two_digit_years_in_the_1900s"),
         pytest.param(["03/04/21", "25/12/98"], ("%d/%m/%y", "2000s"), [date(2021, 4, 3), date(2098, 12, 25)],
                      id="two_digit_years_in_the_2000s"),
+        pytest.param(["03/04/00", "25/12/00"], ("%d/%m/%y", "1900s"), [date(1900, 4, 3), date(1900, 12, 25)],
+                     id="year_00_in_the_1900s"),
+        pytest.param(["03/04/00", "25/12/00"], ("%d/%m/%y", "2000s"), [date(2000, 4, 3), date(2000, 12, 25)],
+                     id="year_00_in_the_2000s"),
+        pytest.param(["03/04/2021", "  "], ("%d/%m/%Y", None), [date(2021, 4, 3), None], id="blank_is_missing"),
+        pytest.param(["03/04/2021", "not known"], ("%d/%m/%Y", None), [date(2021, 4, 3), None],
+                     id="unreadable_is_missing"),
     ],
 )  # fmt: skip
 def test_everyReader_confirmedDateReading_appliedByAllThree(
     values: list[str],
     reading: tuple[str, str | None],
-    expected: list[date],
+    expected: list[date | None],
     read_by_every_reader: Callable[..., dict[str, pl.DataFrame]],
 ) -> None:
     # Arrange: splint fitting dates, read as the user confirmed (a column the file lacks is skipped)
@@ -223,3 +238,23 @@ def test_declaredReads_censoredValue_leftOutOnlyWhenTheUserSaysSo(
 
     # Assert
     assert reads.missing == missing
+
+
+def test_declaredReads_unitColumns_onlyATimeUnitWithItsUnitColumnIsRead() -> None:
+    # Arrange: a wait with its unit column (months), a wait with no unit column, a dose whose unit
+    # column holds a unit that is no time
+    grain = Grain(kind="record", noun="visit", rows=3, one_row_per_patient=False, source="default")
+    columns = {
+        "wait": ColumnSemantics(logical_type="integer", unit=Unit(value="months", source="structure"),
+                                unit_column="wait_unit"),
+        "rest": ColumnSemantics(logical_type="integer", unit=Unit(value="days", source="dictionary")),
+        "dose": ColumnSemantics(logical_type="integer", unit=Unit(value="mg", source="dictionary"),
+                                unit_column="dose_unit"),
+    }  # fmt: skip
+    semantics = DatasetSemantics(rows=3, grain=grain, columns=columns)
+
+    # Act
+    reads = declared_reads(Declarations(), None, semantics)
+
+    # Assert
+    assert reads.units == {"wait": ("wait_unit", "months")}
