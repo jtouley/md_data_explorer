@@ -3,7 +3,8 @@
 
 ``process_isolation`` and ``forkserver_warmup`` keep mutant workers off a process that has
 imported polars (a fork from one deadlocks). mutmut reads them from 3.8 on; an older one ignores
-them and forks plainly, so the dev floor must not let one in.
+them and forks plainly, so the dev floor must not let one in. ``also_copy`` must carry every
+directory a test reads from the repo, or the stats run inside mutants/ fails before any mutant.
 """
 
 from __future__ import annotations
@@ -33,3 +34,14 @@ def test_devMutmutFloor_forkserverKeysSet_floorReadsThem() -> None:
     assert uses_forkserver, "the forkserver keys are gone: this floor check can go too"
     assert not older_allowed, f"{mutmut} allows a mutmut before {FIRST_MUTMUT_WITH_FORKSERVER}"
     assert mutmut.specifier.contains(FIRST_MUTMUT_WITH_FORKSERVER)
+
+
+def test_mutmutAlsoCopy_everyDirectoryTestsReadFromTheRepo_copied() -> None:
+    # Arrange: mutmut runs the suite inside mutants/, which holds only src and also_copy
+    project = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+
+    # Act
+    copied = set(project["tool"]["mutmut"]["also_copy"])
+
+    # Assert: config/ holds the eval-token hashes the check-eval-tokens tests read
+    assert {"config/", "scripts/"} <= copied
