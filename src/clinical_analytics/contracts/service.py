@@ -66,8 +66,7 @@ def stored_semantics(df: pl.DataFrame, metadata: dict[str, Any]) -> DatasetSeman
         )
         for c in added
     )
-    with_apps: DatasetSemantics = semantics.model_copy(update={"app_columns": apps})
-    return with_apps
+    return semantics.model_copy(update={"app_columns": apps})
 
 
 def version_semantics(

@@ -464,10 +464,7 @@ def _without_answered_questions(report: QualityReport, declarations: Declaration
     dropped = len(report.checks) - len(kept)
     if not dropped:
         return report
-    unanswered: QualityReport = report.model_copy(
-        update={"checks": kept, "warnings": max(0, report.warnings - dropped)}
-    )
-    return unanswered
+    return report.model_copy(update={"checks": kept, "warnings": max(0, report.warnings - dropped)})
 
 
 class DatasetSemanticsResponse(BaseModel):
@@ -1374,7 +1371,7 @@ async def upload_dataset(
     invalidate_semantic_layer_cache(upload_id)
     estimates_note = await asyncio.to_thread(_declare_population_estimates, storage, upload_id) if declared else None
     quality = await asyncio.to_thread(_upload_quality, storage, upload_id)
-    response: DatasetUploadResponse = _upload_response(storage, upload_id, display_name, message, quality).model_copy(
+    response = _upload_response(storage, upload_id, display_name, message, quality).model_copy(
         update={"population_estimates": declared, "population_estimates_note": estimates_note}
     )
     log.info(

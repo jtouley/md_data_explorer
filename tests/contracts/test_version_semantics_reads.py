@@ -11,11 +11,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock, call
 
 import polars as pl
+import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from clinical_analytics.contracts import service
 from clinical_analytics.contracts.declarations import Declarations, MemoryDeclarationStore
 from clinical_analytics.contracts.semantics import DatasetSemantics
 from clinical_analytics.contracts.service import check_upload, read_version_semantics, version_semantics
@@ -101,3 +105,97 @@ def test_readVersionSemantics_contractHoldsSemantics_storedFrameNeverRead(tmp_pa
     assert (calls[0], store.loads) == (0, 1)
     assert isinstance(semantics, DatasetSemantics)
     assert semantics.dataset_version == "v1"
+
+
+def test_versionSemantics_anyCall_readsThenInfersWithTheSameArguments(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Arrange
+    marker, store, metadata = object(), MemoryDeclarationStore(), {"source": "fitting log"}
+    calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    def stored_frame() -> pl.DataFrame:
+        return pl.DataFrame()
+
+    def record(*args: Any, **kwargs: Any) -> Callable[[], Any]:
+        calls.append((args, kwargs))
+        return lambda: marker
+
+    monkeypatch.setattr(service, "read_version_semantics", record)
+
+    # Act
+    result = version_semantics(
+        Path("data"), "fit1", "v1", metadata=metadata, stored_frame=stored_frame, declarations=store
+    )
+
+    # Assert
+    assert result is marker
+    assert calls == [
+        (
+            (Path("data"), "fit1", "v1"),
+            {"metadata": metadata, "stored_frame": stored_frame, "declarations": store},
+        )
+    ]
+
+
+def test_readVersionSemantics_noStoreGiven_inferredWithTheFileStoresDeclarations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Arrange: no semantics in the contract; every collaborator recorded
+    from clinical_analytics.contracts import declarations as declarations_module
+    from clinical_analytics.contracts import semantics as semantics_module
+
+    declared = Declarations()
+    file_store = MagicMock()
+    file_store.load.return_value = declared
+    store_class = MagicMock(return_value=file_store)
+    monkeypatch.setattr(declarations_module, "FileDeclarationStore", store_class)
+
+    def no_semantics(*_args: Any, **_kwargs: Any) -> Any:
+        raise semantics_module.SemanticsMissingError("no semantics")
+
+    monkeypatch.setattr(semantics_module, "semantics_for", no_semantics)
+    inferred = MagicMock()
+    stored = MagicMock(return_value=inferred)
+    monkeypatch.setattr(service, "stored_semantics", stored)
+    applied = object()
+    with_declarations = MagicMock(return_value=applied)
+    monkeypatch.setattr(semantics_module, "with_declarations", with_declarations)
+    log = MagicMock()
+    monkeypatch.setattr(service, "logger", log)
+    frame, metadata = pl.DataFrame({"gain_db": [30]}), {"source": "fitting log"}
+
+    # Act
+    infer = read_version_semantics(Path("data"), "fit1", "v1", metadata=metadata, stored_frame=lambda: frame)
+    loaded_before_infer = file_store.load.call_args_list[:]
+    result = infer()
+
+    # Assert
+    assert result is applied
+    store_class.assert_called_once_with(Path("data"))
+    assert loaded_before_infer == [call("fit1")]
+    stored.assert_called_once_with(frame, metadata)
+    inferred.model_copy.assert_called_once_with(update={"dataset_version": "v1"})
+    with_declarations.assert_called_once_with(inferred.model_copy.return_value, declared)
+    log.info.assert_called_once_with("semantics_inferred_for_stored_version", dataset_id="fit1", dataset_version="v1")
+
+
+def test_readVersionSemantics_contractHoldsSemantics_readWithTheGivenStore(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Arrange
+    from clinical_analytics.contracts import semantics as semantics_module
+
+    marker, store = object(), MemoryDeclarationStore()
+    calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    def semantics_for(*args: Any, **kwargs: Any) -> Any:
+        calls.append((args, kwargs))
+        return marker
+
+    monkeypatch.setattr(semantics_module, "semantics_for", semantics_for)
+
+    # Act
+    result = read_version_semantics(
+        Path("data"), "fit1", "v1", metadata={}, stored_frame=pl.DataFrame, declarations=store
+    )()
+
+    # Assert
+    assert result is marker
+    assert calls == [((Path("data"), "fit1", "v1"), {"declarations": store})]
