@@ -43,5 +43,6 @@ def test_mutmutAlsoCopy_everyDirectoryTestsReadFromTheRepo_copied() -> None:
     # Act
     copied = set(project["tool"]["mutmut"]["also_copy"])
 
-    # Assert: config/ holds the eval-token hashes the check-eval-tokens tests read
-    assert {"config/", "scripts/"} <= copied
+    # Assert: config/ holds the eval-token hashes the check-eval-tokens tests read;
+    # tests/scripts/test_pre_push_hook.py reads .pre-commit-config.yaml
+    assert {"config/", "scripts/", ".pre-commit-config.yaml"} <= copied

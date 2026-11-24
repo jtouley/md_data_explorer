@@ -52,3 +52,22 @@ def diff_against_base(root: Path, base: str, args: list[str], paths: tuple[str, 
     cmd = ["-c", "core.quotePath=false", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--merge-base", base]
     out = _git([*cmd, *args, "--", *paths], root)
     return out.decode("utf-8", errors="replace")
+
+
+def file_at_merge_base(root: Path, base: str, path: str) -> str:
+    """Text of repo-relative ``path`` at the merge base of ``base`` and HEAD (the fork point that
+    :func:`diff_against_base` diffs from). Raises :class:`GitQueryError` when it is not there."""
+    fork = _git(["merge-base", base, "HEAD"], root).decode().strip()
+    return _git(["show", f"{fork}:{path}"], root).decode("utf-8", errors="replace")
+
+
+def commit_of(root: Path, ref: str) -> str:
+    """Full sha of the commit ``ref`` names (``HEAD``, a branch, a sha). Raises :class:`GitQueryError`."""
+    return _git(["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], root).decode().strip()
+
+
+def uncommitted_paths(root: Path) -> list[str]:
+    """``git status --porcelain`` entries: staged and unstaged changes to tracked files and
+    untracked files that are not ignored, e.g. ``"M  src/x.py"``, ``"?? notes.py"``."""
+    out = _git(["-c", "core.quotePath=false", "status", "--porcelain=v1", "-z", "--untracked-files=all"], root)
+    return [entry for entry in out.decode("utf-8", errors="replace").split("\0") if entry]
