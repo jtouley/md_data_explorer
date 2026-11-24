@@ -15,6 +15,7 @@ from clinical_analytics.contracts.dates import choose_text_format
 @pytest.mark.parametrize(
     ("values", "read"),
     [
+        pytest.param(["2000-06-30"], True, id="one_date"),
         pytest.param([f"{config.DATE_YEAR_MIN}-01-01", "2000-06-30"], True, id="earliest_plausible_year"),
         pytest.param(["2000-06-30", f"{config.DATE_YEAR_MAX}-12-31"], True, id="latest_plausible_year"),
         pytest.param([f"{config.DATE_YEAR_MIN - 1}-12-31", "2000-06-30"], False, id="year_before_the_range"),

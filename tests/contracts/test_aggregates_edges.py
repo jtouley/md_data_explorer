@@ -79,7 +79,7 @@ def test_countCases_noCountColumn_failsLoud(count_column: str | None) -> None:
     aggregate = _frequency().model_copy(update={"count_column": count_column})
 
     # Act / Assert
-    with pytest.raises(ValueError, match="The table has no count column"):
+    with pytest.raises(ValueError, match="^The table has no count column$"):
         count_cases(_doses(), aggregate, {})
 
 

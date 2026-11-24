@@ -56,7 +56,8 @@ def test_missingExpr_numberColumn_codesComparedAsNumbers(values: tuple[object, .
 def test_everyReader_totalsOnTwoColumns_everyTotalLineLeftOut(
     read_by_every_reader: Callable[..., dict[str, pl.DataFrame]],
 ) -> None:
-    # Arrange: splint fittings by clinic and quarter, totals on both, one line of no clinic
+    # Arrange: splint fittings by clinic and quarter, totals on both (and on a column the file lacks,
+    # named first), one line of no clinic
     frame = pl.DataFrame(
         {
             "line_no": [1, 2, 3, 4, 5, 6],
@@ -65,7 +66,7 @@ def test_everyReader_totalsOnTwoColumns_everyTotalLineLeftOut(
             "fittings": [10, 20, 30, 10, 30, 4],
         }
     )
-    reads = DeclaredReads(totals={"clinic": ("All clinics",), "quarter": ("All quarters",), "absent": ("All",)})
+    reads = DeclaredReads(totals={"absent": ("All",), "clinic": ("All clinics",), "quarter": ("All quarters",)})
 
     # Act
     read = read_by_every_reader(frame, reads, "line_no")
