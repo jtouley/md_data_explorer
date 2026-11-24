@@ -93,9 +93,12 @@ repos:
       # eval tokens) and the fast test suite in parallel, so a push nobody tested is blocked here
       # instead of failing in CI. Stops at the first failure (checks before tests, first failing
       # test ends the run); dots instead of -v output. Bypass (emergencies only): --no-verify.
+      # It tests the working tree, not the pushed commit, so check-push-tree first blocks a push
+      # whose commit is not HEAD or whose tree holds staged changes or untracked files (pre-commit
+      # stashes only unstaged edits before this hook).
       - id: pre-push-gate
-        name: make check-fast && make test-fast
-        entry: bash -c 'make check-fast && make test-fast PYTEST_ARGS="-q --maxfail=1"'
+        name: make check-push-tree && make check-fast && make test-fast
+        entry: bash -c 'make check-push-tree && make check-fast && make test-fast PYTEST_ARGS="-q --maxfail=1"'
         language: system
         pass_filenames: false
         always_run: true

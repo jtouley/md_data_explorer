@@ -64,8 +64,11 @@ In the window, click **Use the sample cohort** and ask `compare outcome by diabe
 ## Before you push
 
 Pre-commit hooks are optional (`make install-pre-commit`). They include a pre-push hook that runs
-`make check-fast` and `make test-fast` and blocks the push when either fails. Whether or not you
-use them, run:
+`make check-fast` and `make test-fast` and blocks the push when either fails. Those test the
+working tree, not the pushed commit, so the hook first runs `make check-push-tree`, which blocks a
+push of a commit other than `HEAD` and a push from a tree with staged changes or untracked files
+(commit or `git stash --include-untracked` them, or list scratch files in `.git/info/exclude`).
+Whether or not you use them, run:
 
 ```bash
 make format && make lint-fix     # ruff format + autofix

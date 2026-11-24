@@ -1,6 +1,7 @@
 """Tests for the pre-push gate in .pre-commit-config.yaml (installed by ``make install-pre-commit``).
 
-The gate runs ``make check-fast`` then ``make test-fast`` and blocks the push when either fails.
+The gate runs ``make check-push-tree``, ``make check-fast`` then ``make test-fast`` and blocks the
+push when any fails.
 Its entry is run here against a fake ``make`` on PATH, so the tests check the real command line
 without running the suite inside itself.
 """
@@ -25,6 +26,7 @@ GATE_ID = "pre-push-gate"
 FAKE_MAKE = """#!/usr/bin/env bash
 echo "$*" >> "$FAKE_MAKE_LOG"
 case "$1" in
+  check-push-tree) exit "$PUSH_TREE_RC" ;;
   check-fast) exit "$CHECK_FAST_RC" ;;
   test-fast) exit "$TEST_FAST_RC" ;;
 esac
@@ -78,17 +80,18 @@ def test_config_gate_runsOnEveryPushWithoutFilenames() -> None:
 
 
 @pytest.mark.parametrize(
-    ("check_rc", "test_rc", "blocked", "calls"),
+    ("tree_rc", "check_rc", "test_rc", "blocked", "calls"),
     [
-        (0, 0, False, ["check-fast", "test-fast"]),
-        (2, 0, True, ["check-fast"]),
-        (0, 2, True, ["check-fast", "test-fast"]),
-        (2, 2, True, ["check-fast"]),
+        (0, 0, 0, False, ["check-push-tree", "check-fast", "test-fast"]),
+        (1, 0, 0, True, ["check-push-tree"]),
+        (0, 2, 0, True, ["check-push-tree", "check-fast"]),
+        (0, 0, 2, True, ["check-push-tree", "check-fast", "test-fast"]),
+        (0, 2, 2, True, ["check-push-tree", "check-fast"]),
     ],
-    ids=["all_pass", "checks_fail_skips_tests", "tests_fail", "both_fail"],
+    ids=["all_pass", "tree_not_pushed_commit_skips_rest", "checks_fail_skips_tests", "tests_fail", "both_fail"],
 )
 def test_gate_entry_makeResults_blocksPushOnAnyFailure(
-    check_rc: int, test_rc: int, blocked: bool, calls: list[str], tmp_path: Path
+    tree_rc: int, check_rc: int, test_rc: int, blocked: bool, calls: list[str], tmp_path: Path
 ) -> None:
     # Arrange
     bin_dir = tmp_path / "bin"
@@ -101,6 +104,7 @@ def test_gate_entry_makeResults_blocksPushOnAnyFailure(
         **os.environ,
         "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
         "FAKE_MAKE_LOG": str(log),
+        "PUSH_TREE_RC": str(tree_rc),
         "CHECK_FAST_RC": str(check_rc),
         "TEST_FAST_RC": str(test_rc),
     }

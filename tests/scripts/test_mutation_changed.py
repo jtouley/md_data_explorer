@@ -1,10 +1,12 @@
 """Tests for scripts/mutation_changed.py (make mutation-changed scope and survivor summary)."""
 
+import fnmatch
 import io
 import json
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from hypothesis import given
@@ -233,7 +235,7 @@ def test_main_summary_moduleWithoutResults_usesMutantsDir(
     out = capsys.readouterr()
     assert result == rc
     assert out.out.startswith(line)
-    assert ("cannot read mutmut's meta files" in out.err) is (rc == 2)
+    assert ("cannot read mutmut's run log or meta files" in out.err) is (rc == 2)
 
 
 @pytest.mark.parametrize(
@@ -369,7 +371,6 @@ SPANS = [
     ("x_keep", 4, 5),
     ("x_decorated", 8, 10),
     ("xǁSchemaǁvalidate", 16, 20),
-    ("xǁSchema.Columnǁname", 23, 24),
     ("x_last", 27, 28),
 ]
 
@@ -396,7 +397,7 @@ def test_function_spans_syntaxError_raises() -> None:
         ({5}, ["x_keep"]),
         ({8}, ["x_decorated"]),
         ({18}, ["xǁSchemaǁvalidate"]),
-        ({24}, ["xǁSchema.Columnǁname"]),
+        ({23, 24}, []),
         ({3, 6, 7, 11, 12, 21, 25, 26}, []),
         ({5, 28}, ["x_keep", "x_last"]),
         ({28, 5}, ["x_keep", "x_last"]),
@@ -409,7 +410,7 @@ def test_function_spans_syntaxError_raises() -> None:
         "function_body",
         "decorator_line",
         "nested_function_counts_for_outer",
-        "nested_class_method",
+        "nested_class_method_not_mutated",
         "blank_lines_between",
         "two_functions",
         "order_free",
@@ -507,8 +508,8 @@ def test_changed_lines_unifiedZeroDiff_oldAndNewSideLines(diff: str, expected: d
 
 @pytest.mark.parametrize(
     ("pattern", "module"),
-    [(f"{MOD}.*", MOD), (f"{MOD}.x_f__mutmut_*", MOD), (f"{MOD}.xǁSchema.Columnǁname__mutmut_*", MOD)],
-    ids=["module", "function", "nested_class_method"],
+    [(f"{MOD}.*", MOD), (f"{MOD}.x_f__mutmut_*", MOD), (f"{MOD}.xǁSchemaǁvalidate__mutmut_*", MOD)],
+    ids=["module", "function", "method"],
 )
 def test_pattern_module_anyPattern_itsModule(pattern: str, module: str) -> None:
     # Act / Assert
@@ -529,20 +530,31 @@ def test_generated_mutants_functionPattern_countsOnlyItsMutants(tmp_path: Path) 
 
 
 @pytest.mark.parametrize(
-    ("results", "generated", "rc", "ok", "head"),
+    ("results", "generated", "rc", "nothing_matched", "ok", "head"),
     [
-        ({}, 0, 1, True, "mutation-changed: SKIP"),
-        ({f"{MOD}.x_f__mutmut_1": "killed"}, 1, 1, False, "mutation-changed: FAIL"),
-        ({}, None, 1, False, "mutation-changed: FAIL"),
-        ({f"{MOD}.x_f__mutmut_1": "killed"}, 1, 0, True, "mutation-changed: PASS"),
+        ({}, 0, 1, True, True, "mutation-changed: SKIP"),
+        ({}, 0, 1, False, False, "mutation-changed: FAIL"),
+        ({f"{MOD}.x_f__mutmut_1": "killed"}, 1, 1, False, False, "mutation-changed: FAIL"),
+        ({}, None, 1, True, False, "mutation-changed: FAIL"),
+        ({}, None, 1, False, False, "mutation-changed: FAIL"),
+        ({f"{MOD}.x_f__mutmut_1": "killed"}, 1, 0, False, True, "mutation-changed: PASS"),
+        ({}, 0, 0, False, True, "mutation-changed: SKIP"),
     ],
-    ids=["nothing_matched_is_skip", "run_failed_after_results", "run_never_generated", "clean_run"],
+    ids=[
+        "nothing_matched_is_skip",
+        "crash_with_stale_meta_is_fail",
+        "run_failed_after_results",
+        "run_never_generated",
+        "crash_never_generated",
+        "clean_run",
+        "clean_run_nothing_to_mutate",
+    ],
 )
-def test_summarise_runExitCode_failsUnlessEveryPatternIsSkip(
-    results: dict[str, str], generated: int | None, rc: int, ok: bool, head: str
+def test_summarise_runExitCode_skipOnlyWhenMutmutSaidNothingMatches(
+    results: dict[str, str], generated: int | None, rc: int, nothing_matched: bool, ok: bool, head: str
 ) -> None:
     # Act
-    text, passed = mc.summarise(results, [f"{MOD}.x_f__mutmut_*"], lambda _pattern: generated, rc)
+    text, passed = mc.summarise(results, [f"{MOD}.x_f__mutmut_*"], lambda _pattern: generated, rc, nothing_matched)
 
     # Assert
     assert passed is ok
@@ -562,7 +574,7 @@ def test_summarise_functionPattern_reportsFunctionScope() -> None:
 def _patterns(repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> list[str]:
     monkeypatch.chdir(repo)
     assert mc.main(["patterns", "--base", "base"]) == 0
-    return capsys.readouterr().out.split()
+    return capsys.readouterr().out.splitlines()  # one pattern per line; a path may hold a tab
 
 
 @pytest.mark.parametrize(
@@ -573,11 +585,19 @@ def _patterns(repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.Captur
         (lambda s: s.replace("LIMIT = 3", "LIMIT = 4").replace("size = 2", "size = 5"), []),
         (lambda s: s + "\n\ndef added(x):\n    return x\n", ["x_added"]),
         (
-            lambda s: s.replace('return "c"', 'return "d"').replace("return x - 1", "return x - 2"),
-            ["x_last", "xǁSchema.Columnǁname"],
+            lambda s: s.replace("return x + 1", "return x + 3").replace("return x - 1", "return x - 2"),
+            ["x_keep", "x_last"],
         ),
+        (lambda s: s.replace('return "c"', 'return "d"'), []),
     ],
-    ids=["edited_function", "deleted_line_in_method", "constants_only", "added_function", "two_functions"],
+    ids=[
+        "edited_function",
+        "deleted_line_in_method",
+        "constants_only",
+        "added_function",
+        "two_functions",
+        "nested_class_method_not_mutated",
+    ],
 )
 def test_main_patterns_editedModule_onlyChangedFunctions(
     edit: Callable[[str], str],
@@ -643,21 +663,24 @@ def test_main_patterns_userDiffPrefixConfig_sameResult(
     assert patterns == [f"{MOD}.x_keep__mutmut_*"]
 
 
-def test_main_patterns_renamedModule_patternUsesNewModule(
-    make_branch_repo: BranchRepo, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    "moved_source", [SOURCE, SOURCE.replace("return x - 1", "return x - 4")], ids=["pure_rename", "rename_with_edit"]
+)
+def test_main_patterns_renamedModule_everyFunctionUnderNewModule(
+    moved_source: str,
+    make_branch_repo: BranchRepo,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # Arrange
+    # Arrange: every mutant name holds the module path, so a moved module's mutants are all untested.
     moved = "src/clinical_analytics/core/contract.py"
-    repo = make_branch_repo(
-        {"pyproject.toml": PYPROJECT, SCHEMA: SOURCE},
-        {SCHEMA: None, moved: SOURCE.replace("return x - 1", "return x - 4")},
-    )
+    repo = make_branch_repo({"pyproject.toml": PYPROJECT, SCHEMA: SOURCE}, {SCHEMA: None, moved: moved_source})
 
     # Act
     patterns = _patterns(repo, monkeypatch, capsys)
 
     # Assert
-    assert patterns == ["clinical_analytics.core.contract.x_last__mutmut_*"]
+    assert patterns == sorted(f"clinical_analytics.core.contract.{name}__mutmut_*" for name, _f, _l in SPANS)
 
 
 def test_main_patterns_unparsableChangedModule_exitsTwo(
@@ -695,3 +718,253 @@ def test_function_patterns_oldSideLines_namesSurvivingFunctionsTheyLeft(
 
     # Assert
     assert patterns == [f"{MOD}.{name}__mutmut_*" for name in expected]
+
+
+# --- mutmut run arguments: test selection for the clean run -----------------------------------------
+
+# Names in mutmut's test map (state().tests_by_mangled_function_name): module + mangled function.
+TEST_MAP = {
+    f"{MOD}.x_load": {"tests/test_a.py::test_load"},
+    f"{MOD}.x_load_other": {"tests/test_a.py::test_other"},
+    f"{MOD}.xǁSchemaǁvalidate": {"tests/test_a.py::test_validate"},
+    f"{MOD}.xǁSchemaǁvalidate_all": {"tests/test_a.py::test_validate_all"},
+    "clinical_analytics.core.schema_v2.x_load": {"tests/test_b.py::test_v2"},
+}
+MUTANT_KEYS = [f"{name}__mutmut_{n}" for name in TEST_MAP for n in (1, 2)]
+
+
+def _mutmut_tests(args: list[str], monkeypatch: pytest.MonkeyPatch) -> set[str]:
+    """The tests mutmut's own clean-run selection picks for ``args`` from :data:`TEST_MAP`."""
+    import mutmut.__main__ as mutmut_main
+
+    monkeypatch.setattr(mutmut_main, "state", lambda: SimpleNamespace(tests_by_mangled_function_name=TEST_MAP))
+    return mutmut_main.tests_for_mutant_names(args)
+
+
+def _mutmut_mutants(args: list[str]) -> list[str]:
+    # mutmut 3.8 collect_source_file_mutation_data's filter over the mutant keys.
+    return [key for key in MUTANT_KEYS if key in args or any(fnmatch.fnmatch(key, arg) for arg in args)]
+
+
+@pytest.mark.parametrize(
+    ("function", "tests"),
+    [
+        ("x_load", {"tests/test_a.py::test_load"}),
+        ("xǁSchemaǁvalidate", {"tests/test_a.py::test_validate"}),
+    ],
+    ids=["function", "method"],
+)
+def test_run_args_functionPattern_mutmutSelectsOnlyItsTestsAndMutants(
+    function: str, tests: set[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Arrange
+    pattern = f"{MOD}.{function}__mutmut_*"
+
+    # Act
+    args = mc.run_args([pattern])
+
+    # Assert: the bare pattern selects no test (mutmut would then run all of tests/); the args do.
+    assert _mutmut_tests([pattern], monkeypatch) == set()
+    assert _mutmut_tests(args, monkeypatch) == tests
+    assert _mutmut_mutants(args) == [f"{MOD}.{function}__mutmut_1", f"{MOD}.{function}__mutmut_2"]
+
+
+def test_run_args_modulePattern_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Act
+    args = mc.run_args([f"{MOD}.*"])
+
+    # Assert
+    assert args == [f"{MOD}.*"]
+    assert _mutmut_tests(args, monkeypatch) == set().union(
+        *(tests for name, tests in TEST_MAP.items() if name.startswith(f"{MOD}."))
+    )
+
+
+@given(
+    name=st.from_regex(r"[a-z_][a-z0-9_]{0,12}", fullmatch=True),
+    other=st.from_regex(r"[a-z_][a-z0-9_]{0,12}", fullmatch=True),
+)
+def test_selection_glob_anyName_matchesExactlyThatName(name: str, other: str) -> None:
+    # Arrange
+    glob = mc.selection_glob(f"{MOD}.x_{name}__mutmut_*")
+
+    # Act / Assert
+    assert "*" in glob  # mutmut globs only patterns holding a "*"
+    assert fnmatch.fnmatch(f"{MOD}.x_{name}", glob)
+    assert fnmatch.fnmatch(f"{MOD}.x_{other}", glob) is (other == name)
+    assert not fnmatch.fnmatch(f"{MOD}.x_{name}__mutmut_1", glob)
+
+
+@pytest.mark.parametrize("pattern", [f"{MOD}.*", "__mutmut_*", f"{MOD}.x_f"], ids=["module", "empty_name", "no_suffix"])
+def test_selection_glob_notAFunctionPattern_raises(pattern: str) -> None:
+    # Act / Assert
+    with pytest.raises(ValueError, match="not a function pattern"):
+        mc.selection_glob(pattern)
+
+
+def test_main_runArgs_printsPatternsAndSelectionGlobs(capsys: pytest.CaptureFixture[str]) -> None:
+    # Act
+    rc = mc.main(["run-args", f"{MOD}.x_load__mutmut_*", f"{MOD}.*"])
+
+    # Assert
+    assert rc == 0
+    assert capsys.readouterr().out.split() == [f"{MOD}.x_load__mutmut_*", f"{MOD}.x_loa[d*]", f"{MOD}.*"]
+
+
+# --- summary: a non-zero mutmut exit is a SKIP only for mutmut's "nothing matches" ------------------
+
+
+@pytest.mark.parametrize(
+    ("log", "rc"),
+    [
+        (f"Traceback ...\nAssertionError: {mc.NOTHING_MATCHES}\n\nFilter: ('x',)\n", 0),
+        ("Traceback ...\nRuntimeError: create_mutants blew up\n", 1),
+        ("", 1),
+    ],
+    ids=["nothing_matches", "crash", "empty_log"],
+)
+def test_main_summary_runLog_onlyNothingMatchesExcusesExitCode(
+    log: str, rc: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Arrange: a stale meta file without the new function's keys, as left by an earlier run.
+    _write_meta(tmp_path, MOD, _meta({f"{MOD}.x_old__mutmut_1": 1}))
+    run_log = tmp_path / "run.log"
+    run_log.write_text(log, encoding="utf-8")
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+
+    # Act
+    result = mc.main(
+        [
+            "summary",
+            f"{MOD}.x_new__mutmut_*",
+            "--mutants-dir",
+            str(tmp_path),
+            "--run-exit-code",
+            "1",
+            "--run-log",
+            str(run_log),
+        ]
+    )
+
+    # Assert
+    assert result == rc
+    assert capsys.readouterr().out.startswith("mutation-changed: SKIP" if rc == 0 else "mutation-changed: FAIL")
+
+
+def test_main_summary_missingRunLog_exitsTwo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Arrange
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+
+    # Act
+    rc = mc.main(["summary", f"{MOD}.*", "--run-exit-code", "1", "--run-log", str(tmp_path / "missing.log")])
+
+    # Assert
+    assert rc == 2
+    assert "cannot read mutmut's run log" in capsys.readouterr().err
+
+
+# --- git's C-quoted path names ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("a/plain.py", "a/plain.py"),
+        ('"a/x\\"y.py"', 'a/x"y.py'),
+        ('"a/x\\\\y.py"', "a/x\\y.py"),
+        ('"a/tab\\there.py"', "a/tab\there.py"),
+        ('"a/new\\nline.py"', "a/new\nline.py"),
+        ('"a/caf\\303\\251.py"', "a/café.py"),
+        ('"a/café\\".py"', 'a/café".py'),
+        ('""', ""),
+    ],
+    ids=["unquoted", "double_quote", "backslash", "tab", "newline", "octal_utf8", "raw_utf8", "empty"],
+)
+def test_unquote_c_path_gitQuotedName_original(name: str, expected: str) -> None:
+    # Act / Assert
+    assert mc.unquote_c_path(name) == expected
+
+
+@pytest.mark.parametrize("name", ['"a/x\\q.py"', '"a/x\\"', '"a/x\\12.py"'], ids=["unknown", "trailing", "short_octal"])
+def test_unquote_c_path_malformed_raises(name: str) -> None:
+    # Act / Assert
+    with pytest.raises(ValueError, match="malformed quoted path"):
+        mc.unquote_c_path(name)
+
+
+def test_changed_lines_quotedHeader_unquotedPath() -> None:
+    # Arrange
+    diff = 'diff --git "a/x\\"y.py" "b/x\\"y.py"\n--- "a/x\\"y.py"\n+++ "b/x\\"y.py"\n@@ -2 +2 @@\n-a\n+b\n'
+
+    # Act / Assert
+    assert mc.changed_lines(diff) == {'x"y.py': _fc('x"y.py', {2}, {2})}
+
+
+@pytest.mark.parametrize(
+    "name", ['quo"te.py', "back\\slash.py", "tab\tname.py", "café.py"], ids=["quote", "backslash", "tab", "utf8"]
+)
+def test_main_patterns_unusualFileName_stillMutated(
+    name: str, make_branch_repo: BranchRepo, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Arrange
+    path = f"src/clinical_analytics/core/{name}"
+    repo = make_branch_repo({"pyproject.toml": PYPROJECT, path: SOURCE}, {path: SOURCE.replace("x + 1", "x + 7")})
+
+    # Act
+    patterns = _patterns(repo, monkeypatch, capsys)
+
+    # Assert
+    assert patterns == [f"{mc.module_name(path)}.x_keep__mutmut_*"]
+
+
+def test_main_patterns_hunkPathMissingFromNameList_exitsTwo(
+    make_branch_repo: BranchRepo, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Arrange: a header the parser misread yields a path the name list does not hold.
+    repo = make_branch_repo({"pyproject.toml": PYPROJECT, SCHEMA: SOURCE}, {SCHEMA: SOURCE.replace("x + 1", "x + 7")})
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(mc, "changed_lines", lambda _diff: {"src/misread.py": _fc(None, set(), {1})})
+
+    # Act
+    rc = mc.main(["patterns", "--base", "base"])
+
+    # Assert
+    assert rc == 2
+    assert "not in `git diff --name-status`" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        ("M\0src/a.py\0", {"src/a.py": "M"}),
+        ("A\0src/n.py\0R100\0src/o.py\0src/p.py\0", {"src/n.py": "A", "src/p.py": "R"}),
+        ("R087\0src/o.py\0src/p.py\0M\0src/a.py\0", {"src/p.py": "R", "src/a.py": "M"}),
+        ("", {}),
+    ],
+    ids=["modified", "added_and_pure_rename", "rename_with_score_then_modified", "empty"],
+)
+def test_name_statuses_nameStatusZ_newPathToStatus(output: str, expected: dict[str, str]) -> None:
+    # Act / Assert
+    assert mc.name_statuses(output) == expected
+
+
+def test_name_statuses_truncated_raises() -> None:
+    # Act / Assert
+    with pytest.raises(ValueError, match="truncated"):
+        mc.name_statuses("R100\0src/o.py")
+
+
+def test_main_patterns_modeOnlyChange_nothing(
+    make_branch_repo: BranchRepo, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Arrange
+    repo = make_branch_repo({"pyproject.toml": PYPROJECT, SCHEMA: SOURCE}, {})
+    (repo / SCHEMA).chmod(0o755)
+
+    # Act
+    patterns = _patterns(repo, monkeypatch, capsys)
+
+    # Assert
+    assert patterns == []
