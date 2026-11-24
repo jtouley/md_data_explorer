@@ -61,12 +61,13 @@ install-dev: ## Install all dependencies including dev tools
 	$(UV) sync --extra dev --group dev
 	$(PYTHON_RUN) scripts/fetch_embedding_model.py
 
-install-pre-commit: ensure-venv ## Install pre-commit hooks (run after install-dev)
+install-pre-commit: ensure-venv ## Install the pre-commit and pre-push hooks (run after install-dev)
 	@echo "$(GREEN)Installing pre-commit hooks...$(NC)"
-	$(PYTHON_RUN) -m pip install pre-commit
+	@# pre-commit is a dev dependency (a uv venv has no pip). The config's default_install_hook_types
+	@# installs both the pre-commit and the pre-push hook.
 	$(PYTHON_RUN) -m pre_commit install
-	@echo "$(GREEN)✓ Pre-commit hooks installed$(NC)"
-	@echo "$(YELLOW)Note: Hooks will run automatically on git commit$(NC)"
+	@echo "$(GREEN)✓ Pre-commit and pre-push hooks installed$(NC)"
+	@echo "$(YELLOW)Note: commit hooks run on git commit; git push runs make check-fast and make test-fast$(NC)"
 	@echo "$(YELLOW)Run 'pre-commit run --all-files' to check all files now$(NC)"
 
 test: ensure-venv ## Run all tests in parallel (default)
@@ -399,29 +400,48 @@ mutation: ensure-venv ## Run mutation testing over all of src (long-running, res
 
 # FUNCS scopes a long module to some of its functions, by mutmut's mangled names (x_name for a
 # function, xǁClassǁmethod for a method): make mutation-module MODULE=... FUNCS="x_a x__b"
+# `mutation_changed.py run-args` adds a glob per function that picks its tests for mutmut's clean run.
 mutation-module: ensure-venv ## Mutation test one module: make mutation-module MODULE=clinical_analytics.core.schema
 	@if [ -z "$(MODULE)" ]; then echo "$(RED)MODULE is required$(NC)"; exit 1; fi
-	$(MUTATION_ENV) $(UV) run mutmut run --max-children $(MUTATION_JOBS) \
-		$(if $(FUNCS),$(foreach f,$(FUNCS),"$(MODULE).$(f)__mutmut_*"),"$(MODULE).*")
+	@set -f; args=$$($(PYTHON_RUN) scripts/mutation_changed.py run-args \
+		$(if $(FUNCS),$(foreach f,$(FUNCS),'$(MODULE).$(f)__mutmut_*'),'$(MODULE).*')) || exit 2; \
+	echo "mutmut run" $$args; \
+	$(MUTATION_ENV) $(UV) run mutmut run --max-children $(MUTATION_JOBS) $$args
 
 mutation-results: ensure-venv ## Summarise surviving mutants from the last mutation run
 	$(UV) run mutmut results
 
-# Mutants of the src modules this branch added or changed against MUTATION_BASE, then a summary
-# that fails on any survivor (scripts/mutation_changed.py). The first run in a checkout also runs
-# the fast suite once to map tests to functions; later runs reuse mutants/.
+# Mutants of the src functions this branch added or changed against MUTATION_BASE (from the diff
+# hunks; the same MODULE.<mangled>__mutmut_* patterns mutation-module's FUNCS= builds), then a
+# summary that fails on any survivor (scripts/mutation_changed.py). A whole-module
+# run takes days; MUTATION_SCOPE=modules restores it. The first run in a checkout also runs the fast
+# suite once to map tests to functions; later runs reuse mutants/. `run-args` adds a test-selection
+# glob per function (without one, mutmut's clean run is all of tests/). mutmut exits non-zero when
+# no mutant matches any pattern, so its exit code and output go to the summary, which judges them.
 MUTATION_BASE ?= origin/main
-mutation-changed: ensure-venv ## Mutation test only the src modules changed against origin/main; fails on survivors [MUTATION_BASE=...]
-	@set -f; patterns=$$($(PYTHON_RUN) scripts/mutation_changed.py patterns --base $(MUTATION_BASE)) || exit 2; \
+MUTATION_SCOPE ?= functions
+mutation-changed: ensure-venv ## Mutation test only the src functions changed against origin/main; fails on survivors [MUTATION_BASE=... MUTATION_SCOPE=functions|modules]
+	@set -f; case "$(MUTATION_SCOPE)" in functions) scope= ;; modules) scope=--whole-modules ;; \
+		*) echo "$(RED)MUTATION_SCOPE must be functions or modules$(NC)"; exit 2 ;; esac; \
+	patterns=$$($(PYTHON_RUN) scripts/mutation_changed.py patterns --base $(MUTATION_BASE) $$scope) || exit 2; \
 	if [ -z "$$patterns" ]; then \
-		echo "mutation-changed: SKIP: no mutable src module changed against $(MUTATION_BASE)"; exit 0; fi; \
-	echo "$(GREEN)Mutating changed modules ($(MUTATION_JOBS) workers):$(NC) "$$patterns; \
-	$(MUTATION_ENV) $(UV) run mutmut run --max-children $(MUTATION_JOBS) $$patterns || exit $$?; \
-	$(UV) run mutmut results --all true | $(PYTHON_RUN) scripts/mutation_changed.py summary $$patterns
+		echo "mutation-changed: SKIP: no mutable src function changed against $(MUTATION_BASE)"; exit 0; fi; \
+	args=$$($(PYTHON_RUN) scripts/mutation_changed.py run-args $$patterns) || exit 2; \
+	echo "$(GREEN)Mutating changed $(MUTATION_SCOPE) ($(MUTATION_JOBS) workers):$(NC) "$$patterns; \
+	log=$$(mktemp) && rcfile=$$(mktemp) || exit 2; \
+	{ $(MUTATION_ENV) $(UV) run mutmut run --max-children $(MUTATION_JOBS) $$args 2>&1; echo $$? >"$$rcfile"; } \
+		| tee "$$log"; \
+	rc=$$(cat "$$rcfile"); \
+	$(UV) run mutmut results --all true | $(PYTHON_RUN) scripts/mutation_changed.py summary \
+		--run-exit-code $$rc --run-log "$$log" $$patterns; \
+	status=$$?; rm -f "$$log" "$$rcfile"; exit $$status
 
 
 check-data: ensure-venv ## Fail if git tracks data files (patient data must stay out of the repo)
 	$(PYTHON_RUN) scripts/check_no_data_files.py
+
+check-push-tree: ensure-venv ## Fail unless the working tree is the commit being pushed (pre-push gate; no staged or untracked files)
+	@$(PYTHON_RUN) scripts/check_push_tree.py
 
 check-spdx: ensure-venv ## Fail if a src/**/*.py or electron/src/**/*.js file lacks an SPDX-License-Identifier line
 	$(PYTHON_RUN) scripts/check_spdx_headers.py

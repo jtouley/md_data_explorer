@@ -1,9 +1,14 @@
 # Pre-commit hooks for automatic code quality enforcement
-# Install: pre-commit install
+# Install: make install-pre-commit (installs the pre-commit and the pre-push hook)
 # Run manually: pre-commit run --all-files
 #
-# These hooks run automatically on git commit and cannot be bypassed.
+# These hooks run automatically on git commit and git push.
 # Agents MUST ensure code passes these checks before committing.
+
+# `pre-commit install` installs these hook types, so the pre-push gate needs no extra flag.
+default_install_hook_types: [pre-commit, pre-push]
+# Hooks without their own `stages` run on commit only; on push only the pre-push gate runs.
+default_stages: [pre-commit]
 
 repos:
   # Ruff for formatting and linting (replaces black, flake8, isort, etc.)
@@ -83,6 +88,21 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+      # Pre-push gate: the checks CI runs first (lint, format, data guard, SPDX, lock platforms,
+      # eval tokens) and the fast test suite in parallel, so a push nobody tested is blocked here
+      # instead of failing in CI. Stops at the first failure (checks before tests, first failing
+      # test ends the run); dots instead of -v output. Bypass (emergencies only): --no-verify.
+      # It tests the working tree, not the pushed commit, so check-push-tree first blocks a push
+      # whose commit is not HEAD or whose tree holds staged changes or untracked files (pre-commit
+      # stashes only unstaged edits before this hook).
+      - id: pre-push-gate
+        name: make check-push-tree && make check-fast && make test-fast
+        entry: bash -c 'make check-push-tree && make check-fast && make test-fast PYTEST_ARGS="-q --maxfail=1"'
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
 
       # Coverage check - DISABLED temporarily (run manually: make test-cov-check)
       # TODO: Re-enable when test suite stabilizes
