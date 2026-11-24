@@ -49,6 +49,7 @@ def _frequency(repeated: int = 0) -> AggregateInfo:
         pytest.param({"district": [ALL], "term": [2]}, 1200, 2, id="total_named_reads_its_groups"),
         pytest.param({"district": [ALL]}, 4600, 5, id="total_named_alone"),
         pytest.param({"ward": ["W1"]}, 4600, 5, id="column_not_in_table_ignored"),
+        pytest.param({"district": ["East"]}, 0, 0, id="no_line_matches_sums_to_zero"),
     ],
 )
 def test_countCases_frequencyTable_sumLeavesTotalsOut(

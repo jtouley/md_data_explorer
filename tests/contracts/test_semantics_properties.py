@@ -19,7 +19,6 @@ from __future__ import annotations
 import random
 import re
 from collections.abc import Callable
-from typing import Any
 
 import polars as pl
 import pytest
@@ -35,6 +34,7 @@ from clinical_analytics.contracts.holds import COLUMN_KINDS, COUNT_KINDS, KEY_KI
 from clinical_analytics.contracts.inference import UploadFacts, apply_semantics, infer_semantics
 from clinical_analytics.contracts.readings import declared_reads
 from clinical_analytics.contracts.semantics import DatasetSemantics, Grain, OpenQuestion, with_declarations
+from tests.contracts.conftest import applied_facts
 
 SEEDS = range(24)
 EXPLICIT = ("Refused", "Don't know", "Not asked", "Missing", "Not recorded")
@@ -295,27 +295,6 @@ def test_openQuestionHolds_questionsFromInference_holdTheirColumn(seed: int) -> 
 
 
 # --------------------------------------------------------------------------- 5. renaming
-def _applied(semantics: DatasetSemantics, back: dict[str, str]) -> dict[str, Any]:
-    """Every fact that changes a number, with columns named as in the original file."""
-    agg = semantics.aggregate
-    return {
-        "columns": {
-            back[name]: (
-                sorted(str(m.value) for m in col.missing_codes),
-                (col.date.format, col.date.has_time) if col.date else None,
-                dict(col.labels),
-                (col.stated_range.minimum, col.stated_range.maximum) if col.stated_range else None,
-                sorted(str(c.value) for c in col.nonresponse_codes),
-                sorted(str(c.value) for c in col.censored_codes),
-                col.unit.value if col.unit is not None and col.unit.source == "dictionary" else None,
-            )
-            for name, col in semantics.columns.items()
-        },
-        "aggregate": (agg.kind, back.get(agg.count_column or "", None), agg.total_levels) if agg else None,
-        "questions": sorted((q.kind, back.get(q.column or "", ""), str(q.value)) for q in semantics.open_questions),
-    }
-
-
 def _podiatry_file(rng: random.Random) -> tuple[pl.DataFrame, str]:
     n = rng.randint(60, 120)
     frame = pl.DataFrame(
@@ -353,4 +332,6 @@ def test_inferSemantics_everyColumnRenamed_appliedFactsUnchanged(seed: int) -> N
     after = infer_semantics(frame.rename(names), UploadFacts(doc_context=renamed_doc))
 
     # Assert
-    assert _applied(after, {new: old for old, new in names.items()}) == _applied(before, {c: c for c in frame.columns})
+    assert applied_facts(after, {new: old for old, new in names.items()}) == applied_facts(
+        before, {c: c for c in frame.columns}
+    )

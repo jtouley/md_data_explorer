@@ -67,7 +67,9 @@ def test_openQuestionHolds_kindWithNoRule_failsLoud() -> None:
 
     # Act / Assert
     with pytest.raises(ValueError, match="No hold rule for question kind 'voice_pitch'"):
-        open_question_holds(_semantics().model_copy(update={"open_questions": (question,)}), columns=None, counts_lines=False)
+        open_question_holds(
+            _semantics().model_copy(update={"open_questions": (question,)}), columns=None, counts_lines=False
+        )
 
 
 @pytest.mark.parametrize(

@@ -281,9 +281,7 @@ def test_parseDictionary_unitWritten_readAsWritten(description: str, unit: str) 
 
 # --------------------------------------------------------------------------- codebook tables
 def _codebook(label: str, *rows: str) -> str:
-    return "\n".join(
-        ["Variable Name: lab", f"SAS Label: {label}", "Code or Value\tValue Description", *rows]
-    ) + "\n"
+    return "\n".join(["Variable Name: lab", f"SAS Label: {label}", "Code or Value\tValue Description", *rows]) + "\n"
 
 
 def test_codebook_rangeWithExplicitAndOtherCodes_onlyEdgeCodesCensored() -> None:
