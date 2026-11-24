@@ -52,7 +52,9 @@ def test_uploadDataset_populationEstimates_measurementsKeptRowNumberAdded(
     assert detail["tables"][0]["row_count"] == df.height
 
 
-def test_uploadDataset_uniqueTextId_copiedAndSourceKept(test_client: TestClient, upload: Callable[..., Any]) -> None:
+def test_uploadDataset_uniqueTextId_linesNumberedAndSourceKept(
+    test_client: TestClient, upload: Callable[..., Any]
+) -> None:
     # Arrange
     df = pl.DataFrame({"record_code": [f"R{i:03d}" for i in range(200)], "sbp": [110.5 + i for i in range(200)]})
 
@@ -61,8 +63,9 @@ def test_uploadDataset_uniqueTextId_copiedAndSourceKept(test_client: TestClient,
     assert "upload_id" in body, body
     columns = test_client.get(f"/api/datasets/{body['upload_id']}").json()["tables"][0]["columns"]
 
-    # Assert
-    assert {"record_code", "patient_id", "sbp"} <= set(columns)
+    # Assert: a line's own ID is never copied into the app's patient_id (ADR017)
+    assert {"record_code", "row_number", "sbp"} <= set(columns)
+    assert "patient_id" not in columns
 
 
 def test_getDataset_populationEstimates_reportsStoredColumnTypes(
@@ -410,7 +413,7 @@ def test_question_modelStepRaises_refusedWithVisibleReason(
 def test_question_compositeRowKey_countsRowsNeverPatients(
     test_client: TestClient, upload: Callable[..., Any], make_population_estimates: Callable[..., pl.DataFrame]
 ) -> None:
-    # Arrange: location x cause x sex x year is unique, so patient_id is hashed from it
+    # Arrange: location x cause x sex x year is unique; it tells lines apart, never patients
     from clinical_analytics.api import dependencies
     from clinical_analytics.core.query_service import QueryService
 
@@ -421,8 +424,8 @@ def test_question_compositeRowKey_countsRowsNeverPatients(
     with dependencies.lease_semantic_layer(upload_id) as lease:
         result = QueryService(lease.layer).ask("count by sex", dataset_id=upload_id, dataset_version="v1")
 
-    # Assert: a synthesized ID keys rows, not patients
-    assert "patient_id" in metadata["columns"] and "mx" in metadata["columns"]
+    # Assert: lines are numbered (no patient_id is made up) and counted as rows, not patients
+    assert "patient_id" not in metadata["columns"] and "mx" in metadata["columns"]
     assert result.analysis is not None, result.failure_reason
     assert result.analysis.get("unit") == "rows"
     assert not re.search(r"\bpatients?\b", result.claim or "")
