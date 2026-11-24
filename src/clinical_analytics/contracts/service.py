@@ -87,16 +87,46 @@ def version_semantics(
     Raises:
         ContractError: the contract or the declarations can't be read (never hidden).
     """
+    return read_version_semantics(
+        data_dir, dataset_id, version, metadata=metadata, stored_frame=stored_frame, declarations=declarations
+    )()
+
+
+def read_version_semantics(
+    data_dir: Path,
+    dataset_id: str,
+    version: str,
+    *,
+    metadata: dict[str, Any],
+    stored_frame: Callable[[], pl.DataFrame],
+    declarations: Any = None,
+) -> Callable[[], DatasetSemantics]:
+    """``version_semantics`` in two steps. This call does every file read (the contract, the
+    declarations and, for a version stored before ADR017, the stored frame); the step it returns
+    reads no file. That step is the inference pass over the frame, which is slow on a large one
+    (4 to 6 s for a 1.8M-row, 13-column cohort), so a caller that holds a lock around the reads
+    runs it after releasing the lock.
+
+    Raises:
+        ContractError: the contract or the declarations can't be read (never hidden).
+    """
     from clinical_analytics.contracts.declarations import FileDeclarationStore
     from clinical_analytics.contracts.semantics import SemanticsMissingError, semantics_for, with_declarations
 
     store = declarations if declarations is not None else FileDeclarationStore(data_dir)
     try:
-        return semantics_for(data_dir, dataset_id, version, declarations=store)
+        semantics = semantics_for(data_dir, dataset_id, version, declarations=store)
     except SemanticsMissingError:
-        logger.info("semantics_inferred_for_stored_version", dataset_id=dataset_id, dataset_version=version)
-        inferred = stored_semantics(stored_frame(), metadata).model_copy(update={"dataset_version": version})
-        return with_declarations(inferred, store.load(dataset_id))
+        frame = stored_frame()
+        declared = store.load(dataset_id)
+
+        def infer() -> DatasetSemantics:
+            logger.info("semantics_inferred_for_stored_version", dataset_id=dataset_id, dataset_version=version)
+            inferred = stored_semantics(frame, metadata).model_copy(update={"dataset_version": version})
+            return with_declarations(inferred, declared)
+
+        return infer
+    return lambda: semantics
 
 
 def accepted_patch_ids(patches: list[Patch]) -> tuple[str, ...]:

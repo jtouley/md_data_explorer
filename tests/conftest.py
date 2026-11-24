@@ -23,6 +23,19 @@ os.environ.setdefault("CLINICAL_ANALYTICS_ALLOWED_HOSTS", "127.0.0.1,localhost,t
 # Tests run the API in explicit dev mode (no token) unless a test sets a token itself.
 os.environ.pop("CLINICAL_ANALYTICS_API_TOKEN", None)
 os.environ["CLINICAL_ANALYTICS_DEV_NO_AUTH"] = "1"
+# Git exports GIT_DIR to hooks run from a linked worktree (the pre-push gate runs this suite).
+# Inherited, it points every `git init`/`git add` a test runs in a temp repo at the real repo:
+# the shared config became bare and the worktree's index lost every file. Tests find repos by cwd.
+GIT_REPO_ENV: tuple[str, ...] = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_PREFIX",
+)
+for _git_var in GIT_REPO_ENV:
+    os.environ.pop(_git_var, None)
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
