@@ -21,7 +21,7 @@ import re
 from collections.abc import Callable
 
 import polars as pl
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
 from clinical_analytics.contracts import config
@@ -114,24 +114,44 @@ def test_everyReader_drawnValueInsideStatedRange_neverBlankedWithoutDeclaration(
 
 
 # --------------------------------------------------------------------------- 2. totals
+UNLABELLED_TOTAL = "Ward sum"
+
+
+def _feed_count_table(
+    wards: list[str], months: list[int], counts: list[int], label: str, order: list[int] | None = None
+) -> tuple[pl.DataFrame, str, list[str]]:
+    """Consults per ward and month (``counts`` ward by ward), a ``label`` total line per month,
+    the lines in ``order`` (as written when None)."""
+    rows = [{"ward": w, "month": m, "consults": counts[i * len(months) + j]} for i, w in enumerate(wards) for j, m in
+            enumerate(months)]  # fmt: skip
+    rows += [
+        {"ward": label, "month": m, "consults": sum(r["consults"] for r in rows if r["month"] == m)} for m in months
+    ]
+    lines = order if order is not None else list(range(len(rows)))
+    return pl.DataFrame([rows[i] for i in lines]).with_row_index("line_no"), label, wards
+
+
 @st.composite
 def _feed_counts(draw: st.DrawFn) -> tuple[pl.DataFrame, str, list[str]]:
     """Lactation consults by ward and month, with a total line per month (labelled or not)."""
     wards = [f"Ward {chr(65 + i)}" for i in range(draw(st.integers(4, 7)))]
     months = list(range(1, draw(st.integers(4, 10)) + 1))
     counts = draw(st.lists(st.integers(0, 60), min_size=len(wards) * len(months), max_size=len(wards) * len(months)))
-    rows = [{"ward": w, "month": m, "consults": counts[i * len(months) + j]} for i, w in enumerate(wards) for j, m in
-            enumerate(months)]  # fmt: skip
-    label = draw(st.sampled_from(("All", "Total", "Overall", "Ward sum")))
-    rows += [
-        {"ward": label, "month": m, "consults": sum(r["consults"] for r in rows if r["month"] == m)} for m in months
-    ]
-    order = draw(st.permutations(range(len(rows))))
-    return pl.DataFrame([rows[i] for i in order]).with_row_index("line_no"), label, wards
+    label = draw(st.sampled_from(("All", "Total", "Overall", UNLABELLED_TOTAL)))
+    order = draw(st.permutations(range(len(wards) * len(months) + len(months))))
+    return _feed_count_table(wards, months, counts, label, list(order))
+
+
+# The unlabelled total, confirmed: derandomized draws hold every "Ward sum" example (none confirm
+# it), so this one checks its sum past the hold.
+UNLABELLED_CONFIRMED = _feed_count_table(
+    [f"Ward {c}" for c in "ABCD"], [1, 2, 3, 4], [(i * 7) % 41 for i in range(16)], UNLABELLED_TOTAL
+)
 
 
 @PROPERTY
 @given(drawn=_feed_counts(), confirm=st.booleans())
+@example(drawn=UNLABELLED_CONFIRMED, confirm=True)
 def test_everyReader_drawnFrequencyTotalRow_neverAddedIntoASum(
     drawn: tuple[pl.DataFrame, str, list[str]],
     confirm: bool,
@@ -306,6 +326,33 @@ def test_inferSemantics_drawnConsistentRenaming_appliedFactsUnchanged(
     # Assert
     back = {new: old for old, new in names.items()}
     assert applied_facts(after, back) == applied_facts(before, {c: c for c in frame.columns})
+
+
+def test_feedCounts_unlabelledTotalConfirmed_readPastTheHold(
+    read_by_every_reader: Callable[..., dict[str, pl.DataFrame]],
+) -> None:
+    # Arrange: the explicit example of property 2, with the user confirming the unlabelled total
+    frame, label, wards = UNLABELLED_CONFIRMED
+    semantics = infer_semantics(frame.drop("line_no")).model_copy(update={"dataset_version": "v1"})
+    answers = tuple(
+        QuestionAnswer(question_id=q.id, answer=q.options[0], dataset_version="v1")
+        for q in semantics.open_questions
+        if q.kind == "total_row" and q.value == label
+    )
+    declarations = Declarations(
+        aggregates=(AggregateDeclaration(count_column="consults", rows=frame.height, dataset_version="v1"),),
+        answers=answers,
+    )
+    declared = with_declarations(semantics, declarations)
+
+    # Act
+    held = open_question_holds(declared, columns={"consults"}, counts_lines=False)
+    reads = read_by_every_reader(frame, declared_reads(declarations, "v1", declared), "line_no")
+
+    # Assert: asked about, answered, then summed without the total line by every reader
+    assert answers and not held
+    truth = int(frame.filter(pl.col("ward").is_in(wards))["consults"].sum())
+    assert {name: int(reads[name].get_column("consults").sum()) for name in READERS} == dict.fromkeys(READERS, truth)
 
 
 def test_feedCounts_drawnTotalLabels_areContractTotalLevels() -> None:
