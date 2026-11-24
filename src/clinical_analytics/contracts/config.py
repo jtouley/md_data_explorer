@@ -373,6 +373,10 @@ ESTIMATE_TOTAL_LEVELS: Final = frozenset(
         "national",
         "global",
         "world",
+        "grand total",
+        "all states",
+        "all regions",
+        "all counties",
     }
 )
 # A level naming a county-like part of a state: the other levels in that column are its totals.
@@ -831,3 +835,136 @@ ESTIMATE_JOIN_PRECISION_METHOD: Final = (
 ESTIMATE_JOIN_PRECISION_SKIPPED: Final = (
     "{count} rows without an interval or with an estimate of 0 or below are not ranked."
 )
+
+
+# Semantics section (ADR017).
+# The contract's top-level custom property that holds the dataset's semantics section.
+SEMANTICS_PROPERTY: Final = "semantics"
+SEMANTICS_SCHEMA_VERSION: Final = 1
+
+# The years a value may fall in to be read as a date (or a column of whole numbers as calendar
+# years), for every reader. 1900: the people in a clinical file kept today were born after it (a
+# few centenarians aside), so an earlier "year" is far more likely a code, a count or a typo
+# than a date. 2100: far enough ahead for planned follow-up, near enough to reject 4-digit codes.
+DATE_YEAR_MIN: Final = 1900
+DATE_YEAR_MAX: Final = 2100
+
+# Values that a file uses for "not recorded" when nothing documents them. One of these counts as
+# a missing-value code only when it repeats (MISSING_CODE_MIN_ROWS) and sits far outside the
+# column's other values (MISSING_CODE_GAP times the largest other value, or below 0 in a column
+# whose other values are all 0 or more). A real 99-year-old among patients aged up to 98 is a value.
+MISSING_CODE_CANDIDATES: Final[frozenset[int]] = frozenset(
+    {99, 999, 9999, 99999, 88, 888, 8888, 77, 777, 7777, 98, 998, 9998, -1, -7, -8, -9, -77, -88, -98, -99, -999, -9999}
+)
+MISSING_CODE_MIN_ROWS: Final = 3
+MISSING_CODE_MIN_SHARE: Final = 0.005
+MISSING_CODE_GAP: Final = 1.5
+# Undocumented codes are never stored as missing: they are asked about. Names of counts, changes
+# and durations hold real -1, 0 and 99 values (a stay of 99 days), so they are not asked.
+MISSING_CODE_EXEMPT_TOKENS: Final = frozenset(
+    {"change", "chg", "diff", "difference", "delta", "stay", "count", "counts", "num", "number", "n"}
+)  # fmt: skip
+# On an exempt name a value is still asked about when it is this many times the largest other
+# value (a length of stay of 999 among stays up to 40 days).
+MISSING_CODE_EXEMPT_GAP: Final = 5.0
+
+# A dictionary code is a missing-value code only when its label says the measurement itself was
+# not recorded ("999 = not recorded", "99 = missing"). Labels that name an answer or an event
+# ("0 = not done" for a biopsy, "1 = refused" for chemotherapy, "unknown", "not tested") are
+# categories: nulling them would change a rate.
+MISSING_LABEL_STRICT: Final = re.compile(
+    r"\b(?:not\s+(?:recorded|measured|available|collected|entered|captured)|missing|no\s+data|"
+    r"data\s+not\s+(?:collected|available)|blank)\b",
+    re.IGNORECASE,
+)
+# On a lone note beside a measurement ("Grip score (0-40). 77 = sheet not returned") these
+# also say the measurement was not taken, when the code lies outside the measurement's values.
+MISSING_LABEL_NOT_TAKEN: Final = re.compile(
+    r"\b(?:not\s+(?:done|assessed|obtained|performed|taken|measured|recorded|available|evaluated|tested|asked)|"
+    r"missing|unknown|unrecorded|no\s+data|no\s+(?:reading|measurement|value|result|record)s?|n/a|refused|declined|"
+    r"don'?t\s+know|not\s+known)\b",
+    re.IGNORECASE,
+)
+# A numeric column with at least this many values besides its listed codes is a measure: its
+# non-response codes are never categories (``inference._measure_nonresponse``).
+MEASURE_MIN_VALUES: Final = 10
+# A codebook keeps at least this many coded categories after its missing codes are taken out.
+MISSING_CODE_MIN_CATEGORIES: Final = 2
+MISSING_LABEL_EXCEPT: Final = re.compile(r"\bother\b", re.IGNORECASE)
+
+# A sequence column numbers the rows of each patient 1..k (or 0..k-1) in at least this share of
+# patients with more than one row, whatever it is called.
+SEQUENCE_MIN_SHARE: Final = 0.95
+# A time since an index event ("weeks since start") differs on each line of at least this share.
+TIME_SINCE_MIN_SHARE: Final = 0.9
+# A repeating column with fewer values than this share of the lines never beats a unique
+# conventionally named patient ID.
+GENERIC_KEY_MIN_SHARE: Final = 0.05
+# "Which column identifies the patient?" is asked whenever only the structure points to a key.
+# These three shares only choose which option is pre-selected (the tentative key); the options,
+# the hold on every answer that counts patients, and every applied fact are the same whatever
+# their values (tests/contracts/test_semantics_key_thresholds.py moves each by 0.1 either way).
+# No tentative key below one different value per five lines (share = values / lines): beyond a
+# handful of lines per value the column reads as a place, a team or a long series, not a person.
+KEY_MIN_SHARE: Final = 0.2
+# Nearly one line per value: when nine values in ten sit on a single line, the column names
+# lines (records with a few repeats), not people with several lines, so nothing is pre-selected.
+KEY_RECORD_SHARE: Final = 0.9
+# Most values on one line (more than half): a line-unique ID nested in such a column may be a
+# second person on each line (a child and a carer), so the line-unique one is pre-selected.
+KEY_SECOND_PERSON_SHARE: Final = 0.5
+# "Which column identifies the patient?": its id and the answer that says no column does.
+KEY_QUESTION_ID: Final = "patient_key"
+KEY_ANSWER_NONE: Final = "none of these names the patient"
+# Day/month order is settled only by at least this many values that one order alone reads, and
+# at least this share of the column (real dates have a day above 12 on about 60% of lines).
+DATE_ORDER_MIN_VALUES: Final = 3
+DATE_ORDER_MIN_SHARE: Final = 0.1
+# A whole-number column counts as a stratum of a summary table only with at most this many
+# values (age bands, category codes) unless it holds years; age or SBP is a measure.
+STRATUM_MAX_CODES: Final = 20
+# A table of groups has few lines repeating another line's groups; above this share the lines are
+# records (a survey with banded answers and a count per respondent), so the reading is asked.
+SUMMARY_MAX_REPEATED_SHARE: Final = 0.2
+# Rate evidence in a column's dictionary entry, whatever its type ("per 100,000", "age-adjusted").
+SUMMARY_RATE_TEXT: Final = re.compile(
+    r"\brates?\b|\bper\s+[\d,]+|\bpercent(?:age)?\b|%|\bage[- ]adjusted\b|\bage[- ]standardi[sz]ed\b|"
+    r"\bprevalence\b|\bproportion\b",
+    re.IGNORECASE,
+)
+
+# "Is each line one patient?": its id and the answer that says lines are records (visits, tests).
+ROWS_QUESTION_ID: Final = "rows_are_patients"
+ROWS_ANSWER_RECORDS: Final = "no, lines are visits, tests or other records"
+
+# Survey weight columns: the usual published names ("WTxxx" weights of interview or exam samples,
+# "_LLCPWT"-style final weights, "sample_weight", "final_wt", "person_wgt").
+SURVEY_WEIGHT_NAME: Final = re.compile(
+    r"^_?(?:wt|wgt)(?:mec|int|sa|pers|fs|final|samp)\w*$|^_?llcpwt\w*$|"
+    r"(?:^|_)(?:sample|sampling|survey|final|person|analysis)_?(?:wt|wgt|weight)s?(?:_|$)"
+)
+# A question that asks for a population estimate, which only weights can give (any country).
+SURVEY_NATIONAL_QUESTION: Final = re.compile(
+    r"\b(?:national(?:ly)?|nationwide|country[- ]?wide|weighted|population[- ]level|"
+    r"population\s+estimates?|(?:in|of|across)\s+the\s+(?:whole\s+|general\s+)?(?:population|country)|"
+    r"representative|prevalence\s+in\s+the\s+population)\b",
+    re.IGNORECASE,
+)
+SURVEY_NATIONAL_REFUSAL: Final = (
+    "This file is a survey sample. Its counts are of the people in this file, not weighted population estimates, "
+    "so a population figure isn't given. Ask about the people in this file instead."
+)
+SURVEY_NOTE: Final = "These are counts of the people in this file, not weighted population estimates."
+
+# Time units a unit column may name (normalised), and days in one of each.
+TIME_UNIT_NAMES: Final = {
+    **dict.fromkeys(("day", "days", "d"), "days"),
+    **dict.fromkeys(("week", "weeks", "wk"), "weeks"),
+    **dict.fromkeys(("month", "months", "mo"), "months"),
+    **dict.fromkeys(("year", "years", "yr", "yrs"), "years"),
+    **dict.fromkeys(("hour", "hours", "h", "hr", "hrs"), "hours"),
+    **dict.fromkeys(("minute", "minutes", "min"), "minutes"),
+}
+TIME_UNIT_DAYS: Final = {
+    "minutes": 1 / 1440, "hours": 1 / 24, "days": 1.0, "weeks": 7.0, "months": 365.25 / 12, "years": 365.25,
+}  # fmt: skip

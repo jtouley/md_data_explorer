@@ -689,7 +689,7 @@ def test_legacy_conversion_restagesEveryTableWithCsv_dtypesMatchCohort(store):
 
 
 def test_overwrite_renamedNumericId_identicalReupload_isAllowed(store):
-    # Arrange: record_number is not ID-named; ensure_patient_id renames it to patient_id
+    # Arrange: record_number is a line's own ID, so lines are numbered; the mapping still names patient_id
     rows = ["record_number,age,outcome"] + [f"{1000 + i},{40 + i % 30},{i % 2}" for i in range(200)]
     data = ("\n".join(rows) + "\n").encode()
     meta = {"patient_id": "patient_id", "outcome": "outcome", "predictors": ["age"]}

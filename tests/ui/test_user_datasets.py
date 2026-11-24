@@ -191,8 +191,8 @@ class TestUserDatasetStorage:
         """
         Test that synthetic ID metadata is used to identify ID columns for schema override.
 
-        When patient_id is created synthetically (composite hash), metadata should
-        indicate this so we can force it to Utf8 during CSV reading.
+        A file whose lines no column identifies gets numbered lines (ADR017: the app's
+        patient_id is only ever a copy of a settled patient key), recorded in the metadata.
         """
         storage = upload_storage
 
@@ -225,14 +225,11 @@ class TestUserDatasetStorage:
         loaded_lf = storage.get_upload_data(upload_id, lazy=True)
         assert isinstance(loaded_lf, pl.LazyFrame)
 
-        # Collect and verify patient_id exists and is string type
+        # Collect: no column names a patient, so lines are numbered and no patient_id is made up
         loaded_df = loaded_lf.collect()
-        assert "patient_id" in loaded_df.columns
-        assert loaded_df.schema["patient_id"] == pl.Utf8, "Synthetic patient_id should be Utf8 (string) type"
-        assert len(loaded_df) == 150
-        # Verify patient_id values are strings (not integers)
-        patient_ids = loaded_df["patient_id"].to_list()
-        assert all(isinstance(pid, str) for pid in patient_ids), "All patient_id values should be strings"
+        assert metadata["synthetic_id_metadata"]["patient_id"]["patient_id_source"] == "row_index"
+        assert "patient_id" not in loaded_df.columns
+        assert loaded_df["row_number"].to_list() == list(range(1, 151))
 
     def test_list_uploads(self, upload_storage):
         """Test listing all uploads."""

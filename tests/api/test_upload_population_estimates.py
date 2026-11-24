@@ -113,8 +113,8 @@ def test_uploadDataset_declaredGbdTable_valueColumnKeptRowsNumbered(
 
 @pytest.mark.parametrize(
     "id_column",
-    ["mrn", "patient_id", "subject", "pid", "Patient ID"],
-    ids=["mrn", "patient_id", "subject", "pid", "spaced"],
+    ["mrn", "patient_id", "person_id", "subject_id", "Patient ID"],
+    ids=["mrn", "patient_id", "person_id", "subject_id", "spaced"],
 )
 def test_uploadDataset_declaredVisitFile_patientIdKeptNotEstimates(
     test_client: TestClient, isolated_data_home, id_column

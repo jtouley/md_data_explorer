@@ -31,7 +31,6 @@ from typing import Final
 import polars as pl
 import structlog
 
-from clinical_analytics.core.schema_inference import patient_key_by_name
 from clinical_analytics.storage.staging import (
     ColumnTypeNote,
     StagedTable,
@@ -189,7 +188,9 @@ def _read_members(
 
 def _id_column(prefix: str, columns: list[str]) -> str:
     """``patient_id`` for one file per patient; ``source_file`` when the files hold patient IDs."""
-    holds_ids = patient_key_by_name(columns) is not None or any(is_id_column_name(c) for c in columns)
+    from clinical_analytics.contracts.inference import names_patient
+
+    holds_ids = any(names_patient(c) for c in columns) or any(is_id_column_name(c) for c in columns)
     if prefix in PATIENT_FILE_PREFIXES and not holds_ids:
         return PATIENT_ID_COLUMN
     return SOURCE_FILE_COLUMN

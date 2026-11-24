@@ -228,6 +228,12 @@ class TestDatasetPreviewEndpoint:
 class TestDatasetUploadEndpoint:
     """Tests for POST /api/datasets/upload endpoint."""
 
+    @pytest.fixture(autouse=True)
+    def _no_contract_for_mocked_storage(self, monkeypatch):
+        """The storage here is a mock with no data contract on disk; the response's semantics
+        (read loudly from the contract since ADR017) are stubbed as absent."""
+        monkeypatch.setattr("clinical_analytics.api.routes.datasets._contract_semantics", lambda *_a, **_k: None)
+
     @staticmethod
     def _make_csv(rows: int = 50) -> bytes:
         """Build a CSV payload above the 1 KB minimum size threshold."""
@@ -408,6 +414,12 @@ class TestDatasetUploadEndpoint:
 
 class TestDatasetSampleEndpoint:
     """Tests for POST /api/datasets/sample."""
+
+    @pytest.fixture(autouse=True)
+    def _no_contract_for_mocked_storage(self, monkeypatch):
+        """The storage here is a mock with no data contract on disk; the response's semantics
+        (read loudly from the contract since ADR017) are stubbed as absent."""
+        monkeypatch.setattr("clinical_analytics.api.routes.datasets._contract_semantics", lambda *_a, **_k: None)
 
     def test_datasets_sample_loads_bundled_cohort(self, test_client, tmp_path):
         """Sample endpoint registers the demo cohort and returns upload_id."""

@@ -6,7 +6,6 @@ import errno
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
 
 import polars as pl
 import pytest
@@ -18,7 +17,6 @@ from clinical_analytics.contracts.service import (
     accepted_patch_ids,
     check_upload,
     check_upload_or_log,
-    id_column_from_metadata,
 )
 from clinical_analytics.contracts.store import (
     contract_path,
@@ -123,53 +121,43 @@ def test_latestReport_corruptNewest_raisesContractStoreError(tmp_path: Path):
 
 
 @pytest.mark.parametrize(
-    ("metadata", "expected"),
+    ("frame", "expected_id", "expected_restricted"),
     [
-        (_META, "patient_id"),
-        ({"inferred_schema": {"column_mapping": {"Subject": "patient_id", "x": "other"}}}, "Subject"),
-        ({"inferred_schema": {}}, None),
-        ({}, None),
-    ],
-    ids=["mapped", "renamed", "no_mapping", "no_schema"],
-)
-def test_idColumnFromMetadata_inferredSchema_returnsPatientIdColumn(metadata, expected):
-    # Act / Assert
-    assert id_column_from_metadata(metadata) == expected
-
-
-_MAPPED = {"inferred_schema": {"column_mapping": {"patient_id": "patient_id"}}}
-
-
-@pytest.mark.parametrize(
-    ("patient_id_meta", "expected_id", "expected_sources"),
-    [
-        pytest.param({"patient_id_source": "composite", "patient_id_columns": ["a", "b"]}, None, (), id="hash"),
-        pytest.param({"patient_id_source": "single_column", "patient_id_columns": ["FIPS"]}, None, (), id="row_copy"),
         pytest.param(
-            {"patient_id_source": "single_column", "patient_id_columns": ["subject_id"]},
-            "patient_id",
-            ("subject_id",),
+            pl.DataFrame({"FIPS": [f"{1000 + i}" for i in range(30)], "rate": [0.5] * 30}),
+            None,
+            (),
+            id="row_id_never_copied",
+        ),
+        pytest.param(
+            pl.DataFrame({"subject_id": [f"S{i % 10}" for i in range(30)], "sbp": [120.5] * 30}),
+            "subject_id",
+            ("patient_id",),
             id="named_copy",
         ),
-        pytest.param({"patient_id_source": "existing"}, "patient_id", (), id="existing"),
+        pytest.param(
+            pl.DataFrame({"patient_id": [f"P{i}" for i in range(30)], "sbp": [120.5] * 30}),
+            "patient_id",
+            (),
+            id="existing",
+        ),
     ],
 )
-def test_idColumnFromMetadata_rowKey_noPatientIdAndCopiedSourceRestricted(
-    patient_id_meta: dict[str, Any], expected_id: str | None, expected_sources: tuple[str, ...]
+def test_contractInputsFromSemantics_keyAndAppCopies_idIsPatientKeyCopiesRestricted(
+    make_semantics, frame: pl.DataFrame, expected_id: str | None, expected_restricted: tuple[str, ...]
 ) -> None:
-    # Arrange: a row key names rows, so the contract states no patient ID (governed SQL then
-    # asks the user to confirm one row per patient instead of calling counts patients)
-    from clinical_analytics.contracts.service import id_source_columns_from_metadata
+    # Arrange: the contract's ID is the semantics' patient key (a row key names rows, so the
+    # contract states no patient ID); the app's copies of an ID are restricted like it
+    from clinical_analytics.contracts.builder import ContractInputs
 
-    metadata = {**_MAPPED, "synthetic_id_metadata": {"patient_id": patient_id_meta}}
+    semantics = make_semantics(frame)
 
     # Act
-    id_column = id_column_from_metadata(metadata)
-    sources = id_source_columns_from_metadata(metadata)
+    inputs = ContractInputs.from_semantics(semantics, upload_id="u1", dataset_version="v1", dataset_name="c")
 
     # Assert
-    assert id_column == expected_id
-    assert sources == expected_sources
+    assert inputs.id_column == expected_id
+    assert inputs.id_source_columns == expected_restricted
 
 
 def _patch(patch_id: str, status: PatchStatus, minute: int) -> MetadataPatch:
@@ -231,12 +219,15 @@ def test_checkUpload_acceptedPatchInOverlay_labelInContract(tmp_path: Path, load
     assert {c.property: c.value for c in contract.customProperties}["metadataPatchIds"] == ["p1"]
 
 
-def test_checkUploadOrLog_checkFails_returnsVisibleNotRunStatus(tmp_path: Path):
-    # Arrange: the mapped ID column is missing, so building the contract fails.
+def test_checkUploadOrLog_checkFails_returnsVisibleNotRunStatus(tmp_path: Path, make_semantics):
+    # Arrange: the semantics' patient key is not a column of the frame, so building the contract fails.
     df = pl.DataFrame({"a": [1, 2]})
+    semantics = make_semantics(pl.DataFrame({"person_id": ["S1", "S1", "S2"]}), add_ids=False)
 
     # Act
-    result = check_upload_or_log(tmp_path, df, upload_id="u1", dataset_version="v1", metadata=_META)
+    result = check_upload_or_log(
+        tmp_path, df, upload_id="u1", dataset_version="v1", metadata=_META, semantics=semantics
+    )
 
     # Assert
     assert isinstance(result, QualityNotRun)

@@ -83,18 +83,17 @@ def test_ensurePatientId_populationEstimates_rowNumberNotPatientId(
     assert result[ROW_NUMBER_COLUMN].to_list() == list(range(1, df.height + 1))
 
 
-def test_ensurePatientId_uniqueTextColumn_copiedNotRenamed() -> None:
-    # Arrange
+def test_ensurePatientId_uniqueTextColumn_linesNumberedSourceKept() -> None:
+    # Arrange: a line's own ID (no convention, no dictionary) is never the app's patient_id
     df = pl.DataFrame({"record_code": [f"R{i:03d}" for i in range(50)], "sbp": [120.5 + i for i in range(50)]})
 
     # Act
     result, metadata = VariableTypeDetector.ensure_patient_id(df)
 
-    # Assert: the source column stays queryable beside the copy
-    assert metadata["patient_id_source"] == "single_column"
-    assert metadata["patient_id_columns"] == ["record_code"]
-    assert result["patient_id"].to_list() == df["record_code"].to_list()
-    assert_frame_equal(result.drop("patient_id"), df)
+    # Assert: the source column stays queryable; lines are numbered
+    assert metadata["patient_id_source"] == "row_index"
+    assert "patient_id" not in result.columns
+    assert_frame_equal(result.drop(ROW_NUMBER_COLUMN), df)
 
 
 def test_ensurePatientId_rowNumberNameTaken_usesFreeName() -> None:
@@ -203,7 +202,7 @@ def test_findIntervals_boundNames_valueAndBoundsFound(schema: dict[str, pl.DataT
     assert find_intervals(schema) == expected
 
 
-def test_ensurePatientId_compositeKey_hashedAndSourcesKept(
+def test_ensurePatientId_compositeKey_linesNumberedSourcesKept(
     make_population_estimates: Callable[..., pl.DataFrame],
 ) -> None:
     # Arrange: three causes, so cause_name is categorical and the cell key is unique
@@ -212,91 +211,105 @@ def test_ensurePatientId_compositeKey_hashedAndSourcesKept(
     # Act
     result, metadata = VariableTypeDetector.ensure_patient_id(df)
 
-    # Assert
-    assert metadata["patient_id_source"] == "composite"
-    assert metadata["patient_id_columns"] == ["location_name", "cause_name", "sex", "year"]
-    assert result["patient_id"].n_unique() == df.height
-    assert_frame_equal(result.drop("patient_id"), df)
+    # Assert: a combination tells cells apart; it never names a patient, so nothing is hashed
+    assert metadata["patient_id_source"] == "row_index"
+    assert "patient_id" not in result.columns
+    assert_frame_equal(result.drop(ROW_NUMBER_COLUMN), df)
+
+
+# Frames for the semantics-based row-key rules (ADR017): what tells rows apart decides the note.
+_ROWS = 30
+_KEY_FRAMES: dict[str, pl.DataFrame] = {
+    "composite": pl.DataFrame(
+        {
+            "location_name": [f"Place {i // 3}" for i in range(_ROWS)],
+            "sex": [("F", "M", "X")[i % 3] for i in range(_ROWS)],
+            "mx": [0.1 * i for i in range(_ROWS)],
+        }
+    ),
+    "row_index": pl.DataFrame({"sbp": [110.5 + i for i in range(_ROWS)]}),
+    "copy_not_named_id": pl.DataFrame({"FIPS": [f"{1000 + i}" for i in range(_ROWS)], "rate": [0.5] * _ROWS}),
+    "copy_of_named_id": pl.DataFrame({"MRN": [f"M{i}" for i in range(_ROWS)], "sbp": [120.5] * _ROWS}),
+    "existing": pl.DataFrame({"patient_id": [f"P{i}" for i in range(_ROWS)], "sbp": [120.5] * _ROWS}),
+    "settled_key": pl.DataFrame({"person_id": [f"P{i // 2}" for i in range(_ROWS)], "sbp": [120.5] * _ROWS}),
+}
 
 
 @pytest.mark.parametrize(
-    ("patient_id_meta", "expected"),
+    ("frame", "expected"),
     [
-        pytest.param({"patient_id_source": "composite", "patient_id_columns": ["a", "b"]}, True, id="composite"),
-        pytest.param({"patient_id_source": "row_index"}, True, id="row_index"),
-        pytest.param(
-            {"patient_id_source": "single_column", "patient_id_columns": ["FIPS"]}, True, id="copy_not_named_id"
-        ),
-        pytest.param(
-            {"patient_id_source": "single_column", "patient_id_columns": ["MRN"]}, False, id="copy_of_named_id"
-        ),
-        pytest.param({"patient_id_source": "existing"}, False, id="existing"),
-        pytest.param({}, False, id="empty"),
-        pytest.param(None, False, id="no_metadata"),
+        pytest.param("composite", True, id="composite"),
+        pytest.param("row_index", True, id="row_index"),
+        pytest.param("copy_not_named_id", True, id="copy_not_named_id"),
+        pytest.param("copy_of_named_id", False, id="copy_of_named_id"),
+        pytest.param("existing", False, id="existing"),
     ],
 )
-def test_patientIdIsRowKey_bySource_rowsUnlessRealPatientId(patient_id_meta: Any, expected: bool) -> None:
+def test_patientIdIsRowKey_bySemantics_rowsUnlessAPatientKey(
+    make_semantics: Callable[..., Any], frame: str, expected: bool
+) -> None:
     # Arrange
-    metadata = {} if patient_id_meta is None else {"synthetic_id_metadata": {"patient_id": patient_id_meta}}
+    semantics = make_semantics(_KEY_FRAMES[frame])
 
-    # Act / Assert
-    assert patient_id_is_row_key(metadata) is expected
+    # Act
+    row_key = patient_id_is_row_key(semantics)
+
+    # Assert
+    assert row_key is expected
 
 
 @pytest.mark.parametrize(
-    ("patient_id_meta", "expected_start"),
+    ("frame", "expected_start"),
     [
         pytest.param(
-            {"patient_id_source": "row_index", "row_number_column": "row_number"},
+            "row_index",
             "No column in this file identifies a patient, so each row was numbered (“row_number”).",
             id="row_index",
         ),
         pytest.param(
-            {"patient_id_source": "composite", "patient_id_columns": ["location_name", "sex", "year"]},
-            "No column in this file identifies a patient, so rows are told apart by “location_name”, “sex” and “year”.",
+            "composite",
+            "No column in this file identifies a patient, so rows are told apart by “location_name” and “sex”.",
             id="composite",
         ),
         pytest.param(
-            {"patient_id_source": "single_column", "patient_id_columns": ["FIPS"]},
+            "copy_not_named_id",
             "Rows are told apart by “FIPS”, which is not named as a patient ID.",
             id="copy_not_named_id",
         ),
     ],
 )
-def test_rowKeyNote_rowKey_saysRowsNotPatientsAndHowToFix(patient_id_meta: Any, expected_start: str) -> None:
+def test_rowKeyNote_rowKey_countsWaitForAnswerAndHowToFix(
+    make_semantics: Callable[..., Any], frame: str, expected_start: str
+) -> None:
     # Arrange
-    metadata = {"synthetic_id_metadata": {"patient_id": patient_id_meta}}
+    semantics = make_semantics(_KEY_FRAMES[frame])
 
     # Act
-    note = row_key_note(metadata)
+    note = row_key_note(semantics)
 
     # Assert
     assert note.startswith(expected_start)
-    assert "Answers count rows, not patients." in note
+    # Asked "Is each line one patient?": counts wait for it (ADR017 rule B); otherwise rows are counted
+    asked = semantics.question("rows_are_patients") is not None
+    assert ("Counts wait for your answer" if asked else "Answers count rows, not patients.") in note
     assert "add a column with one ID for each patient" in note
 
 
 @pytest.mark.parametrize(
-    "patient_id_meta",
-    [
-        pytest.param({"patient_id_source": "existing"}, id="existing"),
-        pytest.param({"patient_id_source": "single_column", "patient_id_columns": ["MRN"]}, id="copy_of_named_id"),
-        pytest.param({}, id="empty"),
-        pytest.param(None, id="no_metadata"),
-    ],
+    "frame", [pytest.param("existing", id="existing"), pytest.param("copy_of_named_id", id="copy_of_named_id")]
 )
-def test_rowKeyNote_patientKey_saysNothing(patient_id_meta: Any) -> None:
+def test_rowKeyNote_patientKey_saysNothing(make_semantics: Callable[..., Any], frame: str) -> None:
     # Arrange
-    metadata = {} if patient_id_meta is None else {"synthetic_id_metadata": {"patient_id": patient_id_meta}}
+    semantics = make_semantics(_KEY_FRAMES[frame])
 
     # Act
-    note = row_key_note(metadata)
+    note = row_key_note(semantics)
 
     # Assert
     assert note == ""
 
 
-def test_ensurePatientId_namedKeyRepeats_isPatientKeyNotRowKey() -> None:
+def test_ensurePatientId_namedKeyRepeats_isPatientKeyNotRowKey(make_semantics: Callable[..., Any]) -> None:
     # Arrange: visit-level rows, subject_id repeated 3 times each (review of #103, finding 1)
     df = pl.DataFrame(
         {
@@ -308,14 +321,16 @@ def test_ensurePatientId_namedKeyRepeats_isPatientKeyNotRowKey() -> None:
 
     # Act
     result, metadata = VariableTypeDetector.ensure_patient_id(df)
-    stored = {"synthetic_id_metadata": {"patient_id": metadata}}
+    semantics = make_semantics(df)
 
-    # Assert: the named key becomes patient_id (repeats are visits), never a row key
+    # Assert: the named key becomes patient_id (repeats are visits), never a row key; visit
+    # numbers each patient's rows (a sequence, never an ID)
     assert metadata["patient_id_source"] == "single_column"
     assert metadata["patient_id_columns"] == ["subject_id"]
     assert result["patient_id"].to_list() == df["subject_id"].to_list()
-    assert patient_id_is_row_key(stored) is False
-    assert row_key_note(stored) == ""
+    assert patient_id_is_row_key(semantics) is False
+    assert row_key_note(semantics) == ""
+    assert [s.column for s in semantics.sequence_columns] == ["visit"]
 
 
 @pytest.mark.parametrize(
@@ -359,25 +374,25 @@ def test_canIdentifyPatients_floatColumn_onlyWholeNumbersNamedAsId(series: pl.Se
 
 
 @pytest.mark.parametrize(
-    ("patient_id_meta", "expected"),
+    ("frame", "expected"),
     [
-        pytest.param({"patient_id_source": "single_column", "patient_id_columns": ["FIPS"]}, ["patient_id"], id="copy"),
-        pytest.param({"patient_id_source": "composite", "patient_id_columns": ["a", "b"]}, ["patient_id"], id="hash"),
-        pytest.param(
-            {"patient_id_source": "row_index", "row_number_column": "_row_number"}, ["_row_number"], id="rows"
-        ),
-        pytest.param({"patient_id_source": "existing"}, [], id="existing"),
-        pytest.param(None, [], id="no_metadata"),
+        pytest.param("settled_key", ["patient_id"], id="copy"),
+        pytest.param("copy_not_named_id", ["row_number"], id="row_id_never_copied"),
+        pytest.param("composite", ["row_number"], id="never_hashed"),
+        pytest.param("row_index", ["row_number"], id="rows"),
+        pytest.param("existing", [], id="existing"),
     ],
 )
-def test_addedIdColumns_bySource_namesOnlyTheAddedColumn(patient_id_meta: Any, expected: list[str]) -> None:
+def test_addedIdColumns_bySemantics_namesOnlyTheAddedColumn(
+    make_semantics: Callable[..., Any], frame: str, expected: list[str]
+) -> None:
     # Arrange
     from clinical_analytics.core.identifier_rules import added_id_columns
 
-    metadata = {} if patient_id_meta is None else {"synthetic_id_metadata": {"patient_id": patient_id_meta}}
+    semantics = make_semantics(_KEY_FRAMES[frame])
 
     # Act
-    added = added_id_columns(metadata)
+    added = added_id_columns(semantics)
 
     # Assert
     assert added == expected

@@ -14,7 +14,11 @@ function fakeContents() {
 }
 
 /** Electron 25+ passes one details object (an Event with url, isMainFrame, preventDefault). */
-const frameNavigation = (url, isMainFrame = false) => ({ url, isMainFrame, preventDefault: vi.fn() });
+const frameNavigation = (url, isMainFrame = false) => ({
+  url,
+  isMainFrame,
+  preventDefault: vi.fn(),
+});
 
 describe('lockDownWebContents', () => {
   it.each([

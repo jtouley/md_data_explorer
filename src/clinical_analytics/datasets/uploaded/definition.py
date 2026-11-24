@@ -16,6 +16,12 @@ import pyarrow as pa
 import structlog
 from ibis.common.exceptions import IbisError
 
+from clinical_analytics.contracts.semantics import (
+    LAYER_CONFIG_KEY,
+    LAYER_DECLARED_KEY,
+    DatasetSemantics,
+    with_declarations,
+)
 from clinical_analytics.core.dataset import ClinicalDataset, Granularity
 from clinical_analytics.core.identifier_rules import (
     PATIENT_ROWS_ASKABLE_CONFIG_FLAG,
@@ -121,6 +127,7 @@ class UploadedDataset(ClinicalDataset):
         self.data: pl.LazyFrame | None = None
         self._semantic_initialized = False  # Track lazy init
         self._stored: StoredDataset | None = None
+        self._semantics: DatasetSemantics | None = None
 
         # Load metadata. It is external data, normalized at this boundary (the stored file by
         # get_upload_metadata, the probe's dict here) so its dict and list fields are never None.
@@ -171,6 +178,110 @@ class UploadedDataset(ClinicalDataset):
         if self.metadata.get(STORAGE_LAYOUT_KEY) == STORAGE_LAYOUT:
             return stored_path(self.storage, self.metadata[COHORT_PARQUET_KEY]).is_file()
         return _legacy_source_path(self.storage, self.upload_id, self.metadata) is not None
+
+    def semantics(self, *, declared: bool = False) -> DatasetSemantics:
+        """The version's semantics from its contract (``contracts.service.version_semantics``: a
+        version stored before contracts held semantics gets the same one inference pass over its
+        stored frame, never a separate guess). ``declared``: with the user's declarations applied;
+        otherwise as inferred (``answer_checks`` applies grain declarations per question).
+
+        Raises:
+            ContractError: the contract, its semantics or the declarations can't be read.
+        """
+        from clinical_analytics.contracts.declarations import FileDeclarationStore, MemoryDeclarationStore
+        from clinical_analytics.contracts.service import version_semantics
+
+        if not declared and self._semantics is not None:
+            return self._semantics
+        assert self.metadata is not None
+        version = self.metadata.get("dataset_version")
+
+        def frame() -> pl.DataFrame:
+            if self._stored is None:
+                self.load()
+            assert self._stored is not None
+            return self._stored.scan_cohort().collect()
+
+        if not isinstance(version, str) or not version:
+            # A legacy upload with no version has no contract: the same pass over its data.
+            from clinical_analytics.contracts.service import stored_semantics
+
+            found_legacy = stored_semantics(frame(), self.metadata)
+            if not declared:
+                self._semantics = found_legacy
+            return found_legacy
+
+        data_dir = self.storage.upload_dir.parent
+        store = FileDeclarationStore(data_dir) if declared else MemoryDeclarationStore()
+        found = version_semantics(
+            data_dir, self.upload_id, version, metadata=self.metadata, stored_frame=frame, declarations=store
+        )
+        if not declared:
+            self._semantics = found
+        return found
+
+    def _semantic_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        """``config`` with the facts the contract's semantics decide: the patient key mapping, the
+        row-key and askable flags, code labels, units and date columns (ADR017)."""
+        semantics = self.semantics()
+        key = semantics.patient_key_column
+        mapping = {s: t for s, t in (config.get("column_mapping") or {}).items() if t != "patient_id"}
+        if key is not None:
+            mapping[key] = "patient_id"
+        variable_types = {
+            k: dict(v) if isinstance(v, dict) else v for k, v in (config.get("variable_types") or {}).items()
+        }
+        for name, col in semantics.columns.items():
+            entry = variable_types.get(name)
+            entry = dict(entry) if isinstance(entry, dict) else {}
+            if col.labels:
+                entry["codebook"] = dict(col.labels)
+                # A coded item stored as integers (1 = Yes, 2 = No, 7 = Refused) is a category,
+                # never a continuous measure; a measure with a stated range keeps its type.
+                if col.stated_range is None:
+                    entry["type"] = "categorical"
+                else:
+                    entry.setdefault("type", "categorical")
+            if col.unit is not None:
+                entry["units"] = col.unit.value
+            if col.date is not None:
+                entry["type"] = "datetime"
+            if col.role in ("patient_key", "row_key", "app_added", "grouping", "sequence"):
+                entry.setdefault("role", col.role)
+            if entry:
+                variable_types[name] = entry
+        from clinical_analytics.contracts.aggregates import LAYER_AGGREGATE_KEY
+        from clinical_analytics.contracts.declarations import FileDeclarationStore
+        from clinical_analytics.contracts.readings import declared_reads, reads_config
+        from clinical_analytics.core.semantic import DECLARED_READS_KEY
+
+        # One read of the declarations: the layer's reads and its holds see the same answers.
+        loaded = FileDeclarationStore(self.storage.upload_dir.parent).load(self.upload_id)
+        version = self.metadata.get("dataset_version") if self.metadata else None
+        declared = with_declarations(
+            semantics.model_copy(update={"dataset_version": semantics.dataset_version or version}), loaded
+        )
+        # A table of groups the user declared answers counts from its count column
+        # (contracts.aggregates); one only the structure suggests is asked, never applied, and
+        # declared public estimates keep ADR014's path.
+        table = (
+            declared.aggregate
+            if declared.aggregate is not None
+            and declared.aggregate.source == "declared"
+            and not declared.population_estimates
+            else None
+        )
+        return {
+            **config,
+            LAYER_AGGREGATE_KEY: table.model_dump(mode="json") if table is not None else None,
+            DECLARED_READS_KEY: reads_config(declared_reads(loaded, declared.dataset_version, declared)),
+            LAYER_DECLARED_KEY: declared.model_dump(mode="json"),
+            "column_mapping": mapping,
+            "variable_types": variable_types,
+            ROW_KEY_CONFIG_FLAG: patient_id_is_row_key(semantics),
+            PATIENT_ROWS_ASKABLE_CONFIG_FLAG: rows_may_be_patients(semantics),
+            LAYER_CONFIG_KEY: semantics.model_dump(mode="json"),
+        }
 
     def load(self) -> None:
         """Load the typed cohort as a LazyFrame (legacy uploads are converted on first load)."""
@@ -353,13 +464,12 @@ class UploadedDataset(ClinicalDataset):
                                 metadata=self._validated_synthetic_id_metadata,
                             )
                         else:
-                            # No regeneration metadata - fall back to auto-detection
-                            from clinical_analytics.ui.components.variable_detector import (
-                                VariableTypeDetector,
-                            )
+                            # No regeneration metadata: the ID column comes from the contract's
+                            # semantics (its patient key or row key), never a fresh guess.
+                            from clinical_analytics.contracts.inference import add_id_columns
 
-                            logger.warning("No regeneration metadata, using auto-detection")
-                            df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(df_materialized)
+                            logger.warning("No regeneration metadata, using the contract's key")
+                            df_with_id, id_metadata, _ = add_id_columns(df_materialized, self.semantics())
 
                         logger.info(
                             "Regenerated patient_id: source=%s, columns=%s",
@@ -587,6 +697,12 @@ class UploadedDataset(ClinicalDataset):
             self.load()
         stored = self._stored
         assert stored is not None  # load() sets it
+        from clinical_analytics.contracts.errors import ContractError
+
+        try:
+            config = self._semantic_config(config)
+        except ContractError as e:
+            raise SemanticLayerBuildError(f"the data contract could not be read ({type(e).__name__})") from e
         log = logger.bind(
             upload_id=self.upload_id,
             dataset_version=self.metadata.get("dataset_version"),
@@ -652,11 +768,6 @@ class UploadedDataset(ClinicalDataset):
             },
             # Include variable_types metadata for column type detection
             "variable_types": safe_get(self.metadata, "variable_types", {}),
-            # A synthesized patient_id keys rows: answers say "rows", never "patients".
-            ROW_KEY_CONFIG_FLAG: patient_id_is_row_key(self.metadata or {}),
-            # Rows may be confirmed one per patient ("Is each row one patient?"): only then does a
-            # stored confirmation make answers count patients.
-            PATIENT_ROWS_ASKABLE_CONFIG_FLAG: rows_may_be_patients(self.metadata or {}),
         }
         return config
 
@@ -760,9 +871,6 @@ class UploadedDataset(ClinicalDataset):
             },
             # Include variable_types metadata for column type detection
             "variable_types": metadata_dict.get("variable_types", {}),
-            # A synthesized patient_id keys rows: answers say "rows", never "patients".
-            ROW_KEY_CONFIG_FLAG: patient_id_is_row_key(metadata_dict),
-            PATIENT_ROWS_ASKABLE_CONFIG_FLAG: rows_may_be_patients(metadata_dict),
         }
         return config
 
@@ -834,7 +942,7 @@ class UploadedDataset(ClinicalDataset):
             # Datasets loaded from a link: URL, download time, size, SHA-256 (routes/dataset_url.py).
             "source": self.metadata.get("source"),
             # The ID column the upload added (patient_id copied or hashed, or a row number).
-            "added_columns": added_id_columns(self.metadata),
+            "added_columns": added_id_columns(self.semantics()),
         }
 
 
@@ -867,6 +975,13 @@ def probe_query_view(storage: UserDatasetStorage, upload_id: str, metadata: dict
         view = layer.get_base_view()
         counts = [view.count().name("_rows"), *(view[c].count().name(f"_c{i}") for i, c in enumerate(view.columns))]
         rows = int(view.aggregate(counts).to_pyarrow().column("_rows")[0].as_py())
+        # A frequency table's total rows are left out of the view on purpose (contracts.readings).
+        from clinical_analytics.contracts.readings import ibis_total_filter
+        from clinical_analytics.core.semantic import DECLARED_READS_KEY
+
+        keep = ibis_total_filter(layer.raw, layer.config.get(DECLARED_READS_KEY) or {})
+        if keep is not None:
+            rows += int(layer.raw.filter(~keep).count().to_pyarrow().as_py())
         view_schema = dict(pl.DataFrame(layer.raw.limit(0).to_pyarrow()).schema) if cohort_path else None
     except _BUILD_ERRORS as e:
         log.error("upload_probe_failed", error_type=type(e).__name__)

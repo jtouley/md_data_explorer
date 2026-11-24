@@ -61,10 +61,20 @@ import {
 import {
   dataCheckNeedsReview,
   dataCheckStatusNote,
+  normalizeFacts,
+  renderFacts,
   normalizeQuality,
   renderDataCheck,
 } from './dataCheckPanel.js';
 import { icon } from './icons.js';
+import {
+  FILE_QUESTIONS_SAVING,
+  buildWaitingCard,
+  normalizeFileQuestions,
+  renderFileQuestions,
+  showAnswerOutcome,
+  waitingText,
+} from './fileQuestionsPanel.js';
 import { THEME_STORAGE_KEY, isThemeSource } from './theme.js';
 
 // ============================================================================
@@ -103,7 +113,13 @@ const elements = {
   datasetOverviewSummary: document.getElementById('dataset-overview-summary'),
   dataCheckSection: document.getElementById('data-check-section'),
   dataCheckHint: document.getElementById('data-check-hint'),
+  dataFactsHint: document.getElementById('data-facts-hint'),
+  dataFactsList: document.getElementById('data-facts-list'),
   dataCheckList: document.getElementById('data-check-list'),
+  fileQuestionsSection: document.getElementById('file-questions-section'),
+  fileQuestionsTitle: document.getElementById('file-questions-title'),
+  fileQuestionsHint: document.getElementById('file-questions-hint'),
+  fileQuestionsList: document.getElementById('file-questions-list'),
   datasetPreviewHead: document.getElementById('dataset-preview-head'),
   datasetPreviewBody: document.getElementById('dataset-preview-body'),
   chatContainer: document.getElementById('chat-container'),
@@ -598,6 +614,10 @@ function fillMessageContent(contentDiv, message) {
     );
   } else if (kind === 'stopped') {
     contentDiv.appendChild(buildNotice('stopped', message.content));
+  } else if (message.result?.needsAnswers) {
+    contentDiv.appendChild(
+      buildWaitingCard(message.result, () => openFileQuestions(document.activeElement))
+    );
   } else if (message.result?.awaitingConfirmation) {
     contentDiv.appendChild(buildHeldCard(message.result, heldCardHandlers(message)));
   } else if (message.result) {
@@ -955,14 +975,23 @@ async function loadDataCheck(datasetId) {
   if (!dataCheckSection || !dataCheckHint || !dataCheckList) return;
   if (!datasetId || typeof window.clinicalAPI?.getDatasetQuality !== 'function') {
     dataCheckSection.classList.add('hidden');
+    elements.fileQuestionsSection?.classList.add('hidden');
     return;
   }
   const parts = { hint: dataCheckHint, list: dataCheckList };
+  const factParts =
+    elements.dataFactsHint && elements.dataFactsList
+      ? { hint: elements.dataFactsHint, list: elements.dataFactsList }
+      : null;
   dataCheckSection.classList.remove('hidden');
   renderDataCheck(parts, 'loading');
+  if (factParts) renderFacts(factParts, []);
   let check;
+  let facts = [];
   try {
-    check = normalizeQuality(await window.clinicalAPI.getDatasetQuality(datasetId));
+    const raw = await window.clinicalAPI.getDatasetQuality(datasetId);
+    check = normalizeQuality(raw);
+    facts = normalizeFacts(raw?.facts);
   } catch (error) {
     check = {
       status: 'not_run',
@@ -970,7 +999,65 @@ async function loadDataCheck(datasetId) {
     };
   }
   if (datasetId !== state.currentDatasetId) return;
+  if (factParts) renderFacts(factParts, facts);
   renderDataCheck(parts, check);
+  void loadFileQuestions(datasetId);
+}
+
+/**
+ * Load "Questions about your file" for the dataset (ADR017): hidden when there are none to show.
+ * @param {string} datasetId
+ */
+async function loadFileQuestions(datasetId) {
+  const { fileQuestionsSection, fileQuestionsHint, fileQuestionsList } = elements;
+  if (!fileQuestionsSection || !fileQuestionsHint || !fileQuestionsList) return;
+  if (typeof window.clinicalAPI?.getFileQuestions !== 'function') return;
+  let questions;
+  try {
+    questions = normalizeFileQuestions(await window.clinicalAPI.getFileQuestions(datasetId));
+  } catch (error) {
+    if (datasetId !== state.currentDatasetId) return;
+    fileQuestionsSection.classList.remove('hidden');
+    fileQuestionsList.replaceChildren();
+    fileQuestionsHint.textContent = plainFailureMessage(error?.message, { context: 'panel' });
+    return;
+  }
+  if (datasetId !== state.currentDatasetId) return;
+  fileQuestionsSection.classList.remove('hidden');
+  renderFileQuestions({ hint: fileQuestionsHint, list: fileQuestionsList }, questions, {
+    onAnswer: (question, answer, item) => void answerFileQuestion(datasetId, answer, item),
+  });
+}
+
+/**
+ * Save one answer, then refresh the facts, the data check and the questions: answers that waited
+ * on it are released on the next question.
+ * @param {string} datasetId
+ * @param {{ route: string, body: Record<string, unknown> }} answer
+ * @param {HTMLElement} item
+ */
+async function answerFileQuestion(datasetId, answer, item) {
+  const status = item.querySelector('[data-testid="file-question-status"]');
+  if (status) status.textContent = FILE_QUESTIONS_SAVING;
+  try {
+    await window.clinicalAPI.answerFileQuestion(datasetId, answer.route, answer.body);
+  } catch (error) {
+    showAnswerOutcome(item, plainFailureMessage(error?.message, { context: 'panel' }));
+    return;
+  }
+  showAnswerOutcome(item, null);
+  announce('Your answer is saved.');
+  await loadDataCheck(datasetId);
+}
+
+/**
+ * Open the cohort details at "Questions about your file".
+ * @param {HTMLElement | null} [returnFocusTo]
+ */
+function openFileQuestions(returnFocusTo) {
+  openDatasetPanel(returnFocusTo);
+  elements.fileQuestionsSection?.scrollIntoView({ block: 'start' });
+  elements.fileQuestionsTitle?.focus();
 }
 
 /**
@@ -1666,6 +1753,20 @@ async function subscribeToQueryStream(
           break;
         }
 
+        case 'query_needs_answers': {
+          const ids = Array.isArray(data.open_questions) ? data.open_questions : [];
+          const reason = typeof data.failure_reason === 'string' ? data.failure_reason : '';
+          updateMessage(assistantMessageId, {
+            content: waitingText(ids.length),
+            result: { needsAnswers: true, count: ids.length, failureReason: reason },
+            isStreaming: false,
+            kind: 'held',
+          });
+          announce(waitingText(ids.length));
+          finish('held');
+          break;
+        }
+
         case 'query_failed': {
           const failure = describeQueryFailure(data);
           showFailure(assistantMessageId, failure.kind, failure.message, failure.detail);
@@ -1736,8 +1837,8 @@ async function subscribeToQueryStream(
 // ============================================================================
 
 const uploadHandlers = {
-  onFileSelect: (file) => {
-    void runFromDatasetMenu(() => handleFileUpload(file));
+  onFileSelect: (file, options) => {
+    void runFromDatasetMenu(() => handleFileUpload(file, options));
   },
   onLoadSample: () => {
     void runFromDatasetMenu(handleLoadSample);
@@ -1821,16 +1922,24 @@ function askPatientRows(result, name) {
     Boolean(elements.uploadArea?.contains(active));
   const panel = renderPatientRowsQuestion(area, {
     takeFocus,
-    onAnswer: async (oneRowPerPatient) => {
+    countColumns: question.countColumns ?? [],
+    onAnswer: async (oneRowPerPatient, countsCasesIn) => {
       panel.setBusy(true);
       let counts;
       try {
-        const body = await window.clinicalAPI.answerOneRowPerPatient(
-          datasetId,
-          question.confirmation,
-          oneRowPerPatient
-        );
-        counts = body?.counts === 'patients' ? 'patients' : 'rows';
+        const body = countsCasesIn
+          ? await window.clinicalAPI.answerOneRowPerPatient(
+              datasetId,
+              question.confirmation,
+              false,
+              countsCasesIn
+            )
+          : await window.clinicalAPI.answerOneRowPerPatient(
+              datasetId,
+              question.confirmation,
+              oneRowPerPatient
+            );
+        counts = ['patients', 'cases'].includes(body?.counts) ? body.counts : 'rows';
       } catch (error) {
         console.error('One-row-per-patient answer failed:', error?.message);
         panel.setBusy(false);
@@ -1842,7 +1951,7 @@ function askPatientRows(result, name) {
       }
       // Saved; the question on screen may by now be another cohort's (a slow answer): leave it.
       if (state.patientRowsDatasetId !== datasetId) return;
-      const text = patientRowsAnsweredText(counts, name);
+      const text = patientRowsAnsweredText(counts, name, countsCasesIn);
       const hadFocus = area.contains(document.activeElement);
       closePatientRows();
       setDatasetStatus(text, 'ok'); // the status line is a live region: read once
@@ -1890,12 +1999,14 @@ async function handleLoadSample() {
   }
 }
 
-async function handleFileUpload(file) {
+async function handleFileUpload(file, options = {}) {
   if (typeof window.clinicalAPI?.uploadDataset !== 'function') return;
   setDatasetStatus(`Uploading “${file.name}”…`);
 
   try {
-    const raw = await window.clinicalAPI.uploadDataset(file);
+    const raw = options.populationEstimates
+      ? await window.clinicalAPI.uploadDataset(file, undefined, true)
+      : await window.clinicalAPI.uploadDataset(file);
     const result = normalizeUploadResponse(raw);
 
     if (uploadIsUsable(result)) {

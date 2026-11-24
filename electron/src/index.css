@@ -582,6 +582,16 @@ ul {
   display: none;
 }
 
+.menu-upload .upload-estimates {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
 .menu-item,
 .menu-upload .btn-upload {
   display: flex;
@@ -2135,4 +2145,40 @@ ul {
   .example-chip:active {
     transform: none;
   }
+}
+
+/* Questions about your file (ADR017) */
+.file-question {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-2) 0;
+}
+.file-question-text {
+  margin: 0;
+  color: var(--text-1);
+}
+.file-question-evidence,
+.file-question-changes,
+.file-question-status {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+.file-question-answers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.file-question-answer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.result-card-waiting {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-2);
 }

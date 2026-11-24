@@ -60,6 +60,7 @@ from clinical_analytics.storage.staging import (
     StagingError,
     describe_sheets,
     detect_header_row,
+    is_id_column_name,
     read_csv_typed,
     read_excel_rows,
     read_excel_typed,
@@ -256,6 +257,7 @@ def normalize_upload_to_table_list(
                 "notes": staged.notes,
                 "units": staged.units,
                 "sheets": staged.sheets,
+                "dates": staged.dates,
             }
         ]
         # A notes block under the data (CDC WONDER) is the file's documentation, never data rows.
@@ -693,7 +695,14 @@ def read_zip_tables(file_bytes: bytes, budget: ZipExpansionBudget | None = None,
             )
         seen.add(name)
         tables.append(
-            {"name": name, "data": staged.data, "notes": staged.notes, "units": staged.units, "sheets": staged.sheets}
+            {
+                "name": name,
+                "data": staged.data,
+                "notes": staged.notes,
+                "units": staged.units,
+                "sheets": staged.sheets,
+                "dates": staged.dates,
+            }
         )
         logger.debug("zip_table_loaded", rows=staged.data.height, columns=staged.data.width)
 
@@ -1460,7 +1469,7 @@ def describe_cohort_build(report: dict[str, Any] | None) -> list[str]:
 
 def _cast_id_columns(df: pl.DataFrame) -> pl.DataFrame:
     """ID-named columns as text, all in one pass (staging already does this for uploads)."""
-    id_cols = [c for c in df.columns if c.lower() in ID_COLUMN_NAMES and df.schema[c] != pl.String]
+    id_cols = [c for c in df.columns if is_id_column_name(c) and df.schema[c] != pl.String]
     return df.with_columns(pl.col(id_cols).cast(pl.Utf8)) if id_cols else df
 
 
@@ -1508,6 +1517,52 @@ def _upload_failure_reason(e: BaseException) -> str:
     return type(e).__name__
 
 
+def _extract_doc_context(metadata: dict[str, Any], log: Any) -> None:
+    """Read the upload's documentation files into ``metadata["doc_context"]`` once (ADR004), and
+    drop the files (not JSON serializable). The semantics pass reads the dictionary from it."""
+    if metadata.get("doc_files"):
+        if "doc_context" not in metadata:
+            import tempfile
+
+            from clinical_analytics.core.doc_parser import extract_context_from_docs
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_path = Path(temp_dir)
+                doc_paths = []
+                for i, doc_file in enumerate(metadata["doc_files"]):
+                    # One folder per document: README.txt in two folders, or codebook.txt beside
+                    # codebook.csv kept as documentation, must not overwrite each other.
+                    doc_temp_path = temp_path / str(i) / Path(doc_file.name).name
+                    doc_temp_path.parent.mkdir()
+                    doc_temp_path.write_bytes(doc_file.content)
+                    doc_paths.append(doc_temp_path)
+                doc_context = extract_context_from_docs(doc_paths)
+                metadata["doc_context"] = doc_context
+                log.info("doc_context_extracted", chars=len(doc_context), files=len(doc_paths))
+        else:
+            log.debug("doc_context_exists_skipped")
+    metadata.pop("doc_files", None)
+
+
+def _upload_facts(
+    table: dict[str, Any], metadata: dict[str, Any], *, cohort_key: str | None = None, estimates: bool = False
+) -> Any:
+    """What the semantics pass needs beyond the table (``contracts.inference.UploadFacts``).
+
+    ``estimates``: declared public estimates whose rows look like estimates (``_declared_estimates``).
+    """
+    from clinical_analytics.contracts.inference import UploadFacts
+
+    return UploadFacts(
+        doc_context=metadata.get("doc_context"),
+        from_excel=table.get("sheets") is not None,
+        source_format=str(metadata.get(SOURCE_FORMAT_KEY) or ""),
+        population_estimates=estimates,
+        staged_dates={d.column: d for d in table.get("dates", ())},
+        cohort_key=cohort_key,
+    )
+
+
 def save_table_list(
     storage: "UserDatasetStorage",
     tables: list[dict[str, Any]],
@@ -1516,6 +1571,7 @@ def save_table_list(
     progress_cb: Callable[[int, str], None] | None = None,
     raw_bytes: bytes | None = None,
     raise_user_errors: bool = False,
+    semantics: Any = None,
 ) -> tuple[bool, str]:
     """
     Save normalized tables as one new dataset version (unified persistence for every upload type).
@@ -1542,6 +1598,9 @@ def save_table_list(
         raise_user_errors: If True, tables that cannot be used as sent (``USER_FILE_ERRORS``)
             raise instead of returning a failure; a ``DataQualityError`` becomes an
             ``UploadFileError`` that says the tables could not be combined.
+        semantics: The version's semantics (``contracts.inference``) when the caller already ran
+            the pass and applied it (the single-table upload). Otherwise the pass runs here on the
+            unified cohort, and is applied to it, before the typed Parquet is written.
 
     Returns:
         (success, message)
@@ -1556,31 +1615,8 @@ def save_table_list(
     try:
         _check_unique_table_names(tables)
 
-        # 1. Extract documentation context (Phase 1: ADR004)
-        # Skip extraction if doc_context already exists (idempotency safeguard)
-        if "doc_files" in metadata and metadata["doc_files"]:
-            if "doc_context" not in metadata:
-                import tempfile
-
-                from clinical_analytics.core.doc_parser import extract_context_from_docs
-
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    temp_path = Path(temp_dir)
-                    doc_paths = []
-                    for i, doc_file in enumerate(metadata["doc_files"]):
-                        # One folder per document: README.txt in two folders, or codebook.txt beside
-                        # codebook.csv kept as documentation, must not overwrite each other.
-                        doc_temp_path = temp_path / str(i) / Path(doc_file.name).name
-                        doc_temp_path.parent.mkdir()
-                        doc_temp_path.write_bytes(doc_file.content)
-                        doc_paths.append(doc_temp_path)
-                    doc_context = extract_context_from_docs(doc_paths)
-                    metadata["doc_context"] = doc_context
-                    log.info("doc_context_extracted", chars=len(doc_context), files=len(doc_paths))
-            else:
-                log.debug("doc_context_exists_skipped")
-            # doc_files are not JSON serializable; only doc_context is kept
-            metadata.pop("doc_files", None)
+        # 1. Extract documentation context (Phase 1: ADR004); skipped when already extracted
+        _extract_doc_context(metadata, log)
 
         # Processed into doc_files above; not JSON serializable
         metadata.pop("external_pdf_bytes", None)
@@ -1635,6 +1671,21 @@ def save_table_list(
             }
             log.info("cohort_built", excluded_tables=len(build.excluded_tables))
 
+        # The one semantics pass (ADR017) when the caller did not run it, applied where the typed
+        # Parquet is written: missing-value codes stored as missing, dates read with one format.
+        if semantics is None:
+            from clinical_analytics.contracts.inference import apply_semantics, infer_semantics
+
+            semantics = infer_semantics(
+                unified_df,
+                _upload_facts(tables[0], metadata, cohort_key=(cohort_build or {}).get("grain_key")),
+            )
+            unified_df = apply_semantics(unified_df, semantics)
+            # Each table's Parquet holds the same values as the cohort: codes and dates applied
+            # to the columns it shares with the cohort.
+            for table in tables:
+                table["data"] = unified_df if len(tables) == 1 else apply_semantics(table["data"], semantics)
+
         # 5. Raw landing + typed Parquet per table (versioned, never replaced)
         for table in tables:
             table["data"] = _cast_id_columns(table["data"])
@@ -1673,11 +1724,32 @@ def save_table_list(
             if inferred is None:
                 from clinical_analytics.core.schema_inference import SchemaInferenceEngine
 
-                inferred = SchemaInferenceEngine().infer_schema(stored_df)
+                inferred = SchemaInferenceEngine().infer_schema(stored_df, semantics=semantics)
             return inferred
 
         if "inferred_schema" not in metadata:
             metadata["inferred_schema"] = inferred_schema().to_dataset_config()
+        # The contract (with its semantics) before the query view: the view is built from it.
+        from clinical_analytics.contracts import service as contract_service
+        from clinical_analytics.contracts.errors import ContractError
+
+        try:
+            _contract, wrote_contract = contract_service.write_version_contract(
+                storage.upload_dir.parent,
+                stored_df,
+                upload_id=upload_id,
+                dataset_version=dataset_version,
+                metadata={**metadata, "dataset_name": metadata.get("dataset_name") or upload_id},
+                semantics=semantics,
+                overlay_dir=storage.metadata_dir,
+            )
+        except ContractError as e:
+            log.error("upload_contract_failed", error_type=type(e).__name__)
+            return False, f"The dataset's data contract could not be written ({type(e).__name__})."
+        if wrote_contract:
+            from clinical_analytics.contracts.store import contract_path
+
+            created.append(contract_path(storage.upload_dir.parent, upload_id, dataset_version))
 
         column_types = [n.as_dict() for t in tables for n in t.get("notes", ())]
         column_units: dict[str, str] = {}
@@ -1778,9 +1850,7 @@ def save_table_list(
             except (ValueError, KeyError, TypeError, AttributeError, pl.exceptions.PolarsError) as e:
                 log.warning("upload_questions_failed", error_type=type(e).__name__)
 
-        # 9. Data contract + quality checks on the stored frame
-        from clinical_analytics.contracts import service as contract_service
-
+        # 9. Quality checks on the stored frame, against the contract written above
         quality_report = contract_service.check_upload_or_log(
             storage.upload_dir.parent,
             stored_df,
@@ -1788,6 +1858,7 @@ def save_table_list(
             dataset_version=dataset_version,
             metadata=full_metadata,
             overlay_dir=storage.metadata_dir,
+            semantics=semantics,
         )
         if quality_report.status == "ran":
             full_metadata["quality"] = {
@@ -2327,54 +2398,29 @@ class UserDatasetStorage:
                 for version_entry in existing_version_history:
                     version_entry["is_active"] = False
 
-            # For single-table uploads, ensure patient_id exists (transparent to user)
+            # Single table: the one semantics pass (ADR017) reads the table and its dictionary, its
+            # missing-value codes and date formats are applied to the data that will be stored, and
+            # the app's ID column is added from the patient key it found (never chosen by name).
+            semantics: Any = None
             if len(tables) == 1:
-                from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
+                from clinical_analytics.contracts.inference import add_id_columns, apply_semantics, infer_semantics
 
-                logger.info(f"Ensuring patient_id exists for upload {upload_id}")
-                if _declared_estimates(tables[0]["data"], metadata):
-                    # A declared table of estimates (ADR014): its rows are groups, not patients, so
-                    # no data column becomes patient_id; rows are numbered and counted as rows.
-                    df_with_id = (
-                        tables[0]["data"]
-                        .with_row_index(ROW_NUMBER_COLUMN, offset=1)
-                        .with_columns(pl.col(ROW_NUMBER_COLUMN).cast(pl.Int64))
-                    )
-                    id_metadata = {
-                        "patient_id_source": "row_index",
-                        "patient_id_columns": None,
-                        "row_number_column": ROW_NUMBER_COLUMN,
-                        "population_estimates": True,  # never asked "Is each row one patient?"
-                    }
-                else:
-                    df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(tables[0]["data"])
-
-                logger.info(
-                    f"Patient ID creation result: source={id_metadata['patient_id_source']}, "
-                    f"columns={id_metadata.get('patient_id_columns')}, "
-                    f"has_patient_id={'patient_id' in df_with_id.columns}"
-                )
-
-                # Store metadata about how patient_id was created
-                if "synthetic_id_metadata" not in metadata:
-                    metadata["synthetic_id_metadata"] = {}
-                metadata["synthetic_id_metadata"]["patient_id"] = id_metadata
-
-                # Update table with patient_id
+                estimates = _declared_estimates(tables[0]["data"], metadata)
+                _extract_doc_context(metadata, logger)
+                semantics = infer_semantics(tables[0]["data"], _upload_facts(tables[0], metadata, estimates=estimates))
+                applied = apply_semantics(tables[0]["data"], semantics)
+                df_with_id, id_metadata, semantics = add_id_columns(applied, semantics)
+                metadata.setdefault("synthetic_id_metadata", {})["patient_id"] = id_metadata
                 tables[0]["data"] = df_with_id
-
-                # Every upload has an ID: patient_id, or the row number added when no column
-                # identifies a patient (answers then count rows, never patients, and the upload
-                # says so: identifier_rules.row_key_note). Neither is a file the app cannot key:
-                # refused with what to add, never stored with rows counted as patients.
+                logger.info(
+                    "upload_id_column_added",
+                    patient_id_source=id_metadata["patient_id_source"],
+                    has_patient_key=semantics.patient_key is not None,
+                )
                 has_row_number = id_metadata.get("patient_id_source") == "row_index"
                 if "patient_id" not in df_with_id.columns and not has_row_number:
                     logger.warning("upload_no_patient_id", columns=df_with_id.width)
                     raise NoPatientIdError(no_patient_id_message(df_with_id.width))
-                logger.info(
-                    f"Ensured an ID column ({'row number' if has_row_number else 'patient_id'}). "
-                    f"DataFrame shape: {df_with_id.shape}"
-                )
 
             df = tables[0]["data"]
 
@@ -2514,6 +2560,7 @@ class UserDatasetStorage:
                 progress_cb,
                 raw_bytes=file_bytes,
                 raise_user_errors=raise_user_errors,
+                semantics=semantics,
             )
 
             if not success:

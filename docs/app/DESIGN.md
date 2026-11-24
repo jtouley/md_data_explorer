@@ -303,8 +303,8 @@ say "patients" where it has counted patients), no internal ids on screen.
 | Working | Processing… / Stage: planning | Reading your question… / Running the analysis… |
 | Claim | Claim: {claim} + title twice | {headline} / {stats line} / {caveats}; title once as caption |
 | Source-suppressed cell | suppressed | suppressed† + footnote (ADR015: the app hides nothing of its own) |
-| Upload ready + data check | ✓ x uploaded | "The cohort “{name}” is ready." + "Data check found N things to review in cohort details." and an "Open cohort details" button / "Data check found nothing to flag." / "Data check could not run." |
-| Cohort details: data check | (none) | Section "Data check": the API's lines as a list, each with its count, the data-check footnote; on failure "Data check could not run: {reason}. You can still ask questions." |
+| Upload ready + data check | ✓ x uploaded | "The cohort “{name}” is ready." + the contract's first fact ("Each line is one splint fitting; 412 patients (owner_ref names the patient) over 637 lines."; the unit note instead when no column names a patient) + "Data check found N things to review in cohort details." and an "Open cohort details" button / "Data check found nothing to flag." / "Data check could not run." |
+| Cohort details: data check | (none) | Section "Data check": first "What the file holds, read from it and its data dictionary:" and the contract's facts in clinical words (ADR017: what one line is, sequences, dates read with an example, values that mean not recorded, open questions), then the API's check lines as a list, each with its count, the data-check footnote; on failure "Data check could not run: {reason}. You can still ask questions." No SQL, "null", "grain" or "distinct" on screen. |
 | Hold heading | (none) | Check this plan before it runs |
 | Confirm / Reject | Confirm / Reject | Run this analysis / Not what I meant |
 | Rejected | Query rejected — not executed. | Not run. Rephrase your question below. |

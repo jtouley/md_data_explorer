@@ -37,11 +37,13 @@ def _one_row_per_record(n: int = N) -> pl.DataFrame:
 
 
 def _visit_rows(n: int = N) -> pl.DataFrame:
-    """Visit-level: a unique visit code, and a person ID (not a patient-key name) that repeats."""
+    """Visit-level: a unique visit code, and an ID that repeats over many lines (20 each); nothing
+    says whom it names, so "Which column identifies the patient?" is asked, never "Is each line
+    one patient?" (a person_id would be the key: ADR017 reads the broad conventions)."""
     return pl.DataFrame(
         {
             "visit_code": [f"V{i:04d}" for i in range(n)],
-            "person_id": [f"P{i % (n // 2):04d}" for i in range(n)],
+            "ward_no": [f"W{i % (n // 20):04d}" for i in range(n)],
             "sex": ["female" if (i % (n // 2)) % 2 else "male" for i in range(n)],
         }
     )
@@ -70,6 +72,8 @@ def _count_unit(upload_id: str) -> str | None:
     with dependencies.lease_semantic_layer(upload_id) as lease:
         service = QueryService(lease.layer, declarations=FileDeclarationStore(data_dir), data_dir=data_dir)
         result = service.ask("how many patients?", dataset_id=upload_id, dataset_version=lease.layer.loaded_version)
+    if result.analysis is None and (result.failure_reason or "").startswith("This answer waits"):
+        return "held"  # "Is each line one patient?" is still open (contracts.holds)
     assert result.analysis is not None, result.failure_reason
     return result.analysis.get("unit")
 
@@ -89,10 +93,10 @@ def test_upload_uniqueUnnamedId_questionPendingThenYesCountsPatients(
     )
     after = _count_unit(upload_id)
 
-    # Assert: pending until answered (rows), then patients
+    # Assert: counts wait until answered, then count patients
     assert question["status"] == "pending"
-    assert "Answers count rows, not patients." in body["unit_note"]
-    assert before == "rows"
+    assert "Counts wait for your answer" in body["unit_note"]
+    assert before == "held"
     assert response.status_code == 200, response.text
     assert response.json() == {"dataset_id": upload_id, "counts": "patients"}
     assert after == "patients"
@@ -141,7 +145,7 @@ def test_answer_staleOrForgedToken_409NothingStored(
     assert response.status_code == 409
     assert "changed after you were asked" in response.json()["detail"]
     assert FileDeclarationStore(uploads_dir().parent).load(upload_id).grains == ()
-    assert _count_unit(upload_id) == "rows"
+    assert _count_unit(upload_id) == "held"
 
 
 def test_upload_visitLevelIdsRepeat_neverAskedAnswerRefused(
@@ -251,6 +255,7 @@ def test_sqlConfirmationOnVisitRows_questionsStillCountRows(
     # Act
     unit = _count_unit(upload_id)
 
-    # Assert: the SQL confirmation is stored, but never turns visit rows into patients
+    # Assert: the SQL confirmation is stored, but never turns visit rows into patients: counts of
+    # patients wait for "Which column identifies the patient?"
     assert FileDeclarationStore(uploads_dir().parent).load(upload_id).grains != ()
-    assert unit == "rows"
+    assert unit == "held"

@@ -11,7 +11,7 @@ usefully, not about small cells: no level is hidden for its size, ADR015.)
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Final
 
 from clinical_analytics.analysis.variable_types import short_name
@@ -50,6 +50,13 @@ def normalised_level(text: str) -> str:
     """A category spelling as compared for variants: case, spacing and known synonyms removed."""
     key = re.sub(r"\s+", " ", text.strip()).casefold()
     return LEVEL_SYNONYMS.get(key, key)
+
+
+def without_listed_codes(groups: list[tuple[str, ...]], codes: Iterable[object]) -> list[tuple[str, ...]]:
+    """``groups`` without a group in which two or more spellings are codes the data dictionary
+    lists as distinct ("L" and "l" both in the codebook are two categories, not one)."""
+    listed = {str(code) for code in codes}
+    return [group for group in groups if sum(1 for spelling in group if spelling in listed) < 2]
 
 
 def level_variants(levels: Sequence[object]) -> list[tuple[str, ...]]:

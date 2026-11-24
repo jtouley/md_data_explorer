@@ -10,6 +10,9 @@ import {
   dataCheckNeedsReview,
   normalizeQuality,
   renderDataCheck,
+  DATA_FACTS_HINT,
+  normalizeFacts,
+  renderFacts,
 } from './dataCheckPanel.js';
 
 function parts() {
@@ -101,5 +104,39 @@ describe('dataCheckNeedsReview (L1)', () => {
     [{ status: 'ran', lines: ['a'], count: 1 }, true],
   ])('%j -> %s', (check, expected) => {
     expect(dataCheckNeedsReview(check)).toBe(expected);
+  });
+});
+
+describe('facts from the data contract', () => {
+  test.each([
+    [null, []],
+    ['text', []],
+    [
+      ['a', '', 2, '  b '],
+      ['a', 'b'],
+    ],
+  ])('normalizeFacts(%j)', (raw, expected) => {
+    expect(normalizeFacts(raw)).toEqual(expected);
+  });
+
+  test('renders each fact as a list item under its hint, in clinical words', () => {
+    const p = parts();
+    renderFacts(p, [
+      'Each line is one hydrotherapy session; 58 patients (client_ref names the patient) over 913 lines.',
+      '999 in end_weight means not recorded.',
+    ]);
+    expect(p.hint.textContent).toBe(DATA_FACTS_HINT);
+    expect([...p.list.children].map((li) => li.textContent)).toEqual([
+      'Each line is one hydrotherapy session; 58 patients (client_ref names the patient) over 913 lines.',
+      '999 in end_weight means not recorded.',
+    ]);
+    expect(p.list.classList.contains('hidden')).toBe(false);
+  });
+
+  test('hides the facts when there are none', () => {
+    const p = parts();
+    renderFacts(p, []);
+    expect(p.hint.classList.contains('hidden')).toBe(true);
+    expect(p.list.children).toHaveLength(0);
   });
 });

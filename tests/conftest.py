@@ -2095,6 +2095,25 @@ def get_dataset_by_name(dataset_registry):
 
 
 @pytest.fixture
+def make_semantics() -> Callable[..., Any]:
+    """Factory: the contract semantics (ADR017) of a frame, from the real inference pass.
+
+    ``make_semantics(df, doc=None, add_ids=True, **facts)`` returns the ``DatasetSemantics``
+    (with the app's ID column recorded when ``add_ids``); ``facts`` are ``UploadFacts`` fields
+    (``from_excel``, ``source_format``, ``population_estimates``, ``cohort_key``).
+    """
+    from clinical_analytics.contracts.inference import UploadFacts, add_id_columns, infer_semantics
+
+    def _make(df: pl.DataFrame, doc: str | None = None, add_ids: bool = True, **facts: Any) -> Any:
+        semantics = infer_semantics(df, UploadFacts(doc_context=doc, **facts))
+        if add_ids:
+            _frame, _meta, semantics = add_id_columns(df, semantics)
+        return semantics.model_copy(update={"dataset_version": "v1"})
+
+    return _make
+
+
+@pytest.fixture
 def make_contract() -> Callable[..., OpenDataContractStandard]:
     """Factory: ODCS contract for ``df`` with test defaults (upload u1, version v1, id patient_id).
 
@@ -2116,6 +2135,59 @@ def make_contract() -> Callable[..., OpenDataContractStandard]:
         return build_contract(df, ContractInputs(**fields))
 
     return _make
+
+
+@pytest.fixture
+def read_by_every_reader(
+    tmp_path: Path, make_contract: Callable[..., OpenDataContractStandard]
+) -> Callable[..., dict[str, pl.DataFrame]]:
+    """Factory: ``frame`` as each of the three readers sees it once ``reads`` are applied (ADR017).
+
+    ``read_by_every_reader(frame, reads, id_column)`` returns ``{"polars": ..., "layer": ...,
+    "sql": ...}``: the raw-frame read (``apply_declared``, the aggregate path), the semantic
+    layer's ibis view (``ibis_reads`` and ``ibis_total_filter`` over DuckDB) and governed SQL's
+    view (``SqlCatalog.view_sql``), each sorted by ``id_column``. ``reads`` is a ``DeclaredReads``.
+    """
+    import duckdb
+    import ibis
+
+    from clinical_analytics.contracts.declarations import DateReadingDeclaration, MissingCodeDeclaration
+    from clinical_analytics.contracts.readings import apply_declared, ibis_reads, ibis_total_filter, reads_config
+    from clinical_analytics.sql.catalog import SqlCatalog
+
+    def _read(frame: pl.DataFrame, reads: Any, id_column: str) -> dict[str, pl.DataFrame]:
+        path = tmp_path / f"stored_{len(list(tmp_path.glob('stored_*.parquet')))}.parquet"
+        frame.write_parquet(path)
+        config = reads_config(reads)
+
+        raw = ibis.duckdb.connect().read_parquet(path)
+        keep = ibis_total_filter(raw, config)
+        if keep is not None:
+            raw = raw.filter(keep)
+        mutations = ibis_reads(raw, config)
+        layer = (raw.mutate(**mutations) if mutations else raw).to_polars()
+
+        missing = [
+            MissingCodeDeclaration(column=c, value=v, missing=True, dataset_version="v1")
+            for c, values in reads.missing.items()
+            for v in values
+        ]
+        dates = [
+            DateReadingDeclaration(column=c, format=f, century=century, dataset_version="v1")
+            for c, (f, century) in reads.dates.items()
+        ]
+        catalog = SqlCatalog.from_contract(
+            make_contract(frame, id_column=id_column), path, (), missing, dates, reads.totals, reads.units
+        )
+        con = duckdb.connect()
+        con.execute(catalog.view_sql())
+        sql = pl.DataFrame(pl.from_arrow(con.execute('SELECT * FROM "unified"').to_arrow_table()))
+        con.close()
+
+        reads_by = {"polars": apply_declared(frame, reads), "layer": layer, "sql": sql}
+        return {name: read.sort(id_column) for name, read in reads_by.items()}
+
+    return _read
 
 
 @pytest.fixture

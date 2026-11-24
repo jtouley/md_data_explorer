@@ -81,7 +81,7 @@ export function methodsSentence(s) {
 }
 
 /**
- * Short line for the status area: "Source saved: data.cdc.gov, 19 November 2026."
+ * Short line for the status area: "Source saved: data.example.org, 19 November 2026."
  * @param {DatasetSource} source
  * @returns {string}
  */
@@ -128,7 +128,7 @@ export function renderDatasetLinkForm(container, { onSubmit, onCancel }) {
   urlInput.required = true;
   urlInput.autocomplete = 'off';
   urlInput.spellcheck = false;
-  urlInput.placeholder = 'https://data.cdc.gov/…';
+  urlInput.placeholder = 'https://data.example.org/…';
   urlInput.dataset.testid = 'dataset-link-url';
   urlInput.setAttribute('aria-describedby', 'dataset-link-hint dataset-link-error');
 

@@ -21,20 +21,26 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import sqlglot
 import structlog
+from sqlglot import exp
 
 from clinical_analytics.contracts.declarations import (
     Declarations,
     DeclarationStore,
     GrainDeclaration,
+    MissingCodeDeclaration,
     confirmation_token,
 )
 from clinical_analytics.contracts.errors import ContractError, ContractStoreError
+from clinical_analytics.contracts.holds import held_message, open_question_holds
+from clinical_analytics.contracts.readings import declared_reads
+from clinical_analytics.contracts.semantics import layer_semantics
 from clinical_analytics.contracts.service import read_saved_contract
 from clinical_analytics.contracts.store import contract_path
 from clinical_analytics.sql.answer import PatientRowsUnconfirmedError, SqlAnswer, answer_query
 from clinical_analytics.sql.catalog import SqlCatalog
-from clinical_analytics.sql.errors import SqlRefusedError
+from clinical_analytics.sql.errors import SqlHeldError, SqlRefusedError
 from clinical_analytics.sql.sandbox import SandboxConnection
 from clinical_analytics.sql.validate import validate_sql
 
@@ -46,6 +52,11 @@ NO_CONTRACT = (
 )
 NOT_STORED = "This dataset is not stored as Parquet yet, so SQL cannot run on it. Upload it again."
 DECLARATIONS_UNREADABLE = "This dataset's saved confirmations can't be read or saved, so SQL can't run on it now."
+AGGREGATE_ROWS = (
+    "Each line of this table counts cases for a group (in {count}), so a count of lines is a count of groups, "
+    "not of patients, and it can't be confirmed as one patient per line. Add up {count} with SUM({count}) instead."
+)
+AGGREGATE_NOTE = "Each line counts cases for a group: sums of {count} are cases, never patients."
 CONFIRMATION_STALE = (
     "The dataset changed after you were asked to confirm one row per patient. "
     "Check that each row is still one patient, then confirm again."
@@ -87,16 +98,54 @@ def run_governed_sql(
         log.warning("governed_sql_contract_unreadable", error_type=type(e).__name__)
         raise SqlRefusedError("This dataset's data contract can't be read, so SQL cannot be checked against it.") from e
     try:
-        declared = declarations.load(dataset_id).for_version(version)
+        loaded = declarations.load(dataset_id)
     except ContractStoreError as e:
         log.warning("governed_sql_declarations_unreadable", error_type=type(e).__name__)
         raise SqlRefusedError(DECLARATIONS_UNREADABLE) from e
-    catalog = SqlCatalog.from_contract(contract, Path(source), declared.levels)
+    declared = loaded.for_version(version)
+    # The leased layer's own semantics, with the answers it was built with (contracts.holds).
+    semantics = layer_semantics(layer, declared=True)
+    reads = declared_reads(loaded, version, semantics)
+    missing = [
+        MissingCodeDeclaration(column=column, value=value, missing=True, dataset_version=version)
+        for column, values in reads.missing.items()
+        for value in values
+    ]
+    catalog = SqlCatalog.from_contract(
+        contract,
+        Path(source),
+        declared.levels,
+        missing,
+        declared.date_readings_for(version),
+        reads.totals,
+        reads.units,
+    )
     query = validate_sql(sql, catalog)
+    read = {c.name for c in sqlglot.parse_one(query.shown_sql, read="duckdb").find_all(exp.Column)}
+    # Counting lines is gated below by the one-row-per-patient confirmation, SQL's own answer to it.
+    holds = open_question_holds(semantics, columns=read, counts_lines=False)
+    if holds:
+        log.info("governed_sql_held", questions=len(holds))
+        raise SqlHeldError(held_message(holds), questions=tuple(h.question_id for h in holds))
+    aggregate = semantics.aggregate if semantics is not None and semantics.aggregate is not None else None
+    if aggregate is not None and aggregate.source == "declared":
+        # A declared table of groups: a count of lines counts groups, never patients; a sum of its
+        # count column is cases, and is answered.
+        if any(a.kind == "count" for a in query.aggregates):
+            log.info("governed_sql_aggregate_rows_refused", kind=aggregate.kind)
+            raise SqlRefusedError(AGGREGATE_ROWS.format(count=aggregate.count_column or "the count"))
+        with SandboxConnection(catalog) as sandbox:
+            return answer_query(
+                query, sandbox, catalog, groups_note=AGGREGATE_NOTE.format(count=aggregate.count_column)
+            )
     with SandboxConnection(catalog) as sandbox:
         try:
             return answer_query(query, sandbox, catalog, confirmed_patient_rows=_confirmed_rows(declared, catalog))
         except PatientRowsUnconfirmedError as e:
+            if aggregate is not None:
+                # Lines of a table of groups are never patients: no confirmation is offered or taken.
+                log.info("governed_sql_aggregate_rows_refused", kind=aggregate.kind)
+                raise SqlRefusedError(AGGREGATE_ROWS.format(count=aggregate.count_column or "the count")) from e
             token = confirmation_token(version, e.key, e.rows)
             if confirm_one_row_per_patient is None:
                 raise PatientRowsUnconfirmedError(e.reason, key=e.key, rows=e.rows, confirmation=token) from e

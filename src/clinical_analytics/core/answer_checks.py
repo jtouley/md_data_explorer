@@ -28,7 +28,7 @@ from typing import Any
 import polars as pl
 import structlog
 
-from clinical_analytics.analysis.grouping import level_variants
+from clinical_analytics.analysis.grouping import level_variants, without_listed_codes
 from clinical_analytics.analysis.numeric_text import all_missing_message, statistic_refusal
 from clinical_analytics.analysis.variable_types import short_name
 from clinical_analytics.contracts.builder import Implausible, find_plausibility_range, implausible_values, range_for
@@ -36,18 +36,18 @@ from clinical_analytics.contracts.builder import range_text as plausibility_text
 from clinical_analytics.contracts.config import MISSINGNESS_WARN_PERCENT
 from clinical_analytics.contracts.declarations import Declarations, GrainDeclaration, LevelMapping
 from clinical_analytics.contracts.quality import RANGE_METRIC, QualityCheckResult, QualityReport
+from clinical_analytics.contracts.semantics import layer_semantics
 from clinical_analytics.core.counting_unit import rollup_choice
 from clinical_analytics.core.identifier_rules import PATIENT_ROWS_ASKABLE_CONFIG_FLAG, ROW_KEY_CONFIG_FLAG
 from clinical_analytics.core.plan_values import plan_values
 from clinical_analytics.core.query_plan import QueryPlan
 from clinical_analytics.core.result_presentation import AMOUNT, DataNote, counted_note, text_note
-from clinical_analytics.core.schema_inference import patient_key_by_name
 
 logger = structlog.get_logger(__name__)
 
 _STATISTIC_INTENTS = frozenset({"DESCRIBE", "COMPARE_GROUPS"})
 # Report checks an answer already handles itself (hold or disclosure), so not repeated as notes.
-_HANDLED_METRICS = frozenset({RANGE_METRIC, "duplicateValues", "censoredValues", "levelVariants"})
+_HANDLED_METRICS = frozenset({RANGE_METRIC, "duplicateValues", "censoredValues", "levelVariants", "openQuestion"})
 
 
 @dataclass(frozen=True)
@@ -94,17 +94,21 @@ class Findings:
 
 
 def patient_key(layer: Any) -> str | None:
-    """The base view's patient key: the column mapped to ``patient_id``, else the best-ranked
-    column named for it that holds more than one value."""
+    """The base view's patient key: the contract semantics' patient key (ADR017) for an uploaded
+    dataset; for a built-in dataset configured by hand, the column its config maps to
+    ``patient_id``. Never chosen by name: no key means n counts rows."""
     config = getattr(layer, "config", None) or {}
     if config.get(ROW_KEY_CONFIG_FLAG):
-        return None  # the upload synthesized patient_id: it keys rows, so n counts rows
+        return None  # no column names a patient: n counts rows
     columns = list(layer.get_base_view().columns)
+    semantics = layer_semantics(layer)
+    if semantics is not None:
+        key = semantics.patient_key_column
+        return key if key in columns else None
     mapping = config.get("column_mapping") or {}
     if "patient_id" in mapping.values() and "patient_id" in columns:
         return "patient_id"
-    rows = layer._base_count(None)
-    return patient_key_by_name(columns, distinct=lambda column: layer._base_count(column) if rows > 1 else 2)
+    return None
 
 
 def grain_of(layer: Any) -> Grain:
@@ -304,6 +308,15 @@ def implausible_sentences(plan: QueryPlan, layer: Any) -> list[tuple[str, str, D
     return found
 
 
+def same_value_key(value: object) -> str:
+    """999, 999.0 and "999" are one value."""
+    try:
+        number = float(str(value))
+    except ValueError:
+        return str(value)
+    return f"{number:g}"
+
+
 def variant_sentence(column: str, group: tuple[str, ...], frequency: dict[str, int]) -> tuple[str, str]:
     """(canonical spelling, hold sentence) for spellings that may be one category: every spelling
     is named, and the most frequent one is the canonical (ties: the later in text order)."""
@@ -334,7 +347,10 @@ def variant_findings(
             continue
         levels, counts = value_counts(layer, column)
         frequency = {v: int(n) for v, n in zip(levels.to_list(), counts.to_list(), strict=True) if v is not None}
-        for group in level_variants(list(frequency)):
+        semantics = layer_semantics(layer)
+        column_facts = semantics.column(column) if semantics is not None else None
+        listed = column_facts.labels if column_facts is not None else {}
+        for group in without_listed_codes(level_variants(list(frequency)), listed):
             if (column, group) in confirmed or (values is not None and not values & set(group)):
                 continue
             canonical, sentence = variant_sentence(column, group, frequency)

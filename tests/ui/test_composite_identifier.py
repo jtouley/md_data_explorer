@@ -155,44 +155,50 @@ class TestEnsurePatientId:
         assert "patient_id" in result_df.columns
         assert result_df["patient_id"].to_list() == ["P001", "P002", "P003"]
 
-    def test_ensure_patient_id_single_column_identifier(self):
-        """Test that single column with >95% uniqueness is used."""
-        # Create column with 100% uniqueness
-        df = pl.DataFrame(
-            {
-                "unique_id": ["ID1", "ID2", "ID3", "ID4", "ID5"],
-                "age": [50, 60, 70, 80, 90],
-            }
-        )
+    def test_ensurePatientId_lineOwnUniqueId_linesNumberedNeverAPatientId(self):
+        """A line's own unique ID is never copied into the app's patient_id (ADR017)."""
+        # Arrange
+        df = pl.DataFrame({"unique_id": ["ID1", "ID2", "ID3", "ID4", "ID5"], "age": [50, 60, 70, 80, 90]})
 
+        # Act
         result_df, metadata = VariableTypeDetector.ensure_patient_id(df)
 
+        # Assert
+        assert metadata["patient_id_source"] == "row_index"
+        assert "patient_id" not in result_df.columns
+        assert result_df["unique_id"].to_list() == df["unique_id"].to_list()
+
+    def test_ensurePatientId_settledKey_copiedToPatientId(self):
+        """A key settled by a published convention (subject_id) is copied; its column stays."""
+        # Arrange
+        df = pl.DataFrame({"subject_id": ["S1", "S1", "S2", "S2", "S3"], "age": [50, 51, 60, 61, 70]})
+
+        # Act
+        result_df, metadata = VariableTypeDetector.ensure_patient_id(df)
+
+        # Assert
         assert metadata["patient_id_source"] == "single_column"
-        assert metadata["patient_id_columns"] == ["unique_id"]
-        assert "patient_id" in result_df.columns
-        assert result_df["patient_id"].n_unique() == 5
+        assert metadata["patient_id_columns"] == ["subject_id"]
+        assert result_df["patient_id"].to_list() == df["subject_id"].to_list()
 
-    def test_ensure_patient_id_composite_identifier(self):
-        """Test that composite identifier is created when no single column is unique."""
-        # No single column is unique enough (>95%), but combination is 100% unique
+    def test_ensurePatientId_combinationUniqueOnEveryLine_linesNumberedNeverHashed(self):
+        """A combination of columns tells lines apart; it never names a patient, so no hash."""
+        # Arrange
         df = pl.DataFrame(
             {
-                "race": ["A", "A", "B", "B", "C", "C"],  # 50% unique
-                "gender": ["M", "F", "X", "M", "F", "X"],  # 50% unique, 3 levels (categorical)
-                "age": [50, 51, 52, 53, 54, 55],  # 100% unique but continuous type
+                "race": ["A", "A", "B", "B", "C", "C"],
+                "gender": ["M", "F", "X", "M", "F", "X"],
+                "age": [50, 51, 52, 53, 54, 55],
             }
         )
 
+        # Act
         result_df, metadata = VariableTypeDetector.ensure_patient_id(df)
 
-        # Age might be detected as identifier (100% unique), or composite might be used
-        # Either way, patient_id should exist
-        assert "patient_id" in result_df.columns
-        assert result_df["patient_id"].n_unique() == 6
-        # If composite was used, verify metadata
-        if metadata["patient_id_source"] == "composite":
-            assert metadata["patient_id_columns"] is not None
-            assert len(metadata["patient_id_columns"]) >= 2
+        # Assert
+        assert metadata["patient_id_source"] == "row_index"
+        assert "patient_id" not in result_df.columns
+        assert result_df["row_number"].to_list() == [1, 2, 3, 4, 5, 6]
 
     def test_ensure_patient_id_no_identifier_found(self):
         """Test behavior when no identifier can be found."""
@@ -253,28 +259,22 @@ class TestCompositeIdentifierIntegration:
             metadata = suggestions["_patient_id_metadata"]
             assert metadata["patient_id_source"] == "composite"
 
-    def test_composite_identifier_preserves_original_columns(self):
-        """Test that original columns are preserved when creating synthetic ID."""
-        # Create data where combination is unique but no single column is >95% unique
-        # Use more rows to ensure combination is unique
+    def test_ensurePatientId_combination_originalColumnsKept(self):
+        """Numbering the lines keeps every column of the file unchanged."""
+        # Arrange
         df = pl.DataFrame(
             {
-                "race": ["A", "A", "B", "B", "C", "C"],  # 50% unique
-                "gender": ["M", "F", "X", "M", "F", "X"],  # 50% unique, 3 levels (categorical)
-                "age": [50, 51, 52, 53, 54, 55],  # All unique but continuous
+                "race": ["A", "A", "B", "B", "C", "C"],
+                "gender": ["M", "F", "X", "M", "F", "X"],
+                "age": [50, 51, 52, 53, 54, 55],
             }
         )
 
-        result_df, metadata = VariableTypeDetector.ensure_patient_id(df)
+        # Act
+        result_df, _metadata = VariableTypeDetector.ensure_patient_id(df)
 
-        # patient_id should always exist
-        assert "patient_id" in result_df.columns
-
-        # When composite ID is created, original columns should still exist
-        if metadata["patient_id_source"] == "composite":
-            assert "race" in result_df.columns
-            assert "gender" in result_df.columns
-            assert "age" in result_df.columns
+        # Assert
+        assert result_df.drop("row_number").equals(df)
 
     def test_composite_identifier_handles_mixed_types(self):
         """Test that composite identifier works with mixed column types."""
@@ -297,45 +297,27 @@ class TestCompositeIdentifierIntegration:
 class TestEnsurePatientIdLogging:
     """Tests for logging in ensure_patient_id."""
 
-    def test_ensure_patient_id_logs_appropriately(self, caplog):
-        """Test that ensure_patient_id logs at appropriate levels."""
-        import logging
-
-        caplog.set_level(logging.INFO)
-
-        # Test with existing patient_id
-        df = pl.DataFrame({"patient_id": ["P1", "P2"], "age": [50, 60]})
-        VariableTypeDetector.ensure_patient_id(df)
-
-        assert any("patient_id already exists in DataFrame" in record.message for record in caplog.records)
-
-        # Test with single column identifier
-        caplog.clear()
-        df2 = pl.DataFrame({"unique_id": ["ID1", "ID2", "ID3"], "age": [50, 60, 70]})
-        VariableTypeDetector.ensure_patient_id(df2)
-
-        assert any("Found single-column identifier" in record.message for record in caplog.records)
-
-        # Test with composite identifier
-        # Use data where no single column is >95% unique, but combination is unique
-        # Need enough rows to ensure combination is unique but individual columns aren't
-        caplog.clear()
-        df3 = pl.DataFrame(
+    def test_ensurePatientId_bySource_recordsHowTheIdWasMade(self):
+        """ensure_patient_id records how the ID was made (the log text is not a contract): an
+        existing patient_id is kept, a settled key is copied, anything else numbers the lines."""
+        # Arrange
+        existing = pl.DataFrame({"patient_id": ["P1", "P2"], "age": [50, 60]})
+        single = pl.DataFrame({"person_id": ["ID1", "ID1", "ID3"], "age": [50, 60, 70]})
+        combined = pl.DataFrame(
             {
-                "race": ["A", "A", "B", "B", "C", "C"],  # 50% unique
-                "gender": ["M", "F", "X", "M", "F", "X"],  # 50% unique, 3 levels (categorical)
-                "age": [50, 51, 52, 53, 54, 55],  # 100% unique but continuous (not identifier type)
+                "race": ["A", "A", "B", "B", "C", "C"],
+                "gender": ["M", "F", "X", "M", "F", "X"],
+                "age": [50, 51, 52, 53, 54, 55],
             }
         )
-        VariableTypeDetector.ensure_patient_id(df3)
 
-        # Age might be detected as identifier, or composite might be used
-        # Check for either path
-        has_single = any("Found single-column identifier" in record.message for record in caplog.records)
-        has_composite = any("Creating composite row key" in record.message for record in caplog.records)
+        # Act
+        sources = [
+            VariableTypeDetector.ensure_patient_id(df)[1]["patient_id_source"] for df in (existing, single, combined)
+        ]
 
-        # age is a measurement, never an ID: the (race, gender) row key is used
-        assert has_composite and not has_single
+        # Assert: a (race, gender) combination tells lines apart but never names a patient
+        assert sources == ["existing", "single_column", "row_index"]
 
 
 class TestPatientIdNeverFromMeasurements:

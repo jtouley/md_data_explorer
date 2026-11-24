@@ -105,6 +105,7 @@ def answer_query(
     catalog: SqlCatalog,
     *,
     confirmed_patient_rows: int | None = None,
+    groups_note: str | None = None,
 ) -> SqlAnswer:
     """The query's answer, every value as computed.
 
@@ -116,7 +117,9 @@ def answer_query(
         PatientRowsUnconfirmedError: no ID on some or all rows, and no matching confirmation.
         SqlRefusedError: rows are visits, too many groups, or the query could not run.
     """
-    confirmed = patient_rows(sandbox, catalog, confirmed_patient_rows)
+    # Lines that are groups (a declared table of groups): never counted as patients; the caller
+    # refuses counts of lines, and sums are said to be of cases.
+    confirmed = False if groups_note is not None else patient_rows(sandbox, catalog, confirmed_patient_rows)
     conditions = _conditions(query)
     frame = sandbox.run_generated(_core_sql(query, conditions))
     if frame.height > config.MAX_GROUPS:
@@ -124,7 +127,10 @@ def answer_query(
     records = frame.to_dicts()
     steps = _step_counts(sandbox, conditions)
     logger.info("governed_sql_answered", groups=frame.height, measures=len(query.measures))
-    return _present(query, records, conditions, steps, confirmed)
+    answer = _present(query, records, conditions, steps, confirmed)
+    if groups_note is not None:
+        return SqlAnswer(sql=answer.sql, columns=answer.columns, rows=answer.rows, notes=[groups_note])
+    return answer
 
 
 def patient_rows(sandbox: SandboxConnection, catalog: SqlCatalog, confirmed_rows: int | None) -> bool:
