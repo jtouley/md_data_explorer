@@ -180,8 +180,13 @@ dev = [
 # are excluded for the same reason they are excluded from coverage: they run at import time.
 source_paths = ["src/clinical_analytics/"]
 do_not_mutate = ["src/clinical_analytics/ui/pages/*", "*/__init__.py"]
-also_copy = ["scripts/", "docs/", "Makefile", "README.md", "AGENT.md", "taskmaster.yaml", ".coveragerc", ".cursor/", ".claude/"]
+also_copy = ["scripts/", "repo_context_mcp/", ".github/", "docs/", "Makefile", "README.md", "AGENT.md", "taskmaster.yaml", ".coveragerc", ".cursor/", ".claude/"]
 pytest_add_cli_args_test_selection = ["tests/"]
 # Each mutant pays ~15s of pytest collection; the 1s default budget misclassifies most as timeouts.
 timeout_constant = 60
+# Fork each mutant's worker from a clean fork server that imports nothing: a process that has
+# imported polars holds its thread pool and jemalloc's background threads, and a worker forked
+# from it deadlocks (the stats process, or a server warmed up by collecting the tests).
+process_isolation = "forkserver"
+forkserver_warmup = "none"
 pytest_add_cli_args = ["-m", "not slow and not integration", "-p", "no:randomly", "-q"]

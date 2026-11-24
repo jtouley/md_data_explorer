@@ -2181,7 +2181,7 @@ def read_by_every_reader(
         )
         con = duckdb.connect()
         con.execute(catalog.view_sql())
-        sql = pl.DataFrame(pl.from_arrow(con.execute('SELECT * FROM "unified"').to_arrow_table()))
+        sql = pl.DataFrame(pl.from_arrow(con.sql('SELECT * FROM "unified"').to_arrow_table()))
         con.close()
 
         reads_by = {"polars": apply_declared(frame, reads), "layer": layer, "sql": sql}

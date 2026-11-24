@@ -393,9 +393,12 @@ mutation: ensure-venv ## Run mutation testing over all of src (long-running, res
 	@echo "$(GREEN)Running mutation testing ($(MUTATION_JOBS) workers)...$(NC)"
 	$(MUTATION_ENV) $(UV) run mutmut run --max-children $(MUTATION_JOBS)
 
+# FUNCS scopes a long module to some of its functions, by mutmut's mangled names (x_name for a
+# function, xǁClassǁmethod for a method): make mutation-module MODULE=... FUNCS="x_a x__b"
 mutation-module: ensure-venv ## Mutation test one module: make mutation-module MODULE=clinical_analytics.core.schema
 	@if [ -z "$(MODULE)" ]; then echo "$(RED)MODULE is required$(NC)"; exit 1; fi
-	$(MUTATION_ENV) $(UV) run mutmut run --max-children $(MUTATION_JOBS) "$(MODULE).*"
+	$(MUTATION_ENV) $(UV) run mutmut run --max-children $(MUTATION_JOBS) \
+		$(if $(FUNCS),$(foreach f,$(FUNCS),"$(MODULE).$(f)__mutmut_*"),"$(MODULE).*")
 
 mutation-results: ensure-venv ## Summarise surviving mutants from the last mutation run
 	$(UV) run mutmut results
