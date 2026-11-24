@@ -74,7 +74,7 @@ dev = [
     "types-requests>=2.31.0",
     "types-PyYAML>=6.0.0",
     "mutmut>=3.8",  # process_isolation / forkserver_warmup ([tool.mutmut]) are read from 3.8 on
-    "hypothesis>=6.100",
+    "hypothesis>=6.100",  # Property tests (make done-check: invariants of each change). MPL-2.0
 ]
 
 [build-system]
