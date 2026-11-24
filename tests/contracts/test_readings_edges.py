@@ -226,6 +226,33 @@ def test_everyReader_everyTwoDigitYear_allThreeReadTheSameCentury(
 
 
 @pytest.mark.parametrize(
+    ("century", "expected_years"),
+    [
+        pytest.param(None, [1950, 1969, 1970, 1999, 2000, 2069, 2070, 2085], id="no_century_years_kept"),
+        pytest.param("pivot", [2050, 2069, 1970, 1999, 2000, 2069, 1970, 1985], id="stated_default"),
+        pytest.param("1900s", [1950, 1969, 1970, 1999, 1900, 1969, 1970, 1985], id="in_the_1900s"),
+        pytest.param("2000s", [2050, 2069, 2070, 2099, 2000, 2069, 2070, 2085], id="in_the_2000s"),
+    ],
+)
+def test_everyReader_centuryOnFourDigitYears_eachReaderSetsTheSameCentury(
+    century: str | None, expected_years: list[int], read_by_every_reader: Callable[..., dict[str, pl.DataFrame]]
+) -> None:
+    # Arrange: years written in full, so the engine's own two-digit pivot plays no part and only
+    # the century rule moves a year
+    years = [1950, 1969, 1970, 1999, 2000, 2069, 2070, 2085]
+    frame = pl.DataFrame({"hand_ref": [f"H{i}" for i in range(len(years))], "cast_on": [f"{y}-06-15" for y in years]})
+    reads = DeclaredReads(dates={"cast_on": ("%Y-%m-%d", century)})
+
+    # Act
+    read = read_by_every_reader(frame, reads, "hand_ref")
+
+    # Assert
+    expected = [date(y, 6, 15) for y in expected_years]
+    for name in READERS:
+        assert read[name].get_column("cast_on").cast(pl.Date).to_list() == expected, name
+
+
+@pytest.mark.parametrize(
     ("choice_format", "century", "expected"),
     [
         pytest.param("%d/%m/%y", None, config.TWO_DIGIT_YEAR_DEFAULT, id="two_digit_year_gets_the_default"),

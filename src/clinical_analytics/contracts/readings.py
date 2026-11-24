@@ -121,8 +121,10 @@ def date_expr(column: str, choice_format: str, century: str | None) -> pl.Expr:
     elif century == "2000s":
         parsed = pl.when(year < 2000).then(parsed.dt.offset_by("100y")).otherwise(parsed)
     elif century == "pivot":
+        # > 2000 or >= 2001 for >= 2000 is equivalent here: years 2000 and 2001 end below the pivot.
+        in_2000s = year >= 2000  # pragma: no mutate
         parsed = (
-            pl.when((year >= 2000) & (year % 100 >= pivot))
+            pl.when(in_2000s & (year % 100 >= pivot))
             .then(parsed.dt.offset_by("-100y"))
             .when((year < 2000) & (year % 100 < pivot))
             .then(parsed.dt.offset_by("100y"))

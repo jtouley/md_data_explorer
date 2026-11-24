@@ -190,14 +190,19 @@ def _is_number(value: object) -> bool:
 def _date_reading(ref: exp.Column, choice_format: str, century: str | None) -> exp.Expr:
     """A text column read with the user's confirmed date format, as a DATE; a two-digit year set
     to its century (``readings.century_for``), as the other two readers set it."""
-    parsed = exp.cast(exp.func("try_strptime", exp.func("trim", ref.copy()), exp.Literal.string(choice_format)), "DATE")
-    year = exp.func("year", parsed.copy())
+    # Function and type names in another letter case are the same SQL (equivalent mutants).
+    parsed = exp.cast(
+        exp.func("try_strptime", exp.func("trim", ref.copy()), exp.Literal.string(choice_format)),  # pragma: no mutate
+        "DATE",  # pragma: no mutate
+    )
+    year = exp.func("year", parsed.copy())  # pragma: no mutate
     two_digits = exp.Paren(this=exp.Mod(this=year.copy(), expression=exp.Literal.number(100)))
     pivot = exp.Literal.number(config.TWO_DIGIT_YEAR_PIVOT)
     century = century_for(choice_format, century)
 
     def shifted(sign: type[exp.Add] | type[exp.Sub]) -> exp.Expr:
-        return sign(this=parsed.copy(), expression=exp.Interval(this=exp.Literal.string("100"), unit=exp.var("YEAR")))
+        years = exp.var("YEAR")  # pragma: no mutate
+        return sign(this=parsed.copy(), expression=exp.Interval(this=exp.Literal.string("100"), unit=years))
 
     in_2000s = exp.GTE(this=year.copy(), expression=exp.Literal.number(2000))
     in_1900s = exp.LT(this=year.copy(), expression=exp.Literal.number(2000))
@@ -213,7 +218,7 @@ def _date_reading(ref: exp.Column, choice_format: str, century: str | None) -> e
         )
     else:
         return parsed
-    return exp.cast(case.else_(parsed), "DATE")
+    return exp.cast(case.else_(parsed), "DATE")  # pragma: no mutate
 
 
 def _spec(prop: SchemaProperty, semantics: DatasetSemantics | None) -> ColumnSpec:
