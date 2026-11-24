@@ -53,6 +53,8 @@ DIGEST_RE: Final = re.compile(r"[0-9a-f]{64}")
 IDENTIFIER_RE: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 # Words joined by "-" or "." ("held-out-set", "cohort.v2"), which IDENTIFIER_RE splits apart.
 WORD_RE: Final = re.compile(r"[A-Za-z0-9_]+(?:[-.][A-Za-z0-9_]+)*")
+# Splits a joined word into segments, keeping the separators: "a-b.c" -> ["a", "-", "b", ".", "c"].
+JOIN_SPLIT_RE: Final = re.compile(r"([-.])")
 # Single-line '...', "..." and `...` literals, honouring backslash escapes.
 STRING_RE: Final = re.compile(r"""(["'`])((?:\\.|(?!\1).)*)\1""")
 HUNK_RE: Final = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
@@ -98,10 +100,23 @@ def load_hashes(text: str) -> TokenHashes:
     return TokenHashes(salt, frozenset(digests))
 
 
+def joined_runs(word: str) -> Iterator[str]:
+    """Every contiguous run of a joined word's segments, with their original separators.
+
+    ``WORD_RE`` is greedy, so a protected "held-out-set" inside "data/held-out-set.parquet" or
+    "old-held-out-set-v2" only comes back as the whole chain; the runs include it.
+    """
+    parts = JOIN_SPLIT_RE.split(word)  # segments at even indexes, separators at odd ones
+    count = len(parts) // 2 + 1
+    for start in range(count):
+        for end in range(start + 1, count + 1):
+            yield "".join(parts[2 * start : 2 * end - 1])
+
+
 def candidate_tokens(text: str) -> set[str]:
-    """Lowercased identifiers, joined words and string-literal contents found in ``text``."""
+    """Lowercased identifiers, joined words (and every run of their segments) and string-literal contents."""
     tokens = {m.group(0) for m in IDENTIFIER_RE.finditer(text)}
-    tokens |= {m.group(0) for m in WORD_RE.finditer(text)}
+    tokens |= {run for m in WORD_RE.finditer(text) for run in joined_runs(m.group(0))}
     tokens |= {m.group(2).strip() for m in STRING_RE.finditer(text)}
     return {t.lower() for t in tokens if t}
 
@@ -114,7 +129,8 @@ class AddedLine(NamedTuple):
 
 def _diff_path(header: str) -> str | None:
     """New-side path from a '+++ ' header, or None for a deleted file."""
-    name = header[4:].rstrip("\n")
+    # git ends the header with a tab when the path holds a space ("+++ b/my notes.md\t").
+    name = header[4:].rstrip("\n").removesuffix("\t")
     if name == "/dev/null":
         return None
     if name.startswith('"') and name.endswith('"'):  # git quotes names with control chars or quotes
@@ -158,10 +174,12 @@ def find_matches(lines: Iterable[AddedLine], hashes: TokenHashes) -> list[tuple[
 def collect_added(root: Path, base: str, head: str | None = None) -> list[AddedLine]:
     """Added lines and added/renamed paths from the merge base with ``base`` to ``head``.
 
+    Type changes (``T``: a symlink replaced by a regular file) are scanned like modifications.
+
     ``head=None`` diffs against the working tree (committed and uncommitted changes).
     """
     rev = [head] if head else []
-    diff = diff_against_base(root, base, ["-U0", "--diff-filter=AMR", *rev], SCANNED_PATHS)
+    diff = diff_against_base(root, base, ["-U0", "--diff-filter=AMRT", *rev], SCANNED_PATHS)
     names = diff_against_base(root, base, ["--name-only", "-z", "--diff-filter=AR", *rev], SCANNED_PATHS)
     return [*added_lines(diff), *(AddedLine(p, 0, p) for p in names.split("\0") if p)]
 

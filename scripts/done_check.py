@@ -3,8 +3,9 @@
 
 Runs ``make check-fast``, ``make test-fast``, ``make mutation-changed`` and ``make pr-size`` in
 order, streaming their output, and then prints a Markdown block to paste into the pull request:
-one row per step (PASS, FAIL or SKIP) with its key line, the commit and the base. Every step runs
-even after a failure, so the summary is complete. Exit 0 only when no step failed.
+one row per step (PASS, FAIL or SKIP) with its key line, the commit and the base. ``--base`` is
+passed to every step (``BASE_VARS``), so the base the summary names is the one each step used.
+Every step runs even after a failure, so the summary is complete. Exit 0 only when no step failed.
 """
 
 from __future__ import annotations
@@ -27,11 +28,15 @@ KEY_LINE: Final[dict[str, re.Pattern[str]]] = {
     "mutation-changed": re.compile(r"^mutation-changed: .*"),
     "pr-size": re.compile(r"^pr-size: .*"),
 }
+# The make variable through which each base-relative step takes its base ref.
+BASE_VARS: Final[tuple[str, ...]] = ("MUTATION_BASE", "PR_SIZE_BASE", "EVAL_TOKEN_BASE")
 SKIP_MARK: Final = "SKIP"
 ANSI_RE: Final = re.compile(r"\x1b\[[0-9;]*m")
-# "make[2]: *** [Makefile:471: check-eval-tokens] Error 1": group 1 is the target that failed.
-MAKE_ERROR_RE: Final = re.compile(r"^make(?:\[\d+\])?: \*\*\* \[[^:\]]+:\d+: ([^\]]+)\] Error")
-NOISE_RE: Final = re.compile(r"^(?:make(?:\[\d+\])?: |warning: )")
+# "make[2]: *** [Makefile:471: check-eval-tokens] Error 1": group 1 is the target that failed. GNU make
+# prints its own argv[0] basename, so "gmake[2]: ***" (macOS) and "make-4.4: ***" are the same line.
+MAKE_PROG: Final = r"\S*make(?:-[\w.]+)?(?:\[\d+\])?: "
+MAKE_ERROR_RE: Final = re.compile(rf"^{MAKE_PROG}\*\*\* \[[^:\]]+:\d+: ([^\]]+)\] Error")
+NOISE_RE: Final = re.compile(rf"^(?:{MAKE_PROG}|warning: )")
 
 
 @dataclass(frozen=True)
@@ -132,10 +137,11 @@ def main(argv: list[str] | None = None, runner: Callable[[str, str, Sequence[str
     parser.add_argument("make_args", nargs="*", help="extra VAR=value arguments passed to every step")
     args = parser.parse_args(argv)
 
+    extra = [*(f"{var}={args.base}" for var in BASE_VARS), *args.make_args]
     outcomes = []
     for step in STEPS:
         print(f"\n===== done-check: make {step} =====", flush=True)
-        status, output = runner(args.make, step, args.make_args)
+        status, output = runner(args.make, step, extra)
         outcomes.append(classify(step, status, output))
     print()
     print(render(outcomes, _git_head(), args.base))

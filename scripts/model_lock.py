@@ -35,6 +35,7 @@ from typing import Final, TextIO
 
 LOCK_ENV: Final = "MDDE_MODEL_LOCK"
 EX_TEMPFAIL: Final = 75
+FORWARDED_SIGNALS: Final = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
 
 
 class LockBusyError(RuntimeError):
@@ -81,20 +82,32 @@ def model_lock(path: Path, *, wait: bool) -> Iterator[TextIO]:
 
 
 def run_locked(command: list[str], path: Path, *, wait: bool) -> int:
-    """Run ``command`` under the lock, forwarding SIGTERM/SIGHUP to it; return its exit status."""
+    """Run ``command`` under the lock, forwarding SIGTERM, SIGHUP and SIGINT to it; return its exit status.
+
+    The handlers go in before the child starts, so a signal that arrives in between is held and
+    delivered to the child instead of killing the wrapper (which would release the lock while the
+    child keeps using the model). The previous handlers come back when the command ends. A
+    terminal Ctrl-C reaches the child directly as well, so it may see SIGINT twice.
+    """
     with model_lock(path, wait=wait):
-        child = subprocess.Popen(command)
+        child: subprocess.Popen[bytes] | None = None
+        pending: list[int] = []
 
         def forward(signum: int, _frame: FrameType | None) -> None:
-            child.send_signal(signum)
+            if child is None:
+                pending.append(signum)
+            elif child.poll() is None:
+                child.send_signal(signum)
 
-        for signum in (signal.SIGTERM, signal.SIGHUP):
-            signal.signal(signum, forward)
-        while True:
-            try:
-                return child.wait()
-            except KeyboardInterrupt:  # the child got the same SIGINT from the terminal; wait for it
-                continue
+        previous = {signum: signal.signal(signum, forward) for signum in FORWARDED_SIGNALS}
+        try:
+            child = subprocess.Popen(command)
+            for signum in pending:
+                child.send_signal(signum)
+            return child.wait()
+        finally:
+            for signum, handler in previous.items():
+                signal.signal(signum, handler)
 
 
 def main(argv: list[str] | None = None) -> int:

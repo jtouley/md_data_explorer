@@ -5,6 +5,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from scripts import check_pr_size as size
+from tests.scripts.conftest import BranchRepo
 
 
 @pytest.mark.parametrize(
@@ -20,13 +21,13 @@ from scripts import check_pr_size as size
     ],
     ids=["empty", "at_warn", "above_warn", "at_fail", "above_fail", "above_fail_labelled", "warn_labelled"],
 )
-def test_verdict_boundaries_warnAndFailStrictlyAbove(lines, approved, expected):
+def test_verdict_boundaries_warnAndFailStrictlyAbove(lines: int, approved: bool, expected: str) -> None:
     # Act / Assert
     assert size.verdict(lines, approved=approved) == expected
 
 
 @given(lines=st.integers(0, 10_000), approved=st.booleans())
-def test_verdict_anyCount_failsOnlyAboveFailLimitWithoutLabel(lines, approved):
+def test_verdict_anyCount_failsOnlyAboveFailLimitWithoutLabel(lines: int, approved: bool) -> None:
     # Act
     result = size.verdict(lines, approved=approved)
 
@@ -64,12 +65,12 @@ def test_verdict_anyCount_failsOnlyAboveFailLimitWithoutLabel(lines, approved):
         "test_in_word",
     ],
 )
-def test_is_exempt_path_onlyTestsAndLockFiles(path, exempt):
+def test_is_exempt_path_onlyTestsAndLockFiles(path: str, exempt: bool) -> None:
     # Act / Assert
     assert size.is_exempt(path) is exempt
 
 
-def test_parse_numstat_binaryAndText_countsBinaryAsZero():
+def test_parse_numstat_binaryAndText_countsBinaryAsZero() -> None:
     # Arrange
     numstat = "10\t2\tsrc/a.py\0-\t-\tdocs/img.png\0"
 
@@ -83,7 +84,7 @@ def test_parse_numstat_binaryAndText_countsBinaryAsZero():
 @given(
     deltas=st.lists(st.tuples(st.sampled_from(["src/a.py", "tests/t.py", "uv.lock", "docs/x.md"]), st.integers(0, 500)))
 )
-def test_counted_lines_anyDeltas_sumOfNonExemptOnly(deltas):
+def test_counted_lines_anyDeltas_sumOfNonExemptOnly(deltas: list[tuple[str, int]]) -> None:
     # Arrange
     files = [size.FileDelta(path, added) for path, added in deltas]
 
@@ -105,8 +106,14 @@ def test_counted_lines_anyDeltas_sumOfNonExemptOnly(deltas):
     ids=["local_fail", "local_approved", "ci_fail", "ci_approved"],
 )
 def test_main_overFailLimit_failsUnlessApproved(
-    approved, github, rc, annotation, make_branch_repo, monkeypatch, capsys
-):
+    approved: bool,
+    github: bool,
+    rc: int,
+    annotation: str | None,
+    make_branch_repo: BranchRepo,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     # Arrange
     big = "".join(f"x{i} = {i}\n" for i in range(size.FAIL_LINES + 1))
     repo = make_branch_repo({"src/a.py": ""}, {"src/a.py": big, "tests/test_a.py": big})
@@ -123,7 +130,9 @@ def test_main_overFailLimit_failsUnlessApproved(
     assert (annotation in out) if annotation else ("::" not in out)
 
 
-def test_main_missingBaseRef_exitsTwo(make_branch_repo, monkeypatch, capsys):
+def test_main_missingBaseRef_exitsTwo(
+    make_branch_repo: BranchRepo, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     # Arrange
     repo = make_branch_repo({"src/a.py": ""}, {})
     monkeypatch.chdir(repo)

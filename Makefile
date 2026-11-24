@@ -479,7 +479,8 @@ PR_SIZE_BASE ?= origin/main
 pr-size: ensure-venv ## Added non-test lines against origin/main: warn above 1500, fail above 3000 [PR_SIZE_BASE=...]
 	@$(PYTHON_RUN) scripts/check_pr_size.py --base $(PR_SIZE_BASE)
 
-done-check: ensure-venv ## Definition of done: check-fast, test-fast, mutation-changed, pr-size; prints a summary for the PR body
+# One base for every step: done_check.py passes MUTATION_BASE, PR_SIZE_BASE and EVAL_TOKEN_BASE to each.
+done-check: ensure-venv ## Definition of done: check-fast, test-fast, mutation-changed, pr-size; prints a summary for the PR body [MUTATION_BASE=...]
 	@$(PYTHON_RUN) scripts/done_check.py --make "$(MAKE)" --base $(MUTATION_BASE)
 
 check-fast: ## Run fast code quality checks (lint, format-check, tracked-data guard, SPDX headers, lock platforms, eval tokens) - no tests

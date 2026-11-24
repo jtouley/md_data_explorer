@@ -9,6 +9,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from scripts import check_eval_tokens as guard
+from tests.scripts.conftest import GIT_IDENTITY, BranchRepo
 
 SALT = "test-salt-1"
 # Synthetic protected tokens: never the real list, which stays hashed in config/.
@@ -29,7 +30,7 @@ def hashes() -> guard.TokenHashes:
 identifiers = st.from_regex(r"[a-z_][a-z0-9_]{0,20}", fullmatch=True)
 
 
-def test_load_hashes_headerAndDigests_parsesSaltAndAllDigests():
+def test_load_hashes_headerAndDigests_parsesSaltAndAllDigests() -> None:
     # Act
     result = guard.load_hashes(_hash_text())
 
@@ -50,7 +51,7 @@ def test_load_hashes_headerAndDigests_parsesSaltAndAllDigests():
     ],
     ids=["missing_salt", "no_digests", "empty", "uppercase_digest", "short_digest", "plaintext_token"],
 )
-def test_load_hashes_malformedFile_raisesHashFileError(text, error):
+def test_load_hashes_malformedFile_raisesHashFileError(text: str, error: str) -> None:
     # Act / Assert
     with pytest.raises(guard.HashFileError, match=error):
         guard.load_hashes(text)
@@ -70,6 +71,13 @@ def test_load_hashes_malformedFile_raisesHashFileError(text, error):
         ("x = zebra", False),
         ("held out set", False),
         ("", False),
+        ("load data/held-out-set.parquet", True),
+        ("held-out-set.csv", True),
+        ("x-held-out-set", True),
+        ("old-held-out-set-v2.tar.gz", True),
+        ("see zebra_cohort.v2", True),
+        ("held-out-settings", False),
+        ("held-out", False),
     ],
     ids=[
         "identifier",
@@ -83,9 +91,16 @@ def test_load_hashes_malformedFile_raisesHashFileError(text, error):
         "prefix_only",
         "spaced_words",
         "empty",
+        "joined_in_file_name",
+        "joined_with_extension",
+        "joined_with_prefix",
+        "joined_inside_longer_chain",
+        "identifier_with_suffix_segment",
+        "longer_last_segment",
+        "partial_joined_word",
     ],
 )
-def test_find_matches_line_flagsOnlyWholeProtectedTokens(line, expected, hashes):
+def test_find_matches_line_flagsOnlyWholeProtectedTokens(line: str, expected: bool, hashes: guard.TokenHashes) -> None:
     # Arrange
     lines = [guard.AddedLine("src/x.py", 7, line)]
 
@@ -99,7 +114,7 @@ def test_find_matches_line_flagsOnlyWholeProtectedTokens(line, expected, hashes)
 @given(
     token=identifiers, prefix=st.sampled_from(["", "x = ", "f(", "  # ", "- "]), quote=st.sampled_from(["", '"', "'"])
 )
-def test_find_matches_anyProtectedIdentifierInAnyContext_isFlagged(token, prefix, quote):
+def test_find_matches_anyProtectedIdentifierInAnyContext_isFlagged(token: str, prefix: str, quote: str) -> None:
     # Arrange
     hashes = guard.load_hashes(_hash_text((token,)))
     line = f"{prefix}{quote}{token.upper()}{quote})"
@@ -111,8 +126,45 @@ def test_find_matches_anyProtectedIdentifierInAnyContext_isFlagged(token, prefix
     assert result == [("a.py", 1)]
 
 
+segments = st.lists(st.from_regex(r"[a-z0-9_]{1,6}", fullmatch=True), min_size=0, max_size=3)
+separators = st.sampled_from(["-", "."])
+
+
+@given(token=st.lists(identifiers, min_size=2, max_size=3), sep=separators, before=segments, after=segments)
+def test_find_matches_protectedJoinedWordInsideLongerChain_isFlagged(
+    token: list[str], sep: str, before: list[str], after: list[str]
+) -> None:
+    # Arrange
+    protected = sep.join(token)
+    hashes = guard.load_hashes(_hash_text((protected,)))
+    line = "path/" + "-".join([*before, protected.upper(), *after]) + " end"
+
+    # Act
+    result = guard.find_matches([guard.AddedLine("a.py", 1, line)], hashes)
+
+    # Assert
+    assert result == [("a.py", 1)]
+
+
+@pytest.mark.parametrize(
+    ("word", "expected"),
+    [
+        ("a", ["a"]),
+        ("a-b", ["a", "a-b", "b"]),
+        ("a-b.c", ["a", "a-b", "a-b.c", "b", "b.c", "c"]),
+    ],
+    ids=["single", "two_segments", "mixed_separators"],
+)
+def test_joined_runs_word_everyContiguousRunWithItsSeparators(word: str, expected: list[str]) -> None:
+    # Act
+    result = sorted(guard.joined_runs(word))
+
+    # Assert
+    assert result == expected
+
+
 @given(token=identifiers, text=st.text(alphabet=st.characters(blacklist_categories=("Cs",)), max_size=40))
-def test_candidate_tokens_anyText_areLowercaseAndIncludeEmbeddedIdentifier(token, text):
+def test_candidate_tokens_anyText_areLowercaseAndIncludeEmbeddedIdentifier(token: str, text: str) -> None:
     # Arrange
     line = f"{text} {token} {text}"
 
@@ -125,12 +177,12 @@ def test_candidate_tokens_anyText_areLowercaseAndIncludeEmbeddedIdentifier(token
 
 
 @given(salt=st.text(min_size=1, max_size=10), token=identifiers)
-def test_digest_anyAsciiToken_isCaseInsensitive(salt, token):
+def test_digest_anyAsciiToken_isCaseInsensitive(salt: str, token: str) -> None:
     # Act / Assert
     assert guard.digest(salt, token.upper()) == guard.digest(salt, token)
 
 
-def test_added_lines_multiHunkDiff_numbersNewFileLinesAndSkipsDeletions():
+def test_added_lines_multiHunkDiff_numbersNewFileLinesAndSkipsDeletions() -> None:
     # Arrange
     diff = "\n".join(
         [
@@ -166,7 +218,7 @@ diff_lines = st.text(alphabet=st.characters(blacklist_characters="\n", blacklist
 
 
 @given(texts=st.lists(diff_lines, min_size=1, max_size=8), start=st.integers(1, 10_000))
-def test_added_lines_anyHunk_numbersLinesConsecutivelyFromHunkStart(texts, start):
+def test_added_lines_anyHunk_numbersLinesConsecutivelyFromHunkStart(texts: list[str], start: int) -> None:
     # Arrange
     diff = "\n".join(["+++ b/f.txt", f"@@ -0,0 +{start},{len(texts)} @@", *(f"+{t}" for t in texts)])
 
@@ -178,7 +230,7 @@ def test_added_lines_anyHunk_numbersLinesConsecutivelyFromHunkStart(texts, start
     assert [line.text for line in result] == texts
 
 
-def test_added_lines_contentLookingLikeHeaders_staysContent():
+def test_added_lines_contentLookingLikeHeaders_staysContent() -> None:
     # Arrange: a removed "-- x" and an added "++ y" render as "--- x" and "+++ y" inside the hunk
     diff = "\n".join(["--- a/f.md", "+++ b/f.md", "@@ -2 +2,2 @@", "--- x", "+++ y", "+@@ -1 +1 @@"])
 
@@ -187,6 +239,21 @@ def test_added_lines_contentLookingLikeHeaders_staysContent():
 
     # Assert
     assert result == [guard.AddedLine("f.md", 2, "++ y"), guard.AddedLine("f.md", 3, "@@ -1 +1 @@")]
+
+
+@pytest.mark.parametrize(
+    ("header", "path"),
+    [
+        ("+++ b/docs/my notes.md\t", "docs/my notes.md"),
+        ("+++ b/docs/notes.md", "docs/notes.md"),
+        ('+++ "b/docs/tab\\there.md"', "docs/tab\there.md"),
+        ("+++ /dev/null", None),
+    ],
+    ids=["space_trailing_tab", "plain", "quoted", "deleted"],
+)
+def test_diff_path_header_newSidePathWithoutTrailingTab(header: str, path: str | None) -> None:
+    # Act / Assert
+    assert guard._diff_path(header) == path
 
 
 def _run(repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> tuple[int, str]:
@@ -198,7 +265,9 @@ def _run(repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixt
     return rc, captured.out + captured.err
 
 
-def test_main_addedLineWithToken_failsWithFileLineAndNeverPrintsToken(make_branch_repo, monkeypatch, capsys):
+def test_main_addedLineWithToken_failsWithFileLineAndNeverPrintsToken(
+    make_branch_repo: BranchRepo, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     # Arrange
     repo = make_branch_repo(
         {"src/app.py": "a = 1\n"},
@@ -216,7 +285,9 @@ def test_main_addedLineWithToken_failsWithFileLineAndNeverPrintsToken(make_branc
     assert "held-out" not in output.lower()
 
 
-def test_main_tokenInNewFileName_isReportedAsFileName(make_branch_repo, monkeypatch, capsys):
+def test_main_tokenInNewFileName_isReportedAsFileName(
+    make_branch_repo: BranchRepo, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     # Arrange
     repo = make_branch_repo({"src/app.py": "a = 1\n"}, {"tests/eval/quokka.yaml": "q: 1\n"})
 
@@ -240,7 +311,12 @@ def test_main_tokenInNewFileName_isReportedAsFileName(make_branch_repo, monkeypa
     ],
     ids=["no_change", "token_line_deleted", "clean_edit", "uv_lock", "package_lock", "hash_file_itself"],
 )
-def test_main_noProtectedTokenAdded_passes(branch, make_branch_repo, monkeypatch, capsys):
+def test_main_noProtectedTokenAdded_passes(
+    branch: dict[str, str | None],
+    make_branch_repo: BranchRepo,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     # Arrange
     repo = make_branch_repo({"src/app.py": "quokka = 1\n"}, branch)
 
@@ -255,7 +331,9 @@ def test_main_noProtectedTokenAdded_passes(branch, make_branch_repo, monkeypatch
 @pytest.mark.parametrize(
     "path", ["README.md", ".claude/CLAUDE.md", ".cursor/rules/brief.mdc", "Makefile", ".github/ci.yml"]
 )
-def test_main_tokenOutsideSourceTrees_isFlagged(path, make_branch_repo, monkeypatch, capsys):
+def test_main_tokenOutsideSourceTrees_isFlagged(
+    path: str, make_branch_repo: BranchRepo, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     # Arrange
     repo = make_branch_repo({"src/app.py": "a = 1\n"}, {path: "rule: avoid the quokka trap\n"})
 
@@ -267,7 +345,52 @@ def test_main_tokenOutsideSourceTrees_isFlagged(path, make_branch_repo, monkeypa
     assert f"{path}:1: {guard.MATCH_MESSAGE}" in output
 
 
-def test_main_uncommittedEdit_isChecked(make_branch_repo, monkeypatch, capsys):
+def test_main_tokenInPathWithSpace_reportsPathWithoutTab(
+    make_branch_repo: BranchRepo, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Arrange
+    repo = make_branch_repo({"src/app.py": "a = 1\n"}, {"docs/my notes.md": "intro\nthe quokka run\n"})
+
+    # Act
+    rc, output = _run(repo, monkeypatch, capsys)
+
+    # Assert
+    assert rc == 1
+    assert f"docs/my notes.md:2: {guard.MATCH_MESSAGE}" in output
+    assert "\t" not in output
+
+
+def test_main_symlinkReplacedByFileWithToken_isChecked(
+    make_branch_repo: BranchRepo, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Arrange: base holds a symlink; the branch turns it into a regular file (git diff status T)
+    repo = make_branch_repo({"src/app.py": "a = 1\n"}, {})
+    git = ["git", *GIT_IDENTITY]
+    subprocess.run(["git", "checkout", "-q", "base"], cwd=repo, check=True)
+    (repo / "notes.md").symlink_to("src/app.py")
+    subprocess.run(["git", "add", "notes.md"], cwd=repo, check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "link"], cwd=repo, check=True)
+    subprocess.run(["git", "checkout", "-q", "-B", "work"], cwd=repo, check=True)
+    (repo / "notes.md").unlink()
+    (repo / "notes.md").write_text("the quokka run\n", encoding="utf-8")
+    subprocess.run(["git", "add", "notes.md"], cwd=repo, check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "type change"], cwd=repo, check=True)
+    status = subprocess.run(
+        ["git", "diff", "--name-status", "base", "work"], cwd=repo, capture_output=True, text=True, check=True
+    )
+    assert status.stdout.startswith("T\tnotes.md")
+
+    # Act
+    rc, output = _run(repo, monkeypatch, capsys)
+
+    # Assert
+    assert rc == 1
+    assert f"notes.md:1: {guard.MATCH_MESSAGE}" in output
+
+
+def test_main_uncommittedEdit_isChecked(
+    make_branch_repo: BranchRepo, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     # Arrange
     repo = make_branch_repo({"src/app.py": "a = 1\n"}, {})
     (repo / "src/app.py").write_text("a = 1\nquokka()\n", encoding="utf-8")
@@ -280,7 +403,9 @@ def test_main_uncommittedEdit_isChecked(make_branch_repo, monkeypatch, capsys):
     assert f"src/app.py:2: {guard.MATCH_MESSAGE}" in output
 
 
-def test_main_missingBaseRef_exitsTwoNamingTheRef(make_branch_repo, monkeypatch, capsys):
+def test_main_missingBaseRef_exitsTwoNamingTheRef(
+    make_branch_repo: BranchRepo, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     # Arrange
     repo = make_branch_repo({"src/app.py": "a = 1\n"}, {})
     hash_file = repo.parent / "hashes.txt"
@@ -295,7 +420,7 @@ def test_main_missingBaseRef_exitsTwoNamingTheRef(make_branch_repo, monkeypatch,
     assert "origin/nope" in capsys.readouterr().err
 
 
-def test_load_hashes_committedHashFile_hasSaltAndDigests():
+def test_load_hashes_committedHashFile_hasSaltAndDigests() -> None:
     # Arrange
     text = (Path(__file__).resolve().parents[2] / guard.HASH_FILE).read_text(encoding="utf-8")
 
@@ -335,7 +460,7 @@ def _has_commit(rev: str) -> bool:
 
 
 @pytest.mark.parametrize("commit", MAIN_REPLAY_COMMITS, ids=[c[:7] for c in MAIN_REPLAY_COMMITS])
-def test_find_matches_replayRecentMainCommitsWithRealList_flagsNothing(commit):
+def test_find_matches_replayRecentMainCommitsWithRealList_flagsNothing(commit: str) -> None:
     # Arrange
     if not (_has_commit(commit) and _has_commit(f"{commit}^")):
         if os.environ.get(REQUIRE_HISTORY_ENV) == "1":
