@@ -1,0 +1,31 @@
+name: PR size
+
+# Warns above 1,500 and fails above 3,000 added non-test lines (scripts/check_pr_size.py), unless
+# the PR has the large-pr-approved label. Its own workflow so that adding or removing the label
+# re-runs this check alone, not the whole CI.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-size:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # Standard library only, so the runner's python3 is enough (no uv sync).
+      - name: Count added non-test lines
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'large-pr-approved') }}
+        run: |
+          args=(--base "origin/$BASE_REF")
+          if [ "$APPROVED" = "true" ]; then args+=(--approved); fi
+          python3 scripts/check_pr_size.py "${args[@]}"

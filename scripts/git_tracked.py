@@ -36,3 +36,19 @@ def tracked_files(root: Path) -> list[str]:
     """Every path git tracks under ``root``, relative to ``root`` with "/" separators."""
     out = _git(["ls-files", "-z", "--full-name"], root)
     return [p for p in out.decode().split("\0") if p]
+
+
+def diff_against_base(root: Path, base: str, args: list[str], paths: tuple[str, ...] = ()) -> str:
+    """``git diff --merge-base <base> <args> -- <paths>``: the working tree against the fork point.
+
+    Covers committed and uncommitted changes to tracked files (untracked files are not in a diff
+    until they are added). A missing ``base`` ref (shallow clone, no ``git fetch origin main``)
+    raises :class:`GitQueryError` naming the ref, never an empty diff.
+    """
+    try:
+        _git(["rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"], root)
+    except GitQueryError as exc:
+        raise GitQueryError(f"base ref {base!r} not found; run `git fetch origin main` or pass another base") from exc
+    cmd = ["-c", "core.quotePath=false", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--merge-base", base]
+    out = _git([*cmd, *args, "--", *paths], root)
+    return out.decode("utf-8", errors="replace")

@@ -6,11 +6,37 @@ The purpose, what "works" means, the ordered steel thread, the merge gate and th
 
 **Rules that stop wasted work:**
 - **Check before building.** Before writing code or briefing an agent, search the repo for what already does the job (`eval/`, `contracts/`, `analysis/`, `core/`, `tests/eval/`) and the open PRs. Extend what exists. A brief must name what exists and say to reuse it.
-- **One change on the thread at a time:** one PR, one independent review, one fix round. A second review only when the fix changes privacy, security or concurrency logic.
+- **One change on the thread at a time:** one PR, reviewed and fixed as in [Delivery](#delivery).
 - **A change merges only if it moves the acceptance table,** or fixes a WRONG, LEAK or ERROR the table shows. Hardening for cases the corpus doesn't hit waits. **Exception:** fixes for privacy, security or data loss merge on their own merits, whether or not the corpus triggers the issue.
 - **Report status as the latest acceptance table,** not as a list of PRs. Give answered right and correctly held as separate numbers.
 - **One issue per cause** for each reproducible WRONG, LEAK, ERROR or unacceptable HOLD, linked to the fixing PR and the oracle it must pass (PURPOSE.md, Merge gate).
 - **Real data:** synthetic data is the rule. The only exception is acceptance testing on public, openly licensed, de-identified datasets: fetched at test time from their public source, checked against a pinned checksum, used under their licence, never committed, and never shown row by row. Aggregate results (counts, statistics, grades) may appear in logs, issues and pull requests. Everything else, unit tests included, uses synthetic data.
+
+## Delivery
+
+Tooling enforces these; a claim that they hold is not enough.
+
+**Done before review** (the builder, before asking for one):
+- `make done-check` passes; paste its summary into the PR body. It runs `check-fast` (which includes `check-eval-tokens`), `test-fast`, `mutation-changed` and `pr-size`.
+- Every surviving mutant in comparison, threshold, missing-code, total-row, hold or unit logic is killed by a test, or, if equivalent, its line carries `# pragma: no mutate` with the reason.
+- Property tests (`hypothesis`) state the change's invariants; example tests alone are not done.
+- Where a name could change the answer (column, code, label, dataset), a test renames it and checks the result holds.
+- Under 1,500 added non-test lines, or split. CI warns above 1,500 and fails above 3,000 unless the PR has the `large-pr-approved` label.
+
+**Review is not the test suite:**
+1. One review by a fresh opus subagent whose whole prompt is `/code-review PR #<n>`; its findings are posted to the PR.
+2. One fix round by a fresh subagent loaded with the relevant skills.
+3. A second review only when the fix changed privacy or security code.
+4. Then merge on green CI, or take the decision to the user. Later findings become issues, not more rounds.
+
+**Evaluation hygiene:**
+- Builders never read sealed or held-out data, questions or answers.
+- Failures from sealed runs never become rules, prompts or briefs. A holdout is used once.
+- No evaluation-dataset identifier enters the repo: `make check-eval-tokens` (CI, `check-fast`) hashes added identifiers and strings against `config/eval_token_hashes.txt`. Never try to reverse that list.
+
+**Outcome metric:** a change to the question path is judged by end-to-end tallies of right, wrong and held answers on development data (`make accept`), with the model to itself. Acceptance needs both a ceiling on wrong answers (`--fail-on WRONG`) and a floor on right ones (`--baseline`); fewer wrong answers bought by holding more is not a pass.
+
+**One model user at a time:** every command that calls the local model (Ollama) runs through `scripts/model_lock.py`, an flock on `~/.cache/mdde/model.lock` (override: `MDDE_MODEL_LOCK`). `make accept`, `accept-fellow` and `accept-sql-arms` take it with `--wait` when a model is in use, so measurements queue. Anything else runs `uv run python scripts/model_lock.py -- <command>`, which exits 75 at once when the lock is busy instead of competing with a measurement.
 
 ## Behavior
 

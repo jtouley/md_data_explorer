@@ -1,4 +1,4 @@
-.PHONY: help accept accept-fellow accept-sql-arms accept-load smoke-installed fetch-embedding-model check-data check-spdx check-lock-platforms audit-held-back golden mutation mutation-module mutation-results install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-contracts test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
+.PHONY: help done-check mutation-changed check-eval-tokens check-eval-token-replay pr-size accept accept-fellow accept-sql-arms accept-load smoke-installed fetch-embedding-model check-data check-spdx check-lock-platforms audit-held-back golden mutation mutation-module mutation-results install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-contracts test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
 
 # Default target
 .DEFAULT_GOAL := help
@@ -201,9 +201,13 @@ MODEL ?= none
 OLLAMA_BASE_URL ?= http://127.0.0.1:11434
 ACCEPT_TIMEOUT ?= 600
 ACCEPT_ARGS ?=
+# One local-model user at a time (scripts/model_lock.py). Measurement commands queue with --wait;
+# runs with MODEL=none use no model and skip the lock.
+MODEL_LOCK_WAIT := $(PYTHON_RUN) scripts/model_lock.py --wait --
+MODEL_LOCK_FOR = $(if $(filter none,$(1)),,$(MODEL_LOCK_WAIT))
 accept: ensure-venv fetch-embedding-model ## Acceptance run: make accept DATASET=covid_ms MODEL=none|<ollama model> [OLLAMA_BASE_URL=...] [ACCEPT_ARGS="--llm-timeout 300"]
 	@echo "$(GREEN)Acceptance run: $(DATASET), MODEL=$(MODEL)...$(NC)"
-	$(PYTHON_RUN) -m clinical_analytics.eval.corpus.run --dataset $(DATASET) --model $(MODEL) \
+	$(call MODEL_LOCK_FOR,$(MODEL)) $(PYTHON_RUN) -m clinical_analytics.eval.corpus.run --dataset $(DATASET) --model $(MODEL) \
 		--ollama-base-url $(OLLAMA_BASE_URL) --timeout $(ACCEPT_TIMEOUT) $(ACCEPT_ARGS)
 
 # The ID fellows' case studies 1-4 as acceptance scenarios, on a synthetic hospital (generated from
@@ -213,7 +217,7 @@ FELLOW_DATASETS ?= fellow_cdiff fellow_hepb fellow_pneumonia fellow_measles
 accept-fellow: ensure-venv fetch-embedding-model ## Fellow case-study scenarios through the app: make accept-fellow MODEL=none|<ollama model> [ACCEPT_ARGS=...]
 	@echo "$(GREEN)Fellow scenarios: $(FELLOW_DATASETS), MODEL=$(MODEL)...$(NC)"
 	@status=0; for dataset in $(FELLOW_DATASETS); do \
-		$(PYTHON_RUN) -m clinical_analytics.eval.corpus.run --dataset $$dataset --model $(MODEL) \
+		$(call MODEL_LOCK_FOR,$(MODEL)) $(PYTHON_RUN) -m clinical_analytics.eval.corpus.run --dataset $$dataset --model $(MODEL) \
 			--ollama-base-url $(OLLAMA_BASE_URL) --timeout $(ACCEPT_TIMEOUT) $(ACCEPT_ARGS) || status=$$?; \
 	done; exit $$status
 
@@ -226,7 +230,7 @@ ARM_MODES ?= app,governed,raw
 ARM_DATASETS ?= $(FELLOW_DATASETS)
 accept-sql-arms: ensure-venv fetch-embedding-model ## App vs model+governed SQL vs model+raw SQL: make accept-sql-arms ARM_MODEL=<model> [ARM_MODES=app,governed,raw] [ARM_DATASETS=...] [ARM_ARGS=...]
 	@echo "$(GREEN)SQL arms ($(ARM_MODES)): $(ARM_DATASETS), ARM_MODEL=$(ARM_MODEL)...$(NC)"
-	$(PYTHON_RUN) -m clinical_analytics.eval.corpus.sql_arm $(foreach dataset,$(ARM_DATASETS),--dataset $(dataset)) \
+	$(MODEL_LOCK_WAIT) $(PYTHON_RUN) -m clinical_analytics.eval.corpus.sql_arm $(foreach dataset,$(ARM_DATASETS),--dataset $(dataset)) \
 		--model $(ARM_MODEL) --mode $(ARM_MODES) --ollama-base-url $(OLLAMA_BASE_URL) $(ARM_ARGS)
 
 # CI upload check: upload each dataset into a fresh app and check status, rows and columns against
@@ -400,6 +404,18 @@ mutation-module: ensure-venv ## Mutation test one module: make mutation-module M
 mutation-results: ensure-venv ## Summarise surviving mutants from the last mutation run
 	$(UV) run mutmut results
 
+# Mutants of the src modules this branch added or changed against MUTATION_BASE, then a summary
+# that fails on any survivor (scripts/mutation_changed.py). The first run in a checkout also runs
+# the fast suite once to map tests to functions; later runs reuse mutants/.
+MUTATION_BASE ?= origin/main
+mutation-changed: ensure-venv ## Mutation test only the src modules changed against origin/main; fails on survivors [MUTATION_BASE=...]
+	@set -f; patterns=$$($(PYTHON_RUN) scripts/mutation_changed.py patterns --base $(MUTATION_BASE)) || exit 2; \
+	if [ -z "$$patterns" ]; then \
+		echo "mutation-changed: SKIP: no mutable src module changed against $(MUTATION_BASE)"; exit 0; fi; \
+	echo "$(GREEN)Mutating changed modules ($(MUTATION_JOBS) workers):$(NC) "$$patterns; \
+	$(MUTATION_ENV) $(UV) run mutmut run --max-children $(MUTATION_JOBS) $$patterns || exit $$?; \
+	$(UV) run mutmut results --all true | $(PYTHON_RUN) scripts/mutation_changed.py summary $$patterns
+
 
 check-data: ensure-venv ## Fail if git tracks data files (patient data must stay out of the repo)
 	$(PYTHON_RUN) scripts/check_no_data_files.py
@@ -448,13 +464,33 @@ golden: ensure-venv ## Synthetic golden kit: regenerate in a temp dir, diff agai
 	@echo "$(GREEN)Running golden statistics and golden question tests (slow ones included)...$(NC)"
 	$(PYTEST) $(GOLDEN_TESTS) -v -n auto $(PYTEST_ARGS)
 
-check-fast: ## Run fast code quality checks (lint, format-check, tracked-data guard, SPDX headers, lock platforms) - no tests
+# Evaluation identifiers must not leak into the repo: added lines are hashed against
+# config/eval_token_hashes.txt (scripts/check_eval_tokens.py). Needs the base ref (git fetch origin main).
+EVAL_TOKEN_BASE ?= origin/main
+check-eval-tokens: ensure-venv ## Fail if lines added since origin/main name a protected evaluation token [EVAL_TOKEN_BASE=...]
+	$(PYTHON_RUN) scripts/check_eval_tokens.py --base $(EVAL_TOKEN_BASE)
+
+# Replays the last 12 commits of main through the real hash list; each must pass. Needs full history,
+# so it runs in the CI quality job (fetch-depth 0); tests-fast skips it on a shallow checkout.
+check-eval-token-replay: ensure-venv ## Replay recent main commits through the eval-token list; none may match
+	EVAL_TOKEN_REPLAY_REQUIRE_HISTORY=1 $(PYTEST) tests/scripts/test_check_eval_tokens.py -k replayRecentMainCommits -v $(PYTEST_ARGS)
+
+PR_SIZE_BASE ?= origin/main
+pr-size: ensure-venv ## Added non-test lines against origin/main: warn above 1500, fail above 3000 [PR_SIZE_BASE=...]
+	@$(PYTHON_RUN) scripts/check_pr_size.py --base $(PR_SIZE_BASE)
+
+# One base for every step: done_check.py passes MUTATION_BASE, PR_SIZE_BASE and EVAL_TOKEN_BASE to each.
+done-check: ensure-venv ## Definition of done: check-fast, test-fast, mutation-changed, pr-size; prints a summary for the PR body [MUTATION_BASE=...]
+	@$(PYTHON_RUN) scripts/done_check.py --make "$(MAKE)" --base $(MUTATION_BASE)
+
+check-fast: ## Run fast code quality checks (lint, format-check, tracked-data guard, SPDX headers, lock platforms, eval tokens) - no tests
 	@echo "$(GREEN)Running fast code quality checks...$(NC)"
 	@$(MAKE) lint || exit 1
 	@$(MAKE) format-check || exit 1
 	@$(MAKE) check-data || exit 1
 	@$(MAKE) check-spdx || exit 1
 	@$(MAKE) check-lock-platforms || exit 1
+	@$(MAKE) check-eval-tokens || exit 1
 	@echo "$(GREEN)✅ All fast checks passed!$(NC)"
 
 run: run-api ## Start the application (FastAPI backend)
