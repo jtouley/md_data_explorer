@@ -30,6 +30,7 @@ import pydantic
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from clinical_analytics.contracts import config
 from clinical_analytics.contracts.errors import ContractStoreError, InvalidDeclarationKeyError
 from clinical_analytics.contracts.store import contracts_root
 from clinical_analytics.storage.dataset_deletion import InvalidDatasetIdError, validate_dataset_id
@@ -136,14 +137,25 @@ class MissingCodeDeclaration(BaseModel):
 
 class DateReadingDeclaration(BaseModel):
     """The answer to a date question on one version: the column's one format, and for two-digit
-    years the century ("1900s": 03/15/45 is 1945)."""
+    years the century ("1900s": 03/15/45 is 1945).
+
+    A ``%y`` format always carries a century: the user's answer, else the stated default
+    (``config.TWO_DIGIT_YEAR_DEFAULT``), so no reader is left to its engine's own reading of a
+    two-digit year. A stored reading saved without one gets the default when it is loaded."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     column: str = Field(min_length=1)
     format: str = Field(min_length=2, max_length=64)
-    century: Literal["1900s", "2000s"] | None = None
+    century: config.TwoDigitCentury | None = None
     dataset_version: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _two_digit_year_has_a_century(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("century") is None and "%y" in str(data.get("format", "")):
+            return {**data, "century": config.TWO_DIGIT_YEAR_DEFAULT}
+        return data
 
 
 class AggregateDeclaration(BaseModel):

@@ -168,6 +168,38 @@ def test_dateReadings_orderAnswered_columnReadAsDates(upload: Callable[..., Any]
     assert str(view.get_column("screen_date")[0]) == "2021-03-04"
 
 
+def test_dateReadings_orderAnsweredOnTwoDigitYears_layerAndSqlReadOneCentury(
+    upload: Callable[..., Any], test_client: TestClient
+) -> None:
+    # Arrange: hearing-screen dates that read either way, one with year 69 (polars alone reads
+    # 2069, DuckDB alone 1969); only the order is asked, never the century
+    from clinical_analytics.api import dependencies
+    from clinical_analytics.contracts import config
+
+    frame = pl.DataFrame(
+        {
+            "child_ref": [f"B{i:03d}" for i in range(200)],
+            "screen_date": ["03/04/69", "05/06/21", "07/08/21", "09/10/21"] * 50,
+        }
+    )
+    body = upload(frame, "screen69").json()
+
+    # Act
+    answer = test_client.post(
+        f"/api/datasets/{body['upload_id']}/date-readings", json={"column": "screen_date", "answer": "month_first"}
+    )
+    with dependencies.lease_semantic_layer(body["upload_id"]) as lease:
+        view = lease.layer.get_base_view().to_polars()
+    dependencies.invalidate_semantic_layer_cache(body["upload_id"])
+    semantics = test_client.get(f"/api/datasets/{body['upload_id']}/semantics").json()["semantics"]
+
+    # Assert: the stated default century, as the raw-frame reader reads it too (2069)
+    assert answer.status_code == 200, answer.text
+    assert config.TWO_DIGIT_YEAR_PIVOT > 69
+    assert str(view.get_column("screen_date")[0]) == "2069-03-04"
+    assert "two-digit years 00-69 in the 2000s" in semantics["columns"]["screen_date"]["date"]["evidence"]
+
+
 def test_populationEstimates_declaredAfterLoading_semanticsSayEstimates(
     upload: Callable[..., Any], test_client: TestClient, make_population_estimates: Callable[..., pl.DataFrame]
 ) -> None:

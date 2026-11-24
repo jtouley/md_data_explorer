@@ -849,6 +849,15 @@ SEMANTICS_SCHEMA_VERSION: Final = 1
 DATE_YEAR_MIN: Final = 1900
 DATE_YEAR_MAX: Final = 2100
 
+# The century of a two-digit year (``%y``). Every reader of a declared date applies the same one,
+# whatever its engine does with ``%y`` on its own (polars reads 69 as 2069, DuckDB as 1969):
+# "1900s" or "2000s" when the user answered the century question, else TWO_DIGIT_YEAR_DEFAULT,
+# which splits at TWO_DIGIT_YEAR_PIVOT: 00-69 are 2000-2069 and 70-99 are 1970-1999, the reading a
+# column typed at upload already gets (polars), so a declared column reads as an undeclared one.
+TwoDigitCentury: TypeAlias = Literal["1900s", "2000s", "pivot"]
+TWO_DIGIT_YEAR_DEFAULT: Final[TwoDigitCentury] = "pivot"
+TWO_DIGIT_YEAR_PIVOT: Final = 70
+
 # Values that a file uses for "not recorded" when nothing documents them. One of these counts as
 # a missing-value code only when it repeats (MISSING_CODE_MIN_ROWS) and sits far outside the
 # column's other values (MISSING_CODE_GAP times the largest other value, or below 0 in a column

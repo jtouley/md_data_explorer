@@ -8,12 +8,22 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import date
+from pathlib import Path
+from typing import Any
 
 import polars as pl
 import pytest
 
-from clinical_analytics.contracts.declarations import Declarations, QuestionAnswer
-from clinical_analytics.contracts.readings import DeclaredReads, declared_reads, missing_expr, total_rows, unit_factors
+from clinical_analytics.contracts import config
+from clinical_analytics.contracts.declarations import DateReadingDeclaration, Declarations, QuestionAnswer
+from clinical_analytics.contracts.readings import (
+    DeclaredReads,
+    century_for,
+    declared_reads,
+    missing_expr,
+    total_rows,
+    unit_factors,
+)
 from clinical_analytics.contracts.semantics import (
     AggregateInfo,
     ColumnSemantics,
@@ -158,6 +168,12 @@ def test_everyReader_skippedAndAbsentColumns_otherReadsStillApplied(
                      id="year_00_in_the_1900s"),
         pytest.param(["03/04/00", "25/12/00"], ("%d/%m/%y", "2000s"), [date(2000, 4, 3), date(2000, 12, 25)],
                      id="year_00_in_the_2000s"),
+        pytest.param(["03/04/69", "25/12/70"], ("%d/%m/%y", None), [date(2069, 4, 3), date(1970, 12, 25)],
+                     id="two_digit_years_no_century_stated_default"),
+        pytest.param(["03/04/69", "25/12/70"], ("%d/%m/%y", "pivot"), [date(2069, 4, 3), date(1970, 12, 25)],
+                     id="two_digit_years_stated_default"),
+        pytest.param(["03/04/69", "25/12/70"], ("%d/%m/%y", "1900s"), [date(1969, 4, 3), date(1970, 12, 25)],
+                     id="year_69_in_the_1900s"),
         pytest.param(["03/04/2021", "  "], ("%d/%m/%Y", None), [date(2021, 4, 3), None], id="blank_is_missing"),
         pytest.param(["03/04/2021", "not known"], ("%d/%m/%Y", None), [date(2021, 4, 3), None],
                      id="unreadable_is_missing"),
@@ -179,6 +195,92 @@ def test_everyReader_confirmedDateReading_appliedByAllThree(
     # Assert
     for name in READERS:
         assert read[name].get_column("fitted_on").cast(pl.Date).to_list() == expected, name
+
+
+def _in_century(two_digits: int, century: str | None) -> int:
+    if century == "1900s":
+        return 1900 + two_digits
+    if century == "2000s":
+        return 2000 + two_digits
+    return (2000 if two_digits < config.TWO_DIGIT_YEAR_PIVOT else 1900) + two_digits
+
+
+@pytest.mark.parametrize("century", [None, "pivot", "1900s", "2000s"])
+@pytest.mark.parametrize("choice_format", ["%d/%m/%y", "%y-%m-%d"])
+def test_everyReader_everyTwoDigitYear_allThreeReadTheSameCentury(
+    century: str | None, choice_format: str, read_by_every_reader: Callable[..., dict[str, pl.DataFrame]]
+) -> None:
+    # Arrange: one cast-check date for each two-digit year (polars reads 69 as 2069, DuckDB as 1969)
+    years = list(range(100))
+    written = [date(2001, 1 + y % 12, 1 + y % 28).replace(year=2000 + y).strftime(choice_format) for y in years]
+    frame = pl.DataFrame({"hand_ref": [f"H{y:02d}" for y in years], "checked_on": written})
+    reads = DeclaredReads(dates={"checked_on": (choice_format, century)})
+
+    # Act
+    read = read_by_every_reader(frame, reads, "hand_ref")
+
+    # Assert: no reader is left to its engine's own century
+    expected = [date(_in_century(y, century), 1 + y % 12, 1 + y % 28) for y in years]
+    for name in READERS:
+        assert read[name].get_column("checked_on").cast(pl.Date).to_list() == expected, name
+
+
+@pytest.mark.parametrize(
+    ("choice_format", "century", "expected"),
+    [
+        pytest.param("%d/%m/%y", None, config.TWO_DIGIT_YEAR_DEFAULT, id="two_digit_year_gets_the_default"),
+        pytest.param("%d/%m/%y", "1900s", "1900s", id="answered_century_kept"),
+        pytest.param("%d/%m/%Y", None, None, id="four_digit_year_needs_none"),
+    ],
+)
+def test_dateReadingDeclaration_twoDigitYear_alwaysCarriesACentury(
+    choice_format: str, century: str | None, expected: str | None
+) -> None:
+    # Act
+    declared = DateReadingDeclaration(column="cast_on", format=choice_format, century=century)
+
+    # Assert: the declaration and the readers' own fallback agree
+    assert declared.century == expected
+    assert century_for(choice_format, century) == expected
+
+
+def test_dateReadingDeclaration_storedWithoutCentury_loadsWithTheDefault() -> None:
+    # Arrange: a reading saved before a two-digit year always carried a century
+    stored = '{"column": "cast_on", "format": "%m/%d/%y", "century": null, "dataset_version": "v1"}'
+
+    # Act
+    loaded = Declarations.model_validate_json(f'{{"date_readings": [{stored}]}}').date_readings_for("v1")
+
+    # Assert
+    assert [d.century for d in loaded] == [config.TWO_DIGIT_YEAR_DEFAULT]
+
+
+def test_readByEveryReader_repeatedCalls_leaveNoFileOrOpenConnection(
+    read_by_every_reader: Callable[..., dict[str, pl.DataFrame]], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Arrange: count the layer's DuckDB connections opened and closed
+    import ibis
+
+    opened, closed = [], []
+    connect = ibis.duckdb.connect
+
+    def _counted() -> Any:
+        backend = connect()
+        opened.append(backend)
+        disconnect = backend.disconnect
+        monkeypatch.setattr(backend, "disconnect", lambda: (closed.append(backend), disconnect())[1])
+        return backend
+
+    monkeypatch.setattr(ibis.duckdb, "connect", _counted)
+    frame = pl.DataFrame({"hand_ref": ["H1", "H2"], "dominance": ["left", "NR"]})
+
+    # Act
+    for _ in range(3):
+        read_by_every_reader(frame, DeclaredReads(missing={"dominance": ("NR",)}), "hand_ref")
+
+    # Assert
+    assert len(opened) == 3 and closed == opened
+    assert list(tmp_path.glob("stored_*.parquet")) == []
 
 
 def test_everyReader_mixedTimeUnits_readInTheOneUnit(

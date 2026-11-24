@@ -101,13 +101,33 @@ def missing_expr(column: str, dtype: pl.DataType, values: Iterable[object]) -> p
     return pl.when(matched).then(None).otherwise(col).alias(column)
 
 
+def century_for(choice_format: str, century: str | None) -> str | None:
+    """The century every reader sets a date read with ``choice_format`` to: the confirmed one, or
+    for a two-digit year (``%y``) with none confirmed the stated default, never the engine's own."""
+    if century is None and "%y" in choice_format:
+        return config.TWO_DIGIT_YEAR_DEFAULT
+    return century
+
+
 def date_expr(column: str, choice_format: str, century: str | None) -> pl.Expr:
-    """A text column read with the confirmed format; a two-digit year set to the confirmed century."""
+    """A text column read with the confirmed format; a two-digit year set to its century
+    (``century_for``). Each branch tests the year as read, so the engine's own pivot never shows."""
     parsed = pl.col(column).cast(pl.String).str.strip_chars().str.strptime(pl.Date, choice_format, strict=False)
+    year = parsed.dt.year()
+    pivot = config.TWO_DIGIT_YEAR_PIVOT
+    century = century_for(choice_format, century)
     if century == "1900s":
-        parsed = pl.when(parsed.dt.year() >= 2000).then(parsed.dt.offset_by("-100y")).otherwise(parsed)
+        parsed = pl.when(year >= 2000).then(parsed.dt.offset_by("-100y")).otherwise(parsed)
     elif century == "2000s":
-        parsed = pl.when(parsed.dt.year() < 2000).then(parsed.dt.offset_by("100y")).otherwise(parsed)
+        parsed = pl.when(year < 2000).then(parsed.dt.offset_by("100y")).otherwise(parsed)
+    elif century == "pivot":
+        parsed = (
+            pl.when((year >= 2000) & (year % 100 >= pivot))
+            .then(parsed.dt.offset_by("-100y"))
+            .when((year < 2000) & (year % 100 < pivot))
+            .then(parsed.dt.offset_by("100y"))
+            .otherwise(parsed)
+        )
     return parsed.alias(column)
 
 
@@ -155,10 +175,19 @@ def ibis_reads(raw: Any, reads_config: dict[str, Any]) -> dict[str, Any]:
         # A value the format does not read (a blank, a stray word) is missing, as in the other two
         # readers; ibis's as_date would fail the whole view on it.
         parsed = _try_strptime(raw[column].cast("string").strip(), choice_format).cast("date")
+        year = parsed.year()
+        pivot = config.TWO_DIGIT_YEAR_PIVOT
+        century = century_for(choice_format, century)
         if century == "1900s":
-            parsed = (parsed.year() >= 2000).ifelse(parsed - ibis.interval(years=100), parsed)
+            parsed = (year >= 2000).ifelse(parsed - ibis.interval(years=100), parsed)
         elif century == "2000s":
-            parsed = (parsed.year() < 2000).ifelse(parsed + ibis.interval(years=100), parsed)
+            parsed = (year < 2000).ifelse(parsed + ibis.interval(years=100), parsed)
+        elif century == "pivot":
+            parsed = ibis.cases(
+                ((year >= 2000) & (year % 100 >= pivot), parsed - ibis.interval(years=100)),
+                ((year < 2000) & (year % 100 < pivot), parsed + ibis.interval(years=100)),
+                else_=parsed,
+            )
         mutations[column] = parsed
     for column, (unit_column, target) in (reads_config.get("units") or {}).items():
         if column not in raw.columns or unit_column not in raw.columns:

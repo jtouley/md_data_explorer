@@ -536,7 +536,14 @@ def _with_date_readings(semantics: DatasetSemantics, readings: Any) -> DatasetSe
         if column is None:
             continue
         settled.add(reading.column)
-        century = f", years in the {reading.century}" if reading.century else ""
+        century = (
+            f", two-digit years 00-{config.TWO_DIGIT_YEAR_PIVOT - 1} in the 2000s"
+            f" and {config.TWO_DIGIT_YEAR_PIVOT}-99 in the 1900s"
+            if reading.century == "pivot"
+            else f", years in the {reading.century}"
+            if reading.century
+            else ""
+        )
         fmt = DateFormat(
             format=reading.format, written=reading.format, example_in="", example_out="", source="declared",
             evidence=f"you said how to read it{century}",
