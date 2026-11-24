@@ -11,6 +11,7 @@ Endpoints:
 """
 
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -20,6 +21,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, field_validator
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from structlog.typing import FilteringBoundLogger
 
 from clinical_analytics.api.db.database import get_db
 from clinical_analytics.api.dependencies import (
@@ -314,6 +316,7 @@ def preview_dataset(
 
 
 NO_CHECK_RECORDED = "no data check was recorded for this upload"
+STORED_DATA_UNREADABLE = "This cohort's stored data can't be read. Upload it again."
 REPORT_UNAVAILABLE = "this upload's report could not be read"
 
 
@@ -342,7 +345,7 @@ def _upload_quality(storage: UserDatasetStorage, upload_id: str) -> QualityRepor
 
 
 def _backfill_quality(
-    storage: UserDatasetStorage, dataset_id: str, version: str, metadata: dict[str, Any]
+    storage: UserDatasetStorage, dataset_id: str, version: str, metadata: dict[str, Any], log: FilteringBoundLogger
 ) -> QualityReport:
     """Build the contract and report. The caller holds the dataset's files lock (see
     ``get_dataset_quality``).
@@ -350,7 +353,7 @@ def _backfill_quality(
     Raises:
         HTTPException: 404 if the dataset's data is gone.
     """
-    logger.info("dataset_quality_backfill", dataset_id=dataset_id)
+    log.info("dataset_quality_backfill")
     data = storage.get_upload_data(dataset_id, lazy=True)
     if data is None:
         raise HTTPException(status_code=404, detail=f"Dataset data not found: {dataset_id}")
@@ -375,12 +378,18 @@ def get_dataset_quality(dataset_id: str) -> QualityReport:
     Every read of the dataset's files (metadata, report, the backfill's writes, declarations, the
     contract's semantics and the stored frame behind them) happens under the dataset's files
     lock, which a delete holds around its purge, with the deleting mark and the metadata checked
-    again under it. So a concurrent delete either waits for the whole response or runs first
-    (409 or 404); it can neither leave contract or report files behind nor purge them between
-    the backfill and the semantics read (the 500 in CI run 45316573902).
+    again under it. So a concurrent delete either waits for those reads or runs first (409 or
+    404); it can neither leave contract or report files behind nor purge them between the
+    backfill and the semantics read (the 500 in CI run 45316573902). The inference pass a version
+    stored before ADR017 needs (seconds on a large file) runs on the frame read under the lock,
+    after releasing it, so a delete is not held up by it.
+
+    The report, its facts and the semantics are all for the active version (``active_version_id``)
+    of the one metadata read under the lock.
 
     Raises:
-        HTTPException: 400 bad id, 404 unknown dataset, 409 while deleting, 500 if the check fails.
+        HTTPException: 400 bad id, 404 unknown dataset, 409 while deleting, 500 if the check fails
+            or the stored data can't be read.
     """
     try:
         validate_dataset_id(dataset_id)
@@ -394,13 +403,13 @@ def get_dataset_quality(dataset_id: str) -> QualityReport:
     with dataset_files_lock(dataset_id):
         reject_if_deleting(dataset_id)  # a delete may have marked the id while this waited
         metadata = storage.get_upload_metadata(dataset_id)
-        version = (metadata or {}).get("dataset_version")
+        version = active_version_id(metadata)
         if not metadata or not version:
             raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
         try:
             report = latest_report(data_dir, dataset_id, version)
             if report is None:
-                report = _backfill_quality(storage, dataset_id, version, metadata)
+                report = _backfill_quality(storage, dataset_id, version, metadata, log)
         except ContractDamagedError as e:
             log.error("dataset_quality_contract_damaged", **error_fields(e))
             raise HTTPException(status_code=500, detail="The saved data contract for this cohort is damaged.") from e
@@ -410,10 +419,12 @@ def get_dataset_quality(dataset_id: str) -> QualityReport:
                 status_code=500, detail=f"Could not check this dataset's quality ({type(e).__name__})."
             ) from e
         declarations = _upload_declarations(storage, dataset_id)
-        semantics = _contract_semantics(storage, dataset_id)
+        infer_semantics = _read_semantics(storage, dataset_id, metadata)
+    semantics = None if infer_semantics is None else infer_semantics()
     report = _without_answered_questions(report, declarations, version)
     log.info("dataset_quality_completed", failed=report.failed, warnings=report.warnings)
-    return report.model_copy(update={"facts": _facts(semantics, declarations)})
+    with_facts: QualityReport = report.model_copy(update={"facts": _facts(semantics, declarations)})
+    return with_facts
 
 
 def _drop_cached_answers(dataset_id: str) -> None:
@@ -453,7 +464,10 @@ def _without_answered_questions(report: QualityReport, declarations: Declaration
     dropped = len(report.checks) - len(kept)
     if not dropped:
         return report
-    return report.model_copy(update={"checks": kept, "warnings": max(0, report.warnings - dropped)})
+    unanswered: QualityReport = report.model_copy(
+        update={"checks": kept, "warnings": max(0, report.warnings - dropped)}
+    )
+    return unanswered
 
 
 class DatasetSemanticsResponse(BaseModel):
@@ -478,7 +492,7 @@ def get_dataset_semantics(dataset_id: str) -> DatasetSemanticsResponse:
 
     Raises:
         HTTPException: 400 bad id, 404 unknown dataset or no semantics yet, 409 while deleting,
-            500 when the contract or declarations can't be read.
+            500 when the contract, the declarations or the stored data can't be read.
     """
     from clinical_analytics.contracts.semantics import describe
 
@@ -488,10 +502,16 @@ def get_dataset_semantics(dataset_id: str) -> DatasetSemanticsResponse:
         raise HTTPException(status_code=400, detail=str(e)) from e
     reject_if_deleting(dataset_id)
     storage = UserDatasetStorage()
-    version = active_version_id(storage.get_upload_metadata(dataset_id))
-    semantics = _contract_semantics(storage, dataset_id, declared=True)
-    if version is None or semantics is None:
+    # The reads under the files lock, as in ``get_dataset_quality``: a delete cannot purge the
+    # contract or the stored data between the metadata read and theirs.
+    with dataset_files_lock(dataset_id):
+        reject_if_deleting(dataset_id)
+        metadata = storage.get_upload_metadata(dataset_id)
+        version = active_version_id(metadata)
+        infer = _read_semantics(storage, dataset_id, metadata, declared=True)
+    if version is None or infer is None:
         raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
+    semantics = infer()
     return DatasetSemanticsResponse(
         dataset_id=dataset_id,
         dataset_version=version,
@@ -680,18 +700,32 @@ def _contract_semantics(
     unless ``declared``; None only when the dataset has no active version.
 
     Raises:
-        HTTPException: 500 when the contract or declarations can't be read (never a silent fallback:
-            the unit note and "Is each row one patient?" depend on it).
+        HTTPException: as ``_read_semantics``.
+    """
+    infer = _read_semantics(storage, upload_id, storage.get_upload_metadata(upload_id), declared=declared)
+    return None if infer is None else infer()
+
+
+def _read_semantics(
+    storage: UserDatasetStorage, upload_id: str, metadata: dict[str, Any] | None, *, declared: bool = False
+) -> Callable[[], DatasetSemantics] | None:
+    """``_contract_semantics`` for ``metadata``'s active version in two steps
+    (``contracts.service.read_version_semantics``): this call reads the files, the step it
+    returns reads none (the inference pass for a version stored before ADR017, slow on a large
+    frame), so a route holding the files lock runs it after releasing the lock.
+
+    Raises:
+        HTTPException: 500 when the contract, the declarations or the stored data can't be read
+            (never a silent fallback: the unit note and "Is each row one patient?" depend on it).
     """
     from clinical_analytics.contracts.declarations import MemoryDeclarationStore
-    from clinical_analytics.contracts.service import version_semantics
+    from clinical_analytics.contracts.service import read_version_semantics
 
-    metadata = storage.get_upload_metadata(upload_id)
     version = active_version_id(metadata)
     if metadata is None or version is None:
         return None
     try:
-        return version_semantics(
+        return read_version_semantics(
             storage.upload_dir.parent,
             upload_id,
             version,
@@ -702,6 +736,9 @@ def _contract_semantics(
     except ContractError as e:
         logger.error("dataset_semantics_unreadable", upload_id=upload_id, **error_fields(e))
         raise HTTPException(status_code=500, detail="This cohort's data contract can't be read.") from e
+    except (OSError, pl.exceptions.PolarsError) as e:
+        logger.error("dataset_stored_data_unreadable", upload_id=upload_id, **error_fields(e))
+        raise HTTPException(status_code=500, detail=STORED_DATA_UNREADABLE) from e
 
 
 def _facts(semantics: DatasetSemantics | None, declarations: Declarations) -> list[str]:
@@ -1337,7 +1374,7 @@ async def upload_dataset(
     invalidate_semantic_layer_cache(upload_id)
     estimates_note = await asyncio.to_thread(_declare_population_estimates, storage, upload_id) if declared else None
     quality = await asyncio.to_thread(_upload_quality, storage, upload_id)
-    response = _upload_response(storage, upload_id, display_name, message, quality).model_copy(
+    response: DatasetUploadResponse = _upload_response(storage, upload_id, display_name, message, quality).model_copy(
         update={"population_estimates": declared, "population_estimates_note": estimates_note}
     )
     log.info(
