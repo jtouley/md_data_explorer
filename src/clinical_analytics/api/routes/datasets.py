@@ -341,34 +341,27 @@ def _upload_quality(storage: UserDatasetStorage, upload_id: str) -> QualityRepor
     return report
 
 
-def _backfill_quality(storage: UserDatasetStorage, dataset_id: str, version: str) -> QualityReport:
-    """Build the contract and report under the dataset's files lock (see ``get_dataset_quality``).
+def _backfill_quality(
+    storage: UserDatasetStorage, dataset_id: str, version: str, metadata: dict[str, Any]
+) -> QualityReport:
+    """Build the contract and report. The caller holds the dataset's files lock (see
+    ``get_dataset_quality``).
 
     Raises:
-        HTTPException: 409 if a delete started meanwhile, 404 if the dataset is gone.
+        HTTPException: 404 if the dataset's data is gone.
     """
-    log = logger.bind(dataset_id=dataset_id)
-    data_dir = storage.upload_dir.parent
-    with dataset_files_lock(dataset_id):
-        reject_if_deleting(dataset_id)
-        metadata = storage.get_upload_metadata(dataset_id)
-        if not metadata or metadata.get("dataset_version") != version:
-            raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
-        report = latest_report(data_dir, dataset_id, version)  # another request may have backfilled
-        if report is not None:
-            return report
-        log.info("dataset_quality_backfill")
-        data = storage.get_upload_data(dataset_id, lazy=True)
-        if data is None:
-            raise HTTPException(status_code=404, detail=f"Dataset data not found: {dataset_id}")
-        return check_upload(
-            data_dir,
-            data.collect(),
-            upload_id=dataset_id,
-            dataset_version=version,
-            metadata=metadata,
-            overlay_dir=storage.metadata_dir,
-        )
+    logger.info("dataset_quality_backfill", dataset_id=dataset_id)
+    data = storage.get_upload_data(dataset_id, lazy=True)
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"Dataset data not found: {dataset_id}")
+    return check_upload(
+        storage.upload_dir.parent,
+        data.collect(),
+        upload_id=dataset_id,
+        dataset_version=version,
+        metadata=metadata,
+        overlay_dir=storage.metadata_dir,
+    )
 
 
 @router.get("/datasets/{dataset_id}/quality", response_model=QualityReport)
@@ -377,9 +370,14 @@ def get_dataset_quality(dataset_id: str) -> QualityReport:
 
     Uploads made before contracts existed (or whose upload check failed) have none: the contract
     and report are generated on first request (the contract is written once per version, so
-    repeating the request is safe). The backfill holds the dataset's files lock, which a delete
-    also takes around its purge, and re-checks the deleting mark and metadata under it, so a
-    concurrent delete cannot leave contract or report files behind.
+    repeating the request is safe).
+
+    Every read of the dataset's files (metadata, report, the backfill's writes, declarations, the
+    contract's semantics and the stored frame behind them) happens under the dataset's files
+    lock, which a delete holds around its purge, with the deleting mark and the metadata checked
+    again under it. So a concurrent delete either waits for the whole response or runs first
+    (409 or 404); it can neither leave contract or report files behind nor purge them between
+    the backfill and the semantics read (the 500 in CI run 45316573902).
 
     Raises:
         HTTPException: 400 bad id, 404 unknown dataset, 409 while deleting, 500 if the check fails.
@@ -392,27 +390,30 @@ def get_dataset_quality(dataset_id: str) -> QualityReport:
     reject_if_deleting(dataset_id)
 
     storage = UserDatasetStorage()
-    metadata = storage.get_upload_metadata(dataset_id)
-    version = (metadata or {}).get("dataset_version")
-    if not metadata or not version:
-        raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
     data_dir = storage.upload_dir.parent
-    try:
-        report = latest_report(data_dir, dataset_id, version)
-        if report is None:
-            report = _backfill_quality(storage, dataset_id, version)
-    except ContractDamagedError as e:
-        log.error("dataset_quality_contract_damaged", **error_fields(e))
-        raise HTTPException(status_code=500, detail="The saved data contract for this cohort is damaged.") from e
-    except (ContractError, OSError, pl.exceptions.PolarsError) as e:
-        log.error("dataset_quality_failed", **error_fields(e))
-        raise HTTPException(
-            status_code=500, detail=f"Could not check this dataset's quality ({type(e).__name__})."
-        ) from e
-    declarations = _upload_declarations(storage, dataset_id)
+    with dataset_files_lock(dataset_id):
+        reject_if_deleting(dataset_id)  # a delete may have marked the id while this waited
+        metadata = storage.get_upload_metadata(dataset_id)
+        version = (metadata or {}).get("dataset_version")
+        if not metadata or not version:
+            raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
+        try:
+            report = latest_report(data_dir, dataset_id, version)
+            if report is None:
+                report = _backfill_quality(storage, dataset_id, version, metadata)
+        except ContractDamagedError as e:
+            log.error("dataset_quality_contract_damaged", **error_fields(e))
+            raise HTTPException(status_code=500, detail="The saved data contract for this cohort is damaged.") from e
+        except (ContractError, OSError, pl.exceptions.PolarsError) as e:
+            log.error("dataset_quality_failed", **error_fields(e))
+            raise HTTPException(
+                status_code=500, detail=f"Could not check this dataset's quality ({type(e).__name__})."
+            ) from e
+        declarations = _upload_declarations(storage, dataset_id)
+        semantics = _contract_semantics(storage, dataset_id)
     report = _without_answered_questions(report, declarations, version)
     log.info("dataset_quality_completed", failed=report.failed, warnings=report.warnings)
-    return report.model_copy(update={"facts": _facts(_contract_semantics(storage, dataset_id), declarations)})
+    return report.model_copy(update={"facts": _facts(semantics, declarations)})
 
 
 def _drop_cached_answers(dataset_id: str) -> None:

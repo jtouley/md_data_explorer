@@ -179,6 +179,61 @@ def test_getDatasetQuality_deleteDuringBackfill_leavesNoContractOrReport(
     assert not (data_dir / "dq" / upload_id).exists()
 
 
+def test_getDatasetQuality_deletePurgesBetweenBackfillAndSemantics_waitsForTheResponse(
+    test_client: TestClient, isolated_data_home, monkeypatch
+):
+    # Arrange: a legacy upload. Once the backfill is done, and before the request reads its
+    # declarations and the contract's semantics, a delete gets up to 1 s to purge the files; it
+    # then pauses before removing the metadata. That is the interleaving behind CI run 45316573902
+    # (metadata still there, contract and parquet gone: the semantics read raised), forced here
+    # instead of left to the scheduler.
+    body = _upload_cohort(test_client)
+    upload_id = body["upload_id"]
+    data_dir = isolated_data_home / "data"
+    shutil.rmtree(data_dir / "contracts")
+    shutil.rmtree(data_dir / "dq")
+    from clinical_analytics.api.routes import datasets
+
+    real_declarations, real_purge = datasets._upload_declarations, datasets.purge_dataset_files
+    purged, release = threading.Event(), threading.Event()
+    results: dict[str, int] = {}
+
+    def purge_then_pause(*args, before_metadata, **kwargs):
+        def pause_before_metadata() -> None:
+            purged.set()
+            assert release.wait(10)
+            before_metadata()
+
+        return real_purge(*args, before_metadata=pause_before_metadata, **kwargs)
+
+    def delete() -> None:
+        results["delete"] = test_client.delete(f"/api/datasets/{upload_id}").status_code
+
+    deleter = threading.Thread(target=delete)
+
+    def declarations_after_purge_chance(*args, **kwargs):
+        deleter.start()
+        purged.wait(1)  # a correct request still holds the files lock, so the purge cannot start
+        return real_declarations(*args, **kwargs)
+
+    monkeypatch.setattr(datasets, "purge_dataset_files", purge_then_pause)
+    monkeypatch.setattr(datasets, "_upload_declarations", declarations_after_purge_chance)
+
+    # Act
+    try:
+        response = test_client.get(f"/api/datasets/{upload_id}/quality")
+    finally:
+        release.set()
+        deleter.join(30)
+
+    # Assert
+    assert response.status_code == 200, response.text
+    assert response.json()["dataset_version"] == body["quality"]["dataset_version"]
+    assert results["delete"] == 200
+    assert not (data_dir / "contracts" / upload_id).exists()
+    assert not (data_dir / "dq" / upload_id).exists()
+
+
 def test_getDatasetQuality_deletionMarkedWhileWaitingForLock_rejected409(test_client: TestClient, isolated_data_home):
     # Arrange: a legacy upload, with a delete holding the files lock and the deleting mark.
     from clinical_analytics.api.dependencies import _deleting_datasets, dataset_files_lock
