@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -121,3 +122,15 @@ def test_problems_manyDirtyEntries_listsFirstTenAndCount() -> None:
     assert "f9.py" in problem
     assert "f10.py" not in problem
     assert "and 3 more" in problem
+
+
+@pytest.mark.parametrize("variable", ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"])
+def test_testSession_gitHookRepoVariable_notInherited(variable: str) -> None:
+    # Arrange: git exports GIT_DIR to a hook run from a linked worktree (the pre-push gate);
+    # tests/conftest.py drops these before any test runs git.
+
+    # Act
+    inherited = os.environ.get(variable)
+
+    # Assert: a test's `git init` in a temp dir can never reach the real repo
+    assert inherited is None
