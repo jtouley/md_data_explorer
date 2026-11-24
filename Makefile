@@ -61,12 +61,13 @@ install-dev: ## Install all dependencies including dev tools
 	$(UV) sync --extra dev --group dev
 	$(PYTHON_RUN) scripts/fetch_embedding_model.py
 
-install-pre-commit: ensure-venv ## Install pre-commit hooks (run after install-dev)
+install-pre-commit: ensure-venv ## Install the pre-commit and pre-push hooks (run after install-dev)
 	@echo "$(GREEN)Installing pre-commit hooks...$(NC)"
-	$(PYTHON_RUN) -m pip install pre-commit
+	@# pre-commit is a dev dependency (a uv venv has no pip). The config's default_install_hook_types
+	@# installs both the pre-commit and the pre-push hook.
 	$(PYTHON_RUN) -m pre_commit install
-	@echo "$(GREEN)✓ Pre-commit hooks installed$(NC)"
-	@echo "$(YELLOW)Note: Hooks will run automatically on git commit$(NC)"
+	@echo "$(GREEN)✓ Pre-commit and pre-push hooks installed$(NC)"
+	@echo "$(YELLOW)Note: commit hooks run on git commit; git push runs make check-fast and make test-fast$(NC)"
 	@echo "$(YELLOW)Run 'pre-commit run --all-files' to check all files now$(NC)"
 
 test: ensure-venv ## Run all tests in parallel (default)
@@ -407,17 +408,22 @@ mutation-module: ensure-venv ## Mutation test one module: make mutation-module M
 mutation-results: ensure-venv ## Summarise surviving mutants from the last mutation run
 	$(UV) run mutmut results
 
-# Mutants of the src modules this branch added or changed against MUTATION_BASE, then a summary
-# that fails on any survivor (scripts/mutation_changed.py). The first run in a checkout also runs
-# the fast suite once to map tests to functions; later runs reuse mutants/.
+# Mutants of the src functions this branch added or changed against MUTATION_BASE (from the diff
+# hunks), then a summary that fails on any survivor (scripts/mutation_changed.py). A whole-module
+# run takes days; MUTATION_SCOPE=modules restores it. The first run in a checkout also runs the fast
+# suite once to map tests to functions; later runs reuse mutants/. mutmut exits non-zero when no
+# mutant matches any pattern, so its exit code goes to the summary, which judges it.
 MUTATION_BASE ?= origin/main
-mutation-changed: ensure-venv ## Mutation test only the src modules changed against origin/main; fails on survivors [MUTATION_BASE=...]
-	@set -f; patterns=$$($(PYTHON_RUN) scripts/mutation_changed.py patterns --base $(MUTATION_BASE)) || exit 2; \
+MUTATION_SCOPE ?= functions
+mutation-changed: ensure-venv ## Mutation test only the src functions changed against origin/main; fails on survivors [MUTATION_BASE=... MUTATION_SCOPE=functions|modules]
+	@set -f; case "$(MUTATION_SCOPE)" in functions) scope= ;; modules) scope=--whole-modules ;; \
+		*) echo "$(RED)MUTATION_SCOPE must be functions or modules$(NC)"; exit 2 ;; esac; \
+	patterns=$$($(PYTHON_RUN) scripts/mutation_changed.py patterns --base $(MUTATION_BASE) $$scope) || exit 2; \
 	if [ -z "$$patterns" ]; then \
-		echo "mutation-changed: SKIP: no mutable src module changed against $(MUTATION_BASE)"; exit 0; fi; \
-	echo "$(GREEN)Mutating changed modules ($(MUTATION_JOBS) workers):$(NC) "$$patterns; \
-	$(MUTATION_ENV) $(UV) run mutmut run --max-children $(MUTATION_JOBS) $$patterns || exit $$?; \
-	$(UV) run mutmut results --all true | $(PYTHON_RUN) scripts/mutation_changed.py summary $$patterns
+		echo "mutation-changed: SKIP: no mutable src function changed against $(MUTATION_BASE)"; exit 0; fi; \
+	echo "$(GREEN)Mutating changed $(MUTATION_SCOPE) ($(MUTATION_JOBS) workers):$(NC) "$$patterns; \
+	$(MUTATION_ENV) $(UV) run mutmut run --max-children $(MUTATION_JOBS) $$patterns; rc=$$?; \
+	$(UV) run mutmut results --all true | $(PYTHON_RUN) scripts/mutation_changed.py summary --run-exit-code $$rc $$patterns
 
 
 check-data: ensure-venv ## Fail if git tracks data files (patient data must stay out of the repo)

@@ -92,7 +92,9 @@ When coverage drops:
 
 ### Pre-Push Hook
 
-Coverage is checked on `git push`. If coverage is below 67%, the push will be blocked.
+`make install-pre-commit` installs a pre-push hook (`.pre-commit-config.yaml`, id `pre-push-gate`)
+that runs `make check-fast` and then `make test-fast` and blocks the push when either fails. The
+coverage hook is not part of it (it is `stages: [manual]`); run `make test-cov-check` yourself.
 
 > **Reference**: [.cursor/rules/108-coverage-enforcement.mdc](../.cursor/rules/108-coverage-enforcement.mdc)
 

@@ -63,7 +63,9 @@ In the window, click **Use the sample cohort** and ask `compare outcome by diabe
 
 ## Before you push
 
-Pre-commit hooks are optional (`make install-pre-commit`). Whether or not you use them, run:
+Pre-commit hooks are optional (`make install-pre-commit`). They include a pre-push hook that runs
+`make check-fast` and `make test-fast` and blocks the push when either fails. Whether or not you
+use them, run:
 
 ```bash
 make format && make lint-fix     # ruff format + autofix

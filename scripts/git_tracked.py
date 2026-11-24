@@ -52,3 +52,10 @@ def diff_against_base(root: Path, base: str, args: list[str], paths: tuple[str, 
     cmd = ["-c", "core.quotePath=false", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--merge-base", base]
     out = _git([*cmd, *args, "--", *paths], root)
     return out.decode("utf-8", errors="replace")
+
+
+def file_at_merge_base(root: Path, base: str, path: str) -> str:
+    """Text of repo-relative ``path`` at the merge base of ``base`` and HEAD (the fork point that
+    :func:`diff_against_base` diffs from). Raises :class:`GitQueryError` when it is not there."""
+    fork = _git(["merge-base", base, "HEAD"], root).decode().strip()
+    return _git(["show", f"{fork}:{path}"], root).decode("utf-8", errors="replace")
