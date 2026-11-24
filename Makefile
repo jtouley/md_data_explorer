@@ -409,7 +409,8 @@ mutation-results: ensure-venv ## Summarise surviving mutants from the last mutat
 	$(UV) run mutmut results
 
 # Mutants of the src functions this branch added or changed against MUTATION_BASE (from the diff
-# hunks), then a summary that fails on any survivor (scripts/mutation_changed.py). A whole-module
+# hunks; the same MODULE.<mangled>__mutmut_* patterns mutation-module's FUNCS= builds), then a
+# summary that fails on any survivor (scripts/mutation_changed.py). A whole-module
 # run takes days; MUTATION_SCOPE=modules restores it. The first run in a checkout also runs the fast
 # suite once to map tests to functions; later runs reuse mutants/. mutmut exits non-zero when no
 # mutant matches any pattern, so its exit code goes to the summary, which judges it.
