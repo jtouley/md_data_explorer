@@ -1,0 +1,3025 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Spec-driven clinical analytics with question-driven semantic analysis">
+      
+      
+        <meta name="author" content="Development Team">
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>Clinical Analytics Platform - Implementation Plan - Clinical Analytics Platform</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#clinical-analytics-platform-implementation-plan" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Clinical Analytics Platform" class="md-header__button md-logo" aria-label="Clinical Analytics Platform" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Clinical Analytics Platform
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Clinical Analytics Platform - Implementation Plan
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/yourusername/md_data_explorer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../user-guide/question-driven-analysis/" class="md-tabs__link">
+          
+  
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../architecture/overview/" class="md-tabs__link">
+          
+  
+  
+  Architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../security/THREAT_MODEL/" class="md-tabs__link">
+          
+  
+  
+  Security
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../api-reference/core/" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../development/contributing/" class="md-tabs__link">
+          
+  
+  
+  Development
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../vision/PURPOSE/" class="md-tabs__link">
+          
+  
+  
+  Specifications
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Clinical Analytics Platform" class="md-nav__button md-logo" aria-label="Clinical Analytics Platform" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Clinical Analytics Platform
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/yourusername/md_data_explorer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quick-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/uploading-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Uploading Data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/question-driven-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/statistical-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Statistical Tests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/interpreting-results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interpreting Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/AS_BUILT_ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    As-built (2025-03)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/ARCHITECTURE_BOUNDARIES/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module boundaries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/semantic-layer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Semantic Layer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/dataset-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dataset Registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/nl-query-engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NL Query Engine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Security
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../security/THREAT_MODEL/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Threat model & backlog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../security/LOCAL_DATA_SECURITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Patient data on this computer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/datasets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Datasets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI Components
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/packaging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packaging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Specifications
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Specifications
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../vision/PURPOSE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Purpose and steel thread
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../MASTER_PLAN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Master plan (roadmap)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--active"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../specs/omnibus_electron_streamlit_cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Electron cutover (omnibus)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--active"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../specs/question-driven-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../specs/multi-table-support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Table Support
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#executive-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Executive Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-1-critical-security-data-integrity-week-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: Critical Security &amp; Data Integrity (Week 1)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 1: Critical Security &amp; Data Integrity (Week 1)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#p1-issues-critical-must-fix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P1 Issues (Critical - Must Fix)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="P1 Issues (Critical - Must Fix)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#security-fixes-16-hours" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security Fixes (16 hours)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#data-integrity-fixes-8-hours" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Integrity Fixes (8 hours)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-deliverables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1 Deliverables
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-success-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1 Success Criteria
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-2-high-priority-quality-performance-weeks-2-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: High-Priority Quality &amp; Performance (Weeks 2-4)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 2: High-Priority Quality &amp; Performance (Weeks 2-4)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#type-hints-code-quality-25-hours" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Type Hints &amp; Code Quality (25 hours)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#performance-optimization-11-hours" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance Optimization (11 hours)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#security-compliance-9-hours" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security &amp; Compliance (9 hours)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#testing-infrastructure-ongoing-throughout-phase-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Testing Infrastructure (Ongoing throughout Phase 2)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-deliverables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2 Deliverables
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-success-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2 Success Criteria
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-3-natural-language-query-enhancement-months-2-3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3: Natural Language Query Enhancement (Months 2-3)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 3: Natural Language Query Enhancement (Months 2-3)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nl-query-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NL Query Implementation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-deliverables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3 Deliverables
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-success-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3 Success Criteria
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-4-additional-improvements-months-3-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4: Additional Improvements (Months 3-4)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 4: Additional Improvements (Months 3-4)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#p4-issues-medium-priority" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P4 Issues (Medium Priority)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-deliverables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4 Deliverables
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-sequence-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Sequence &amp; Dependencies
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resource-allocation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resource Allocation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Resource Allocation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#skill-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Skill Requirements
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#time-estimates-by-category" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Time Estimates by Category
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#risk-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risk Management
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Risk Management">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#high-risk-items" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        High-Risk Items
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#medium-risk-items" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Medium-Risk Items
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#risk-mitigation-strategies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risk Mitigation Strategies
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quality-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quality Gates
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Quality Gates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gate-1-security-approval-end-of-week-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gate 1: Security Approval (End of Week 1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gate-2-performance-milestone-end-of-week-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gate 2: Performance Milestone (End of Week 2)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gate-3-testing-milestone-end-of-week-3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gate 3: Testing Milestone (End of Week 3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gate-4-production-ready-end-of-week-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gate 4: Production Ready (End of Week 4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#success-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Success Metrics
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Success Metrics">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#security-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security Metrics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#performance-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance Metrics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#quality-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quality Metrics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compliance-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compliance Metrics
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#monitoring-maintenance-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Monitoring &amp; Maintenance Plan
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Monitoring &amp; Maintenance Plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#post-deployment-monitoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Post-Deployment Monitoring
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#maintenance-schedule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Maintenance Schedule
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#communication-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Communication Plan
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Communication Plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#stakeholders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stakeholders
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#status-reporting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Status Reporting
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#contingency-plans" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Contingency Plans
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Contingency Plans">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#if-phase-1-takes-longer-than-expected" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        If Phase 1 Takes Longer Than Expected
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#if-critical-bug-found-in-production" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        If Critical Bug Found in Production
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#if-performance-targets-not-met" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        If Performance Targets Not Met
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#getting-started" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Getting Started
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Getting Started">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#week-1-kickoff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Week 1 Kickoff
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#quick-wins-do-first" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick Wins (Do First)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#long-term-efforts-start-early-run-in-background" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Long-Term Efforts (Start Early, Run in Background)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#document-maintenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Document Maintenance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-a-todo-file-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Appendix A: Todo File References
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-b-tools-technologies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Appendix B: Tools &amp; Technologies
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="clinical-analytics-platform-implementation-plan">Clinical Analytics Platform - Implementation Plan</h1>
+<p><strong>Version:</strong> 1.0
+<strong>Date:</strong> 2025-12-24
+<strong>Based On:</strong> Comprehensive multi-agent code review
+<strong>Status:</strong> Ready for execution</p>
+<h2 id="executive-summary">Executive Summary</h2>
+<p>This implementation plan addresses <strong>50+ findings</strong> from a comprehensive code review covering security, performance, data integrity, testing, and code quality. The plan is organized into phases based on priority and dependencies, with estimated effort and risk assessment for each phase.</p>
+<p><strong>Strategic Enhancement:</strong> Phase 3 adds natural language query capabilities to QuestionEngine, leveraging the existing semantic layer architecture with RAG patterns. This aligns with the unified vision documented in <a href="../../vision/UNIFIED_VISION/">vision/UNIFIED_VISION.md</a>.</p>
+<p><strong>Alternative Approach:</strong> For a feature-first implementation focusing on question-driven analysis transformation, see <a href="../plans/consolidate-docs-and-implement-question-driven-analysis/">plans/consolidate-docs-and-implement-question-driven-analysis.md</a> - a comprehensive 17-day plan that includes documentation infrastructure, NL query engine, schema inference, and multi-table support.</p>
+<p><strong>Overall Assessment:</strong>
+- <strong>Security:</strong> D grade (Critical vulnerabilities require immediate attention)
+- <strong>Performance:</strong> C+ grade (Will degrade without optimization)
+- <strong>Data Integrity:</strong> B- grade (Silent data corruption risks)
+- <strong>Testing:</strong> D+ grade (43% maturity, critical gaps)
+- <strong>Code Quality:</strong> F grade (Type hints completely missing)
+- <strong>Architecture:</strong> A- grade (Well-designed config-driven system)</p>
+<p><strong>Total Estimated Effort:</strong> 95-120 hours (12-15 working days)</p>
+<h2 id="phase-1-critical-security-data-integrity-week-1">Phase 1: Critical Security &amp; Data Integrity (Week 1)</h2>
+<p><strong>Goal:</strong> Eliminate production blockers, achieve minimum HIPAA compliance, prevent data corruption</p>
+<p><strong>Duration:</strong> 5 days (40 hours)
+<strong>Risk Level:</strong> HIGH - Blocks production deployment</p>
+<h3 id="p1-issues-critical-must-fix">P1 Issues (Critical - Must Fix)</h3>
+<h4 id="security-fixes-16-hours">Security Fixes (16 hours)</h4>
+<ol>
+<li><strong>[TODO-001] SQL Injection Vulnerability</strong> (4 hours)</li>
+<li><strong>Impact:</strong> CVSS 9.8 - Complete database compromise</li>
+<li><strong>Solution:</strong> Replace f-string SQL with DuckDB native API</li>
+<li><strong>Files:</strong> <code>semantic.py:78</code>, <code>sepsis/definition.py:70</code></li>
+<li><strong>Tests:</strong> SQL injection prevention tests</li>
+<li>
+<p><strong>Acceptance:</strong> No SQL string interpolation with user input</p>
+</li>
+<li>
+<p><strong>[TODO-005] Path Traversal Vulnerability</strong> (3 hours)</p>
+</li>
+<li><strong>Impact:</strong> CVSS 8.6 - Arbitrary file system access</li>
+<li><strong>Solution:</strong> PathValidator with allowlist + symlink detection</li>
+<li><strong>Files:</strong> <code>semantic.py:70-78</code>, <code>sepsis/loader.py:15-30</code></li>
+<li><strong>Tests:</strong> Path traversal and symlink attack tests</li>
+<li>
+<p><strong>Acceptance:</strong> All file paths validated before use</p>
+</li>
+<li>
+<p><strong>[TODO-003] No Authentication System</strong> (10 hours)</p>
+</li>
+<li><strong>Impact:</strong> HIPAA violation - Unauthorized PHI access</li>
+<li><strong>Solution:</strong> Streamlit-Authenticator with RBAC</li>
+<li><strong>Files:</strong> <code>app.py</code>, new <code>auth/</code> module</li>
+<li><strong>Dependencies:</strong> <code>streamlit-authenticator&gt;=0.2.3</code></li>
+<li><strong>Tests:</strong> Login, logout, permission checks</li>
+<li><strong>Acceptance:</strong> All users must authenticate before data access</li>
+</ol>
+<h4 id="data-integrity-fixes-8-hours">Data Integrity Fixes (8 hours)</h4>
+<ol>
+<li><strong>[TODO-004] Outcome Mapping Validation Missing</strong> (4 hours)</li>
+<li><strong>Impact:</strong> Silent data corruption, wrong research results</li>
+<li><strong>Solution:</strong> Default to NULL + validation for unmapped values</li>
+<li><strong>Files:</strong> <code>mapper.py:72-96</code></li>
+<li><strong>Tests:</strong> Unmapped value rejection, NULL handling</li>
+<li>
+<p><strong>Acceptance:</strong> Error raised if unmapped non-null values exist</p>
+</li>
+<li>
+<p><strong>[TODO-006] Statistical Analysis Untested</strong> (12 hours)</p>
+</li>
+<li><strong>Impact:</strong> Research integrity risk, invalid conclusions</li>
+<li><strong>Solution:</strong> Comprehensive test suite with known datasets</li>
+<li><strong>Files:</strong> New <code>tests/analysis/test_stats.py</code></li>
+<li><strong>Tests:</strong> Coefficient recovery, missing data, convergence</li>
+<li><strong>Acceptance:</strong> ≥90% test coverage for stats.py</li>
+</ol>
+<h3 id="phase-1-deliverables">Phase 1 Deliverables</h3>
+<ul>
+<li>✅ All critical security vulnerabilities patched</li>
+<li>✅ Authentication system deployed</li>
+<li>✅ Data integrity validation in place</li>
+<li>✅ Statistical analysis tested and validated</li>
+<li>✅ Security audit passed</li>
+<li>✅ Ready for internal testing with real data</li>
+</ul>
+<h3 id="phase-1-success-criteria">Phase 1 Success Criteria</h3>
+<ul>
+<li>[ ] Security scan shows no critical vulnerabilities</li>
+<li>[ ] HIPAA authentication requirements met</li>
+<li>[ ] All P1 tests passing</li>
+<li>[ ] No data corruption in validation runs</li>
+<li>[ ] Internal security team approval</li>
+</ul>
+<hr />
+<h2 id="phase-2-high-priority-quality-performance-weeks-2-4">Phase 2: High-Priority Quality &amp; Performance (Weeks 2-4)</h2>
+<p><strong>Goal:</strong> Achieve production-ready quality, optimize performance, establish testing foundation</p>
+<p><strong>Duration:</strong> 15 days (120 hours)
+<strong>Risk Level:</strong> MEDIUM - Quality and scalability improvements</p>
+<h3 id="type-hints-code-quality-25-hours">Type Hints &amp; Code Quality (25 hours)</h3>
+<ol>
+<li><strong>[TODO-002] Missing Type Hints Entire Codebase</strong> (25 hours over 4 weeks)</li>
+<li><strong>Impact:</strong> F grade code quality, no IDE support</li>
+<li><strong>Solution:</strong> Phased type hint addition module-by-module</li>
+<li><strong>Files:</strong> All Python files (~2,846 lines)</li>
+<li><strong>Week 1:</strong> Core modules (schema, dataset, registry) - 4h</li>
+<li><strong>Week 2:</strong> Data layer (mapper, semantic, loaders) - 6h</li>
+<li><strong>Week 3:</strong> Analysis (stats, survival, profiling) - 4h</li>
+<li><strong>Week 4:</strong> UI and remaining modules - 6h</li>
+<li><strong>Week 4:</strong> Enable MyPy strict mode - 5h</li>
+<li><strong>Acceptance:</strong> MyPy strict mode passes, 100% type coverage</li>
+</ol>
+<h3 id="performance-optimization-11-hours">Performance Optimization (11 hours)</h3>
+<ol>
+<li><strong>[TODO-007] Missing Streamlit Caching</strong> (2 hours)</li>
+<li><strong>Impact:</strong> Slow UI, poor user experience</li>
+<li><strong>Solution:</strong> @st.cache_data decorators on expensive operations</li>
+<li><strong>Files:</strong> <code>app.py</code></li>
+<li><strong>Target:</strong> &lt;1s page loads after initial, &lt;200ms interactions</li>
+<li>
+<p><strong>Acceptance:</strong> Cache hit rate &gt;80%</p>
+</li>
+<li>
+<p><strong>[TODO-008] Polars→Pandas Conversion Overhead</strong> (6 hours)</p>
+</li>
+<li><strong>Impact:</strong> 3-5x performance penalty, 2x memory usage</li>
+<li><strong>Solution:</strong> Polars-first architecture</li>
+<li><strong>Files:</strong> <code>mapper.py</code>, <code>semantic.py</code>, <code>dataset.py</code>, <code>stats.py</code>, <code>app.py</code></li>
+<li><strong>Target:</strong> 4x performance improvement, 40% memory reduction</li>
+<li><strong>Acceptance:</strong> No unnecessary conversions, benchmarks hit targets</li>
+</ol>
+<h3 id="security-compliance-9-hours">Security &amp; Compliance (9 hours)</h3>
+<ol>
+<li><strong>[TODO-009] PHI Access Audit Logging</strong> (5 hours)</li>
+<li><strong>Impact:</strong> HIPAA § 164.312(b) violation</li>
+<li><strong>Solution:</strong> AuditLogger with tamper detection</li>
+<li><strong>Dependencies:</strong> Requires [TODO-003] authentication</li>
+<li><strong>Files:</strong> New <code>audit/logger.py</code></li>
+<li>
+<p><strong>Acceptance:</strong> All PHI access logged, 6-year retention</p>
+</li>
+<li>
+<p><strong>[TODO-010] Information Disclosure via Errors</strong> (3 hours)</p>
+<ul>
+<li><strong>Impact:</strong> Information leakage aids attackers</li>
+<li><strong>Solution:</strong> SafeErrorHandler with user-friendly messages</li>
+<li><strong>Files:</strong> <code>semantic.py</code>, <code>mapper.py</code>, <code>app.py</code>, all datasets</li>
+<li><strong>Acceptance:</strong> No internal details in error messages</li>
+</ul>
+</li>
+</ol>
+<h3 id="testing-infrastructure-ongoing-throughout-phase-2">Testing Infrastructure (Ongoing throughout Phase 2)</h3>
+<ul>
+<li>Unit tests for all core modules</li>
+<li>Integration tests for workflows</li>
+<li>Security tests for vulnerabilities</li>
+<li>Performance benchmarks</li>
+<li>CI/CD pipeline with automated testing</li>
+</ul>
+<h3 id="phase-2-deliverables">Phase 2 Deliverables</h3>
+<ul>
+<li>✅ Type hints on all code, MyPy strict mode enabled</li>
+<li>✅ 4x performance improvement achieved</li>
+<li>✅ HIPAA audit logging operational</li>
+<li>✅ Test coverage ≥80% for core modules</li>
+<li>✅ CI/CD running all tests automatically</li>
+<li>✅ Ready for production deployment</li>
+</ul>
+<h3 id="phase-2-success-criteria">Phase 2 Success Criteria</h3>
+<ul>
+<li>[ ] MyPy strict mode passes</li>
+<li>[ ] Performance benchmarks meet targets</li>
+<li>[ ] Audit log collecting all events</li>
+<li>[ ] Test coverage ≥80%</li>
+<li>[ ] All P2 issues resolved</li>
+<li>[ ] Production deployment approved</li>
+</ul>
+<hr />
+<h2 id="phase-3-natural-language-query-enhancement-months-2-3">Phase 3: Natural Language Query Enhancement (Months 2-3)</h2>
+<p><strong>Goal:</strong> Add semantic natural language query capabilities to QuestionEngine</p>
+<p><strong>Duration:</strong> 20 days (can run parallel with Phase 2)
+<strong>Risk Level:</strong> MEDIUM - New feature, builds on existing architecture</p>
+<h3 id="nl-query-implementation">NL Query Implementation</h3>
+<ol>
+<li><strong>[TODO-021] Free-Form NL Input</strong> (8 hours)</li>
+<li><strong>Impact:</strong> Transform UX from structured forms to natural language</li>
+<li><strong>Solution:</strong> Add text input to QuestionEngine with embedding-based intent classification</li>
+<li><strong>Files:</strong> <code>question_engine.py</code>, <code>Analyze.py</code></li>
+<li><strong>Dependencies:</strong> <code>sentence-transformers</code>, semantic layer config</li>
+<li><strong>Tests:</strong> Intent classification accuracy ≥85%</li>
+<li>
+<p><strong>Acceptance:</strong> Users can type NL queries, intent correctly inferred</p>
+</li>
+<li>
+<p><strong>[TODO-022] Semantic Layer RAG Integration</strong> (6 hours)</p>
+</li>
+<li><strong>Impact:</strong> Use semantic layer metadata for context-aware query understanding</li>
+<li><strong>Solution:</strong> Extract outcomes/variables from semantic layer config for entity matching</li>
+<li><strong>Files:</strong> <code>question_engine.py</code>, <code>semantic.py</code></li>
+<li><strong>Dependencies:</strong> Semantic layer config structure</li>
+<li><strong>Tests:</strong> Variable matching accuracy ≥80%</li>
+<li>
+<p><strong>Acceptance:</strong> Semantic layer metadata used for NL query understanding</p>
+</li>
+<li>
+<p><strong>[TODO-023] Hybrid NL + Structured Questions</strong> (4 hours)</p>
+</li>
+<li><strong>Impact:</strong> Best UX - NL primary, structured fallback</li>
+<li><strong>Solution:</strong> Seamless transition between NL input and structured questions</li>
+<li><strong>Files:</strong> <code>question_engine.py</code>, <code>Analyze.py</code></li>
+<li><strong>Tests:</strong> User can switch between modes, context preserved</li>
+<li>
+<p><strong>Acceptance:</strong> Hybrid approach functional, confidence-based prompting</p>
+</li>
+<li>
+<p><strong>[TODO-024] Entity Extraction from NL Queries</strong> (6 hours)</p>
+</li>
+<li><strong>Impact:</strong> Automatically identify outcomes, predictors, grouping variables</li>
+<li><strong>Solution:</strong> Embedding-based matching against semantic layer entities</li>
+<li><strong>Files:</strong> <code>question_engine.py</code></li>
+<li><strong>Dependencies:</strong> Semantic layer config, embedding model</li>
+<li><strong>Tests:</strong> Entity extraction accuracy ≥75%</li>
+<li><strong>Acceptance:</strong> Relevant variables extracted from NL queries</li>
+</ol>
+<h3 id="phase-3-deliverables">Phase 3 Deliverables</h3>
+<ul>
+<li>✅ Free-form natural language query input</li>
+<li>✅ Semantic layer RAG integration</li>
+<li>✅ Hybrid NL + structured question interface</li>
+<li>✅ Entity extraction from NL queries</li>
+<li>✅ Intent classification accuracy ≥85%</li>
+<li>✅ Documentation updated (see <a href="../../vision/UNIFIED_VISION/">vision/UNIFIED_VISION.md</a>)</li>
+</ul>
+<h3 id="phase-3-success-criteria">Phase 3 Success Criteria</h3>
+<ul>
+<li>[ ] Users can type natural language queries</li>
+<li>[ ] Intent classification accuracy ≥85%</li>
+<li>[ ] Semantic layer metadata used for entity extraction</li>
+<li>[ ] Structured questions remain as fallback</li>
+<li>[ ] Multi-turn conversation support</li>
+</ul>
+<hr />
+<h2 id="phase-4-additional-improvements-months-3-4">Phase 4: Additional Improvements (Months 3-4)</h2>
+<p><strong>Goal:</strong> Architecture optimization, comprehensive testing, documentation</p>
+<p><strong>Duration:</strong> 30 days (as needed)
+<strong>Risk Level:</strong> LOW - Quality of life improvements</p>
+<h3 id="p4-issues-medium-priority">P4 Issues (Medium Priority)</h3>
+<ol>
+<li>Input validation on all filters and user inputs</li>
+<li>YAML configuration security hardening</li>
+<li>Semantic layer comprehensive testing</li>
+<li>Data profiling test suite</li>
+<li>Architecture consolidation (single transformation system)</li>
+<li>Code simplification (~1,012 lines removable)</li>
+<li>Error handling standardization</li>
+<li>Documentation improvements</li>
+<li>Additional performance optimizations</li>
+<li>Advanced security hardening</li>
+</ol>
+<h3 id="phase-4-deliverables">Phase 4 Deliverables</h3>
+<ul>
+<li>✅ Comprehensive test suite (≥90% coverage)</li>
+<li>✅ Simplified codebase</li>
+<li>✅ Complete documentation</li>
+<li>✅ Advanced security features</li>
+<li>✅ Production monitoring and alerting</li>
+</ul>
+<hr />
+<h2 id="implementation-sequence-dependencies">Implementation Sequence &amp; Dependencies</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>CRITICAL PATH:
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>Week 1:
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>├─ Day 1-2: TODO-001 (SQL Injection) + TODO-005 (Path Traversal)
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>├─ Day 3-5: TODO-003 (Authentication)
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>└─ Day 5: TODO-004 (Outcome Mapping)
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>Week 2-4:
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>├─ TODO-002 (Type Hints) - Ongoing background work
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>├─ TODO-007 (Streamlit Caching) - Can parallelize
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>├─ TODO-008 (Polars Performance) - After caching
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>├─ TODO-009 (Audit Logging) - After TODO-003
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>├─ TODO-010 (Error Messages) - Can parallelize
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>└─ TODO-006 (Statistical Tests) - Ongoing
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>Month 2-3 (Phase 3):
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>├─ TODO-021 (Free-Form NL Input) - Can start after Phase 1
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>├─ TODO-022 (Semantic Layer RAG) - After TODO-021
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>├─ TODO-023 (Hybrid NL + Structured) - After TODO-021
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>└─ TODO-024 (Entity Extraction) - After TODO-022
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>DEPENDENCY GRAPH:
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>TODO-003 (Auth) ──┬─→ TODO-009 (Audit Logging)
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>                  └─→ Production Deployment
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>TODO-001 (SQL) ───┬─→ Security Approval
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>TODO-005 (Path) ──┘
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>TODO-002 (Types) ──→ Code Quality Milestone
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>TODO-007 (Cache) ──→ TODO-008 (Polars) ──→ Performance Milestone
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>
+<a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>TODO-021 (NL Input) ──→ TODO-022 (RAG) ──→ TODO-024 (Entities)
+<a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>                  └─→ TODO-023 (Hybrid) ──→ NL Query Milestone
+</code></pre></div>
+<p><strong>Note:</strong> Phase 3 (NL Query Enhancement) can run in parallel with Phase 2 after critical security fixes are complete. See <a href="../../vision/UNIFIED_VISION/">vision/UNIFIED_VISION.md</a> for detailed architecture and implementation approach.</p>
+<h2 id="resource-allocation">Resource Allocation</h2>
+<h3 id="skill-requirements">Skill Requirements</h3>
+<ul>
+<li><strong>Security Engineer:</strong> TODO-001, 003, 005, 009, 010 (32 hours)</li>
+<li><strong>Backend Engineer:</strong> TODO-002, 004, 006, 008 (49 hours)</li>
+<li><strong>Frontend Engineer:</strong> TODO-007, UI improvements (5 hours)</li>
+<li><strong>QA Engineer:</strong> Test infrastructure, coverage (20 hours)</li>
+</ul>
+<h3 id="time-estimates-by-category">Time Estimates by Category</h3>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Hours</th>
+<th>Percentage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Security</td>
+<td>32</td>
+<td>30%</td>
+</tr>
+<tr>
+<td>Type Hints</td>
+<td>25</td>
+<td>23%</td>
+</tr>
+<tr>
+<td>Testing</td>
+<td>20</td>
+<td>19%</td>
+</tr>
+<tr>
+<td>Performance</td>
+<td>11</td>
+<td>10%</td>
+</tr>
+<tr>
+<td>Data Integrity</td>
+<td>12</td>
+<td>11%</td>
+</tr>
+<tr>
+<td>Other</td>
+<td>8</td>
+<td>7%</td>
+</tr>
+<tr>
+<td><strong>Total</strong></td>
+<td><strong>108</strong></td>
+<td><strong>100%</strong></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="risk-management">Risk Management</h2>
+<h3 id="high-risk-items">High-Risk Items</h3>
+<ol>
+<li><strong>Authentication Integration (TODO-003):</strong> Complex, blocks deployment</li>
+<li><strong>Mitigation:</strong> Start early, prototype first, get security review</li>
+<li>
+<p><strong>Rollback Plan:</strong> Deploy behind VPN initially</p>
+</li>
+<li>
+<p><strong>Type Hints Migration (TODO-002):</strong> Large scope, can break code</p>
+</li>
+<li><strong>Mitigation:</strong> Phased approach, extensive testing per module</li>
+<li>
+<p><strong>Rollback Plan:</strong> Module-by-module rollback if issues</p>
+</li>
+<li>
+<p><strong>Statistical Testing (TODO-006):</strong> Requires domain expertise</p>
+</li>
+<li><strong>Mitigation:</strong> Consult with statisticians, use known test datasets</li>
+<li><strong>Rollback Plan:</strong> None - tests don't break existing code</li>
+</ol>
+<h3 id="medium-risk-items">Medium-Risk Items</h3>
+<ol>
+<li><strong>Polars Architecture (TODO-008):</strong> API changes</li>
+<li><strong>Mitigation:</strong> Feature branch, comprehensive testing</li>
+<li><strong>Rollback Plan:</strong> Git revert, keep pandas compatibility layer</li>
+</ol>
+<h3 id="risk-mitigation-strategies">Risk Mitigation Strategies</h3>
+<ul>
+<li><strong>Feature Branches:</strong> All work in branches, PR reviews required</li>
+<li><strong>Automated Testing:</strong> CI/CD catches regressions</li>
+<li><strong>Gradual Rollout:</strong> Deploy to staging first, then production</li>
+<li><strong>Monitoring:</strong> Track errors, performance, security events</li>
+<li><strong>Rollback Plans:</strong> Document rollback for each change</li>
+</ul>
+<hr />
+<h2 id="quality-gates">Quality Gates</h2>
+<h3 id="gate-1-security-approval-end-of-week-1">Gate 1: Security Approval (End of Week 1)</h3>
+<p><strong>Criteria:</strong>
+- [ ] No critical or high security vulnerabilities
+- [ ] Authentication system functional
+- [ ] Security team sign-off
+- [ ] Penetration testing passed</p>
+<p><strong>Deliverables:</strong>
+- Security audit report
+- Penetration test results
+- Authentication documentation
+- Deployment security checklist</p>
+<h3 id="gate-2-performance-milestone-end-of-week-2">Gate 2: Performance Milestone (End of Week 2)</h3>
+<p><strong>Criteria:</strong>
+- [ ] Query performance &lt;5s for 50K records
+- [ ] UI interactions &lt;200ms
+- [ ] Memory usage &lt;500MB for typical workload
+- [ ] Performance benchmarks documented</p>
+<p><strong>Deliverables:</strong>
+- Performance benchmark results
+- Optimization documentation
+- Caching strategy guide</p>
+<h3 id="gate-3-testing-milestone-end-of-week-3">Gate 3: Testing Milestone (End of Week 3)</h3>
+<p><strong>Criteria:</strong>
+- [ ] Test coverage ≥80% for core modules
+- [ ] All critical paths tested
+- [ ] CI/CD pipeline operational
+- [ ] No failing tests</p>
+<p><strong>Deliverables:</strong>
+- Test coverage report
+- Testing strategy document
+- CI/CD configuration</p>
+<h3 id="gate-4-production-ready-end-of-week-4">Gate 4: Production Ready (End of Week 4)</h3>
+<p><strong>Criteria:</strong>
+- [ ] All P1 and P2 issues resolved
+- [ ] HIPAA compliance verified
+- [ ] Performance targets met
+- [ ] Documentation complete
+- [ ] Deployment runbook ready</p>
+<p><strong>Deliverables:</strong>
+- Production deployment plan
+- HIPAA compliance checklist
+- Operations runbook
+- User documentation</p>
+<hr />
+<h2 id="success-metrics">Success Metrics</h2>
+<h3 id="security-metrics">Security Metrics</h3>
+<ul>
+<li><strong>Vulnerability Count:</strong> 0 critical, 0 high</li>
+<li><strong>Authentication:</strong> 100% of users authenticated before PHI access</li>
+<li><strong>Audit Coverage:</strong> 100% of PHI access events logged</li>
+<li><strong>Security Test Pass Rate:</strong> 100%</li>
+</ul>
+<h3 id="performance-metrics">Performance Metrics</h3>
+<ul>
+<li><strong>Query Performance:</strong> &lt;5s for 50K records (currently 8.2s)</li>
+<li><strong>UI Response Time:</strong> &lt;200ms for interactions</li>
+<li><strong>Memory Usage:</strong> &lt;500MB typical workload</li>
+<li><strong>Cache Hit Rate:</strong> &gt;80%</li>
+</ul>
+<h3 id="quality-metrics">Quality Metrics</h3>
+<ul>
+<li><strong>Test Coverage:</strong> ≥80% overall, ≥90% for critical modules</li>
+<li><strong>Type Hint Coverage:</strong> 100%</li>
+<li><strong>MyPy Pass Rate:</strong> 100% in strict mode</li>
+<li><strong>Code Complexity:</strong> Reduce by 1,012 lines</li>
+</ul>
+<h3 id="compliance-metrics">Compliance Metrics</h3>
+<ul>
+<li><strong>HIPAA Compliance:</strong> 100% of required controls implemented</li>
+<li><strong>Audit Retention:</strong> 6-year retention policy enforced</li>
+<li><strong>Data Integrity:</strong> 0 silent data corruption events</li>
+</ul>
+<hr />
+<h2 id="monitoring-maintenance-plan">Monitoring &amp; Maintenance Plan</h2>
+<h3 id="post-deployment-monitoring">Post-Deployment Monitoring</h3>
+<ol>
+<li><strong>Security Monitoring:</strong></li>
+<li>Failed authentication attempts</li>
+<li>Unauthorized access attempts</li>
+<li>Audit log integrity checks</li>
+<li>
+<p>Vulnerability scanning (weekly)</p>
+</li>
+<li>
+<p><strong>Performance Monitoring:</strong></p>
+</li>
+<li>Query performance trends</li>
+<li>Memory usage trends</li>
+<li>Cache hit rates</li>
+<li>
+<p>Error rates</p>
+</li>
+<li>
+<p><strong>Data Integrity Monitoring:</strong></p>
+</li>
+<li>Outcome mapping validation failures</li>
+<li>Data quality checks</li>
+<li>Statistical analysis result validation</li>
+</ol>
+<h3 id="maintenance-schedule">Maintenance Schedule</h3>
+<ul>
+<li><strong>Daily:</strong> Audit log review, error monitoring</li>
+<li><strong>Weekly:</strong> Security scans, performance review</li>
+<li><strong>Monthly:</strong> Dependency updates, comprehensive testing</li>
+<li><strong>Quarterly:</strong> Security audit, penetration testing</li>
+<li><strong>Annually:</strong> HIPAA compliance review</li>
+</ul>
+<hr />
+<h2 id="communication-plan">Communication Plan</h2>
+<h3 id="stakeholders">Stakeholders</h3>
+<ul>
+<li><strong>Development Team:</strong> Daily standups, PR reviews</li>
+<li><strong>Security Team:</strong> Weekly security reviews</li>
+<li><strong>Compliance Officer:</strong> Milestone approvals</li>
+<li><strong>End Users:</strong> Training sessions, documentation</li>
+<li><strong>Management:</strong> Weekly status reports</li>
+</ul>
+<h3 id="status-reporting">Status Reporting</h3>
+<ul>
+<li><strong>Daily:</strong> Slack updates on progress</li>
+<li><strong>Weekly:</strong> Status report email with metrics</li>
+<li><strong>Milestone:</strong> Presentation to stakeholders</li>
+<li><strong>Issues:</strong> Immediate notification for blockers</li>
+</ul>
+<hr />
+<h2 id="contingency-plans">Contingency Plans</h2>
+<h3 id="if-phase-1-takes-longer-than-expected">If Phase 1 Takes Longer Than Expected</h3>
+<ul>
+<li><strong>Action:</strong> Prioritize authentication (TODO-003) and SQL injection (TODO-001)</li>
+<li><strong>Impact:</strong> Delay Phase 2 start, adjust resource allocation</li>
+<li><strong>Communication:</strong> Update timeline, notify stakeholders</li>
+</ul>
+<h3 id="if-critical-bug-found-in-production">If Critical Bug Found in Production</h3>
+<ul>
+<li><strong>Action:</strong> Immediate rollback to previous version</li>
+<li><strong>Process:</strong> Emergency change control, root cause analysis</li>
+<li><strong>Communication:</strong> Incident report, postmortem</li>
+</ul>
+<h3 id="if-performance-targets-not-met">If Performance Targets Not Met</h3>
+<ul>
+<li><strong>Action:</strong> Additional optimization sprint</li>
+<li><strong>Options:</strong> More aggressive caching, database optimization, limit dataset sizes</li>
+<li><strong>Communication:</strong> Revise performance expectations</li>
+</ul>
+<hr />
+<h2 id="getting-started">Getting Started</h2>
+<h3 id="week-1-kickoff">Week 1 Kickoff</h3>
+<ol>
+<li><strong>Day 1 Morning:</strong> Team meeting, review plan, assign tasks</li>
+<li><strong>Day 1 Afternoon:</strong> Create feature branches, set up CI/CD</li>
+<li><strong>Days 1-2:</strong> TODO-001 (SQL Injection) + TODO-005 (Path Traversal)</li>
+<li><strong>Days 3-5:</strong> TODO-003 (Authentication)</li>
+<li><strong>Day 5 PM:</strong> TODO-004 (Outcome Mapping)</li>
+<li><strong>Week 1 End:</strong> Security gate review</li>
+</ol>
+<h3 id="quick-wins-do-first">Quick Wins (Do First)</h3>
+<ul>
+<li>[ ] TODO-010 (Error Messages) - 3 hours, immediate impact</li>
+<li>[ ] TODO-007 (Streamlit Caching) - 2 hours, noticeable improvement</li>
+<li>[ ] TODO-004 (Outcome Mapping) - 4 hours, prevents data corruption</li>
+</ul>
+<h3 id="long-term-efforts-start-early-run-in-background">Long-Term Efforts (Start Early, Run in Background)</h3>
+<ul>
+<li>[ ] TODO-002 (Type Hints) - 25 hours over 4 weeks</li>
+<li>[ ] TODO-006 (Statistical Tests) - 12 hours, can parallelize</li>
+</ul>
+<hr />
+<h2 id="document-maintenance">Document Maintenance</h2>
+<p><strong>Owner:</strong> Engineering Lead
+<strong>Review Frequency:</strong> Weekly during active development, monthly after deployment
+<strong>Next Review:</strong> End of Week 1 (adjust based on progress)</p>
+<p><strong>Change Log:</strong>
+- 2025-12-24: Initial plan created based on code review findings
+- Future updates will be tracked here</p>
+<hr />
+<h2 id="appendix-a-todo-file-references">Appendix A: Todo File References</h2>
+<p>All detailed specifications, acceptance criteria, and technical implementations are documented in individual todo files:</p>
+<p><strong>P1 Critical (Week 1):</strong>
+- <code>todos/001-pending-p1-sql-injection-vulnerability.md</code>
+- <code>todos/002-pending-p1-missing-type-hints-entire-codebase.md</code>
+- <code>todos/003-pending-p1-no-authentication-authorization.md</code>
+- <code>todos/004-pending-p1-outcome-mapping-validation-missing.md</code>
+- <code>todos/005-pending-p1-path-traversal-vulnerability.md</code>
+- <code>todos/006-pending-p1-statistical-analysis-untested.md</code></p>
+<p><strong>P2 High Priority (Weeks 2-4):</strong>
+- <code>todos/007-pending-p2-missing-streamlit-caching.md</code>
+- <code>todos/008-pending-p2-polars-pandas-conversion-overhead.md</code>
+- <code>todos/009-pending-p2-phi-access-audit-logging.md</code>
+- <code>todos/010-pending-p2-information-disclosure-errors.md</code></p>
+<p>Refer to individual todo files for complete implementation details, code examples, and testing requirements.</p>
+<hr />
+<h2 id="appendix-b-tools-technologies">Appendix B: Tools &amp; Technologies</h2>
+<p><strong>Development:</strong>
+- Python 3.11+
+- Polars, pandas, DuckDB, Ibis
+- Streamlit, statsmodels, lifelines
+- pytest, mypy, ruff</p>
+<p><strong>Security:</strong>
+- streamlit-authenticator
+- bcrypt for password hashing
+- Cryptographic hash chains for audit logs</p>
+<p><strong>CI/CD:</strong>
+- GitHub Actions (or equivalent)
+- Automated testing pipeline
+- Security scanning</p>
+<p><strong>Monitoring:</strong>
+- Application logs
+- Audit logs
+- Performance metrics
+- Error tracking</p>
+<hr />
+<p><strong>END OF IMPLEMENTATION PLAN</strong></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

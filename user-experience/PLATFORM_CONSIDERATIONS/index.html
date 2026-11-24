@@ -1,0 +1,2603 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Spec-driven clinical analytics with question-driven semantic analysis">
+      
+      
+        <meta name="author" content="Development Team">
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>Platform & Technology Considerations - Clinical Analytics Platform</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#platform-technology-considerations" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Clinical Analytics Platform" class="md-header__button md-logo" aria-label="Clinical Analytics Platform" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Clinical Analytics Platform
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Platform &amp; Technology Considerations
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/yourusername/md_data_explorer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../user-guide/question-driven-analysis/" class="md-tabs__link">
+          
+  
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../architecture/overview/" class="md-tabs__link">
+          
+  
+  
+  Architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../security/THREAT_MODEL/" class="md-tabs__link">
+          
+  
+  
+  Security
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../api-reference/core/" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../development/contributing/" class="md-tabs__link">
+          
+  
+  
+  Development
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../vision/PURPOSE/" class="md-tabs__link">
+          
+  
+  
+  Specifications
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Clinical Analytics Platform" class="md-nav__button md-logo" aria-label="Clinical Analytics Platform" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Clinical Analytics Platform
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/yourusername/md_data_explorer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quick-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/uploading-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Uploading Data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/question-driven-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/statistical-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Statistical Tests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/interpreting-results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interpreting Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/AS_BUILT_ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    As-built (2025-03)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/ARCHITECTURE_BOUNDARIES/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module boundaries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/semantic-layer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Semantic Layer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/dataset-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dataset Registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/nl-query-engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NL Query Engine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Security
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../security/THREAT_MODEL/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Threat model & backlog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../security/LOCAL_DATA_SECURITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Patient data on this computer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/datasets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Datasets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI Components
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/packaging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packaging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Specifications
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Specifications
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../vision/PURPOSE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Purpose and steel thread
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../implementation/MASTER_PLAN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Master plan (roadmap)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--active"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../specs/omnibus_electron_streamlit_cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Electron cutover (omnibus)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--active"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../specs/question-driven-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../specs/multi-table-support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Table Support
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#current-choice-streamlit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current Choice: Streamlit
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Current Choice: Streamlit">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-streamlit-works-well-now" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why Streamlit Works Well Now
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recommendation-stick-with-streamlit-for-phase-0-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommendation: Stick with Streamlit for Phase 0 + 1
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#streamlit-cloud-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Streamlit Cloud Deployment
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Streamlit Cloud Deployment">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#recommendation-use-streamlit-community-cloud-free-tier" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommendation: Use Streamlit Community Cloud (Free Tier)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#for-phi-data-phase-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        For PHI Data (Phase 1+):
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-to-consider-migration-future-phase" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to Consider Migration (Future Phase)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="When to Consider Migration (Future Phase)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#trigger-points-for-framework-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trigger Points for Framework Change:
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternative-frameworks-if-migration-needed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternative Frameworks (If Migration Needed)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Alternative Frameworks (If Migration Needed)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#option-1-nextjs-fastapi-modern-stack" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option 1: Next.js + FastAPI (Modern Stack)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-2-dash-by-plotly-python-framework" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option 2: Dash by Plotly (Python Framework)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-3-gradio-ml-focused-framework" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option 3: Gradio (ML-Focused Framework)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-4-shiny-r-framework" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option 4: Shiny (R Framework)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hybrid-approach-recommended-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hybrid Approach (Recommended Strategy)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Hybrid Approach (Recommended Strategy)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-0-1-streamlit-core-now" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 0-1: Streamlit Core (Now)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-streamlit-custom-components-6-12-months" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: Streamlit + Custom Components (6-12 months)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-evaluate-migration-12-18-months" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3: Evaluate Migration (12-18 months)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#technical-debt-considerations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Technical Debt Considerations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Technical Debt Considerations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#if-staying-with-streamlit-long-term" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        If Staying with Streamlit Long-Term:
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#current-code-quality" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current Code Quality:
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hosting-options-comparison" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hosting Options Comparison
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Hosting Options Comparison">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#for-developmenttesting-no-phi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        For Development/Testing (No PHI):
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#for-production-with-phi-hipaa-required" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        For Production (With PHI - HIPAA Required):
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cost-benefit-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cost-Benefit Analysis
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Cost-Benefit Analysis">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#option-a-stay-with-streamlit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option A: Stay with Streamlit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-b-build-custom-nextjs-fastapi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option B: Build Custom (Next.js + FastAPI)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recommendation-streamlit-first-migrate-if-needed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommendation: Streamlit First, Migrate If Needed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision-framework" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision Framework
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Decision Framework">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#use-streamlit-if" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Use Streamlit If:
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#build-custom-if" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Build Custom If:
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recommended-path-forward" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended Path Forward
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Recommended Path Forward">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#immediate-phase-0-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Immediate (Phase 0 + 1):
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-12-months" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6-12 Months:
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#12-18-months" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12-18 Months:
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conclusion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conclusion
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="platform-technology-considerations">Platform &amp; Technology Considerations</h1>
+<p><strong>Date:</strong> 2025-12-24
+<strong>Topic:</strong> Streamlit vs Other Frameworks for Clinical Users</p>
+<hr />
+<h2 id="current-choice-streamlit">Current Choice: Streamlit</h2>
+<h3 id="why-streamlit-works-well-now">Why Streamlit Works Well Now</h3>
+<p><strong>For You (Data Engineer):</strong>
+- ✅ Fast prototyping
+- ✅ Pure Python (no HTML/CSS/JS)
+- ✅ Good for data apps
+- ✅ Easy deployment
+- ✅ Active community</p>
+<p><strong>Can It Work for Clinical Users?</strong>
+<strong>Yes, with Phase 0 improvements!</strong> Streamlit can absolutely serve clinical researchers IF we design it properly:</p>
+<p>✅ <strong>Pros for Clinical Users:</strong>
+- Clean, modern interface (looks professional)
+- Fast, responsive (with caching)
+- Easy to host (Streamlit Cloud = free hosting)
+- No installation needed (web-based)
+- Mobile-friendly (important for busy clinicians)
+- Can implement all Phase 0 features</p>
+<p>⚠️ <strong>Cons for Clinical Users:</strong>
+- Limited UI customization (harder to make truly "custom")
+- File upload size limits (need Streamlit Cloud paid for large files)
+- Session management quirks (can lose work if not careful)
+- Page reloads on interactions (even cached, can feel clunky)</p>
+<hr />
+<h2 id="recommendation-stick-with-streamlit-for-phase-0-1">Recommendation: Stick with Streamlit for Phase 0 + 1</h2>
+<p><strong>Rationale:</strong>
+1. <strong>Speed to Market:</strong> Phase 0 + 1 in Streamlit = 60-80 hours. Rewrite in React/Next.js = 200+ hours
+2. <strong>Validation:</strong> Prove the concept works with clinicians BEFORE investing in custom UI
+3. <strong>Hosted Solution:</strong> Streamlit Cloud solves deployment immediately
+4. <strong>Good Enough:</strong> For research tool (not consumer product), Streamlit quality is acceptable</p>
+<p><strong>Phase 0 can be fully implemented in Streamlit:</strong>
+- File upload: <code>st.file_uploader()</code> handles CSV/Excel/SPSS ✅
+- Analysis wizard: Multi-step forms with <code>st.form()</code> ✅
+- Visualizations: Plotly/Matplotlib integration ✅
+- Export: <code>st.download_button()</code> for Word/PNG ✅
+- Help system: <code>st.expander()</code> and tooltips ✅</p>
+<hr />
+<h2 id="streamlit-cloud-deployment">Streamlit Cloud Deployment</h2>
+<h3 id="recommendation-use-streamlit-community-cloud-free-tier">Recommendation: Use Streamlit Community Cloud (Free Tier)</h3>
+<p><strong>Benefits:</strong>
+- Free hosting for public repos
+- HTTPS out of the box
+- Easy updates (push to git = auto-deploy)
+- No DevOps needed
+- Good for internal research tools</p>
+<p><strong>Limitations:</strong>
+- 1 GB resource limit (fine for Phase 0/1)
+- Cannot use custom authentication (must use Streamlit's)
+  - <strong>IMPORTANT:</strong> For HIPAA compliance, need paid tier or self-host
+- Public by default (can make private in paid tier)</p>
+<h3 id="for-phi-data-phase-1">For PHI Data (Phase 1+):</h3>
+<p><strong>Option A: Streamlit Cloud Business ($250/month)</strong>
+- Private apps
+- Custom authentication
+- SSO support
+- More resources
+- HIPAA-compliant infrastructure</p>
+<p><strong>Option B: Self-Host on Secure Server</strong>
+- Full control over security
+- Implement custom authentication (TODO-003)
+- Behind hospital VPN/firewall
+- HIPAA compliance easier to achieve
+- Requires server management</p>
+<p><strong>Recommendation:</strong> Start with Community Cloud for development/testing, move to Business or self-host for production with PHI.</p>
+<hr />
+<h2 id="when-to-consider-migration-future-phase">When to Consider Migration (Future Phase)</h2>
+<h3 id="trigger-points-for-framework-change">Trigger Points for Framework Change:</h3>
+<p><strong>Stay with Streamlit if:</strong>
+- Users are satisfied with speed/responsiveness
+- Feature set can be implemented in Streamlit
+- Cost is acceptable ($250/month or self-host)
+- Research tool remains internal (not commercial product)</p>
+<p><strong>Migrate to Custom Framework if:</strong>
+- Need highly interactive UI (drag-and-drop, real-time updates)
+- Streamlit performance becomes limiting
+- Want custom branding/white-label
+- Building commercial product (not just research tool)
+- Need offline capability
+- Advanced collaboration features (real-time multi-user)</p>
+<hr />
+<h2 id="alternative-frameworks-if-migration-needed">Alternative Frameworks (If Migration Needed)</h2>
+<h3 id="option-1-nextjs-fastapi-modern-stack">Option 1: Next.js + FastAPI (Modern Stack)</h3>
+<p><strong>Frontend:</strong> Next.js (React framework)
+<strong>Backend:</strong> FastAPI (Python API)
+<strong>Pros:</strong>
+- Fully customizable UI
+- Best performance
+- Modern, scalable
+- Great for commercial product</p>
+<p><strong>Cons:</strong>
+- 3-6 months development time
+- Requires frontend + backend developers
+- More complex deployment
+- Higher maintenance</p>
+<p><strong>Cost Estimate:</strong> $150,000-$300,000 (full custom development)</p>
+<hr />
+<h3 id="option-2-dash-by-plotly-python-framework">Option 2: Dash by Plotly (Python Framework)</h3>
+<p><strong>Similar to Streamlit but more customizable</strong></p>
+<p><strong>Pros:</strong>
+- Still pure Python
+- More control over layout
+- Better for complex interactions
+- Enterprise support available</p>
+<p><strong>Cons:</strong>
+- Steeper learning curve than Streamlit
+- More code required
+- Still has some Streamlit limitations</p>
+<p><strong>Cost Estimate:</strong> ~50% more development time than Streamlit</p>
+<hr />
+<h3 id="option-3-gradio-ml-focused-framework">Option 3: Gradio (ML-Focused Framework)</h3>
+<p><strong>Similar to Streamlit, focused on ML/AI demos</strong></p>
+<p><strong>Pros:</strong>
+- Very similar to Streamlit
+- Good for quick demos
+- Easy sharing</p>
+<p><strong>Cons:</strong>
+- Less mature than Streamlit
+- Smaller community
+- Not ideal for complex apps</p>
+<p><strong>Cost Estimate:</strong> Similar to Streamlit</p>
+<hr />
+<h3 id="option-4-shiny-r-framework">Option 4: Shiny (R Framework)</h3>
+<p><strong>If moving to R ecosystem</strong></p>
+<p><strong>Pros:</strong>
+- Statisticians know R
+- Excellent statistical packages
+- Good clinical adoption</p>
+<p><strong>Cons:</strong>
+- Requires rewriting all Python code
+- Lose Polars/pandas ecosystem
+- R has performance limitations</p>
+<p><strong>Cost Estimate:</strong> 6+ months full rewrite</p>
+<hr />
+<h2 id="hybrid-approach-recommended-strategy">Hybrid Approach (Recommended Strategy)</h2>
+<h3 id="phase-0-1-streamlit-core-now">Phase 0-1: Streamlit Core (Now)</h3>
+<ul>
+<li>Build all features in Streamlit</li>
+<li>Validate with users</li>
+<li>Achieve product-market fit</li>
+</ul>
+<h3 id="phase-2-streamlit-custom-components-6-12-months">Phase 2: Streamlit + Custom Components (6-12 months)</h3>
+<ul>
+<li>Keep Streamlit backend</li>
+<li>Add custom React components for specific features</li>
+<li>Example: Custom drag-and-drop file upload, interactive plot editor</li>
+<li>Gradual enhancement without full rewrite</li>
+</ul>
+<h3 id="phase-3-evaluate-migration-12-18-months">Phase 3: Evaluate Migration (12-18 months)</h3>
+<ul>
+<li>If user base grows significantly</li>
+<li>If commercial opportunity emerges</li>
+<li>If Streamlit becomes limiting</li>
+<li>Then: Plan full migration to custom stack</li>
+</ul>
+<hr />
+<h2 id="technical-debt-considerations">Technical Debt Considerations</h2>
+<h3 id="if-staying-with-streamlit-long-term">If Staying with Streamlit Long-Term:</h3>
+<p><strong>Invest In:</strong>
+- Clean architecture (separate business logic from UI)
+- Comprehensive API layer (makes future migration easier)
+- Well-documented data models
+- Type hints everywhere (TODO-002)
+- Extensive test coverage</p>
+<p><strong>This Allows:</strong>
+- Keeping business logic if migrating UI
+- Using Streamlit as frontend for existing backend
+- Gradual migration path</p>
+<h3 id="current-code-quality">Current Code Quality:</h3>
+<p>The codebase already has good separation:
+- ✅ <code>core/</code> modules (business logic)
+- ✅ <code>analysis/</code> modules (statistics)
+- ✅ <code>ui/</code> modules (Streamlit)
+- ✅ Config-driven approach</p>
+<p><strong>This is good architecture</strong> - business logic is NOT tightly coupled to Streamlit.</p>
+<p><strong>Migration Risk:</strong> LOW - Could replace UI layer without rewriting analytics.</p>
+<hr />
+<h2 id="hosting-options-comparison">Hosting Options Comparison</h2>
+<h3 id="for-developmenttesting-no-phi">For Development/Testing (No PHI):</h3>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Cost</th>
+<th>Effort</th>
+<th>Security</th>
+<th>Recommendation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Streamlit Community Cloud</td>
+<td>Free</td>
+<td>None</td>
+<td>Medium</td>
+<td>✅ <strong>Use This</strong></td>
+</tr>
+<tr>
+<td>Heroku</td>
+<td>$7/month</td>
+<td>Low</td>
+<td>Medium</td>
+<td>Alternative</td>
+</tr>
+<tr>
+<td>Railway</td>
+<td>$5/month</td>
+<td>Low</td>
+<td>Medium</td>
+<td>Alternative</td>
+</tr>
+<tr>
+<td>AWS/GCP Free Tier</td>
+<td>Free</td>
+<td>Medium</td>
+<td>High</td>
+<td>Overkill</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Recommendation:</strong> Streamlit Community Cloud for Phase 0 development.</p>
+<hr />
+<h3 id="for-production-with-phi-hipaa-required">For Production (With PHI - HIPAA Required):</h3>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Cost</th>
+<th>Effort</th>
+<th>Security</th>
+<th>HIPAA</th>
+<th>Recommendation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Streamlit Cloud Business</td>
+<td>$250/month</td>
+<td>Low</td>
+<td>High</td>
+<td>✅ Yes</td>
+<td>Good for small teams</td>
+</tr>
+<tr>
+<td>Self-Host on Hospital Server</td>
+<td>Variable</td>
+<td>High</td>
+<td>Highest</td>
+<td>✅ Yes</td>
+<td><strong>Best for PHI</strong></td>
+</tr>
+<tr>
+<td>AWS with HIPAA BAA</td>
+<td>~$500/month</td>
+<td>High</td>
+<td>High</td>
+<td>✅ Yes</td>
+<td>Scalable option</td>
+</tr>
+<tr>
+<td>Azure Healthcare</td>
+<td>~$500/month</td>
+<td>High</td>
+<td>High</td>
+<td>✅ Yes</td>
+<td>Enterprise option</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Recommendation:</strong> Self-host on hospital infrastructure behind firewall for maximum security and HIPAA compliance.</p>
+<hr />
+<h2 id="cost-benefit-analysis">Cost-Benefit Analysis</h2>
+<h3 id="option-a-stay-with-streamlit">Option A: Stay with Streamlit</h3>
+<p><strong>Costs:</strong>
+- $250/month Streamlit Cloud Business (optional)
+- OR self-hosting costs (server, maintenance)
+- Development time: 60-80 hours (Phase 0)</p>
+<p><strong>Benefits:</strong>
+- Fast time to market
+- Proven technology
+- Easy maintenance
+- Good enough for research tool
+- Can always migrate later</p>
+<p><strong>Total Cost Year 1:</strong> $3,000 (hosting) + ~$10,000 (development at $125/hr)= <strong>$13,000</strong></p>
+<hr />
+<h3 id="option-b-build-custom-nextjs-fastapi">Option B: Build Custom (Next.js + FastAPI)</h3>
+<p><strong>Costs:</strong>
+- Development: 500-800 hours at $125/hr = $62,500-$100,000
+- Hosting: $500/month = $6,000/year
+- Maintenance: 10 hours/month = $15,000/year</p>
+<p><strong>Benefits:</strong>
+- Fully customizable
+- Best performance
+- Professional appearance
+- Scalable to commercial product</p>
+<p><strong>Total Cost Year 1:</strong> <strong>$83,500-$121,000</strong></p>
+<hr />
+<h3 id="recommendation-streamlit-first-migrate-if-needed">Recommendation: Streamlit First, Migrate If Needed</h3>
+<p><strong>The Math:</strong>
+- Streamlit: $13,000 to validate concept
+- Custom: $83,500 without knowing if it works</p>
+<p><strong>Savings:</strong> $70,000+ by validating with Streamlit first</p>
+<p><strong>Risk Mitigation:</strong>
+- If concept fails → only spent $13k
+- If concept succeeds → invest $80k in custom build with confidence</p>
+<p><strong>Plus:</strong> Good architecture means migration is feasible later.</p>
+<hr />
+<h2 id="decision-framework">Decision Framework</h2>
+<h3 id="use-streamlit-if">Use Streamlit If:</h3>
+<ul>
+<li>✅ Building research tool (not consumer product)</li>
+<li>✅ Users are clinical researchers (not general public)</li>
+<li>✅ Speed to market is critical</li>
+<li>✅ Budget is limited</li>
+<li>✅ Team is small (1-3 developers)</li>
+<li>✅ Need to validate concept first</li>
+</ul>
+<h3 id="build-custom-if">Build Custom If:</h3>
+<ul>
+<li>Commercial product (B2B or B2C)</li>
+<li>Need highly interactive UI</li>
+<li>Large user base (10,000+)</li>
+<li>Have budget ($100k+)</li>
+<li>Team of 5+ developers</li>
+<li>Multi-year roadmap</li>
+</ul>
+<hr />
+<h2 id="recommended-path-forward">Recommended Path Forward</h2>
+<h3 id="immediate-phase-0-1">Immediate (Phase 0 + 1):</h3>
+<ol>
+<li><strong>Build everything in Streamlit</strong></li>
+<li>Fast development</li>
+<li>Validate with clinical users</li>
+<li>
+<p>Achieve HIPAA compliance</p>
+</li>
+<li>
+<p><strong>Deploy on Streamlit Cloud Business</strong> (for testing with de-identified data)</p>
+</li>
+<li>
+<p>OR self-host for PHI data</p>
+</li>
+<li>
+<p><strong>Focus on Phase 0 features</strong> (usability &gt; technology)</p>
+</li>
+</ol>
+<h3 id="6-12-months">6-12 Months:</h3>
+<ol>
+<li><strong>Assess user feedback:</strong></li>
+<li>Are users happy with Streamlit?</li>
+<li>What features are limited by Streamlit?</li>
+<li>
+<p>Is performance acceptable?</p>
+</li>
+<li>
+<p><strong>Decision point:</strong></p>
+</li>
+<li>If feedback is positive → <strong>Stay with Streamlit</strong>, add features</li>
+<li>If hitting limitations → <strong>Plan migration</strong>, maintain Streamlit in parallel</li>
+</ol>
+<h3 id="12-18-months">12-18 Months:</h3>
+<ol>
+<li><strong>If migrating:</strong></li>
+<li>Build custom frontend with existing backend</li>
+<li>Gradual transition (both platforms live during migration)</li>
+<li>
+<p>Minimize disruption to users</p>
+</li>
+<li>
+<p><strong>If staying:</strong></p>
+</li>
+<li>Invest in Streamlit optimization</li>
+<li>Add custom components where needed</li>
+<li>Focus on features, not framework</li>
+</ol>
+<hr />
+<h2 id="conclusion">Conclusion</h2>
+<p><strong>Short Answer:</strong> Stick with Streamlit for now. It's the right choice for:
+- Your technical skills (Python data engineer)
+- Your users (clinical researchers, not consumers)
+- Your timeline (need usable tool in weeks, not months)
+- Your budget (limited resources)</p>
+<p><strong>Long Answer:</strong> Streamlit is a mature, production-ready framework that can absolutely serve clinical researchers. The limitations it has are NOT blockers for Phase 0-2. If you outgrow it later (which may never happen for a research tool), the good architecture you've built makes migration feasible.</p>
+<p><strong>Action Items:</strong>
+1. ✅ Proceed with Phase 0 in Streamlit
+2. ✅ Deploy to Streamlit Cloud for development
+3. ✅ Plan self-hosting or Cloud Business for production (HIPAA)
+4. ⏸️ Revisit platform choice after 6-12 months of user feedback
+5. ⏸️ Budget for custom build only if Streamlit proves limiting</p>
+<p><strong>Bottom Line:</strong> Don't let perfect be the enemy of good. Streamlit is good enough to validate your concept and serve users. Invest in custom build only when you have product-market fit and know exactly what you need.</p>
+<hr />
+<p><strong>Hosting Recommendation Summary:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Data Type</th>
+<th>Hosting</th>
+<th>Cost</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Development</strong></td>
+<td>Synthetic</td>
+<td>Streamlit Community Cloud</td>
+<td>Free</td>
+<td>Fast, easy</td>
+</tr>
+<tr>
+<td><strong>Testing</strong></td>
+<td>De-identified</td>
+<td>Streamlit Cloud Business</td>
+<td>$250/month</td>
+<td>Private, secure</td>
+</tr>
+<tr>
+<td><strong>Production</strong></td>
+<td>PHI</td>
+<td>Self-host (hospital server)</td>
+<td>Variable</td>
+<td>HIPAA compliant</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<p><strong>END OF PLATFORM CONSIDERATIONS</strong></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

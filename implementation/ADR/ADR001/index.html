@@ -1,0 +1,3228 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Spec-driven clinical analytics with question-driven semantic analysis">
+      
+      
+        <meta name="author" content="Development Team">
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>ADR001: Query Plan Producer, Filtering, and Chat-First Execution Rules - Clinical Analytics Platform</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#adr001-query-plan-producer-filtering-and-chat-first-execution-rules" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="Clinical Analytics Platform" class="md-header__button md-logo" aria-label="Clinical Analytics Platform" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Clinical Analytics Platform
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ADR001: Query Plan Producer, Filtering, and Chat-First Execution Rules
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/yourusername/md_data_explorer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../getting-started/installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../user-guide/question-driven-analysis/" class="md-tabs__link">
+          
+  
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../architecture/overview/" class="md-tabs__link">
+          
+  
+  
+  Architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../security/THREAT_MODEL/" class="md-tabs__link">
+          
+  
+  
+  Security
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../api-reference/core/" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../development/contributing/" class="md-tabs__link">
+          
+  
+  
+  Development
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../vision/PURPOSE/" class="md-tabs__link">
+          
+  
+  
+  Specifications
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="Clinical Analytics Platform" class="md-nav__button md-logo" aria-label="Clinical Analytics Platform" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Clinical Analytics Platform
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/yourusername/md_data_explorer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/quick-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/uploading-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Uploading Data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/question-driven-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/statistical-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Statistical Tests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../user-guide/interpreting-results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interpreting Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/AS_BUILT_ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    As-built (2025-03)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/ARCHITECTURE_BOUNDARIES/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module boundaries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/semantic-layer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Semantic Layer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/dataset-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dataset Registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/nl-query-engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NL Query Engine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Security
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../security/THREAT_MODEL/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Threat model & backlog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../security/LOCAL_DATA_SECURITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Patient data on this computer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/datasets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Datasets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI Components
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../development/packaging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packaging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Specifications
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Specifications
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../vision/PURPOSE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Purpose and steel thread
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../MASTER_PLAN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Master plan (roadmap)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--active"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../specs/omnibus_electron_streamlit_cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Electron cutover (omnibus)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--active"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../specs/question-driven-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../specs/multi-table-support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Table Support
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Status
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scope-clarification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scope Clarification
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alignment-with-adr002-adr003-and-adr007-north-stars" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alignment with ADR002, ADR003, and ADR007 (North Stars)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Alignment with ADR002, ADR003, and ADR007 (North Stars)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#critical-principle-feature-parity-no-exceptions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Critical Principle: Feature Parity (No Exceptions)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#feature-parity-requirements-from-adr007" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Feature Parity Requirements (From ADR007)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reference-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reference Architecture
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Decision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#query-plan-contract-authoritative" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Query Plan Contract (Authoritative)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-0-ensure-feature-parity-prerequisite" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 0: Ensure Feature Parity (Prerequisite) ⚠️
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-fix-comparison-analysis-bug" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: Fix Comparison Analysis Bug
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 1: Fix Comparison Analysis Bug">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#11-update-compute_comparison_analysis-to-try-numeric-conversion-first" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.1 Update compute_comparison_analysis() to try numeric conversion first
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#12-add-tests-for-string-numeric-conversion-in-comparison" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.2 Add tests for string numeric conversion in comparison
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-15-add-count-intent-type-p0-quick-win" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1.5: Add COUNT Intent Type (P0 - Quick Win)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-implement-filter-parsing-and-application" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: Implement Filter Parsing and Application
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 2: Implement Filter Parsing and Application">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-add-filter-extraction-to-nl-query-engine-p0-deterministic-first" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 Add filter extraction to NL Query Engine (P0 - Deterministic First)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-update-analysiscontext-to-use-queryplan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 Update AnalysisContext to use QueryPlan
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-apply-filters-in-compute-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 Apply filters in compute functions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#24-enhanced-breakdown-reporting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.4 Enhanced breakdown reporting
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-redesign-ui-for-conversational-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3: Redesign UI for Conversational Flow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 3: Redesign UI for Conversational Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-conversation-history-data-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 Conversation history data structure
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-redesign-main-ui-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 Redesign main UI flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-inline-result-rendering" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3 Inline result rendering
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#34-follow-up-question-suggestions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.4 Follow-up question suggestions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#35-conversation-management-controls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.5 Conversation management controls
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4: Testing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 4: Testing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-test-comparison-analysis-with-string-numeric-columns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 Test comparison analysis with string numeric columns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-test-filter-parsing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 Test filter parsing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-test-conversational-ui-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 Test conversational UI flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Order
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#success-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Success Criteria
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Success Criteria">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-0-feature-parity-prerequisite" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 0: Feature Parity (Prerequisite)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-3-core-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1-3: Core Features
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Consequences">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#positive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Positive
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#negative" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Negative
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mitigations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mitigations
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Notes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#feature-parity-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Feature Parity Requirements
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#implementation-guidance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Guidance
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="References">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#related-adrs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related ADRs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#related-plans" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related Plans
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#code-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Code References
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#testing-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Testing Requirements
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="adr001-query-plan-producer-filtering-and-chat-first-execution-rules">ADR001: Query Plan Producer, Filtering, and Chat-First Execution Rules</h1>
+<h2 id="status">Status</h2>
+<p>Complete</p>
+<h2 id="scope-clarification">Scope Clarification</h2>
+<p><strong>ADR001 owns</strong>:
+- QueryPlan production (NLU parsing: text → QueryPlan)
+- Intent classification + filter extraction (Tier 1 + Tier 1.5 heuristics)
+- Execution gating (confidence threshold, confirmation UI, idempotent run keys)
+- Comparison analysis logic (COMPARE_GROUPS plan shape)
+- UI behavior for "Ask Questions" (chat-first orchestration, result lifecycle)</p>
+<p><strong>ADR001 does NOT own</strong>:
+- Trust UI / audit protocol (ADR003 owns this)
+- Persistence details (ADR002 owns storage layout + metadata)
+- Semantic layer execution (ADR003 owns QueryPlan validation + execution)</p>
+<h2 id="alignment-with-adr002-adr003-and-adr007-north-stars">Alignment with ADR002, ADR003, and ADR007 (North Stars)</h2>
+<p><strong>This ADR must be implemented in alignment with:</strong>
+1. <strong><a href="../ADR002/">ADR002: Persistent Storage Layer</a></strong> - Establishes architectural north star for upload handling
+2. <strong><a href="../ADR003/">ADR003: Clinical Trust Architecture &amp; Adaptive Terminology</a></strong> - Trust/verification UI and adaptive dictionary overlap with filter extraction and conversational UI
+3. <strong><a href="../ADR007/">ADR007: Feature Parity Architecture</a></strong> - <strong>AUTHORITATIVE SOURCE</strong> for feature parity requirements</p>
+<h3 id="critical-principle-feature-parity-no-exceptions">Critical Principle: Feature Parity (No Exceptions)</h3>
+<p><strong>ADR007 establishes the core principle: "Single-Table = Multi-Table with 1 Table"</strong></p>
+<p>This means:
+- ✅ <strong>Single-file uploads</strong> (CSV, Excel, SPSS) are a special case of multi-table uploads, not a different architecture
+- ✅ <strong>Both upload types must use identical code paths</strong> - no conditional logic based on upload type
+- ✅ <strong>Both upload types must have identical capabilities</strong> - persistence, query capabilities, analysis features, UI features
+- ✅ <strong>No feature gap is acceptable</strong> - any capability added for one type must be available to the other</p>
+<h3 id="feature-parity-requirements-from-adr007">Feature Parity Requirements (From ADR007)</h3>
+<p>ADR007 defines the following required parity (see ADR007 for complete details):</p>
+<ul>
+<li>✅ <strong>Persistence</strong>: Both save individual tables to disk (single-table = 1 table in <code>{upload_id}_tables/</code>)</li>
+<li>✅ <strong>Semantic Layer</strong>: Both register all tables in DuckDB identically</li>
+<li>✅ <strong>Query Capabilities</strong>: Both support same granularity levels (patient_level, admission_level, event_level)</li>
+<li>✅ <strong>Lazy Evaluation</strong>: Both use Polars lazy frames (not eager pandas)</li>
+<li>✅ <strong>Metadata Schema</strong>: Both use <code>inferred_schema</code> format (not <code>variable_mapping</code> for single-table)</li>
+<li>✅ <strong>Validation Pipeline</strong>: Both go through same <code>DataQualityValidator.validate_complete()</code> pipeline</li>
+<li>✅ <strong>Analysis Features</strong>: Comparison analysis, filtering, descriptive stats work identically</li>
+<li>✅ <strong>UI Features</strong>: Conversational UI, follow-up questions, conversation history work identically</li>
+</ul>
+<p><strong>This ADR's implementation must ensure all new features (comparison analysis fix, filtering, conversational UI) work identically for both upload types, following ADR007's unified architecture.</strong></p>
+<h3 id="reference-architecture">Reference Architecture</h3>
+<ul>
+<li><strong>ADR007</strong>: <strong>AUTHORITATIVE SOURCE</strong> for feature parity - defines unified code paths, persistence, and query capabilities</li>
+<li><strong>ADR002</strong>: Defines persistent storage, DuckDB registration, Parquet export, lazy evaluation - all features must apply to both upload types</li>
+<li><strong>Multi-Table Handler Refactor Plan</strong> (<code>.cursor/plans/multi-table_handler_refactor_aggregate-before-join_architecture_b7ca2b5e.plan.md</code>): Defines advanced features like table classification, aggregate-before-join, partitioning - these patterns should inform single-file handling where applicable</li>
+<li><strong>Consolidate Docs Plan</strong>: Shows multi-table deferred to V2, but infrastructure exists - single-file must match this infrastructure</li>
+</ul>
+<h2 id="context">Context</h2>
+<p>The clinical analytics platform has three critical defects blocking physician usage:</p>
+<ol>
+<li><strong>Comparison Analysis Bug</strong>: String numeric columns (e.g., "Viral Load" with values like "&lt;20", "120") are incorrectly treated as categorical, causing the system to compare group counts instead of group means. This produces wrong clinical conclusions (selecting least common treatment instead of treatment with lowest mean viral load).</li>
+</ol>
+<p><strong>Related Issue (2025-12-29)</strong>: Inverse problem also observed - categorical variables encoded as 1/2 (e.g., "Statin Prescribed? 1: Yes 2: No") are incorrectly treated as numeric, computing meaningless statistics (mean=1.41) instead of counts/percentages. Query "how many patients on statins?" should return count/percentage, not mean/median. System needs better data type detection and query intent understanding.</p>
+<ol>
+<li>
+<p><strong>Missing Filter Support</strong>: Queries like "what was the average t score of those that had osteoporosis (with scores below -2.5)" contain filter conditions that are parsed but never applied to the data, resulting in incorrect cohort selection and invalid statistical results.</p>
+</li>
+<li>
+<p><strong>Non-Conversational UI</strong>: The Ask Questions page uses confusing buttons ("Start Over", "Clear Results", "Confirm and Run"), lacks conversation history, and forces page resets between queries. Physicians asking follow-up questions (observed in user testing) must re-enter context, breaking analytical flow.</p>
+</li>
+</ol>
+<p>These issues prevent the platform from supporting iterative clinical research workflows where physicians refine questions based on initial results.</p>
+<h2 id="decision">Decision</h2>
+<h3 id="query-plan-contract-authoritative">Query Plan Contract (Authoritative)</h3>
+<p><strong>ADR001 owns the QueryPlan schema</strong> - this is the contract between NLU (query parsing) and execution (semantic layer + analysis functions).</p>
+<p>All query parsing must produce a <code>QueryPlan</code>, and all execution must consume a <code>QueryPlan</code>. This prevents ad-hoc dict structures and ensures type safety.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Literal</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nd">@dataclass</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="k">class</span><span class="w"> </span><span class="nc">FilterSpec</span><span class="p">:</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">    </span><span class="sd">"""Single filter condition specification."""</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">column</span><span class="p">:</span> <span class="nb">str</span>  <span class="c1"># Canonical column name (after alias resolution)</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">operator</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"=="</span><span class="p">,</span> <span class="s2">"!="</span><span class="p">,</span> <span class="s2">"&gt;"</span><span class="p">,</span> <span class="s2">"&gt;="</span><span class="p">,</span> <span class="s2">"&lt;"</span><span class="p">,</span> <span class="s2">"&lt;="</span><span class="p">,</span> <span class="s2">"IN"</span><span class="p">,</span> <span class="s2">"NOT_IN"</span><span class="p">]</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">value</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">float</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">float</span><span class="p">]</span>  <span class="c1"># Filter value(s)</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="n">exclude_nulls</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>  <span class="c1"># Whether to exclude nulls (default: yes)</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="nd">@dataclass</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="k">class</span><span class="w"> </span><span class="nc">QueryPlan</span><span class="p">:</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">    </span><span class="sd">"""Structured query plan produced by NLU and consumed by execution layer."""</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    <span class="n">intent</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"COUNT"</span><span class="p">,</span> <span class="s2">"DESCRIBE"</span><span class="p">,</span> <span class="s2">"COMPARE_GROUPS"</span><span class="p">,</span> <span class="s2">"FIND_PREDICTORS"</span><span class="p">,</span> <span class="s2">"CORRELATIONS"</span><span class="p">]</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    <span class="n">metric</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># Column name for aggregation (e.g., "LDL mg/dL" for average/describe)</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    <span class="n">group_by</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># Column name for grouping (e.g., "Nicotine Use")</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>    <span class="n">filters</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">FilterSpec</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>  <span class="c1"># Filter conditions</span>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>    <span class="n">confidence</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>  <span class="c1"># Parsing confidence (0.0-1.0)</span>
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>    <span class="n">explanation</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>  <span class="c1"># Human-readable explanation (shown in UI + logs)</span>
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>    <span class="n">run_key</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># Deterministic key for idempotent execution (includes dataset_version + plan hash)</span>
+</code></pre></div>
+<p><strong>QueryPlan Semantics by Intent</strong>:</p>
+<ul>
+<li><strong>COUNT</strong>: Count rows (optionally with filters, optionally grouped by <code>group_by</code>)</li>
+<li><code>metric=None</code>, <code>group_by=None</code> → Total count with filters</li>
+<li><code>metric=None</code>, <code>group_by="X"</code> → Count by X (frequency table)</li>
+<li>
+<p>Example: "how many patients on statins?" → <code>COUNT</code>, <code>filters=[FilterSpec("Statin Prescribed?", "==", "Yes")]</code></p>
+</li>
+<li>
+<p><strong>DESCRIBE</strong>: Descriptive statistics for a metric</p>
+</li>
+<li><code>metric="X"</code>, <code>group_by=None</code> → Stats for X (mean, median, std dev, etc.)</li>
+<li><code>metric="X"</code>, <code>group_by="Y"</code> → Stats for X grouped by Y</li>
+<li>
+<p>Example: "average LDL" → <code>DESCRIBE</code>, <code>metric="LDL mg/dL"</code></p>
+</li>
+<li>
+<p><strong>COMPARE_GROUPS</strong>: Compare metric across groups</p>
+</li>
+<li><code>metric="X"</code>, <code>group_by="Y"</code> → Compare X across Y groups (t-test/ANOVA/chi-square)</li>
+<li>
+<p>Example: "compare viral load by treatment" → <code>COMPARE_GROUPS</code>, <code>metric="Viral Load"</code>, <code>group_by="Treatment"</code></p>
+</li>
+<li>
+<p><strong>FIND_PREDICTORS</strong>: Predictive modeling</p>
+</li>
+<li><code>metric="X"</code> (outcome), <code>group_by=None</code> → Find predictors of X</li>
+<li>Example: "what predicts mortality?" → <code>FIND_PREDICTORS</code>, <code>metric="mortality"</code></li>
+</ul>
+<p><strong>Execution Gating Rules</strong>:
+- <strong>Confidence &lt; threshold (default 0.75)</strong>: Show interpreted plan in UI, require user confirmation before execution
+- <strong>Confidence &gt;= threshold</strong>: Auto-execute (user can still review results)
+- <strong>Idempotency</strong>: <code>run_key</code> is deterministic hash of <code>(dataset_version, normalized_plan)</code> - same plan on same data = same key = cached result</p>
+<p><strong>Dependencies</strong>:
+- <strong>ADR002</strong>: Provides <code>dataset_version</code> for run_key generation
+- <strong>ADR003</strong>: Semantic layer validates and executes QueryPlan (does not produce it)</p>
+<p>Implement fixes in four phases, executed sequentially. <strong>Phase 0 (Feature Parity) must be completed first</strong> to ensure all subsequent phases work identically for single-file and multi-table uploads.</p>
+<h3 id="phase-0-ensure-feature-parity-prerequisite">Phase 0: Ensure Feature Parity (Prerequisite) ⚠️</h3>
+<p><strong>Goal</strong>: Eliminate any feature disparity between single-file and multi-table uploads before implementing new features. Both upload types must be first-class citizens with identical capabilities.</p>
+<p><strong>Alignment with ADR007</strong>: This phase directly implements <a href="../ADR007/">ADR007: Feature Parity Architecture</a>, which establishes the principle "Single-Table = Multi-Table with 1 Table" and defines unified code paths.</p>
+<p><strong>Implementation Strategy</strong>:</p>
+<p>This phase implements ADR007's 5-phase strategy:</p>
+<ol>
+<li><strong>Normalize Upload Handling</strong> (ADR007 Phase 1)</li>
+<li>Create <code>normalize_upload_to_table_list()</code> function</li>
+<li>Both upload types normalize to same table list structure</li>
+<li>Single-table → <code>[{"name": "table_0", "data": df}]</code></li>
+<li>
+<p>Multi-table → <code>[{"name": "table_0", "data": df1}, {"name": "table_1", "data": df2}, ...]</code></p>
+</li>
+<li>
+<p><strong>Unify Persistence</strong> (ADR007 Phase 2)</p>
+</li>
+<li>Both upload types save individual tables to <code>{upload_id}_tables/</code> directory</li>
+<li>Both save unified cohort CSV (for backward compatibility)</li>
+<li>
+<p>Both use <code>inferred_schema</code> metadata format (convert <code>variable_mapping</code> during save)</p>
+</li>
+<li>
+<p><strong>Unify Semantic Layer Registration</strong> (ADR007 Phase 3)</p>
+</li>
+<li>Both upload types register all tables in DuckDB identically</li>
+<li>Remove hardcoded <code>patient_level</code> restriction</li>
+<li>
+<p>Both support all granularity levels (patient_level, admission_level, event_level)</p>
+</li>
+<li>
+<p><strong>Unify Data Access</strong> (ADR007 Phase 4)</p>
+</li>
+<li>Both upload types return Polars lazy frames (not pandas DataFrames)</li>
+<li>Both support lazy evaluation and predicate pushdown</li>
+<li>
+<p>Remove eager pandas loading paths</p>
+</li>
+<li>
+<p><strong>Remove Conditional Logic</strong> (ADR007 Phase 5)</p>
+</li>
+<li>Eliminate all <code>if upload_type == "single"</code> conditionals</li>
+<li>Use unified code paths for both upload types</li>
+<li>Verify identical behavior through tests</li>
+</ol>
+<p><strong>Success Criteria</strong> (from ADR007):
+- [ ] Single-table and multi-table uploads have identical persistence structure
+- [ ] Both upload types register all tables in DuckDB semantic layer
+- [ ] Both upload types support lazy Polars evaluation
+- [ ] Both upload types use same metadata schema (<code>inferred_schema</code> format)
+- [ ] Both upload types go through same validation pipeline
+- [ ] Both upload types support all granularity levels
+- [ ] No conditional logic based on upload type exists in codebase
+- [ ] Same query produces identical results for both upload types</p>
+<p><strong>Implementation Notes</strong>:
+- <strong>See ADR007 for complete implementation details, code examples, and migration strategy</strong>
+- This phase must be completed before Phase 1-3 to ensure new features work for both upload types
+- All subsequent phases assume feature parity is established per ADR007</p>
+<h3 id="phase-1-fix-comparison-analysis-bug">Phase 1: Fix Comparison Analysis Bug</h3>
+<h4 id="11-update-compute_comparison_analysis-to-try-numeric-conversion-first">1.1 Update <code>compute_comparison_analysis()</code> to try numeric conversion first</h4>
+<p><strong>File</strong>: <code>src/clinical_analytics/analysis/compute.py</code></p>
+<p>Before determining test type (currently line 388-389), attempt to convert the outcome column to numeric using <code>_try_convert_to_numeric()</code> (the same helper already used in descriptive analysis):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">compute_comparison_analysis</span><span class="p">(</span><span class="n">df</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">,</span> <span class="n">context</span><span class="p">:</span> <span class="n">AnalysisContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">outcome_col</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">primary_variable</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">group_col</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">grouping_variable</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="c1"># Clean data</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">analysis_df</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">select</span><span class="p">([</span><span class="n">outcome_col</span><span class="p">,</span> <span class="n">group_col</span><span class="p">])</span><span class="o">.</span><span class="n">drop_nulls</span><span class="p">()</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="c1"># CRITICAL FIX: Try numeric conversion FIRST, before deciding test type</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    <span class="n">outcome_series</span> <span class="o">=</span> <span class="n">analysis_df</span><span class="p">[</span><span class="n">outcome_col</span><span class="p">]</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    <span class="n">numeric_outcome</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    <span class="n">outcome_is_numeric</span> <span class="o">=</span> <span class="kc">False</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>    <span class="c1"># Check if already numeric</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    <span class="k">if</span> <span class="n">outcome_series</span><span class="o">.</span><span class="n">dtype</span> <span class="ow">in</span> <span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">Int64</span><span class="p">,</span> <span class="n">pl</span><span class="o">.</span><span class="n">Float64</span><span class="p">):</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>        <span class="n">outcome_is_numeric</span> <span class="o">=</span> <span class="kc">True</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>        <span class="n">numeric_outcome</span> <span class="o">=</span> <span class="n">outcome_series</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>    <span class="k">else</span><span class="p">:</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>        <span class="c1"># Try to convert string columns to numeric (handles "&lt;20", "120", etc.)</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>        <span class="n">numeric_outcome</span> <span class="o">=</span> <span class="n">_try_convert_to_numeric</span><span class="p">(</span><span class="n">outcome_series</span><span class="p">)</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>        <span class="k">if</span> <span class="n">numeric_outcome</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>            <span class="n">outcome_is_numeric</span> <span class="o">=</span> <span class="kc">True</span>
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>            <span class="c1"># Replace outcome column with numeric version</span>
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>            <span class="n">analysis_df</span> <span class="o">=</span> <span class="n">analysis_df</span><span class="o">.</span><span class="n">with_columns</span><span class="p">(</span><span class="n">numeric_outcome</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="n">outcome_col</span><span class="p">))</span>
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a>
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>    <span class="c1"># Now proceed with numeric vs categorical logic</span>
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>    <span class="k">if</span> <span class="n">outcome_is_numeric</span><span class="p">:</span>
+<a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>        <span class="c1"># Use t-test/ANOVA path (existing code lines 398-464)</span>
+<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>        <span class="o">...</span>
+<a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a>    <span class="k">else</span><span class="p">:</span>
+<a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a>        <span class="c1"># Use chi-square path (existing code lines 466-516)</span>
+<a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>        <span class="o">...</span>
+</code></pre></div>
+<p><strong>Rationale</strong>: String columns containing numeric data (like "Viral Load" with "&lt;20", "120") must be treated as numeric and use mean-based comparisons, not count-based. This ensures clinically correct answers.</p>
+<h4 id="12-add-tests-for-string-numeric-conversion-in-comparison">1.2 Add tests for string numeric conversion in comparison</h4>
+<p><strong>File</strong>: <code>tests/analysis/test_compute.py</code></p>
+<p>Add test cases:
+- String numeric outcome with "&lt;20" style values (below detection limit)
+- String numeric outcome with European comma format
+- Verify group means are computed correctly (not counts)
+- Verify test selection logic chooses t-test/ANOVA for converted numerics</p>
+<h3 id="phase-15-add-count-intent-type-p0-quick-win">Phase 1.5: Add COUNT Intent Type (P0 - Quick Win)</h3>
+<p><strong>Goal</strong>: Support simple counting queries ("how many X?") as first-class intent type.</p>
+<p><strong>Real-World Failure Evidence (2025-12-29)</strong>: Query <strong>"how many were on a statin?"</strong> should return a simple count, but system computed descriptive statistics (mean=0.93) instead. This is a fundamental query type that must work.</p>
+<p><strong>Implementation</strong>:</p>
+<ol>
+<li>
+<p><strong>Add COUNT to intent types</strong>:
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">VALID_INTENT_TYPES</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"DESCRIBE"</span><span class="p">,</span> <span class="s2">"COMPARE_GROUPS"</span><span class="p">,</span> <span class="s2">"FIND_PREDICTORS"</span><span class="p">,</span> <span class="s2">"COUNT"</span><span class="p">,</span> <span class="s2">"CORRELATIONS"</span><span class="p">]</span>
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Pattern matching for COUNT intent</strong> (Tier 1.5 - deterministic):
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">COUNT_PATTERNS</span> <span class="o">=</span> <span class="p">[</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="sa">r</span><span class="s2">"how many"</span><span class="p">,</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="sa">r</span><span class="s2">"count"</span><span class="p">,</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="sa">r</span><span class="s2">"number of"</span><span class="p">,</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="p">]</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">query</span><span class="o">.</span><span class="n">lower</span><span class="p">())</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">COUNT_PATTERNS</span><span class="p">):</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">intent</span> <span class="o">=</span> <span class="n">QueryIntent</span><span class="p">(</span><span class="n">intent_type</span><span class="o">=</span><span class="s2">"COUNT"</span><span class="p">,</span> <span class="n">confidence</span><span class="o">=</span><span class="mf">0.9</span><span class="p">)</span>
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>COUNT QueryPlan execution</strong>:</p>
+</li>
+<li>If <code>filters</code> present: Use <code>semantic_layer.query(metrics=["count"], filters={...})</code> for SQL aggregation</li>
+<li>If <code>group_by</code> present: Use <code>semantic_layer.query(metrics=["count"], dimensions=[group_by])</code> for grouped counts</li>
+<li>Return simple count/percentage, not statistics</li>
+</ol>
+<p><strong>Success Criteria</strong>:
+- "how many X?" queries produce COUNT intent with confidence &gt;0.75
+- COUNT queries return count/percentage, not mean/median/std dev
+- COUNT queries use semantic layer aggregation (SQL) when possible, not Polars</p>
+<h3 id="phase-2-implement-filter-parsing-and-application">Phase 2: Implement Filter Parsing and Application</h3>
+<h4 id="21-add-filter-extraction-to-nl-query-engine-p0-deterministic-first">2.1 Add filter extraction to NL Query Engine (P0 - Deterministic First)</h4>
+<p><strong>File</strong>: <code>src/clinical_analytics/core/nl_query_engine.py</code></p>
+<p><strong>Note</strong>: This coordinates with ADR003 Phase 2 (Enhanced LLM Parser) - filter extraction can leverage enhanced LLM parsing for complex filter conditions.</p>
+<p><strong>Real-World Failure Evidence (2025-12-29)</strong>:</p>
+<p>Query <strong>"Average LDL for those patients not on statin?"</strong> failed completely:
+- Filter condition <strong>"not on statin"</strong> was not extracted (should map to <code>{"column": "Statin Prescribed?", "operator": "==", "value": "2: No"}</code>)
+- Primary variable was wrong (<code>Age</code> instead of <code>LDL mg/dL</code>)
+- Result: System computed average Age for all patients (not filtered, wrong variable)</p>
+<p>This demonstrates critical need for filter extraction implementation. The query contains clear filter condition ("those patients not on statin") that must be parsed and applied before analysis.</p>
+<p><strong>Implementation Strategy</strong>: <strong>P0: Deterministic heuristics first, LLM only when needed</strong></p>
+<p>Filter extraction should use deterministic pattern matching (Tier 1.5) for common patterns:
+- "not on X" → <code>FilterSpec(column="X", operator="==", value="No")</code>
+- "those patients with X" → <code>FilterSpec(column="X", operator="==", value="Yes")</code>
+- "scores below/above X" → <code>FilterSpec(column="score_col", operator="&lt;"/"&gt;", value=X)</code></p>
+<p>LLM structured extraction (Tier 3) only invoked when:
+- Tier 1.5 cannot produce valid FilterSpec with confidence ≥ threshold
+- Query contains complex negation or multiple conditions</p>
+<p><strong>New Method</strong>: <code>_extract_filters(query: str) -&gt; list[FilterSpec]</code></p>
+<p>Extract filter conditions from query text (returns FilterSpec, not dict):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_extract_filters</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]:</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">    </span><span class="sd">"""</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="sd">    Extract filter conditions from query text.</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="sd">    Patterns to detect:</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="sd">    - "those that had X" / "patients with X" → categorical filter</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="sd">    - "scores below/above X" → numeric range filter</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="sd">    - "with X" / "without X" → presence filter</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="sd">    Returns:</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="sd">        List of FilterSpec objects:</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="sd">        [</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="sd">            FilterSpec(column="Results of DEXA?", operator="==", value="Osteoporosis"),</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="sd">            FilterSpec(column="DEXA Score (T score)", operator="&lt;", value=-2.5)</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="sd">        ]</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="sd">    """</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>    <span class="n">filters</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>    <span class="n">query_lower</span> <span class="o">=</span> <span class="n">query</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a>
+<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a>    <span class="c1"># Pattern 1: Categorical filters ("those that had X", "patients with X")</span>
+<a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a>    <span class="c1"># Match against semantic layer column aliases</span>
+<a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a>    <span class="c1"># ...</span>
+<a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a>
+<a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a>    <span class="c1"># Pattern 2: Numeric range filters ("below X", "above X", "less than X")</span>
+<a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a>    <span class="c1"># Extract numeric value and operator</span>
+<a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a>    <span class="c1"># ...</span>
+<a id="__codelineno-4-27" name="__codelineno-4-27" href="#__codelineno-4-27"></a>
+<a id="__codelineno-4-28" name="__codelineno-4-28" href="#__codelineno-4-28"></a>    <span class="c1"># Pattern 3: "without X" → inverse filter</span>
+<a id="__codelineno-4-29" name="__codelineno-4-29" href="#__codelineno-4-29"></a>    <span class="c1"># ...</span>
+<a id="__codelineno-4-30" name="__codelineno-4-30" href="#__codelineno-4-30"></a>
+<a id="__codelineno-4-31" name="__codelineno-4-31" href="#__codelineno-4-31"></a>    <span class="k">return</span> <span class="n">filters</span>
+</code></pre></div>
+<p><strong>Integration</strong>:
+- Call <code>_extract_filters()</code> in <code>parse_query()</code> and populate <code>QueryIntent.filters</code> (as <code>list[FilterSpec]</code>)
+- Convert <code>QueryIntent</code> to <code>QueryPlan</code> with filters as <code>list[FilterSpec]</code>
+- Pass <code>QueryPlan</code> to execution layer (semantic layer or analysis functions)</p>
+<p><strong>Data Structure</strong>: Filters use <code>FilterSpec</code> dataclass (from QueryPlan contract), not dicts. This ensures type safety and prevents ad-hoc structures.</p>
+<p><strong>Example from Real Failure</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># Query: "Average LDL for those patients not on statin?"</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="c1"># Should extract:</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">filters</span> <span class="o">=</span> <span class="p">[</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="p">{</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>        <span class="s2">"column"</span><span class="p">:</span> <span class="s2">"Statin Prescribed?"</span><span class="p">,</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>        <span class="s2">"operator"</span><span class="p">:</span> <span class="s2">"=="</span><span class="p">,</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>        <span class="s2">"value"</span><span class="p">:</span> <span class="s2">"2: No"</span><span class="p">,</span>  <span class="c1"># Maps "not on statin" to column value</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>        <span class="s2">"negation"</span><span class="p">:</span> <span class="kc">False</span>  <span class="c1"># "not" is handled via value mapping</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>    <span class="p">}</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="p">]</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="c1"># Then apply filter before computing average LDL</span>
+</code></pre></div></p>
+<p><strong>Note</strong>: This requires coordination with ADR003 Phase 2 (Enhanced LLM Parser) for robust negation handling and column value mapping. Pattern matching alone may not handle "not on statin" → "Statin Prescribed? == 2: No" mapping correctly.</p>
+<h4 id="22-update-analysiscontext-to-use-queryplan">2.2 Update AnalysisContext to use QueryPlan</h4>
+<p><strong>File</strong>: <code>src/clinical_analytics/ui/components/question_engine.py</code></p>
+<p><strong>Change</strong>: <code>AnalysisContext</code> should contain a <code>QueryPlan</code> (or be replaced by QueryPlan entirely).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nd">@dataclass</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">AnalysisContext</span><span class="p">:</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="c1"># ... existing fields ...</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>    <span class="n">query_plan</span><span class="p">:</span> <span class="n">QueryPlan</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># Structured plan (preferred)</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>    <span class="c1"># OR: Keep existing fields but add query_plan for new code paths</span>
+</code></pre></div>
+<p><strong>Propagation</strong>: In <code>ask_free_form_question()</code>, convert <code>QueryIntent</code> to <code>QueryPlan</code> and store in context.</p>
+<h4 id="23-apply-filters-in-compute-functions">2.3 Apply filters in compute functions</h4>
+<p><strong>File</strong>: <code>src/clinical_analytics/analysis/compute.py</code></p>
+<p><strong>New Helper</strong>: <code>_apply_filters(df: pl.DataFrame, filters: list[FilterSpec]) -&gt; pl.DataFrame</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_apply_filters</span><span class="p">(</span><span class="n">df</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">,</span> <span class="n">filters</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]])</span> <span class="o">-&gt;</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">    </span><span class="sd">"""</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="sd">    Apply filter conditions to DataFrame.</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="sd">    Args:</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="sd">        df: Input DataFrame</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="sd">        filters: List of FilterSpec objects</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="sd">    Returns:</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="sd">        Filtered DataFrame</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="sd">    """</span>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>    <span class="c1"># Operator dispatch table</span>
+<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>    <span class="n">OPERATORS</span> <span class="o">=</span> <span class="p">{</span>
+<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>        <span class="s2">"=="</span><span class="p">:</span> <span class="k">lambda</span> <span class="n">col</span><span class="p">,</span> <span class="n">val</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="n">col</span><span class="p">)</span> <span class="o">==</span> <span class="n">val</span><span class="p">,</span>
+<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>        <span class="s2">"!="</span><span class="p">:</span> <span class="k">lambda</span> <span class="n">col</span><span class="p">,</span> <span class="n">val</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="n">col</span><span class="p">)</span> <span class="o">!=</span> <span class="n">val</span><span class="p">,</span>
+<a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a>        <span class="s2">"&lt;"</span><span class="p">:</span> <span class="k">lambda</span> <span class="n">col</span><span class="p">,</span> <span class="n">val</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="n">col</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">val</span><span class="p">,</span>
+<a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a>        <span class="s2">"&gt;"</span><span class="p">:</span> <span class="k">lambda</span> <span class="n">col</span><span class="p">,</span> <span class="n">val</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="n">col</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">val</span><span class="p">,</span>
+<a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a>        <span class="s2">"&lt;="</span><span class="p">:</span> <span class="k">lambda</span> <span class="n">col</span><span class="p">,</span> <span class="n">val</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="n">col</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="n">val</span><span class="p">,</span>
+<a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a>        <span class="s2">"&gt;="</span><span class="p">:</span> <span class="k">lambda</span> <span class="n">col</span><span class="p">,</span> <span class="n">val</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="n">col</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="n">val</span><span class="p">,</span>
+<a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a>        <span class="s2">"IN"</span><span class="p">:</span> <span class="k">lambda</span> <span class="n">col</span><span class="p">,</span> <span class="n">val</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="n">col</span><span class="p">)</span><span class="o">.</span><span class="n">is_in</span><span class="p">(</span><span class="n">val</span><span class="p">),</span>
+<a id="__codelineno-7-21" name="__codelineno-7-21" href="#__codelineno-7-21"></a>        <span class="s2">"NOT_IN"</span><span class="p">:</span> <span class="k">lambda</span> <span class="n">col</span><span class="p">,</span> <span class="n">val</span><span class="p">:</span> <span class="o">~</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="n">col</span><span class="p">)</span><span class="o">.</span><span class="n">is_in</span><span class="p">(</span><span class="n">val</span><span class="p">),</span>
+<a id="__codelineno-7-22" name="__codelineno-7-22" href="#__codelineno-7-22"></a>    <span class="p">}</span>
+<a id="__codelineno-7-23" name="__codelineno-7-23" href="#__codelineno-7-23"></a>
+<a id="__codelineno-7-24" name="__codelineno-7-24" href="#__codelineno-7-24"></a>    <span class="n">filtered_df</span> <span class="o">=</span> <span class="n">df</span>
+<a id="__codelineno-7-25" name="__codelineno-7-25" href="#__codelineno-7-25"></a>    <span class="k">for</span> <span class="n">filter_spec</span> <span class="ow">in</span> <span class="n">filters</span><span class="p">:</span>
+<a id="__codelineno-7-26" name="__codelineno-7-26" href="#__codelineno-7-26"></a>        <span class="k">if</span> <span class="n">filter_spec</span><span class="o">.</span><span class="n">column</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">df</span><span class="o">.</span><span class="n">columns</span><span class="p">:</span>
+<a id="__codelineno-7-27" name="__codelineno-7-27" href="#__codelineno-7-27"></a>            <span class="k">continue</span>  <span class="c1"># Skip if column not found</span>
+<a id="__codelineno-7-28" name="__codelineno-7-28" href="#__codelineno-7-28"></a>
+<a id="__codelineno-7-29" name="__codelineno-7-29" href="#__codelineno-7-29"></a>        <span class="c1"># Apply null exclusion if requested (default: yes)</span>
+<a id="__codelineno-7-30" name="__codelineno-7-30" href="#__codelineno-7-30"></a>        <span class="k">if</span> <span class="n">filter_spec</span><span class="o">.</span><span class="n">exclude_nulls</span><span class="p">:</span>
+<a id="__codelineno-7-31" name="__codelineno-7-31" href="#__codelineno-7-31"></a>            <span class="n">filtered_df</span> <span class="o">=</span> <span class="n">filtered_df</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="n">filter_spec</span><span class="o">.</span><span class="n">column</span><span class="p">)</span><span class="o">.</span><span class="n">is_not_null</span><span class="p">())</span>
+<a id="__codelineno-7-32" name="__codelineno-7-32" href="#__codelineno-7-32"></a>
+<a id="__codelineno-7-33" name="__codelineno-7-33" href="#__codelineno-7-33"></a>        <span class="c1"># Apply operator</span>
+<a id="__codelineno-7-34" name="__codelineno-7-34" href="#__codelineno-7-34"></a>        <span class="n">op_func</span> <span class="o">=</span> <span class="n">OPERATORS</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">filter_spec</span><span class="o">.</span><span class="n">operator</span><span class="p">)</span>
+<a id="__codelineno-7-35" name="__codelineno-7-35" href="#__codelineno-7-35"></a>        <span class="k">if</span> <span class="n">op_func</span><span class="p">:</span>
+<a id="__codelineno-7-36" name="__codelineno-7-36" href="#__codelineno-7-36"></a>            <span class="n">filtered_df</span> <span class="o">=</span> <span class="n">filtered_df</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">op_func</span><span class="p">(</span><span class="n">filter_spec</span><span class="o">.</span><span class="n">column</span><span class="p">,</span> <span class="n">filter_spec</span><span class="o">.</span><span class="n">value</span><span class="p">))</span>
+<a id="__codelineno-7-37" name="__codelineno-7-37" href="#__codelineno-7-37"></a>
+<a id="__codelineno-7-38" name="__codelineno-7-38" href="#__codelineno-7-38"></a>    <span class="k">return</span> <span class="n">filtered_df</span>
+</code></pre></div>
+<p><strong>Integration</strong>:
+- In <code>compute_descriptive_analysis()</code>: Apply filters at the start (line ~340), before computing statistics
+- In <code>compute_comparison_analysis()</code>: Apply filters at the start (line ~390), before grouping
+- For COUNT intent: Use <code>semantic_layer.query(metrics=["count"], filters={...})</code> when possible (SQL aggregation), fall back to Polars if needed
+- Track filtered vs unfiltered counts for breakdown reporting
+- <strong>Feature Parity</strong>: Filter application must work identically for both single-file and multi-table uploads, using the same lazy Polars evaluation pattern</p>
+<p><strong>Note</strong>: For COUNT queries with filters, prefer semantic layer aggregation (<code>query()</code> method) over Polars filtering + counting. This is faster and more correct (predicate pushdown in SQL).</p>
+<h4 id="24-enhanced-breakdown-reporting">2.4 Enhanced breakdown reporting</h4>
+<p><strong>File</strong>: <code>src/clinical_analytics/analysis/compute.py</code></p>
+<p><strong>Note</strong>: This coordinates with ADR003 Phase 1 (Trust Layer) - breakdown reporting provides foundation for verification UI.</p>
+<p><strong>Modify <code>compute_descriptive_analysis()</code></strong> to return breakdown info:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">compute_descriptive_analysis</span><span class="p">(</span><span class="n">df</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">,</span> <span class="n">context</span><span class="p">:</span> <span class="n">AnalysisContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    <span class="c1"># Store original count</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    <span class="n">original_count</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">df</span><span class="p">)</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    <span class="c1"># Apply filters</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="k">if</span> <span class="n">context</span><span class="o">.</span><span class="n">filters</span><span class="p">:</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>        <span class="n">df</span> <span class="o">=</span> <span class="n">_apply_filters</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">context</span><span class="o">.</span><span class="n">filters</span><span class="p">)</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>    <span class="c1"># ... existing analysis logic ...</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>    <span class="k">return</span> <span class="p">{</span>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>        <span class="c1"># ... existing fields ...</span>
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>        <span class="s2">"original_count"</span><span class="p">:</span> <span class="n">original_count</span><span class="p">,</span>
+<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a>        <span class="s2">"filtered_count"</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">df</span><span class="p">),</span>
+<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>        <span class="s2">"filters_applied"</span><span class="p">:</span> <span class="p">[</span><span class="n">f</span><span class="o">.</span><span class="vm">__dict__</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">context</span><span class="o">.</span><span class="n">query_plan</span><span class="o">.</span><span class="n">filters</span><span class="p">]</span> <span class="k">if</span> <span class="n">context</span><span class="o">.</span><span class="n">query_plan</span> <span class="k">else</span> <span class="p">[],</span>
+<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>        <span class="s2">"filter_description"</span><span class="p">:</span> <span class="n">_format_filter_description</span><span class="p">(</span><span class="n">context</span><span class="o">.</span><span class="n">query_plan</span><span class="o">.</span><span class="n">filters</span><span class="p">)</span> <span class="k">if</span> <span class="n">context</span><span class="o">.</span><span class="n">query_plan</span> <span class="k">else</span> <span class="s2">""</span><span class="p">,</span>
+<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a>    <span class="p">}</span>
+</code></pre></div>
+<p><strong>New Helper</strong>: <code>_format_filter_description(filters: list[FilterSpec]) -&gt; str</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_format_filter_description</span><span class="p">(</span><span class="n">filters</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">FilterSpec</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">    </span><span class="sd">"""Convert filter list to human-readable description."""</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">filters</span><span class="p">:</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>        <span class="k">return</span> <span class="s2">""</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    <span class="n">descriptions</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">filters</span><span class="p">:</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>        <span class="n">op_text</span> <span class="o">=</span> <span class="p">{</span>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>            <span class="s2">"=="</span><span class="p">:</span> <span class="s2">"equals"</span><span class="p">,</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>            <span class="s2">"!="</span><span class="p">:</span> <span class="s2">"does not equal"</span><span class="p">,</span>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>            <span class="s2">"&lt;"</span><span class="p">:</span> <span class="s2">"less than"</span><span class="p">,</span>
+<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>            <span class="s2">"&gt;"</span><span class="p">:</span> <span class="s2">"greater than"</span><span class="p">,</span>
+<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>            <span class="s2">"&lt;="</span><span class="p">:</span> <span class="s2">"at most"</span><span class="p">,</span>
+<a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>            <span class="s2">"&gt;="</span><span class="p">:</span> <span class="s2">"at least"</span><span class="p">,</span>
+<a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>            <span class="s2">"IN"</span><span class="p">:</span> <span class="s2">"in"</span><span class="p">,</span>
+<a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>            <span class="s2">"NOT_IN"</span><span class="p">:</span> <span class="s2">"not in"</span><span class="p">,</span>
+<a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a>        <span class="p">}</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">operator</span><span class="p">,</span> <span class="n">f</span><span class="o">.</span><span class="n">operator</span><span class="p">)</span>
+<a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a>
+<a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a>        <span class="n">descriptions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">f</span><span class="o">.</span><span class="n">column</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">op_text</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">f</span><span class="o">.</span><span class="n">value</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a>
+<a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a>    <span class="k">return</span> <span class="s2">"; "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">descriptions</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>File</strong>: <code>src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py</code></p>
+<p><strong>Update rendering functions</strong> to show breakdown:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_render_focused_descriptive</span><span class="p">(</span><span class="n">result</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="c1"># Show breakdown if filters were applied</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"filters_applied"</span><span class="p">):</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>        <span class="n">st</span><span class="o">.</span><span class="n">markdown</span><span class="p">(</span><span class="s2">"### Data Breakdown"</span><span class="p">)</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>        <span class="n">col1</span><span class="p">,</span> <span class="n">col2</span> <span class="o">=</span> <span class="n">st</span><span class="o">.</span><span class="n">columns</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>        <span class="k">with</span> <span class="n">col1</span><span class="p">:</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>            <span class="n">st</span><span class="o">.</span><span class="n">metric</span><span class="p">(</span><span class="s2">"Matching Criteria"</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">result</span><span class="p">[</span><span class="s1">'filtered_count'</span><span class="p">]</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>        <span class="k">with</span> <span class="n">col2</span><span class="p">:</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>            <span class="n">st</span><span class="o">.</span><span class="n">metric</span><span class="p">(</span><span class="s2">"Excluded"</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">result</span><span class="p">[</span><span class="s1">'original_count'</span><span class="p">]</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">result</span><span class="p">[</span><span class="s1">'filtered_count'</span><span class="p">]</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>        <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"filter_description"</span><span class="p">):</span>
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>            <span class="n">st</span><span class="o">.</span><span class="n">caption</span><span class="p">(</span><span class="sa">f</span><span class="s2">"**Filters:** </span><span class="si">{</span><span class="n">result</span><span class="p">[</span><span class="s1">'filter_description'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a>
+<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a>        <span class="n">st</span><span class="o">.</span><span class="n">divider</span><span class="p">()</span>
+<a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a>
+<a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a>    <span class="c1"># Show headline answer</span>
+<a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a>    <span class="k">if</span> <span class="s2">"headline"</span> <span class="ow">in</span> <span class="n">result</span><span class="p">:</span>
+<a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a>        <span class="n">st</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">"📋 **Answer:** </span><span class="si">{</span><span class="n">result</span><span class="p">[</span><span class="s1">'headline'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<a id="__codelineno-10-19" name="__codelineno-10-19" href="#__codelineno-10-19"></a>
+<a id="__codelineno-10-20" name="__codelineno-10-20" href="#__codelineno-10-20"></a>    <span class="c1"># ... rest of rendering</span>
+</code></pre></div>
+<p>Apply similar breakdown display to <code>_render_focused_comparison()</code>.</p>
+<h3 id="phase-3-redesign-ui-for-conversational-flow">Phase 3: Redesign UI for Conversational Flow</h3>
+<p><strong>Note</strong>: This coordinates with ADR003 Phase 1 (Trust Layer) - conversational UI should include verification expanders in each result message.</p>
+<h4 id="31-conversation-history-data-structure">3.1 Conversation history data structure</h4>
+<p><strong>File</strong>: <code>src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py</code></p>
+<p><strong>New Session State Structure</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Initialize conversation history</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="k">if</span> <span class="s2">"conversation_history"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">st</span><span class="o">.</span><span class="n">session_state</span><span class="p">:</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="n">st</span><span class="o">.</span><span class="n">session_state</span><span class="p">[</span><span class="s2">"conversation_history"</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="c1"># Each entry (lightweight storage):</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="p">{</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>    <span class="s2">"query"</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>  <span class="c1"># Original user query</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>    <span class="s2">"intent"</span><span class="p">:</span> <span class="n">AnalysisIntent</span><span class="p">,</span>  <span class="c1"># Parsed intent</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>    <span class="s2">"headline"</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>  <span class="c1"># Summary result (not full result dict)</span>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>    <span class="s2">"run_key"</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>  <span class="c1"># Unique key to reference full result if needed</span>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>    <span class="s2">"timestamp"</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>  <span class="c1"># Unix timestamp</span>
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>    <span class="s2">"filters_applied"</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span>  <span class="c1"># For audit trail</span>
+<a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Rationale</strong>: Store lightweight summaries (headline text, not full result dicts with arrays/charts) to prevent session state bloat. Full results can be reconstructed on demand via <code>run_key</code>.</p>
+<h4 id="32-redesign-main-ui-flow">3.2 Redesign main UI flow</h4>
+<p><strong>File</strong>: <code>src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py</code></p>
+<p><strong>Remove Completely</strong>:
+- "Start Over" button
+- "Clear Results" button
+- "Confirm and Run" button
+- Low confidence variable selection expanders</p>
+<p><strong>New Flow</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>    <span class="n">st</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">"💬 Ask Questions"</span><span class="p">)</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>    <span class="c1"># Display conversation history (if any)</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>    <span class="k">if</span> <span class="n">st</span><span class="o">.</span><span class="n">session_state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"conversation_history"</span><span class="p">):</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>        <span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">st</span><span class="o">.</span><span class="n">session_state</span><span class="o">.</span><span class="n">conversation_history</span><span class="p">:</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>            <span class="k">with</span> <span class="n">st</span><span class="o">.</span><span class="n">chat_message</span><span class="p">(</span><span class="s2">"user"</span><span class="p">):</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>                <span class="n">st</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">entry</span><span class="p">[</span><span class="s2">"query"</span><span class="p">])</span>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>            <span class="k">with</span> <span class="n">st</span><span class="o">.</span><span class="n">chat_message</span><span class="p">(</span><span class="s2">"assistant"</span><span class="p">):</span>
+<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a>                <span class="n">st</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="n">entry</span><span class="p">[</span><span class="s2">"headline"</span><span class="p">])</span>
+<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a>
+<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a>                <span class="c1"># Expandable details</span>
+<a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a>                <span class="k">with</span> <span class="n">st</span><span class="o">.</span><span class="n">expander</span><span class="p">(</span><span class="s2">"View detailed results"</span><span class="p">):</span>
+<a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a>                    <span class="c1"># Reconstruct or display cached details</span>
+<a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a>                    <span class="n">st</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">"Detailed analysis here..."</span><span class="p">)</span>
+<a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a>
+<a id="__codelineno-12-18" name="__codelineno-12-18" href="#__codelineno-12-18"></a>    <span class="c1"># Always show query input at bottom (sticky)</span>
+<a id="__codelineno-12-19" name="__codelineno-12-19" href="#__codelineno-12-19"></a>    <span class="n">query</span> <span class="o">=</span> <span class="n">st</span><span class="o">.</span><span class="n">chat_input</span><span class="p">(</span><span class="s2">"Ask a question about your data..."</span><span class="p">)</span>
+<a id="__codelineno-12-20" name="__codelineno-12-20" href="#__codelineno-12-20"></a>
+<a id="__codelineno-12-21" name="__codelineno-12-21" href="#__codelineno-12-21"></a>    <span class="k">if</span> <span class="n">query</span><span class="p">:</span>
+<a id="__codelineno-12-22" name="__codelineno-12-22" href="#__codelineno-12-22"></a>        <span class="c1"># Parse and execute</span>
+<a id="__codelineno-12-23" name="__codelineno-12-23" href="#__codelineno-12-23"></a>        <span class="n">context</span> <span class="o">=</span> <span class="n">QuestionEngine</span><span class="o">.</span><span class="n">ask_free_form_question</span><span class="p">(</span>
+<a id="__codelineno-12-24" name="__codelineno-12-24" href="#__codelineno-12-24"></a>            <span class="n">query</span><span class="o">=</span><span class="n">query</span><span class="p">,</span>
+<a id="__codelineno-12-25" name="__codelineno-12-25" href="#__codelineno-12-25"></a>            <span class="n">data_preview</span><span class="o">=</span><span class="n">st</span><span class="o">.</span><span class="n">session_state</span><span class="p">[</span><span class="s2">"data_preview"</span><span class="p">],</span>
+<a id="__codelineno-12-26" name="__codelineno-12-26" href="#__codelineno-12-26"></a>            <span class="n">semantic_layer</span><span class="o">=</span><span class="n">st</span><span class="o">.</span><span class="n">session_state</span><span class="p">[</span><span class="s2">"semantic_layer"</span><span class="p">],</span>
+<a id="__codelineno-12-27" name="__codelineno-12-27" href="#__codelineno-12-27"></a>        <span class="p">)</span>
+<a id="__codelineno-12-28" name="__codelineno-12-28" href="#__codelineno-12-28"></a>
+<a id="__codelineno-12-29" name="__codelineno-12-29" href="#__codelineno-12-29"></a>        <span class="k">if</span> <span class="n">context</span> <span class="ow">and</span> <span class="n">context</span><span class="o">.</span><span class="n">execution_ready</span><span class="p">:</span>
+<a id="__codelineno-12-30" name="__codelineno-12-30" href="#__codelineno-12-30"></a>            <span class="c1"># Execute analysis</span>
+<a id="__codelineno-12-31" name="__codelineno-12-31" href="#__codelineno-12-31"></a>            <span class="n">result</span> <span class="o">=</span> <span class="n">execute_analysis</span><span class="p">(</span>
+<a id="__codelineno-12-32" name="__codelineno-12-32" href="#__codelineno-12-32"></a>                <span class="n">df</span><span class="o">=</span><span class="n">st</span><span class="o">.</span><span class="n">session_state</span><span class="p">[</span><span class="s2">"uploaded_data"</span><span class="p">],</span>
+<a id="__codelineno-12-33" name="__codelineno-12-33" href="#__codelineno-12-33"></a>                <span class="n">context</span><span class="o">=</span><span class="n">context</span><span class="p">,</span>
+<a id="__codelineno-12-34" name="__codelineno-12-34" href="#__codelineno-12-34"></a>            <span class="p">)</span>
+<a id="__codelineno-12-35" name="__codelineno-12-35" href="#__codelineno-12-35"></a>
+<a id="__codelineno-12-36" name="__codelineno-12-36" href="#__codelineno-12-36"></a>            <span class="c1"># Generate unique run key</span>
+<a id="__codelineno-12-37" name="__codelineno-12-37" href="#__codelineno-12-37"></a>            <span class="n">run_key</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">context</span><span class="o">.</span><span class="n">inferred_intent</span><span class="o">.</span><span class="n">value</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span><span class="o">*</span><span class="mi">1000</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
+<a id="__codelineno-12-38" name="__codelineno-12-38" href="#__codelineno-12-38"></a>
+<a id="__codelineno-12-39" name="__codelineno-12-39" href="#__codelineno-12-39"></a>            <span class="c1"># Add to conversation history (lightweight)</span>
+<a id="__codelineno-12-40" name="__codelineno-12-40" href="#__codelineno-12-40"></a>            <span class="n">st</span><span class="o">.</span><span class="n">session_state</span><span class="o">.</span><span class="n">conversation_history</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+<a id="__codelineno-12-41" name="__codelineno-12-41" href="#__codelineno-12-41"></a>                <span class="s2">"query"</span><span class="p">:</span> <span class="n">query</span><span class="p">,</span>
+<a id="__codelineno-12-42" name="__codelineno-12-42" href="#__codelineno-12-42"></a>                <span class="s2">"intent"</span><span class="p">:</span> <span class="n">context</span><span class="o">.</span><span class="n">inferred_intent</span><span class="p">,</span>
+<a id="__codelineno-12-43" name="__codelineno-12-43" href="#__codelineno-12-43"></a>                <span class="s2">"headline"</span><span class="p">:</span> <span class="n">result</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"headline"</span><span class="p">)</span> <span class="ow">or</span> <span class="n">result</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"headline_text"</span><span class="p">),</span>
+<a id="__codelineno-12-44" name="__codelineno-12-44" href="#__codelineno-12-44"></a>                <span class="s2">"run_key"</span><span class="p">:</span> <span class="n">run_key</span><span class="p">,</span>
+<a id="__codelineno-12-45" name="__codelineno-12-45" href="#__codelineno-12-45"></a>                <span class="s2">"timestamp"</span><span class="p">:</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">(),</span>
+<a id="__codelineno-12-46" name="__codelineno-12-46" href="#__codelineno-12-46"></a>                <span class="s2">"filters_applied"</span><span class="p">:</span> <span class="n">context</span><span class="o">.</span><span class="n">filters</span><span class="p">,</span>
+<a id="__codelineno-12-47" name="__codelineno-12-47" href="#__codelineno-12-47"></a>            <span class="p">})</span>
+<a id="__codelineno-12-48" name="__codelineno-12-48" href="#__codelineno-12-48"></a>
+<a id="__codelineno-12-49" name="__codelineno-12-49" href="#__codelineno-12-49"></a>            <span class="c1"># Rerun to display new message</span>
+<a id="__codelineno-12-50" name="__codelineno-12-50" href="#__codelineno-12-50"></a>            <span class="n">st</span><span class="o">.</span><span class="n">rerun</span><span class="p">()</span>
+</code></pre></div>
+<p><strong>Handling Low Confidence Variable Matches</strong>:</p>
+<p>Instead of showing variable selection UI in expanders, display inline clarification in chat:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="k">if</span> <span class="n">context</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">context</span><span class="o">.</span><span class="n">execution_ready</span><span class="p">:</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>    <span class="c1"># Low confidence - ask for clarification inline</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>    <span class="k">with</span> <span class="n">st</span><span class="o">.</span><span class="n">chat_message</span><span class="p">(</span><span class="s2">"assistant"</span><span class="p">):</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>        <span class="n">st</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">"I found multiple possible matches. Which did you mean?"</span><span class="p">)</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>        <span class="c1"># Show options as buttons</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>        <span class="k">for</span> <span class="n">idx</span><span class="p">,</span> <span class="n">option</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">context</span><span class="o">.</span><span class="n">candidate_variables</span><span class="p">):</span>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>            <span class="k">if</span> <span class="n">st</span><span class="o">.</span><span class="n">button</span><span class="p">(</span>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>                <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">option</span><span class="p">[</span><span class="s1">'column'</span><span class="p">]</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">option</span><span class="p">[</span><span class="s1">'confidence'</span><span class="p">]</span><span class="si">:</span><span class="s2">.0%</span><span class="si">}</span><span class="s2"> confidence)"</span><span class="p">,</span>
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a>                <span class="n">key</span><span class="o">=</span><span class="sa">f</span><span class="s2">"clarify_</span><span class="si">{</span><span class="n">idx</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">run_key</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
+<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a>                <span class="n">use_container_width</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a>            <span class="p">):</span>
+<a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a>                <span class="c1"># Update context with selected variable</span>
+<a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a>                <span class="n">st</span><span class="o">.</span><span class="n">session_state</span><span class="p">[</span><span class="s2">"pending_clarification"</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+<a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a>                    <span class="s2">"context"</span><span class="p">:</span> <span class="n">context</span><span class="p">,</span>
+<a id="__codelineno-13-16" name="__codelineno-13-16" href="#__codelineno-13-16"></a>                    <span class="s2">"selected_variable"</span><span class="p">:</span> <span class="n">option</span><span class="p">[</span><span class="s2">"column"</span><span class="p">],</span>
+<a id="__codelineno-13-17" name="__codelineno-13-17" href="#__codelineno-13-17"></a>                <span class="p">}</span>
+<a id="__codelineno-13-18" name="__codelineno-13-18" href="#__codelineno-13-18"></a>                <span class="n">st</span><span class="o">.</span><span class="n">rerun</span><span class="p">()</span>
+</code></pre></div>
+<h4 id="33-inline-result-rendering">3.3 Inline result rendering</h4>
+<p><strong>File</strong>: <code>src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py</code></p>
+<p>Results are now rendered inline within the <code>st.chat_message("assistant")</code> block (shown in 3.2 above). No separate page or section.</p>
+<p><strong>Detailed results</strong> are placed in an <code>st.expander()</code> within the assistant message to keep the conversation flow clean.</p>
+<h4 id="34-follow-up-question-suggestions">3.4 Follow-up question suggestions</h4>
+<p><strong>File</strong>: <code>src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py</code></p>
+<p><strong>New Function</strong>: <code>_suggest_follow_ups(context: AnalysisContext, result: dict) -&gt; None</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_suggest_follow_ups</span><span class="p">(</span><span class="n">context</span><span class="p">:</span> <span class="n">AnalysisContext</span><span class="p">,</span> <span class="n">result</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">    </span><span class="sd">"""Suggest natural follow-up questions based on current result."""</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>    <span class="n">st</span><span class="o">.</span><span class="n">markdown</span><span class="p">(</span><span class="s2">"**💡 You might also ask:**"</span><span class="p">)</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>    <span class="n">suggestions</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>    <span class="k">if</span> <span class="n">context</span><span class="o">.</span><span class="n">inferred_intent</span> <span class="o">==</span> <span class="n">AnalysisIntent</span><span class="o">.</span><span class="n">DESCRIBE</span><span class="p">:</span>
+<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>        <span class="k">if</span> <span class="n">context</span><span class="o">.</span><span class="n">primary_variable</span><span class="p">:</span>
+<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>            <span class="n">suggestions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Compare </span><span class="si">{</span><span class="n">context</span><span class="o">.</span><span class="n">primary_variable</span><span class="si">}</span><span class="s2"> by treatment group"</span><span class="p">)</span>
+<a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a>            <span class="n">suggestions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"What predicts </span><span class="si">{</span><span class="n">context</span><span class="o">.</span><span class="n">primary_variable</span><span class="si">}</span><span class="s2">?"</span><span class="p">)</span>
+<a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a>
+<a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a>    <span class="k">elif</span> <span class="n">context</span><span class="o">.</span><span class="n">inferred_intent</span> <span class="o">==</span> <span class="n">AnalysisIntent</span><span class="o">.</span><span class="n">COMPARE_GROUPS</span><span class="p">:</span>
+<a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a>        <span class="k">if</span> <span class="n">context</span><span class="o">.</span><span class="n">grouping_variable</span> <span class="ow">and</span> <span class="n">context</span><span class="o">.</span><span class="n">primary_variable</span><span class="p">:</span>
+<a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a>            <span class="n">suggestions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Show distribution of </span><span class="si">{</span><span class="n">context</span><span class="o">.</span><span class="n">primary_variable</span><span class="si">}</span><span class="s2"> by </span><span class="si">{</span><span class="n">context</span><span class="o">.</span><span class="n">grouping_variable</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<a id="__codelineno-14-16" name="__codelineno-14-16" href="#__codelineno-14-16"></a>            <span class="n">suggestions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"What else affects </span><span class="si">{</span><span class="n">context</span><span class="o">.</span><span class="n">primary_variable</span><span class="si">}</span><span class="s2">?"</span><span class="p">)</span>
+<a id="__codelineno-14-17" name="__codelineno-14-17" href="#__codelineno-14-17"></a>
+<a id="__codelineno-14-18" name="__codelineno-14-18" href="#__codelineno-14-18"></a>    <span class="c1"># Render as clickable buttons that populate chat input</span>
+<a id="__codelineno-14-19" name="__codelineno-14-19" href="#__codelineno-14-19"></a>    <span class="k">for</span> <span class="n">suggestion</span> <span class="ow">in</span> <span class="n">suggestions</span><span class="p">:</span>
+<a id="__codelineno-14-20" name="__codelineno-14-20" href="#__codelineno-14-20"></a>        <span class="k">if</span> <span class="n">st</span><span class="o">.</span><span class="n">button</span><span class="p">(</span><span class="n">suggestion</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="sa">f</span><span class="s2">"suggest_</span><span class="si">{</span><span class="nb">hash</span><span class="p">(</span><span class="n">suggestion</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="n">use_container_width</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+<a id="__codelineno-14-21" name="__codelineno-14-21" href="#__codelineno-14-21"></a>            <span class="n">st</span><span class="o">.</span><span class="n">session_state</span><span class="p">[</span><span class="s2">"prefilled_query"</span><span class="p">]</span> <span class="o">=</span> <span class="n">suggestion</span>
+<a id="__codelineno-14-22" name="__codelineno-14-22" href="#__codelineno-14-22"></a>            <span class="n">st</span><span class="o">.</span><span class="n">rerun</span><span class="p">()</span>
+</code></pre></div>
+<p><strong>Integration</strong>: Call <code>_suggest_follow_ups()</code> at the end of each assistant message block.</p>
+<p><strong>Optional Enhancement</strong>: If <code>st.session_state.get("prefilled_query")</code> exists, pre-populate the <code>st.chat_input()</code> with it (if Streamlit supports this; otherwise, display as text above input).</p>
+<h4 id="35-conversation-management-controls">3.5 Conversation management controls</h4>
+<p><strong>File</strong>: <code>src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py</code></p>
+<p><strong>Add to sidebar</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="k">with</span> <span class="n">st</span><span class="o">.</span><span class="n">sidebar</span><span class="p">:</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>    <span class="n">st</span><span class="o">.</span><span class="n">markdown</span><span class="p">(</span><span class="s2">"### Conversation"</span><span class="p">)</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>    <span class="k">if</span> <span class="n">st</span><span class="o">.</span><span class="n">button</span><span class="p">(</span><span class="s2">"Clear Conversation"</span><span class="p">,</span> <span class="n">use_container_width</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>        <span class="n">st</span><span class="o">.</span><span class="n">session_state</span><span class="o">.</span><span class="n">conversation_history</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>        <span class="n">st</span><span class="o">.</span><span class="n">rerun</span><span class="p">()</span>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>    <span class="c1"># Optional: Export conversation as JSON</span>
+<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>    <span class="k">if</span> <span class="n">st</span><span class="o">.</span><span class="n">session_state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"conversation_history"</span><span class="p">):</span>
+<a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>        <span class="n">conversation_json</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span>
+<a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>            <span class="n">st</span><span class="o">.</span><span class="n">session_state</span><span class="o">.</span><span class="n">conversation_history</span><span class="p">,</span>
+<a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a>            <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a>            <span class="n">default</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a>        <span class="p">)</span>
+<a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a>        <span class="n">st</span><span class="o">.</span><span class="n">download_button</span><span class="p">(</span>
+<a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a>            <span class="s2">"Export Conversation"</span><span class="p">,</span>
+<a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a>            <span class="n">data</span><span class="o">=</span><span class="n">conversation_json</span><span class="p">,</span>
+<a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a>            <span class="n">file_name</span><span class="o">=</span><span class="sa">f</span><span class="s2">"conversation_</span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">())</span><span class="si">}</span><span class="s2">.json"</span><span class="p">,</span>
+<a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a>            <span class="n">mime</span><span class="o">=</span><span class="s2">"application/json"</span><span class="p">,</span>
+<a id="__codelineno-15-20" name="__codelineno-15-20" href="#__codelineno-15-20"></a>            <span class="n">use_container_width</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<a id="__codelineno-15-21" name="__codelineno-15-21" href="#__codelineno-15-21"></a>        <span class="p">)</span>
+</code></pre></div>
+<p><strong>Rationale</strong>: Conversation controls in sidebar keep main area clean. Export supports audit trail for clinical research reproducibility.</p>
+<h3 id="phase-4-testing">Phase 4: Testing</h3>
+<p><strong>Critical</strong>: All tests must verify functionality works identically for both single-file and multi-table uploads. Feature parity is not optional.</p>
+<h4 id="41-test-comparison-analysis-with-string-numeric-columns">4.1 Test comparison analysis with string numeric columns</h4>
+<p><strong>File</strong>: <code>tests/analysis/test_compute.py</code></p>
+<p>Add test cases:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_comparison_analysis_with_string_numeric_outcome</span><span class="p">():</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">    </span><span class="sd">"""Test that string numeric columns are converted and means computed."""</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>    <span class="n">df</span> <span class="o">=</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>        <span class="s2">"Treatment"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"A"</span><span class="p">,</span> <span class="s2">"A"</span><span class="p">,</span> <span class="s2">"B"</span><span class="p">,</span> <span class="s2">"B"</span><span class="p">],</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>        <span class="s2">"Viral Load"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"&lt;20"</span><span class="p">,</span> <span class="s2">"120"</span><span class="p">,</span> <span class="s2">"200"</span><span class="p">,</span> <span class="s2">"150"</span><span class="p">],</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>    <span class="p">})</span>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>
+<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>    <span class="n">context</span> <span class="o">=</span> <span class="n">AnalysisContext</span><span class="p">(</span>
+<a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a>        <span class="n">primary_variable</span><span class="o">=</span><span class="s2">"Viral Load"</span><span class="p">,</span>
+<a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a>        <span class="n">grouping_variable</span><span class="o">=</span><span class="s2">"Treatment"</span><span class="p">,</span>
+<a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a>        <span class="n">inferred_intent</span><span class="o">=</span><span class="n">AnalysisIntent</span><span class="o">.</span><span class="n">COMPARE_GROUPS</span><span class="p">,</span>
+<a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a>    <span class="p">)</span>
+<a id="__codelineno-16-13" name="__codelineno-16-13" href="#__codelineno-16-13"></a>
+<a id="__codelineno-16-14" name="__codelineno-16-14" href="#__codelineno-16-14"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">compute_comparison_analysis</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">context</span><span class="p">)</span>
+<a id="__codelineno-16-15" name="__codelineno-16-15" href="#__codelineno-16-15"></a>
+<a id="__codelineno-16-16" name="__codelineno-16-16" href="#__codelineno-16-16"></a>    <span class="c1"># Verify group means were computed (not counts)</span>
+<a id="__codelineno-16-17" name="__codelineno-16-17" href="#__codelineno-16-17"></a>    <span class="k">assert</span> <span class="s2">"group_statistics"</span> <span class="ow">in</span> <span class="n">result</span>
+<a id="__codelineno-16-18" name="__codelineno-16-18" href="#__codelineno-16-18"></a>    <span class="c1"># Treatment A: mean of [20, 120] = 70</span>
+<a id="__codelineno-16-19" name="__codelineno-16-19" href="#__codelineno-16-19"></a>    <span class="c1"># Treatment B: mean of [200, 150] = 175</span>
+<a id="__codelineno-16-20" name="__codelineno-16-20" href="#__codelineno-16-20"></a>    <span class="c1"># (Note: "&lt;20" converts to 20 as upper bound)</span>
+<a id="__codelineno-16-21" name="__codelineno-16-21" href="#__codelineno-16-21"></a>    <span class="k">assert</span> <span class="n">result</span><span class="p">[</span><span class="s2">"group_statistics"</span><span class="p">][</span><span class="s2">"A"</span><span class="p">][</span><span class="s2">"mean"</span><span class="p">]</span> <span class="o">==</span> <span class="n">pytest</span><span class="o">.</span><span class="n">approx</span><span class="p">(</span><span class="mi">70</span><span class="p">,</span> <span class="n">rel</span><span class="o">=</span><span class="mf">0.01</span><span class="p">)</span>
+<a id="__codelineno-16-22" name="__codelineno-16-22" href="#__codelineno-16-22"></a>    <span class="k">assert</span> <span class="n">result</span><span class="p">[</span><span class="s2">"group_statistics"</span><span class="p">][</span><span class="s2">"B"</span><span class="p">][</span><span class="s2">"mean"</span><span class="p">]</span> <span class="o">==</span> <span class="n">pytest</span><span class="o">.</span><span class="n">approx</span><span class="p">(</span><span class="mi">175</span><span class="p">,</span> <span class="n">rel</span><span class="o">=</span><span class="mf">0.01</span><span class="p">)</span>
+<a id="__codelineno-16-23" name="__codelineno-16-23" href="#__codelineno-16-23"></a>
+<a id="__codelineno-16-24" name="__codelineno-16-24" href="#__codelineno-16-24"></a>    <span class="c1"># Verify test type is numeric (t-test or ANOVA)</span>
+<a id="__codelineno-16-25" name="__codelineno-16-25" href="#__codelineno-16-25"></a>    <span class="k">assert</span> <span class="n">result</span><span class="p">[</span><span class="s2">"test_type"</span><span class="p">]</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">"t-test"</span><span class="p">,</span> <span class="s2">"ANOVA"</span><span class="p">]</span>
+<a id="__codelineno-16-26" name="__codelineno-16-26" href="#__codelineno-16-26"></a>
+<a id="__codelineno-16-27" name="__codelineno-16-27" href="#__codelineno-16-27"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_comparison_analysis_with_european_comma_format</span><span class="p">():</span>
+<a id="__codelineno-16-28" name="__codelineno-16-28" href="#__codelineno-16-28"></a><span class="w">    </span><span class="sd">"""Test European comma format conversion (e.g., '1,234.5')."""</span>
+<a id="__codelineno-16-29" name="__codelineno-16-29" href="#__codelineno-16-29"></a>    <span class="n">df</span> <span class="o">=</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span>
+<a id="__codelineno-16-30" name="__codelineno-16-30" href="#__codelineno-16-30"></a>        <span class="s2">"Treatment"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"A"</span><span class="p">,</span> <span class="s2">"B"</span><span class="p">],</span>
+<a id="__codelineno-16-31" name="__codelineno-16-31" href="#__codelineno-16-31"></a>        <span class="s2">"Score"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"1,234.5"</span><span class="p">,</span> <span class="s2">"2,345.6"</span><span class="p">],</span>
+<a id="__codelineno-16-32" name="__codelineno-16-32" href="#__codelineno-16-32"></a>    <span class="p">})</span>
+<a id="__codelineno-16-33" name="__codelineno-16-33" href="#__codelineno-16-33"></a>
+<a id="__codelineno-16-34" name="__codelineno-16-34" href="#__codelineno-16-34"></a>    <span class="n">context</span> <span class="o">=</span> <span class="n">AnalysisContext</span><span class="p">(</span>
+<a id="__codelineno-16-35" name="__codelineno-16-35" href="#__codelineno-16-35"></a>        <span class="n">primary_variable</span><span class="o">=</span><span class="s2">"Score"</span><span class="p">,</span>
+<a id="__codelineno-16-36" name="__codelineno-16-36" href="#__codelineno-16-36"></a>        <span class="n">grouping_variable</span><span class="o">=</span><span class="s2">"Treatment"</span><span class="p">,</span>
+<a id="__codelineno-16-37" name="__codelineno-16-37" href="#__codelineno-16-37"></a>        <span class="n">inferred_intent</span><span class="o">=</span><span class="n">AnalysisIntent</span><span class="o">.</span><span class="n">COMPARE_GROUPS</span><span class="p">,</span>
+<a id="__codelineno-16-38" name="__codelineno-16-38" href="#__codelineno-16-38"></a>    <span class="p">)</span>
+<a id="__codelineno-16-39" name="__codelineno-16-39" href="#__codelineno-16-39"></a>
+<a id="__codelineno-16-40" name="__codelineno-16-40" href="#__codelineno-16-40"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">compute_comparison_analysis</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">context</span><span class="p">)</span>
+<a id="__codelineno-16-41" name="__codelineno-16-41" href="#__codelineno-16-41"></a>
+<a id="__codelineno-16-42" name="__codelineno-16-42" href="#__codelineno-16-42"></a>    <span class="c1"># Verify conversion and mean computation</span>
+<a id="__codelineno-16-43" name="__codelineno-16-43" href="#__codelineno-16-43"></a>    <span class="k">assert</span> <span class="n">result</span><span class="p">[</span><span class="s2">"group_statistics"</span><span class="p">][</span><span class="s2">"A"</span><span class="p">][</span><span class="s2">"mean"</span><span class="p">]</span> <span class="o">==</span> <span class="n">pytest</span><span class="o">.</span><span class="n">approx</span><span class="p">(</span><span class="mf">1234.5</span><span class="p">)</span>
+<a id="__codelineno-16-44" name="__codelineno-16-44" href="#__codelineno-16-44"></a>    <span class="k">assert</span> <span class="n">result</span><span class="p">[</span><span class="s2">"group_statistics"</span><span class="p">][</span><span class="s2">"B"</span><span class="p">][</span><span class="s2">"mean"</span><span class="p">]</span> <span class="o">==</span> <span class="n">pytest</span><span class="o">.</span><span class="n">approx</span><span class="p">(</span><span class="mf">2345.6</span><span class="p">)</span>
+</code></pre></div>
+<h4 id="42-test-filter-parsing">4.2 Test filter parsing</h4>
+<p><strong>File</strong>: <code>tests/core/test_nl_query_engine_filters.py</code> (new)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_extract_categorical_filter</span><span class="p">():</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">    </span><span class="sd">"""Test extraction of categorical filters from query."""</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>    <span class="n">engine</span> <span class="o">=</span> <span class="n">NLQueryEngine</span><span class="p">(</span><span class="n">semantic_layer</span><span class="o">=</span><span class="n">mock_semantic_layer</span><span class="p">)</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>    <span class="n">query</span> <span class="o">=</span> <span class="s2">"what was the average t score of those that had osteoporosis"</span>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>    <span class="n">filters</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">_extract_filters</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a>    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">filters</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span>
+<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a>    <span class="k">assert</span> <span class="n">filters</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"column"</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"Results of DEXA?"</span>
+<a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a>    <span class="k">assert</span> <span class="n">filters</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"operator"</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"=="</span>
+<a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a>    <span class="k">assert</span> <span class="n">filters</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"value"</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"Osteoporosis"</span>
+<a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a>
+<a id="__codelineno-17-13" name="__codelineno-17-13" href="#__codelineno-17-13"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_extract_numeric_range_filter</span><span class="p">():</span>
+<a id="__codelineno-17-14" name="__codelineno-17-14" href="#__codelineno-17-14"></a><span class="w">    </span><span class="sd">"""Test extraction of numeric range filters."""</span>
+<a id="__codelineno-17-15" name="__codelineno-17-15" href="#__codelineno-17-15"></a>    <span class="n">engine</span> <span class="o">=</span> <span class="n">NLQueryEngine</span><span class="p">(</span><span class="n">semantic_layer</span><span class="o">=</span><span class="n">mock_semantic_layer</span><span class="p">)</span>
+<a id="__codelineno-17-16" name="__codelineno-17-16" href="#__codelineno-17-16"></a>
+<a id="__codelineno-17-17" name="__codelineno-17-17" href="#__codelineno-17-17"></a>    <span class="n">query</span> <span class="o">=</span> <span class="s2">"show patients with scores below -2.5"</span>
+<a id="__codelineno-17-18" name="__codelineno-17-18" href="#__codelineno-17-18"></a>    <span class="n">filters</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">_extract_filters</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+<a id="__codelineno-17-19" name="__codelineno-17-19" href="#__codelineno-17-19"></a>
+<a id="__codelineno-17-20" name="__codelineno-17-20" href="#__codelineno-17-20"></a>    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">filters</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span>
+<a id="__codelineno-17-21" name="__codelineno-17-21" href="#__codelineno-17-21"></a>    <span class="k">assert</span> <span class="n">filters</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"column"</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"DEXA Score (T score)"</span>
+<a id="__codelineno-17-22" name="__codelineno-17-22" href="#__codelineno-17-22"></a>    <span class="k">assert</span> <span class="n">filters</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"operator"</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"&lt;"</span>
+<a id="__codelineno-17-23" name="__codelineno-17-23" href="#__codelineno-17-23"></a>    <span class="k">assert</span> <span class="n">filters</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"value"</span><span class="p">]</span> <span class="o">==</span> <span class="o">-</span><span class="mf">2.5</span>
+<a id="__codelineno-17-24" name="__codelineno-17-24" href="#__codelineno-17-24"></a>
+<a id="__codelineno-17-25" name="__codelineno-17-25" href="#__codelineno-17-25"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_extract_multiple_filters</span><span class="p">():</span>
+<a id="__codelineno-17-26" name="__codelineno-17-26" href="#__codelineno-17-26"></a><span class="w">    </span><span class="sd">"""Test extraction of multiple filters in one query."""</span>
+<a id="__codelineno-17-27" name="__codelineno-17-27" href="#__codelineno-17-27"></a>    <span class="n">engine</span> <span class="o">=</span> <span class="n">NLQueryEngine</span><span class="p">(</span><span class="n">semantic_layer</span><span class="o">=</span><span class="n">mock_semantic_layer</span><span class="p">)</span>
+<a id="__codelineno-17-28" name="__codelineno-17-28" href="#__codelineno-17-28"></a>
+<a id="__codelineno-17-29" name="__codelineno-17-29" href="#__codelineno-17-29"></a>    <span class="n">query</span> <span class="o">=</span> <span class="s2">"average t score of those that had osteoporosis with scores below -2.5"</span>
+<a id="__codelineno-17-30" name="__codelineno-17-30" href="#__codelineno-17-30"></a>    <span class="n">filters</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">_extract_filters</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+<a id="__codelineno-17-31" name="__codelineno-17-31" href="#__codelineno-17-31"></a>
+<a id="__codelineno-17-32" name="__codelineno-17-32" href="#__codelineno-17-32"></a>    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">filters</span><span class="p">)</span> <span class="o">==</span> <span class="mi">2</span>
+<a id="__codelineno-17-33" name="__codelineno-17-33" href="#__codelineno-17-33"></a>    <span class="c1"># Order may vary</span>
+<a id="__codelineno-17-34" name="__codelineno-17-34" href="#__codelineno-17-34"></a>    <span class="n">filter_columns</span> <span class="o">=</span> <span class="p">{</span><span class="n">f</span><span class="p">[</span><span class="s2">"column"</span><span class="p">]</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">filters</span><span class="p">}</span>
+<a id="__codelineno-17-35" name="__codelineno-17-35" href="#__codelineno-17-35"></a>    <span class="k">assert</span> <span class="s2">"Results of DEXA?"</span> <span class="ow">in</span> <span class="n">filter_columns</span>
+<a id="__codelineno-17-36" name="__codelineno-17-36" href="#__codelineno-17-36"></a>    <span class="k">assert</span> <span class="s2">"DEXA Score (T score)"</span> <span class="ow">in</span> <span class="n">filter_columns</span>
+<a id="__codelineno-17-37" name="__codelineno-17-37" href="#__codelineno-17-37"></a>
+<a id="__codelineno-17-38" name="__codelineno-17-38" href="#__codelineno-17-38"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_apply_filters</span><span class="p">():</span>
+<a id="__codelineno-17-39" name="__codelineno-17-39" href="#__codelineno-17-39"></a><span class="w">    </span><span class="sd">"""Test filter application to DataFrame."""</span>
+<a id="__codelineno-17-40" name="__codelineno-17-40" href="#__codelineno-17-40"></a>    <span class="n">df</span> <span class="o">=</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span>
+<a id="__codelineno-17-41" name="__codelineno-17-41" href="#__codelineno-17-41"></a>        <span class="s2">"Results of DEXA?"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"Osteoporosis"</span><span class="p">,</span> <span class="s2">"Normal"</span><span class="p">,</span> <span class="s2">"Osteoporosis"</span><span class="p">,</span> <span class="s2">"Osteopenia"</span><span class="p">],</span>
+<a id="__codelineno-17-42" name="__codelineno-17-42" href="#__codelineno-17-42"></a>        <span class="s2">"DEXA Score (T score)"</span><span class="p">:</span> <span class="p">[</span><span class="o">-</span><span class="mf">3.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.5</span><span class="p">,</span> <span class="o">-</span><span class="mf">2.8</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.5</span><span class="p">],</span>
+<a id="__codelineno-17-43" name="__codelineno-17-43" href="#__codelineno-17-43"></a>    <span class="p">})</span>
+<a id="__codelineno-17-44" name="__codelineno-17-44" href="#__codelineno-17-44"></a>
+<a id="__codelineno-17-45" name="__codelineno-17-45" href="#__codelineno-17-45"></a>    <span class="n">filters</span> <span class="o">=</span> <span class="p">[</span>
+<a id="__codelineno-17-46" name="__codelineno-17-46" href="#__codelineno-17-46"></a>        <span class="p">{</span><span class="s2">"column"</span><span class="p">:</span> <span class="s2">"Results of DEXA?"</span><span class="p">,</span> <span class="s2">"operator"</span><span class="p">:</span> <span class="s2">"=="</span><span class="p">,</span> <span class="s2">"value"</span><span class="p">:</span> <span class="s2">"Osteoporosis"</span><span class="p">},</span>
+<a id="__codelineno-17-47" name="__codelineno-17-47" href="#__codelineno-17-47"></a>        <span class="p">{</span><span class="s2">"column"</span><span class="p">:</span> <span class="s2">"DEXA Score (T score)"</span><span class="p">,</span> <span class="s2">"operator"</span><span class="p">:</span> <span class="s2">"&lt;"</span><span class="p">,</span> <span class="s2">"value"</span><span class="p">:</span> <span class="o">-</span><span class="mf">2.5</span><span class="p">},</span>
+<a id="__codelineno-17-48" name="__codelineno-17-48" href="#__codelineno-17-48"></a>    <span class="p">]</span>
+<a id="__codelineno-17-49" name="__codelineno-17-49" href="#__codelineno-17-49"></a>
+<a id="__codelineno-17-50" name="__codelineno-17-50" href="#__codelineno-17-50"></a>    <span class="n">filtered_df</span> <span class="o">=</span> <span class="n">_apply_filters</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">filters</span><span class="p">)</span>
+<a id="__codelineno-17-51" name="__codelineno-17-51" href="#__codelineno-17-51"></a>
+<a id="__codelineno-17-52" name="__codelineno-17-52" href="#__codelineno-17-52"></a>    <span class="c1"># Should only include rows where both conditions are met</span>
+<a id="__codelineno-17-53" name="__codelineno-17-53" href="#__codelineno-17-53"></a>    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">filtered_df</span><span class="p">)</span> <span class="o">==</span> <span class="mi">2</span>  <span class="c1"># Rows 0 and 2</span>
+<a id="__codelineno-17-54" name="__codelineno-17-54" href="#__codelineno-17-54"></a>    <span class="k">assert</span> <span class="n">filtered_df</span><span class="p">[</span><span class="s2">"DEXA Score (T score)"</span><span class="p">]</span><span class="o">.</span><span class="n">to_list</span><span class="p">()</span> <span class="o">==</span> <span class="p">[</span><span class="o">-</span><span class="mf">3.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">2.8</span><span class="p">]</span>
+<a id="__codelineno-17-55" name="__codelineno-17-55" href="#__codelineno-17-55"></a>
+<a id="__codelineno-17-56" name="__codelineno-17-56" href="#__codelineno-17-56"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_filters_work_identically_single_file_and_multi_table</span><span class="p">():</span>
+<a id="__codelineno-17-57" name="__codelineno-17-57" href="#__codelineno-17-57"></a><span class="w">    </span><span class="sd">"""Test that filter application works identically for both upload types."""</span>
+<a id="__codelineno-17-58" name="__codelineno-17-58" href="#__codelineno-17-58"></a>    <span class="c1"># Create test data for single-file upload</span>
+<a id="__codelineno-17-59" name="__codelineno-17-59" href="#__codelineno-17-59"></a>    <span class="n">single_file_df</span> <span class="o">=</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span>
+<a id="__codelineno-17-60" name="__codelineno-17-60" href="#__codelineno-17-60"></a>        <span class="s2">"patient_id"</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">],</span>
+<a id="__codelineno-17-61" name="__codelineno-17-61" href="#__codelineno-17-61"></a>        <span class="s2">"outcome"</span><span class="p">:</span> <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">],</span>
+<a id="__codelineno-17-62" name="__codelineno-17-62" href="#__codelineno-17-62"></a>        <span class="s2">"age"</span><span class="p">:</span> <span class="p">[</span><span class="mi">50</span><span class="p">,</span> <span class="mi">60</span><span class="p">,</span> <span class="mi">70</span><span class="p">,</span> <span class="mi">80</span><span class="p">],</span>
+<a id="__codelineno-17-63" name="__codelineno-17-63" href="#__codelineno-17-63"></a>    <span class="p">})</span>
+<a id="__codelineno-17-64" name="__codelineno-17-64" href="#__codelineno-17-64"></a>
+<a id="__codelineno-17-65" name="__codelineno-17-65" href="#__codelineno-17-65"></a>    <span class="c1"># Create test data for multi-table upload (unified cohort)</span>
+<a id="__codelineno-17-66" name="__codelineno-17-66" href="#__codelineno-17-66"></a>    <span class="n">multi_table_df</span> <span class="o">=</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span>
+<a id="__codelineno-17-67" name="__codelineno-17-67" href="#__codelineno-17-67"></a>        <span class="s2">"patient_id"</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">],</span>
+<a id="__codelineno-17-68" name="__codelineno-17-68" href="#__codelineno-17-68"></a>        <span class="s2">"outcome"</span><span class="p">:</span> <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">],</span>
+<a id="__codelineno-17-69" name="__codelineno-17-69" href="#__codelineno-17-69"></a>        <span class="s2">"age"</span><span class="p">:</span> <span class="p">[</span><span class="mi">50</span><span class="p">,</span> <span class="mi">60</span><span class="p">,</span> <span class="mi">70</span><span class="p">,</span> <span class="mi">80</span><span class="p">],</span>
+<a id="__codelineno-17-70" name="__codelineno-17-70" href="#__codelineno-17-70"></a>    <span class="p">})</span>
+<a id="__codelineno-17-71" name="__codelineno-17-71" href="#__codelineno-17-71"></a>
+<a id="__codelineno-17-72" name="__codelineno-17-72" href="#__codelineno-17-72"></a>    <span class="n">filters</span> <span class="o">=</span> <span class="p">[{</span><span class="s2">"column"</span><span class="p">:</span> <span class="s2">"age"</span><span class="p">,</span> <span class="s2">"operator"</span><span class="p">:</span> <span class="s2">"&gt;="</span><span class="p">,</span> <span class="s2">"value"</span><span class="p">:</span> <span class="mi">60</span><span class="p">}]</span>
+<a id="__codelineno-17-73" name="__codelineno-17-73" href="#__codelineno-17-73"></a>
+<a id="__codelineno-17-74" name="__codelineno-17-74" href="#__codelineno-17-74"></a>    <span class="c1"># Apply filters to both</span>
+<a id="__codelineno-17-75" name="__codelineno-17-75" href="#__codelineno-17-75"></a>    <span class="n">single_filtered</span> <span class="o">=</span> <span class="n">_apply_filters</span><span class="p">(</span><span class="n">single_file_df</span><span class="p">,</span> <span class="n">filters</span><span class="p">)</span>
+<a id="__codelineno-17-76" name="__codelineno-17-76" href="#__codelineno-17-76"></a>    <span class="n">multi_filtered</span> <span class="o">=</span> <span class="n">_apply_filters</span><span class="p">(</span><span class="n">multi_table_df</span><span class="p">,</span> <span class="n">filters</span><span class="p">)</span>
+<a id="__codelineno-17-77" name="__codelineno-17-77" href="#__codelineno-17-77"></a>
+<a id="__codelineno-17-78" name="__codelineno-17-78" href="#__codelineno-17-78"></a>    <span class="c1"># Results must be identical</span>
+<a id="__codelineno-17-79" name="__codelineno-17-79" href="#__codelineno-17-79"></a>    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">single_filtered</span><span class="p">)</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">multi_filtered</span><span class="p">)</span>
+<a id="__codelineno-17-80" name="__codelineno-17-80" href="#__codelineno-17-80"></a>    <span class="k">assert</span> <span class="n">single_filtered</span><span class="p">[</span><span class="s2">"age"</span><span class="p">]</span><span class="o">.</span><span class="n">to_list</span><span class="p">()</span> <span class="o">==</span> <span class="n">multi_filtered</span><span class="p">[</span><span class="s2">"age"</span><span class="p">]</span><span class="o">.</span><span class="n">to_list</span><span class="p">()</span>
+</code></pre></div>
+<h4 id="43-test-conversational-ui-flow">4.3 Test conversational UI flow</h4>
+<p><strong>File</strong>: <code>tests/ui/pages/test_ask_questions_conversational.py</code> (new)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_conversation_history_persistence</span><span class="p">():</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="w">    </span><span class="sd">"""Test that conversation history is stored correctly."""</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>    <span class="c1"># Initialize session state</span>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>    <span class="n">st</span><span class="o">.</span><span class="n">session_state</span><span class="p">[</span><span class="s2">"conversation_history"</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>    <span class="c1"># Simulate adding a query</span>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>    <span class="n">entry</span> <span class="o">=</span> <span class="p">{</span>
+<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a>        <span class="s2">"query"</span><span class="p">:</span> <span class="s2">"what is the average viral load"</span><span class="p">,</span>
+<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a>        <span class="s2">"intent"</span><span class="p">:</span> <span class="n">AnalysisIntent</span><span class="o">.</span><span class="n">DESCRIBE</span><span class="p">,</span>
+<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a>        <span class="s2">"headline"</span><span class="p">:</span> <span class="s2">"Average viral load: 150 copies/mL"</span><span class="p">,</span>
+<a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a>        <span class="s2">"run_key"</span><span class="p">:</span> <span class="s2">"describe_123456"</span><span class="p">,</span>
+<a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a>        <span class="s2">"timestamp"</span><span class="p">:</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">(),</span>
+<a id="__codelineno-18-13" name="__codelineno-18-13" href="#__codelineno-18-13"></a>        <span class="s2">"filters_applied"</span><span class="p">:</span> <span class="p">[],</span>
+<a id="__codelineno-18-14" name="__codelineno-18-14" href="#__codelineno-18-14"></a>    <span class="p">}</span>
+<a id="__codelineno-18-15" name="__codelineno-18-15" href="#__codelineno-18-15"></a>    <span class="n">st</span><span class="o">.</span><span class="n">session_state</span><span class="o">.</span><span class="n">conversation_history</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">entry</span><span class="p">)</span>
+<a id="__codelineno-18-16" name="__codelineno-18-16" href="#__codelineno-18-16"></a>
+<a id="__codelineno-18-17" name="__codelineno-18-17" href="#__codelineno-18-17"></a>    <span class="c1"># Verify storage</span>
+<a id="__codelineno-18-18" name="__codelineno-18-18" href="#__codelineno-18-18"></a>    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">st</span><span class="o">.</span><span class="n">session_state</span><span class="o">.</span><span class="n">conversation_history</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span>
+<a id="__codelineno-18-19" name="__codelineno-18-19" href="#__codelineno-18-19"></a>    <span class="k">assert</span> <span class="n">st</span><span class="o">.</span><span class="n">session_state</span><span class="o">.</span><span class="n">conversation_history</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"query"</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"what is the average viral load"</span>
+<a id="__codelineno-18-20" name="__codelineno-18-20" href="#__codelineno-18-20"></a>
+<a id="__codelineno-18-21" name="__codelineno-18-21" href="#__codelineno-18-21"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_conversation_history_lightweight_storage</span><span class="p">():</span>
+<a id="__codelineno-18-22" name="__codelineno-18-22" href="#__codelineno-18-22"></a><span class="w">    </span><span class="sd">"""Test that only lightweight data is stored, not full results."""</span>
+<a id="__codelineno-18-23" name="__codelineno-18-23" href="#__codelineno-18-23"></a>    <span class="n">entry</span> <span class="o">=</span> <span class="p">{</span>
+<a id="__codelineno-18-24" name="__codelineno-18-24" href="#__codelineno-18-24"></a>        <span class="s2">"query"</span><span class="p">:</span> <span class="s2">"compare viral load by treatment"</span><span class="p">,</span>
+<a id="__codelineno-18-25" name="__codelineno-18-25" href="#__codelineno-18-25"></a>        <span class="s2">"intent"</span><span class="p">:</span> <span class="n">AnalysisIntent</span><span class="o">.</span><span class="n">COMPARE_GROUPS</span><span class="p">,</span>
+<a id="__codelineno-18-26" name="__codelineno-18-26" href="#__codelineno-18-26"></a>        <span class="s2">"headline"</span><span class="p">:</span> <span class="s2">"Treatment A has lower viral load (p&lt;0.05)"</span><span class="p">,</span>
+<a id="__codelineno-18-27" name="__codelineno-18-27" href="#__codelineno-18-27"></a>        <span class="s2">"run_key"</span><span class="p">:</span> <span class="s2">"compare_789012"</span><span class="p">,</span>
+<a id="__codelineno-18-28" name="__codelineno-18-28" href="#__codelineno-18-28"></a>        <span class="s2">"timestamp"</span><span class="p">:</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">(),</span>
+<a id="__codelineno-18-29" name="__codelineno-18-29" href="#__codelineno-18-29"></a>        <span class="s2">"filters_applied"</span><span class="p">:</span> <span class="p">[],</span>
+<a id="__codelineno-18-30" name="__codelineno-18-30" href="#__codelineno-18-30"></a>    <span class="p">}</span>
+<a id="__codelineno-18-31" name="__codelineno-18-31" href="#__codelineno-18-31"></a>
+<a id="__codelineno-18-32" name="__codelineno-18-32" href="#__codelineno-18-32"></a>    <span class="c1"># Verify no large objects (arrays, dataframes) are stored</span>
+<a id="__codelineno-18-33" name="__codelineno-18-33" href="#__codelineno-18-33"></a>    <span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+<a id="__codelineno-18-34" name="__codelineno-18-34" href="#__codelineno-18-34"></a>    <span class="n">entry_size</span> <span class="o">=</span> <span class="n">sys</span><span class="o">.</span><span class="n">getsizeof</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">entry</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="nb">str</span><span class="p">))</span>
+<a id="__codelineno-18-35" name="__codelineno-18-35" href="#__codelineno-18-35"></a>    <span class="k">assert</span> <span class="n">entry_size</span> <span class="o">&lt;</span> <span class="mi">1024</span>  <span class="c1"># Should be under 1KB per entry</span>
+<a id="__codelineno-18-36" name="__codelineno-18-36" href="#__codelineno-18-36"></a>
+<a id="__codelineno-18-37" name="__codelineno-18-37" href="#__codelineno-18-37"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_clear_conversation</span><span class="p">():</span>
+<a id="__codelineno-18-38" name="__codelineno-18-38" href="#__codelineno-18-38"></a><span class="w">    </span><span class="sd">"""Test clearing conversation history."""</span>
+<a id="__codelineno-18-39" name="__codelineno-18-39" href="#__codelineno-18-39"></a>    <span class="n">st</span><span class="o">.</span><span class="n">session_state</span><span class="p">[</span><span class="s2">"conversation_history"</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span>
+<a id="__codelineno-18-40" name="__codelineno-18-40" href="#__codelineno-18-40"></a>        <span class="p">{</span><span class="s2">"query"</span><span class="p">:</span> <span class="s2">"test1"</span><span class="p">,</span> <span class="s2">"headline"</span><span class="p">:</span> <span class="s2">"result1"</span><span class="p">},</span>
+<a id="__codelineno-18-41" name="__codelineno-18-41" href="#__codelineno-18-41"></a>        <span class="p">{</span><span class="s2">"query"</span><span class="p">:</span> <span class="s2">"test2"</span><span class="p">,</span> <span class="s2">"headline"</span><span class="p">:</span> <span class="s2">"result2"</span><span class="p">},</span>
+<a id="__codelineno-18-42" name="__codelineno-18-42" href="#__codelineno-18-42"></a>    <span class="p">]</span>
+<a id="__codelineno-18-43" name="__codelineno-18-43" href="#__codelineno-18-43"></a>
+<a id="__codelineno-18-44" name="__codelineno-18-44" href="#__codelineno-18-44"></a>    <span class="c1"># Simulate clear button</span>
+<a id="__codelineno-18-45" name="__codelineno-18-45" href="#__codelineno-18-45"></a>    <span class="n">st</span><span class="o">.</span><span class="n">session_state</span><span class="o">.</span><span class="n">conversation_history</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-18-46" name="__codelineno-18-46" href="#__codelineno-18-46"></a>
+<a id="__codelineno-18-47" name="__codelineno-18-47" href="#__codelineno-18-47"></a>    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">st</span><span class="o">.</span><span class="n">session_state</span><span class="o">.</span><span class="n">conversation_history</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span>
+</code></pre></div>
+<h2 id="implementation-order">Implementation Order</h2>
+<p>Execute phases sequentially to maintain code quality and testability. <strong>Phase 0 must be completed first</strong> to ensure feature parity:</p>
+<ol>
+<li><strong>Phase 0</strong> (Feature Parity Prerequisite): Ensure single-file and multi-table uploads have identical capabilities</li>
+<li>Estimated time: 2-3 hours</li>
+<li>Deliverable: Both upload types use same persistence, semantic layer registration, and data access patterns</li>
+<li>Commit messages:<ul>
+<li><code>feat: unify single-file and multi-table upload persistence</code></li>
+<li><code>feat: ensure both upload types register in DuckDB semantic layer identically</code></li>
+<li><code>feat: replace eager pandas with lazy Polars for both upload types</code></li>
+</ul>
+</li>
+<li>
+<p><strong>Must complete before Phase 1</strong></p>
+</li>
+<li>
+<p><strong>Phase 1</strong> (Critical Bug Fix): Fix comparison analysis to handle string numeric columns</p>
+</li>
+<li>Estimated time: 2 hours</li>
+<li>Deliverable: Comparison analysis correctly computes group means for string numeric columns</li>
+<li>
+<p>Commit message: <code>fix: handle string numeric columns in comparison analysis</code></p>
+</li>
+<li>
+<p><strong>Phase 2</strong> (Core Feature): Implement filter parsing and application</p>
+</li>
+<li>Estimated time: 3 hours</li>
+<li>Deliverable: Filters are extracted from NL queries and applied to cohort before analysis</li>
+<li>
+<p>Commit messages:</p>
+<ul>
+<li><code>feat: add filter extraction to NL query engine</code></li>
+<li><code>feat: apply filters in compute functions</code></li>
+<li><code>feat: add breakdown reporting for filtered cohorts</code></li>
+</ul>
+</li>
+<li>
+<p><strong>Phase 3</strong> (UX Improvement): Redesign UI for conversational flow</p>
+</li>
+<li>Estimated time: 3-4 hours</li>
+<li>Deliverable: Clean conversation flow with inline results, no confusing buttons</li>
+<li>
+<p>Commit messages:</p>
+<ul>
+<li><code>feat: add conversation history to session state</code></li>
+<li><code>refactor: redesign Ask Questions UI for conversational flow</code></li>
+<li><code>feat: add follow-up question suggestions</code></li>
+</ul>
+</li>
+<li>
+<p><strong>Phase 4</strong> (Quality): Add comprehensive tests</p>
+</li>
+<li>Estimated time: 2 hours</li>
+<li>Deliverable: Test coverage for all three phases</li>
+<li>Commit message: <code>test: add comprehensive tests for comparison fix, filters, and conversational UI</code></li>
+</ol>
+<h2 id="success-criteria">Success Criteria</h2>
+<h3 id="phase-0-feature-parity-prerequisite">Phase 0: Feature Parity (Prerequisite)</h3>
+<ul>
+<li>[ ] Single-file and multi-table uploads have identical persistence mechanisms</li>
+<li>[ ] Both types register tables in DuckDB semantic layer identically</li>
+<li>[ ] Both types support lazy Polars evaluation (not eager pandas)</li>
+<li>[ ] Both types use same metadata schema (<code>inferred_schema</code> format)</li>
+<li>[ ] Both types go through same validation pipeline</li>
+<li>[ ] Both types support all granularity levels (patient_level, admission_level, event_level)</li>
+<li>[ ] No feature disparity exists between upload types</li>
+</ul>
+<h3 id="phase-1-3-core-features">Phase 1-3: Core Features</h3>
+<ul>
+<li>[ ] Comparison analysis correctly computes group means for string numeric columns (not counts)</li>
+<li>[ ] Comparison analysis works identically for single-file and multi-table uploads</li>
+<li>[ ] Filter conditions from NL queries are parsed and applied correctly</li>
+<li>[ ] Filter application works identically for both upload types (using lazy Polars)</li>
+<li>[ ] Filtered cohort size is displayed in breakdown reporting</li>
+<li>[ ] UI shows clean conversation flow: question → data → question</li>
+<li>[ ] Conversational UI works identically for both upload types</li>
+<li>[ ] No confusing buttons; all actions are clear and contextual</li>
+<li>[ ] Follow-up questions work naturally without page resets</li>
+<li>[ ] Conversation history persists across page interactions</li>
+<li>[ ] Conversation history can be exported for audit trail</li>
+<li>[ ] All functionality has test coverage for both upload types</li>
+</ul>
+<h2 id="consequences">Consequences</h2>
+<h3 id="positive">Positive</h3>
+<ul>
+<li>Physicians can ask follow-up questions without re-entering context</li>
+<li>String numeric columns are handled correctly in all analysis types</li>
+<li>Filter conditions enable precise cohort selection for research questions</li>
+<li>Conversational UI matches physician mental model (iterative refinement)</li>
+<li>Lightweight conversation storage prevents session state bloat</li>
+<li>Export capability supports research reproducibility and audit requirements</li>
+</ul>
+<h3 id="negative">Negative</h3>
+<ul>
+<li>Conversation history limited to current session (no cross-session persistence)</li>
+<li>Filter parsing uses pattern matching (may miss complex filter syntax)</li>
+<li>Follow-up suggestions are static (not context-aware or learned)</li>
+</ul>
+<h3 id="mitigations">Mitigations</h3>
+<ul>
+<li>Document filter syntax patterns in user help</li>
+<li>Add telemetry to identify failed filter extractions for future improvement</li>
+<li>Consider persistent conversation storage (database) in future iteration if cross-session history becomes critical</li>
+</ul>
+<h2 id="notes">Notes</h2>
+<h3 id="feature-parity-requirements">Feature Parity Requirements</h3>
+<ul>
+<li><strong>All features must work identically for single-file and multi-table uploads</strong> - no exceptions</li>
+<li>Filter parsing should leverage semantic layer column aliases for robust matching (works for both upload types)</li>
+<li>Comparison analysis must handle string numeric columns identically regardless of upload type</li>
+<li>Conversational UI must work identically for both upload types</li>
+<li>All analysis functions must use lazy Polars evaluation (not eager pandas) for both upload types</li>
+</ul>
+<h3 id="implementation-guidance">Implementation Guidance</h3>
+<ul>
+<li>Reference ADR002 Phase 0 for detailed feature parity requirements</li>
+<li>Reference multi-table handler refactor plan for advanced patterns (aggregate-before-join, table classification) - apply to single-file where applicable</li>
+<li>UI redesign maintains backward compatibility with existing analysis results</li>
+<li>Conversation history should be limited (e.g., last 20 queries) to avoid memory issues in long sessions</li>
+<li>Statistical warnings (small sample size, etc.) should be added to results in future iteration</li>
+<li>Consider adding filter validation against semantic layer schema to catch extraction errors early</li>
+</ul>
+<h2 id="references">References</h2>
+<h3 id="related-adrs">Related ADRs</h3>
+<ul>
+<li><strong><a href="../ADR007/">ADR007: Feature Parity Architecture</a></strong> - <strong>AUTHORITATIVE SOURCE</strong> for feature parity. Establishes principle "Single-Table = Multi-Table with 1 Table" and defines unified code paths, persistence, and query capabilities. Phase 0 of this ADR implements ADR007.</li>
+<li><strong><a href="../ADR002/">ADR002: Persistent Storage Layer</a></strong> - <strong>NORTH STAR</strong>: Defines persistent DuckDB storage, lazy Polars evaluation, Parquet export. All features in this ADR must align with ADR002's architecture. ADR002 Phase 0 references feature parity, which is fully defined in ADR007.</li>
+<li><strong><a href="../ADR003/">ADR003: Clinical Trust Architecture &amp; Adaptive Terminology</a></strong> - Trust/verification UI (Phase 1) should be integrated into conversational UI results. Enhanced LLM parsing (Phase 2) can improve filter extraction. Adaptive dictionary (Phase 3) extends existing alias system used in variable matching.</li>
+</ul>
+<h3 id="related-plans">Related Plans</h3>
+<ul>
+<li><strong><a href="../../.cursor/plans/multi-table_handler_refactor_aggregate-before-join_architecture_b7ca2b5e.plan.md">Multi-Table Handler Refactor Plan</a></strong>: Defines advanced multi-table features (table classification, aggregate-before-join, partitioning). Single-file uploads should leverage these patterns where applicable.</li>
+<li><strong><a href="../../docs/implementation/plans/consolidate-docs-and-implement-question-driven-analysis.md">Consolidate Docs Plan</a></strong>: Shows multi-table infrastructure (deferred to V2). Single-file uploads must match this infrastructure.</li>
+</ul>
+<h3 id="code-references">Code References</h3>
+<ul>
+<li><code>src/clinical_analytics/ui/storage/user_datasets.py</code> - Upload storage (must handle both types uniformly)</li>
+<li><code>src/clinical_analytics/datasets/uploaded/definition.py</code> - UploadedDataset class (must support both types identically)</li>
+<li><code>src/clinical_analytics/analysis/compute.py</code> - Analysis functions (must work identically for both upload types)</li>
+<li><code>src/clinical_analytics/core/nl_query_engine.py</code> - NL query parsing (must work identically for both upload types)</li>
+</ul>
+<h3 id="testing-requirements">Testing Requirements</h3>
+<ul>
+<li>All tests must verify functionality works for both single-file and multi-table uploads</li>
+<li>Test feature parity explicitly: same query on both upload types produces identical results</li>
+<li>Test lazy evaluation works correctly for both upload types</li>
+<li>Test semantic layer registration works identically for both upload types</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,2168 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Spec-driven clinical analytics with question-driven semantic analysis">
+      
+      
+        <meta name="author" content="Development Team">
+      
+      
+      
+        <link rel="prev" href="../THREAT_MODEL/">
+      
+      
+        <link rel="next" href="../../api-reference/core/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>Patient data on this computer - Clinical Analytics Platform</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#protecting-patient-data-on-the-clinicians-computer" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Clinical Analytics Platform" class="md-header__button md-logo" aria-label="Clinical Analytics Platform" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Clinical Analytics Platform
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Patient data on this computer
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/yourusername/md_data_explorer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../user-guide/question-driven-analysis/" class="md-tabs__link">
+          
+  
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../architecture/overview/" class="md-tabs__link">
+          
+  
+  
+  Architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../THREAT_MODEL/" class="md-tabs__link">
+          
+  
+  
+  Security
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../api-reference/core/" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../development/contributing/" class="md-tabs__link">
+          
+  
+  
+  Development
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../vision/PURPOSE/" class="md-tabs__link">
+          
+  
+  
+  Specifications
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Clinical Analytics Platform" class="md-nav__button md-logo" aria-label="Clinical Analytics Platform" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Clinical Analytics Platform
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/yourusername/md_data_explorer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    md_data_explorer
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quick-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/uploading-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Uploading Data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/question-driven-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/statistical-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Statistical Tests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/interpreting-results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interpreting Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/AS_BUILT_ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    As-built (2025-03)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/ARCHITECTURE_BOUNDARIES/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module boundaries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/semantic-layer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Semantic Layer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/dataset-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dataset Registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/nl-query-engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NL Query Engine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Security
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../THREAT_MODEL/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Threat model & backlog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Patient data on this computer
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Patient data on this computer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#logs-never-contain-questions-or-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logs never contain questions or values
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#only-the-app-can-call-the-local-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Only the app can call the local API
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deleting-a-dataset-removes-all-of-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deleting a dataset removes all of it
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Deleting a dataset removes all of it">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#recovering-from-a-pending-store-rewrite" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recovering from a pending store rewrite
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#duckdb-upgrades-and-rollbacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DuckDB upgrades and rollbacks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-data-folder-is-private-to-your-account" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The data folder is private to your account
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#disk-encryption-is-required" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Disk encryption is required
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/datasets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Datasets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI Components
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/packaging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packaging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Specifications
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Specifications
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../vision/PURPOSE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Purpose and steel thread
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../implementation/MASTER_PLAN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Master plan (roadmap)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--active"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../specs/omnibus_electron_streamlit_cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Electron cutover (omnibus)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--active"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../specs/question-driven-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Question-Driven Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../specs/multi-table-support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Table Support
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#logs-never-contain-questions-or-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logs never contain questions or values
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#only-the-app-can-call-the-local-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Only the app can call the local API
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deleting-a-dataset-removes-all-of-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deleting a dataset removes all of it
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Deleting a dataset removes all of it">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#recovering-from-a-pending-store-rewrite" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recovering from a pending store rewrite
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#duckdb-upgrades-and-rollbacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DuckDB upgrades and rollbacks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-data-folder-is-private-to-your-account" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The data folder is private to your account
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#disk-encryption-is-required" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Disk encryption is required
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="protecting-patient-data-on-the-clinicians-computer">Protecting patient data on the clinician's computer</h1>
+<p>The app runs entirely on one machine, but it holds patient-level research data. This page lists
+what the app does to keep that data contained and what the person installing it must do.</p>
+<h2 id="logs-never-contain-questions-or-values">Logs never contain questions or values</h2>
+<p>Questions typed by a clinician, filter values and row values can identify a patient, so no log
+line at any level carries them.</p>
+<ul>
+<li>Call sites log a 12-character keyed hash (<code>query_hash</code>, HMAC-SHA256 with a random key kept
+  in <code>&lt;data home&gt;/.log-key</code>, mode 0600) and a length or count (<code>query_len</code>, <code>filter_count</code>,
+  <code>response_length</code>) instead of text. The key stops anyone with the log from confirming a short
+  value such as a diagnosis code by hashing guesses. Column names may be logged; values may not.</li>
+<li>Exceptions are logged as <code>error_type</code> plus a keyed <code>error_hash</code>, never their message (database
+  and parsing errors often quote cell values). Rendered tracebacks keep frames and exception
+  types; the message after the type is replaced with <code>[message redacted]</code>. When analysis fails,
+  the user sees a plain-language message, not the exception text.</li>
+<li>One handler formats everything: structlog, the standard library <code>logging</code> used by older
+  modules, uvicorn's error and access loggers, and Python warnings all pass through the same
+  redaction before they are written to stderr. Tracebacks are rebuilt from the exception objects:
+  file, line, function and exception type only, including exception-group members and chained
+  causes; messages, notes and source lines are never printed.</li>
+<li>Standard-library messages are treated as unsafe: a <code>%</code>-style template is kept with its
+  arguments replaced, and any other message (f-strings) is replaced by <code>[message redacted]</code> plus
+  the logger name and line number. Only uvicorn's own startup lines are allowlisted. Access log
+  lines keep the method, path and status but drop the query string. Warnings keep their file,
+  line and category.</li>
+<li>uvicorn is always started through <code>python -m clinical_analytics.api.serve</code>, which passes
+  <code>log_config=None</code> so uvicorn does not install its own handlers; app startup re-applies the
+  redacting setup anyway, in case uvicorn was launched some other way.</li>
+<li>Keys that can carry free text (<code>error</code>, <code>sql</code>, <code>message</code>, <code>detail</code>, <code>plan</code>, <code>context</code>, ...)
+  are hashed or sized wherever they appear, including inside nested dicts and lists.</li>
+<li>If the log key cannot be created (read-only data home, unusual filesystem), hashing switches
+  off with one warning and only sizes are logged; it never falls back to an unkeyed hash.</li>
+<li>The LLM prompt overlay is read from <code>&lt;data home&gt;/nl_query_learning/</code>, not the world-writable
+  <code>/tmp/nl_query_learning</code> used before.</li>
+<li><code>clinical_analytics.core.log_redaction.redact_sensitive_fields</code> is a structlog processor that
+  backs this up: an event key such as <code>query</code>, <code>question</code>, <code>filters</code>, <code>value</code>, <code>rows</code> or
+  <code>response</code> is replaced by <code>&lt;key&gt;_hash</code> / <code>&lt;key&gt;_size</code> before the line is written.</li>
+<li>The API's log level defaults to <code>INFO</code>. Set <code>CLINICAL_ANALYTICS_LOG_LEVEL=DEBUG</code> only while
+  debugging; debug lines follow the same rule.</li>
+<li>SQL debugging (<code>MDDE_SQL_DEBUG</code>) logs the SQL length and hash, not the SQL text, because the
+  SQL carries filter values.</li>
+<li>The Electron renderer and preload log query ids, event types and lengths, never the question or
+  a result payload.</li>
+<li><code>tests/core/test_log_redaction.py</code> runs a full ask at DEBUG with the redacting processor turned
+  off and fails if the question text or a filter value reaches any log event.</li>
+</ul>
+<h2 id="only-the-app-can-call-the-local-api">Only the app can call the local API</h2>
+<p>The API listens on <code>127.0.0.1:8000</code>, but every process on the computer, and any web page open
+in a browser, can send requests to a loopback port. These checks close that
+(<code>clinical_analytics/api/security.py</code>, <code>electron/src/main.js</code>):</p>
+<ul>
+<li><strong>Per-launch bearer token.</strong> <code>scripts/run_app.sh</code> generates a random token for each launch
+  (<code>secrets.token_urlsafe(32)</code>) and passes it in <code>CLINICAL_ANALYTICS_API_TOKEN</code> to the backend and
+  to Electron. Electron main gives it to the preload script over IPC, and only to the app's own
+  page; the preload adds <code>Authorization: Bearer &lt;token&gt;</code> to every request. The token is never put
+  on <code>window</code> or in a URL. The API answers <code>401</code> to any request without the right token, except
+  <code>GET /health</code> (the launcher polls it before the window opens) and CORS preflights. Tokens
+  shorter than 32 characters stop the API at startup.</li>
+<li><strong>No silent open mode.</strong> Without a token the API refuses to start unless
+  <code>CLINICAL_ANALYTICS_DEV_NO_AUTH=1</code> is set (<code>make run-api</code> and the test suite set it). If it is
+  started anyway, every request except <code>/health</code> gets <code>503</code>. <code>/health</code> reports <code>auth_required</code>.</li>
+<li><strong>The app checks it is talking to its own backend.</strong> Before sending the token or any data,
+  the preload sends <code>GET /health?nonce=&lt;random&gt;</code> and requires <code>token_proof =
+  HMAC-SHA256(token, "clinical-analytics-health-v1:" + nonce)</code>, <code>auth_required: true</code>, and a
+  <code>401</code> for a request without the token. A program squatting on port 8000 cannot produce the
+  proof, so it never receives the token. If a check fails, the app shows a plain message asking
+  the user to restart with the launcher (unless Electron itself was started with
+  <code>CLINICAL_ANALYTICS_DEV_NO_AUTH=1</code>).</li>
+<li><strong>One address.</strong> The app, its CSP and the launcher use <code>http://127.0.0.1:8000</code>, never
+  <code>localhost</code>: if <code>localhost</code> resolved to <code>::1</code>, a program listening on <code>[::1]:8000</code> could relay
+  <code>/health</code> proofs from the real backend and receive the token.</li>
+<li><strong>The launcher checks too.</strong> <code>scripts/run_app.sh</code> refuses to start if something already
+  answers on port 8000 (IPv4 or IPv6 loopback), checks that the backend it started is still running once <code>/health</code>
+  answers, and runs <code>python -m clinical_analytics.api.security verify-health</code> (the same proof)
+  before opening the app.</li>
+<li><strong>Exact page origin.</strong> The packaged page is served from a privileged <code>app://clinical-analytics</code>
+  scheme (<code>protocol.registerSchemesAsPrivileged</code> + <code>protocol.handle</code>), not <code>file://</code>. CORS allows
+  exactly that origin plus the Vite dev server; <code>"null"</code> (what <code>file://</code> pages send) and <code>*</code> are
+  rejected at startup. CORS does not allow credentials (the token is a header, not a cookie).</li>
+<li><strong>Locked-down window.</strong> The renderer is sandboxed (<code>sandbox: true</code>, context isolation, no Node).
+  Navigation away from the app's own origin and <code>window.open</code> are blocked, and webviews are not
+  allowed, so a link or injected script cannot load another page that would receive the token.</li>
+<li><strong>Loopback Host only.</strong> <code>TrustedHostMiddleware</code> rejects requests whose <code>Host</code> header is not
+  <code>127.0.0.1</code> or <code>localhost</code>, which defeats DNS-rebinding pages
+  (<code>CLINICAL_ANALYTICS_ALLOWED_HOSTS</code> overrides the list; tests add <code>testserver</code>).</li>
+</ul>
+<p><strong>Query stream.</strong> <code>EventSource</code> cannot send headers, so the preload reads
+<code>/api/queries/{id}/stream</code> with <code>fetch</code> streaming instead (same SSE wire format). The
+alternative, a short-lived token in the query string, was rejected because URLs land in access
+logs, and it would need a second token type. If the stream drops before it ends, the preload asks
+<code>GET /api/queries/{id}</code> and, if the query still exists, reopens the stream (up to three times);
+the server replays the query's events, so an answer that finished meanwhile still arrives, and
+the preload drops the replayed events the renderer has already seen.</p>
+<p><strong>Development.</strong> <code>make run-api</code> runs the API with <code>CLINICAL_ANALYTICS_DEV_NO_AUTH=1</code>. To use the
+Electron app against it, start Electron with the same variable (<code>CLINICAL_ANALYTICS_DEV_NO_AUTH=1
+npm start</code>). Never use dev mode with real patient data.</p>
+<h2 id="deleting-a-dataset-removes-all-of-it">Deleting a dataset removes all of it</h2>
+<p><strong>Delete dataset</strong> in the dataset bar (or <code>DELETE /api/datasets/{id}</code>) asks for confirmation in
+the page, then removes, for that dataset id:</p>
+<ul>
+<li>the uploaded file, the unified CSV and per-table CSVs (<code>uploads/raw/</code>)</li>
+<li>its metadata and enrichment overlays (<code>uploads/metadata/{id}.json</code>, <code>uploads/metadata/overlays/{id}/</code>)</li>
+<li>its Parquet exports (<code>parquet/{id}_*.parquet</code>)</li>
+<li>its DuckDB tables; the store is then rewritten into a fresh file, because DuckDB leaves the
+  bytes of dropped tables in free blocks</li>
+<li>any copy of the store left by a failed DuckDB upgrade check (<code>analytics.duckdb.backup-*</code>, see
+  <a href="#duckdb-upgrades-and-rollbacks">DuckDB upgrades and rollbacks</a>)</li>
+<li>its sessions and their messages (SQLite runs with <code>secure_delete=ON</code>, so deleted rows are
+  zeroed rather than left in free pages)</li>
+<li>in-memory query results, events and conversation history</li>
+</ul>
+<p>The delete takes the store lock before it removes anything, then drops the DuckDB tables and
+rewrites the store, then removes the files, then the sessions and messages (in their own
+transaction), and the metadata last. If the store is busy (HTTP 409), nothing is removed: files,
+metadata, tables and chat all stay. Because metadata goes last, a delete that fails part-way
+leaves the dataset listed and can be retried; a retry for an id whose metadata is already gone
+still removes any sessions left for it.
+A durable <code>analytics.duckdb.needs-compaction</code> marker is written before any table is dropped and
+removed only after the rewritten store has replaced the old file, so a failed rewrite is redone
+on retry instead of being reported as success. The purge holds a process-wide store lock and
+refuses (HTTP 409) while any connection to the store is open. Opening a connection while a
+purge holds the lock waits at most 15 seconds, then answers HTTP 503 "The data store is busy";
+store and file work runs in worker threads, so a long rewrite never stalls other requests. A
+<code>DataStore</code> that is dropped without <code>close()</code> releases its registration when garbage-collected.
+A marker left by a crash is picked up at the next API start and the rewrite finished then; if
+that rewrite fails, the API does not start (see below). While a delete runs, queries,
+previews and semantic-layer loads for that dataset get HTTP 409, and caches are dropped again
+when it ends. Upload ids are random (<code>user_upload_&lt;uuid4 hex&gt;</code>), so two uploads of the same file
+can never share an id. A one-time <code>VACUUM</code> at startup clears free pages left by deletes made
+before <code>secure_delete</code> was turned on.
+<code>tests/api/test_dataset_delete.py</code> uploads a dataset, adds a session, a message, an overlay and a
+query service, deletes it, and checks that neither the dataset id nor a cell value appears in
+any file name or file content under the data home or in the session database.</p>
+<h3 id="recovering-from-a-pending-store-rewrite">Recovering from a pending store rewrite</h3>
+<p>While <code>analytics.duckdb.needs-compaction</code> exists, the store file may still hold the bytes of a
+deleted dataset. The API finishes that rewrite at startup. If it cannot, the API refuses to
+start: <code>python -m clinical_analytics.api.serve</code> prints one line, <code>Clinical Analytics cannot
+start: A deleted dataset is still in the data store (analytics.duckdb.needs-compaction is
+present) ...</code>, followed by the two steps below in short form, and exits with status 2, the same
+way as a failed engine check (below). The log
+line <code>store_compaction_failed</code> names the error type, never a path or value. A bare <code>uvicorn</code> run
+fails its startup with <code>StoreCompactionPendingError</code> instead. Nothing is served from the file in
+the meantime.</p>
+<ol>
+<li>Fix the cause the error type names: free disk space (the rewrite needs room for a second copy
+   of the store), or fix ownership or permissions on the data home. Then start the app again; the
+   rewrite runs and the marker is removed.</li>
+<li>If the store itself cannot be opened (a DuckDB <code>IOException</code> or similar on every start), quit
+   the app, move <code>analytics.duckdb</code> and every <code>analytics.duckdb.*</code> file next to it (<code>.wal</code>,
+   <code>.compact</code>, <code>.engine</code>, any <code>.backup-*</code>, and the marker) out of <code>&lt;data home&gt;/data/</code>, and delete
+   them securely. Uploaded datasets are
+   then read from their files in <code>uploads/raw/</code> on the next load.</li>
+</ol>
+<p>Do not delete only the marker: the API would start and serve a file that still contains the
+deleted rows.</p>
+<h2 id="duckdb-upgrades-and-rollbacks">DuckDB upgrades and rollbacks</h2>
+<p>The DuckDB store is <code>analytics.duckdb</code> in the data home's <code>data/</code> folder.</p>
+<p><strong>File format.</strong> The app creates and rewrites the store in DuckDB storage format <code>v1.0.0</code>
+(<code>STORE_STORAGE_VERSION</code> in <code>clinical_analytics.storage.store_format</code>). Both DuckDB 1.x and
+2.x can read that format. Without this setting, DuckDB 2.0 would create files in its own
+format, which 1.x cannot open. With it, rolling back to an app release that uses DuckDB 1.4
+keeps working. DuckDB keeps a file's existing format when it writes to it, so stores created
+before the upgrade are not converted. Raise the pinned format only once rollback to the older
+DuckDB line is no longer supported.</p>
+<p><strong>Engine check at startup.</strong> <code>analytics.duckdb.engine</code> records the DuckDB version that last
+opened the store. It is written when the store is first created. At startup, the app compares
+it with the running DuckDB. A different patch release, such as 2.0.0 to 2.0.1, needs nothing
+more. A different major or minor line, such as 1.4 to 2.0, triggers a check:</p>
+<ol>
+<li>The app first makes sure no other program has the store open. It then copies the store,
+   and its <code>.wal</code> file if present, to <code>analytics.duckdb.backup-&lt;previous version&gt;-&lt;UTC time&gt;-&lt;random&gt;</code>
+   in the same folder. While the copy is made and checked, the store is locked against other
+   connections.</li>
+<li>The running DuckDB opens the store read-write and reads its catalog.</li>
+<li>If that works, the app records the new version and <strong>deletes the backup</strong>.</li>
+</ol>
+<p>The backup exists only for those few seconds: it is a full copy of patient data, and keeping
+it has no value because the file format does not change. If a previous start passed the check
+but stopped before deleting the backup, the next start deletes it. A backup with no
+<code>analytics.duckdb</code> next to it is also deleted at startup.</p>
+<p><strong>If the check fails</strong>, the app does not start. <code>python -m clinical_analytics.api.serve</code> prints
+one line saying why and exits with status 2:</p>
+<ul>
+<li><em>Unreadable store</em> (written by a newer DuckDB, or damaged). The error names the backup path,
+  and the backup is kept. The backup is the store exactly as it was just before the check, and
+  the check normally leaves the store unchanged. So first run the app release you used before,
+  and copy the backup over <code>analytics.duckdb</code> only if that release cannot open the store either.
+  Then <strong>delete the backup yourself</strong>. It holds every dataset as it was
+  before the upgrade, and an older app release does not know about it, so datasets deleted
+  there remain in the backup until you delete it. Deleting a dataset in this release also
+  deletes any backup, and a later successful start deletes it too.</li>
+<li><em>Store open in another program</em> (for example, the DuckDB command-line tool). The message is
+  "The data store is open in another program." Close that program and start the app again. This
+  is checked before anything is copied, so no backup is made.</li>
+<li><em>No room for the backup</em> (or another file error during the copy). Any partial copy is deleted
+  and the app does not start.</li>
+</ul>
+<p>The app never keeps more than one backup. When a start finds a backup left by a failed check,
+it copies the store again and deletes the old backup, since the store may have changed since then.</p>
+<h2 id="the-data-folder-is-private-to-your-account">The data folder is private to your account</h2>
+<p>On macOS and Linux the data home is created with mode <code>0700</code>, and a data home you own with a
+wider mode is tightened to <code>0700</code> at startup. If the folder belongs to another account, the app
+refuses to start and says so: that account could read every dataset in it. A data home whose
+parent folder is writable by everyone (without the sticky bit <code>/tmp</code> has) is logged as
+<code>data_home_parent_world_writable</code>; move it somewhere only you can write.</p>
+<h2 id="disk-encryption-is-required">Disk encryption is required</h2>
+<p>Deleting a file does not overwrite the disk blocks it used, and on SSDs nothing in software can
+guarantee that it does. The data home (see <code>clinical_analytics.core.data_home</code>) holds patient
+data at rest, so <strong>the computer running this app must have full-disk encryption turned on</strong>:</p>
+<ul>
+<li><strong>macOS:</strong> FileVault (System Settings → Privacy &amp; Security → FileVault).</li>
+<li><strong>Windows:</strong> BitLocker (Settings → Privacy &amp; security → Device encryption, or Control Panel →
+  BitLocker Drive Encryption). Windows Home editions offer Device encryption only on some hardware.</li>
+<li><strong>Linux:</strong> LUKS full-disk encryption, chosen at install time.</li>
+</ul>
+<p>Backups (Time Machine, File History, cloud sync) copy the data home too: encrypt them, or exclude
+the data home. Moving the data home with <code>CLINICAL_ANALYTICS_DATA_HOME</code> to an unencrypted
+external or network drive defeats this requirement.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>
