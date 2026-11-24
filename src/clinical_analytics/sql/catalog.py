@@ -19,9 +19,11 @@ from typing import Any, Literal, TypeAlias
 from open_data_contract_standard.model import OpenDataContractStandard, SchemaProperty
 from sqlglot import exp
 
+from clinical_analytics.contracts import config
 from clinical_analytics.contracts.config import UNIFIED_OBJECT_NAME
 from clinical_analytics.contracts.declarations import LevelMapping
 from clinical_analytics.contracts.quality import is_id_property, is_restricted_property
+from clinical_analytics.contracts.readings import century_for
 from clinical_analytics.contracts.semantics import DatasetSemantics, semantics_from_contract
 from clinical_analytics.sql.errors import SqlRefusedError
 from clinical_analytics.sql.render import render
@@ -186,24 +188,37 @@ def _is_number(value: object) -> bool:
 
 
 def _date_reading(ref: exp.Column, choice_format: str, century: str | None) -> exp.Expr:
-    """A text column read with the user's confirmed date format (and century), as a DATE."""
-    parsed = exp.cast(exp.func("try_strptime", exp.func("trim", ref.copy()), exp.Literal.string(choice_format)), "DATE")
-    year = exp.func("year", parsed.copy())
+    """A text column read with the user's confirmed date format, as a DATE; a two-digit year set
+    to its century (``readings.century_for``), as the other two readers set it."""
+    # Function and type names in another letter case are the same SQL (equivalent mutants).
+    parsed = exp.cast(
+        exp.func("try_strptime", exp.func("trim", ref.copy()), exp.Literal.string(choice_format)),  # pragma: no mutate
+        "DATE",  # pragma: no mutate
+    )
+    year = exp.func("year", parsed.copy())  # pragma: no mutate
+    two_digits = exp.Paren(this=exp.Mod(this=year.copy(), expression=exp.Literal.number(100)))
+    pivot = exp.Literal.number(config.TWO_DIGIT_YEAR_PIVOT)
+    century = century_for(choice_format, century)
+
+    def shifted(sign: type[exp.Add] | type[exp.Sub]) -> exp.Expr:
+        years = exp.var("YEAR")  # pragma: no mutate
+        return sign(this=parsed.copy(), expression=exp.Interval(this=exp.Literal.string("100"), unit=years))
+
+    in_2000s = exp.GTE(this=year.copy(), expression=exp.Literal.number(2000))
+    in_1900s = exp.LT(this=year.copy(), expression=exp.Literal.number(2000))
     if century == "1900s":
-        shifted = exp.Sub(
-            this=parsed.copy(), expression=exp.Interval(this=exp.Literal.string("100"), unit=exp.var("YEAR"))
+        case = exp.case().when(in_2000s, shifted(exp.Sub))
+    elif century == "2000s":
+        case = exp.case().when(in_1900s, shifted(exp.Add))
+    elif century == "pivot":
+        case = (
+            exp.case()
+            .when(exp.and_(in_2000s, exp.GTE(this=two_digits.copy(), expression=pivot.copy())), shifted(exp.Sub))
+            .when(exp.and_(in_1900s, exp.LT(this=two_digits.copy(), expression=pivot.copy())), shifted(exp.Add))
         )
-        return exp.cast(
-            exp.case().when(exp.GTE(this=year, expression=exp.Literal.number(2000)), shifted).else_(parsed), "DATE"
-        )
-    if century == "2000s":
-        added = exp.Add(
-            this=parsed.copy(), expression=exp.Interval(this=exp.Literal.string("100"), unit=exp.var("YEAR"))
-        )
-        return exp.cast(
-            exp.case().when(exp.LT(this=year, expression=exp.Literal.number(2000)), added).else_(parsed), "DATE"
-        )
-    return parsed
+    else:
+        return parsed
+    return exp.cast(case.else_(parsed), "DATE")  # pragma: no mutate
 
 
 def _spec(prop: SchemaProperty, semantics: DatasetSemantics | None) -> ColumnSpec:

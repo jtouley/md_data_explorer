@@ -2,6 +2,7 @@
 Pytest configuration and fixtures for clinical analytics tests.
 """
 
+import itertools
 import os
 import sys
 import tempfile
@@ -2155,17 +2156,25 @@ def read_by_every_reader(
     from clinical_analytics.contracts.readings import apply_declared, ibis_reads, ibis_total_filter, reads_config
     from clinical_analytics.sql.catalog import SqlCatalog
 
+    calls = itertools.count()
+
     def _read(frame: pl.DataFrame, reads: Any, id_column: str) -> dict[str, pl.DataFrame]:
-        path = tmp_path / f"stored_{len(list(tmp_path.glob('stored_*.parquet')))}.parquet"
+        # A file per call, removed once every reader is done: a hypothesis property calls this per
+        # example, and every connection is closed here so none piles up over a run.
+        path = tmp_path / f"stored_{next(calls)}.parquet"
         frame.write_parquet(path)
         config = reads_config(reads)
 
-        raw = ibis.duckdb.connect().read_parquet(path)
-        keep = ibis_total_filter(raw, config)
-        if keep is not None:
-            raw = raw.filter(keep)
-        mutations = ibis_reads(raw, config)
-        layer = (raw.mutate(**mutations) if mutations else raw).to_polars()
+        layer_con = ibis.duckdb.connect()
+        try:
+            raw = layer_con.read_parquet(path)
+            keep = ibis_total_filter(raw, config)
+            if keep is not None:
+                raw = raw.filter(keep)
+            mutations = ibis_reads(raw, config)
+            layer = (raw.mutate(**mutations) if mutations else raw).to_polars()
+        finally:
+            layer_con.disconnect()
 
         missing = [
             MissingCodeDeclaration(column=c, value=v, missing=True, dataset_version="v1")
@@ -2180,9 +2189,12 @@ def read_by_every_reader(
             make_contract(frame, id_column=id_column), path, (), missing, dates, reads.totals, reads.units
         )
         con = duckdb.connect()
-        con.execute(catalog.view_sql())
-        sql = pl.DataFrame(pl.from_arrow(con.execute('SELECT * FROM "unified"').to_arrow_table()))
-        con.close()
+        try:
+            con.execute(catalog.view_sql())
+            sql = pl.DataFrame(pl.from_arrow(con.sql('SELECT * FROM "unified"').to_arrow_table()))
+        finally:
+            con.close()
+        path.unlink()
 
         reads_by = {"polars": apply_declared(frame, reads), "layer": layer, "sql": sql}
         return {name: read.sort(id_column) for name, read in reads_by.items()}

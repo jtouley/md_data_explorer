@@ -66,8 +66,8 @@ def unit_from_tokens(tokens: Sequence[str]) -> str | None:
             tail.insert(0, token)
             continue
         break
-    while tail and tail[0] in _PER:
-        tail.pop(0)
+    if tail and tail[0] in _PER:
+        return None  # "dose_per_kg": a divisor with no unit before it is not the column's unit
     atoms = [t for t in tail if t not in _PER]
     if not atoms or len(tail) >= len(tokens):
         return None  # no stem before the unit ("kg" alone, "mg_dl")
