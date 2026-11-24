@@ -19,17 +19,38 @@ MUTATION_FAIL = (
         (
             "check-fast",
             2,
-            "make[1]: *** [Makefile:9: lint] Error 1\n",
+            "Found 2 errors.\nmake[2]: *** [Makefile:9: lint] Error 1\n"
+            "make[1]: *** [Makefile:20: check-fast] Error 1\n",
             "FAIL",
-            "make[1]: *** [Makefile:9: lint] Error 1",
+            "lint: Found 2 errors.",
         ),
+        (
+            "check-fast",
+            2,
+            "lint ok\nsrc/a.py:3: matched a protected evaluation token\n1 added line(s) name an evaluation token.\n"
+            "warning: The `UV_X` environment variable is deprecated\n"
+            "make[2]: *** [Makefile:471: check-eval-tokens] Error 1\nmake[1]: *** [Makefile:487: check-fast] Error 1\n",
+            "FAIL",
+            "check-eval-tokens: 1 added line(s) name an evaluation token.",
+        ),
+        ("check-fast", 2, "make[1]: *** [Makefile:9: lint] Error 1\n", "FAIL", "lint failed"),
         ("test-fast", 0, "collected\n" + PYTEST_TAIL, "PASS", "120 passed, 3 skipped in 41.20s"),
         ("test-fast", 2, "", "FAIL", "exit 2"),
         ("mutation-changed", 0, "mutation-changed: SKIP: no mutable src module changed\n", "SKIP", None),
         ("mutation-changed", 1, MUTATION_FAIL, "FAIL", "mutation-changed: FAIL: 8/9 killed, 1 unkilled"),
         ("pr-size", 0, "pr-size: 10 added non-test lines (warn above 1500, fail above 3000)\n", "PASS", None),
     ],
-    ids=["check_pass", "check_fail", "tests_pass", "tests_no_output", "mutation_skip", "mutation_fail", "size_ok"],
+    ids=[
+        "check_pass",
+        "check_fail_lint",
+        "check_fail_eval_tokens",
+        "check_fail_silent",
+        "tests_pass",
+        "tests_no_output",
+        "mutation_skip",
+        "mutation_fail",
+        "size_ok",
+    ],
 )
 def test_classify_stepOutput_resultAndKeyLine(step, rc, output, result, detail):
     # Act

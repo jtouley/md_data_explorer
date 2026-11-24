@@ -22,13 +22,16 @@ Result = Literal["PASS", "FAIL", "SKIP"]
 STEPS: Final[tuple[str, ...]] = ("check-fast", "test-fast", "mutation-changed", "pr-size")
 # The line of each step's output that goes into the summary (last match wins).
 KEY_LINE: Final[dict[str, re.Pattern[str]]] = {
-    "check-fast": re.compile(r"All fast checks passed|check_eval_tokens: .*|\*\*\*.*Error.*"),
+    "check-fast": re.compile(r"All fast checks passed"),
     "test-fast": re.compile(r"=+ .*\b(passed|failed|error|errors|no tests ran)\b.* in [\d.]+s.* =+"),
     "mutation-changed": re.compile(r"^mutation-changed: .*"),
     "pr-size": re.compile(r"^pr-size: .*"),
 }
 SKIP_MARK: Final = "SKIP"
 ANSI_RE: Final = re.compile(r"\x1b\[[0-9;]*m")
+# "make[2]: *** [Makefile:471: check-eval-tokens] Error 1": group 1 is the target that failed.
+MAKE_ERROR_RE: Final = re.compile(r"^make(?:\[\d+\])?: \*\*\* \[[^:\]]+:\d+: ([^\]]+)\] Error")
+NOISE_RE: Final = re.compile(r"^(?:make(?:\[\d+\])?: |warning: )")
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,20 @@ def key_line(step: str, output: str) -> str:
     return matches[-1] if matches else ""
 
 
+def failure_line(output: str) -> str:
+    """The failing make target and the last line it printed itself, e.g. "lint: Found 2 errors."
+
+    Make reports the innermost failure first, so the first make error names the step that failed;
+    the line before it (make and uv noise skipped) is that step's own verdict.
+    """
+    lines = [ANSI_RE.sub("", line).strip() for line in output.splitlines()]
+    for index, line in enumerate(lines):
+        if error := MAKE_ERROR_RE.match(line):
+            own = [prior for prior in lines[:index] if prior and not NOISE_RE.match(prior)]
+            return f"{error.group(1)}: {own[-1]}" if own else f"{error.group(1)} failed"
+    return ""
+
+
 def mutation_notes(output: str) -> tuple[str, ...]:
     """The per-module lines that follow the mutation-changed head line."""
     lines = [ANSI_RE.sub("", line).rstrip() for line in output.splitlines()]
@@ -62,7 +79,7 @@ def classify(step: str, exit_code: int, output: str) -> StepOutcome:
     detail = key_line(step, output)
     notes = mutation_notes(output) if step == "mutation-changed" else ()
     if exit_code != 0:
-        return StepOutcome(step, "FAIL", detail or f"exit {exit_code}", notes)
+        return StepOutcome(step, "FAIL", detail or failure_line(output) or f"exit {exit_code}", notes)
     if step == "mutation-changed" and f": {SKIP_MARK}" in detail:
         return StepOutcome(step, "SKIP", detail, notes)
     return StepOutcome(step, "PASS", detail, notes)

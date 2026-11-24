@@ -1,5 +1,7 @@
 """Tests for scripts/check_eval_tokens.py (evaluation-token leak guard), on a synthetic hash list."""
 
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -303,3 +305,47 @@ def test_load_hashes_committedHashFile_hasSaltAndDigests():
     # Assert
     assert result.salt
     assert result.digests
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+# The last 12 first-parent commits of main when the curated hash list was committed. Each must pass
+# the real list: a list that flags ordinary merged work would fail every PR.
+MAIN_REPLAY_COMMITS = (
+    "af063e7529bd81cf229ad92285ee47a5f545649f",
+    "c8f55e614bc9524f14298e0fec793a947401040f",
+    "13443ab45abc4e6ffcf63f6a138a64d070a8a6be",
+    "89e9f5259dc7fd0af4179b572dd3c6a85d8b1c5d",
+    "a5d321efa1baa3b829bb267e1a1a58d2b3d21164",
+    "5c309978015e7c157df708749c43e1cd60754fe9",
+    "9eb009f28c71a358ef433eeacd2000b674891ea7",
+    "99d6ae46a35ad5b05e78a07bf686fe05a5eae8a1",
+    "ccdd5235a709552a02416caba89ece7f64a583ae",
+    "121f6a20611bac98aa3834951bb47ff69d2991e9",
+    "16c0bf86fe06b5a2bad5601f1a919ea4bc920998",
+    "564f84d6c63b231818efcd0c7d00d5027177bfad",
+)
+# make check-eval-token-replay sets this (CI quality job, full history): a missing commit fails there
+# instead of skipping. Shallow checkouts (tests-fast) skip.
+REQUIRE_HISTORY_ENV = "EVAL_TOKEN_REPLAY_REQUIRE_HISTORY"
+
+
+def _has_commit(rev: str) -> bool:
+    probe = ["git", "cat-file", "-e", f"{rev}^{{commit}}"]
+    return subprocess.run(probe, cwd=REPO_ROOT, capture_output=True, check=False).returncode == 0
+
+
+@pytest.mark.parametrize("commit", MAIN_REPLAY_COMMITS, ids=[c[:7] for c in MAIN_REPLAY_COMMITS])
+def test_find_matches_replayRecentMainCommitsWithRealList_flagsNothing(commit):
+    # Arrange
+    if not (_has_commit(commit) and _has_commit(f"{commit}^")):
+        if os.environ.get(REQUIRE_HISTORY_ENV) == "1":
+            pytest.fail(f"commit {commit[:7]} or its parent is not in this checkout (needs full history)")
+        pytest.skip("shallow checkout: replay needs main's history (make check-eval-token-replay)")
+    hashes = guard.load_hashes((REPO_ROOT / guard.HASH_FILE).read_text(encoding="utf-8"))
+    lines = guard.collect_added(REPO_ROOT, f"{commit}^", commit)
+
+    # Act
+    matches = guard.find_matches(lines, hashes)
+
+    # Assert
+    assert matches == []

@@ -53,6 +53,10 @@ jobs:
       - name: No evaluation tokens in added lines
         run: make check-eval-tokens
 
+      # The hash list must not flag ordinary merged work: replay recent main commits through it.
+      - name: Evaluation-token list passes recent main commits
+        run: make check-eval-token-replay
+
       - name: onnxruntime lock covers macOS 13
         run: make check-lock-platforms
 

@@ -1,4 +1,4 @@
-.PHONY: help done-check mutation-changed check-eval-tokens pr-size accept accept-fellow accept-sql-arms accept-load smoke-installed fetch-embedding-model check-data check-spdx check-lock-platforms audit-held-back golden mutation mutation-module mutation-results install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-contracts test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
+.PHONY: help done-check mutation-changed check-eval-tokens check-eval-token-replay pr-size accept accept-fellow accept-sql-arms accept-load smoke-installed fetch-embedding-model check-data check-spdx check-lock-platforms audit-held-back golden mutation mutation-module mutation-results install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-contracts test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
 
 # Default target
 .DEFAULT_GOAL := help
@@ -469,6 +469,11 @@ golden: ensure-venv ## Synthetic golden kit: regenerate in a temp dir, diff agai
 EVAL_TOKEN_BASE ?= origin/main
 check-eval-tokens: ensure-venv ## Fail if lines added since origin/main name a protected evaluation token [EVAL_TOKEN_BASE=...]
 	$(PYTHON_RUN) scripts/check_eval_tokens.py --base $(EVAL_TOKEN_BASE)
+
+# Replays the last 12 commits of main through the real hash list; each must pass. Needs full history,
+# so it runs in the CI quality job (fetch-depth 0); tests-fast skips it on a shallow checkout.
+check-eval-token-replay: ensure-venv ## Replay recent main commits through the eval-token list; none may match
+	EVAL_TOKEN_REPLAY_REQUIRE_HISTORY=1 $(PYTEST) tests/scripts/test_check_eval_tokens.py -k replayRecentMainCommits -v $(PYTEST_ARGS)
 
 PR_SIZE_BASE ?= origin/main
 pr-size: ensure-venv ## Added non-test lines against origin/main: warn above 1500, fail above 3000 [PR_SIZE_BASE=...]

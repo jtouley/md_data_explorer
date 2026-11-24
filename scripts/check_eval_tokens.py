@@ -155,9 +155,15 @@ def find_matches(lines: Iterable[AddedLine], hashes: TokenHashes) -> list[tuple[
     return [(line.path, line.line_no) for line in lines if any(map(hashes.matches, candidate_tokens(line.text)))]
 
 
-def _changed_paths(root: Path, base: str) -> list[AddedLine]:
-    names = diff_against_base(root, base, ["--name-only", "-z", "--diff-filter=AR"], SCANNED_PATHS)
-    return [AddedLine(p, 0, p) for p in names.split("\0") if p]
+def collect_added(root: Path, base: str, head: str | None = None) -> list[AddedLine]:
+    """Added lines and added/renamed paths from the merge base with ``base`` to ``head``.
+
+    ``head=None`` diffs against the working tree (committed and uncommitted changes).
+    """
+    rev = [head] if head else []
+    diff = diff_against_base(root, base, ["-U0", "--diff-filter=AMR", *rev], SCANNED_PATHS)
+    names = diff_against_base(root, base, ["--name-only", "-z", "--diff-filter=AR", *rev], SCANNED_PATHS)
+    return [*added_lines(diff), *(AddedLine(p, 0, p) for p in names.split("\0") if p)]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -169,9 +175,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         root = repo_root()
         hashes = load_hashes((args.hashes or root / HASH_FILE).read_text(encoding="utf-8"))
-        diff = diff_against_base(root, args.base, ["-U0", "--diff-filter=AMR"], SCANNED_PATHS)
-        lines = list(added_lines(diff))
-        lines += _changed_paths(root, args.base)
+        lines = collect_added(root, args.base)
     except (GitQueryError, HashFileError, OSError) as exc:
         print(f"check_eval_tokens: cannot run: {exc}", file=sys.stderr)
         return 2
